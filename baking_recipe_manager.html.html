@@ -9,22 +9,31 @@
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
 </head>
 <body class="bg-gradient-to-br from-pink-50 to-amber-50 min-h-screen">
-    <!-- ... 相同 header ... -->
     <div class="max-w-6xl mx-auto p-4">
-        <!-- 搜尋與新增按鈕 -->
+        <header class="flex justify-between items-center mb-8">
+            <div class="flex items-center gap-3">
+                <div class="w-12 h-12 bg-pink-500 rounded-2xl flex items-center justify-center text-3xl">🍰</div>
+                <div>
+                    <h1 class="text-3xl font-bold">烘焙食譜</h1>
+                    <p class="text-pink-600 text-sm">共享食譜系統</p>
+                </div>
+            </div>
+            <div id="user-info" class="flex items-center gap-4"></div>
+        </header>
+
         <div class="flex gap-4 mb-6">
-            <input id="search-input" onkeyup="filterRecipes()" placeholder="搜尋食譜..." class="flex-1 px-6 py-4 border border-gray-300 rounded-3xl">
-            <button onclick="showAddModal()" class="bg-pink-600 text-white px-8 py-4 rounded-3xl flex items-center gap-2">
+            <input id="search-input" onkeyup="filterRecipes()" placeholder="搜尋食譜名稱..." class="flex-1 px-6 py-4 border border-gray-300 rounded-3xl focus:outline-none">
+            <button onclick="showAddModal()" class="bg-pink-600 text-white px-8 py-4 rounded-3xl flex items-center gap-2 whitespace-nowrap">
                 <i class="fas fa-plus"></i> 新增食譜
             </button>
         </div>
+
         <div id="recipes-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
     </div>
 
-    <!-- 詳細 Modal -->
+    <!-- 食譜詳細 Modal -->
     <div id="detail-modal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
         <div class="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-auto" id="modal-content"></div>
     </div>
@@ -35,20 +44,14 @@
             <div class="p-8">
                 <h2 class="text-2xl font-bold mb-6" id="modal-title">新增食譜</h2>
                 <input id="recipe-id" type="hidden">
-                <input id="name" placeholder="食譜名稱" class="w-full px-5 py-4 border rounded-2xl mb-4">
+                <input id="name" class="w-full px-5 py-4 border rounded-2xl mb-4 text-lg" placeholder="食譜名稱">
                 <div class="grid grid-cols-2 gap-4 mb-6">
-                    <select id="category" class="px-5 py-4 border rounded-2xl"></select>
+                    <select id="category" class="px-5 py-4 border rounded-2xl">
+                        <option value="蛋糕">蛋糕</option><option value="麵包">麵包</option><option value="餅乾">餅乾</option>
+                        <option value="塔派">塔派</option><option value="慕斯">慕斯</option><option value="其他">其他</option>
+                    </select>
                     <input id="servings" type="number" value="8" class="px-5 py-4 border rounded-2xl">
                 </div>
-                
-                <!-- 圖片上傳 -->
-                <div class="mb-6">
-                    <label class="block mb-2 font-medium">食譜照片</label>
-                    <input type="file" id="image-upload" accept="image/*" class="block w-full text-sm text-gray-500 file:mr-4 file:py-3 file:px-6 file:rounded-2xl file:border-0 file:text-sm file:font-medium file:bg-pink-50 file:text-pink-700 hover:file:bg-pink-100">
-                    <img id="image-preview" class="mt-4 max-h-48 rounded-2xl hidden">
-                </div>
-
-                <!-- 食材與步驟 -->
                 <div class="mb-6">
                     <div class="flex justify-between mb-3"><label class="font-medium">食材</label><button onclick="addIngredientField()" class="text-pink-600">+ 新增</button></div>
                     <div id="ingredients-container" class="space-y-3"></div>
@@ -57,9 +60,8 @@
                     <div class="flex justify-between mb-3"><label class="font-medium">作法</label><button onclick="addStepField()" class="text-pink-600">+ 新增</button></div>
                     <div id="steps-container" class="space-y-3"></div>
                 </div>
-
                 <div class="flex gap-4 mt-10">
-                    <button onclick="saveRecipe()" class="flex-1 bg-pink-600 text-white py-4 rounded-3xl">💾 儲存食譜</button>
+                    <button onclick="saveRecipe()" class="flex-1 bg-pink-600 text-white py-4 rounded-3xl">💾 儲存</button>
                     <button onclick="closeAddModal()" class="flex-1 bg-gray-200 py-4 rounded-3xl">取消</button>
                 </div>
             </div>
@@ -67,8 +69,7 @@
     </div>
 
     <script>
-        // Firebase 初始化 (你的 config)
-        const firebaseConfig = { /* 你的 config */ 
+        const firebaseConfig = {
           apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
           authDomain: "recipe-synchronization.firebaseapp.com",
           projectId: "recipe-synchronization",
@@ -80,32 +81,190 @@
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
         const db = firebase.firestore();
-        const storage = firebase.storage();
 
-        // ... (其餘邏輯與之前版本相同，包含 loadRecipes, showDetail, saveRecipe 等)
+        let currentUser = null;
+        let allRecipes = [];
 
-        // 在 saveRecipe 中加入圖片上傳邏輯
-        async function saveRecipe() {
-            // ... 收集資料 ...
-            let imageUrl = '';
+        auth.onAuthStateChanged(user => {
+            currentUser = user;
+            document.getElementById('user-info').innerHTML = user ? `${user.displayName} <button onclick="logout()" class="ml-4 text-red-500">登出</button>` : `<button onclick="googleLogin()" class="bg-white px-5 py-2 rounded-3xl">登入</button>`;
+            if (user) loadRecipes();
+        });
 
-            const fileInput = document.getElementById('image-upload');
-            if (fileInput.files[0]) {
-                const file = fileInput.files[0];
-                const storageRef = storage.ref('recipe-images/' + Date.now() + '-' + file.name);
-                await storageRef.put(file);
-                imageUrl = await storageRef.getDownloadURL();
+        function googleLogin() { auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
+        function logout() { auth.signOut(); }
+
+        function loadRecipes() {
+            db.collection("recipes").orderBy("createdAt", "desc").onSnapshot(snap => {
+                allRecipes = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+                renderRecipes(allRecipes);
+            });
+        }
+
+        function renderRecipes(recipes) {
+            const grid = document.getElementById('recipes-grid');
+            grid.innerHTML = '';
+            recipes.forEach(r => {
+                const div = document.createElement('div');
+                div.className = "bg-white rounded-3xl p-6 cursor-pointer hover:shadow-xl";
+                div.innerHTML = `
+                    <span class="px-4 py-1 text-xs bg-pink-100 text-pink-600 rounded-full">${r.category}</span>
+                    <h3 class="font-bold text-xl mt-3">${r.name}</h3>
+                    <p class="text-sm text-gray-500">${r.servings} 人份 • ${r.authorName||''}</p>
+                `;
+                div.onclick = () => showDetail(r);
+                grid.appendChild(div);
+            });
+        }
+
+        function filterRecipes() {
+            const term = document.getElementById('search-input').value.toLowerCase();
+            const filtered = allRecipes.filter(r => r.name.toLowerCase().includes(term));
+            renderRecipes(filtered);
+        }
+
+        function showDetail(recipe) {
+            const html = `
+                <div class="p-8">
+                    <div class="flex justify-between mb-6">
+                        <div>
+                            <span class="px-4 py-1 text-xs bg-pink-100 text-pink-600 rounded-full">${recipe.category}</span>
+                            <h2 class="text-3xl font-bold mt-3">${recipe.name}</h2>
+                        </div>
+                        <button onclick="closeDetail()" class="text-4xl text-gray-400">×</button>
+                    </div>
+                    <div class="flex gap-3 mb-8">
+                        <input id="scale-servings" value="${recipe.servings}" type="number" class="flex-1 px-6 py-4 border rounded-3xl">
+                        <button onclick="scaleRecipe(${JSON.stringify(recipe).replace(/"/g, '&quot;')})" class="bg-pink-500 text-white px-8 rounded-3xl">換算</button>
+                    </div>
+                    <div class="mb-10">
+                        <h3 class="font-semibold mb-4">食材</h3>
+                        <div id="detail-ingredients"></div>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold mb-4">作法</h3>
+                        ${recipe.steps.map((s,i) => `<div class="flex gap-4 mb-4"><span class="font-medium text-pink-500">${i+1}.</span><p>${s}</p></div>`).join('')}
+                    </div>
+                    <div class="flex gap-4 mt-12">
+                        <button onclick="editRecipe(${JSON.stringify(recipe).replace(/"/g, '&quot;')})" class="flex-1 bg-amber-500 text-white py-4 rounded-3xl">編輯</button>
+                        <button onclick="deleteRecipe('${recipe.id}')" class="flex-1 bg-red-500 text-white py-4 rounded-3xl">刪除</button>
+                    </div>
+                </div>
+            `;
+            document.getElementById('modal-content').innerHTML = html;
+            document.getElementById('detail-modal').classList.remove('hidden');
+            scaleRecipe(recipe);
+        }
+
+        function scaleRecipe(recipe) {
+            const newServings = parseInt(document.getElementById('scale-servings').value) || recipe.servings;
+            const factor = newServings / recipe.servings;
+            let html = '';
+            recipe.ingredients.forEach(ing => {
+                html += `<div class="flex justify-between bg-gray-50 px-5 py-3 rounded-2xl mb-2"><span>${ing.name}</span><span class="font-medium">${(ing.amount * factor).toFixed(1)} ${ing.unit}</span></div>`;
+            });
+            document.getElementById('detail-ingredients').innerHTML = html;
+        }
+
+        function closeDetail() {
+            document.getElementById('detail-modal').classList.add('hidden');
+        }
+
+        function editRecipe(recipe) {
+            closeDetail();
+            showAddModal();
+            document.getElementById('modal-title').textContent = '編輯食譜';
+            document.getElementById('recipe-id').value = recipe.id;
+            document.getElementById('name').value = recipe.name;
+            document.getElementById('category').value = recipe.category;
+            document.getElementById('servings').value = recipe.servings;
+            document.getElementById('ingredients-container').innerHTML = '';
+            recipe.ingredients.forEach(ing => addIngredientField(ing.name, ing.amount, ing.unit));
+            document.getElementById('steps-container').innerHTML = '';
+            recipe.steps.forEach(s => addStepField(s));
+        }
+
+        function deleteRecipe(id) {
+            if (confirm("確定刪除此食譜？")) {
+                db.collection("recipes").doc(id).delete().then(() => {
+                    alert("食譜已刪除");
+                    closeDetail();
+                });
+            }
+        }
+
+        function showAddModal() {
+            document.getElementById('add-modal').classList.remove('hidden');
+            document.getElementById('modal-title').textContent = '新增食譜';
+            document.getElementById('recipe-id').value = '';
+            document.getElementById('name').value = '';
+            document.getElementById('ingredients-container').innerHTML = '';
+            document.getElementById('steps-container').innerHTML = '';
+            addIngredientField(); addStepField();
+        }
+
+        function closeAddModal() {
+            document.getElementById('add-modal').classList.add('hidden');
+        }
+
+        function addIngredientField(name='', amt=100, unit='g') {
+            const container = document.getElementById('ingredients-container');
+            const idx = container.children.length;
+            const div = document.createElement('div');
+            div.className = "grid grid-cols-12 gap-2";
+            div.innerHTML = `
+                <input value="${name}" id="ing-name-${idx}" placeholder="食材" class="col-span-5 px-4 py-3 border rounded-xl">
+                <input value="${amt}" type="number" id="ing-amt-${idx}" class="col-span-3 px-4 py-3 border rounded-xl">
+                <input value="${unit}" id="ing-unit-${idx}" class="col-span-3 px-4 py-3 border rounded-xl">
+                <button onclick="this.parentElement.remove()" class="col-span-1 text-red-500">×</button>
+            `;
+            container.appendChild(div);
+        }
+
+        function addStepField(text='') {
+            const container = document.getElementById('steps-container');
+            const idx = container.children.length;
+            const div = document.createElement('div');
+            div.className = "flex gap-3";
+            div.innerHTML = `<span class="pt-3 text-pink-500">${idx+1}.</span><input value="${text}" id="step-${idx}" class="flex-1 px-5 py-4 border rounded-2xl">`;
+            container.appendChild(div);
+        }
+
+        function saveRecipe() {
+            const id = document.getElementById('recipe-id').value;
+            const name = document.getElementById('name').value.trim();
+            if (!name) return alert("請輸入食譜名稱");
+
+            const ingredients = [], steps = [];
+            for (let i = 0; i < 30; i++) {
+                const n = document.getElementById(`ing-name-${i}`);
+                if (n && n.value.trim()) ingredients.push({
+                    name: n.value.trim(),
+                    amount: parseFloat(document.getElementById(`ing-amt-${i}`).value) || 0,
+                    unit: document.getElementById(`ing-unit-${i}`).value || ''
+                });
+            }
+            for (let i = 0; i < 30; i++) {
+                const s = document.getElementById(`step-${i}`);
+                if (s && s.value.trim()) steps.push(s.value.trim());
             }
 
             const data = {
-                name, category, servings, ingredients, steps,
-                imageUrl,
+                name, 
+                category: document.getElementById('category').value,
+                servings: parseInt(document.getElementById('servings').value) || 1,
+                ingredients, 
+                steps,
                 authorName: currentUser.displayName,
                 authorId: currentUser.uid,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             };
 
-            // ... 儲存到 Firestore ...
+            if (id) {
+                db.collection("recipes").doc(id).update(data).then(() => { alert("更新成功！"); closeAddModal(); });
+            } else {
+                db.collection("recipes").add(data).then(() => { alert("食譜已上傳！"); closeAddModal(); });
+            }
         }
     </script>
 </body>
