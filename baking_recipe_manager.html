@@ -164,6 +164,20 @@
                     </select>
                     <input id="servings" type="number" value="8" class="form-input">
                 </div>
+                <div class="mb-6">
+                    <label class="font-semibold block mb-3">📷 食譜封面照片（選填）</label>
+                    <div class="flex items-center gap-4">
+                        <div id="image-preview-wrap" class="hidden w-24 h-24 rounded-2xl overflow-hidden shrink-0" style="border:1px solid var(--line)">
+                            <img id="image-preview" class="w-full h-full object-cover" src="">
+                        </div>
+                        <div class="flex-1">
+                            <input type="file" id="image-file-input" accept="image/jpeg,image/png,image/webp" onchange="handleImageSelect(event)" class="hidden">
+                            <button type="button" onclick="document.getElementById('image-file-input').click()" class="btn-secondary text-sm">選擇圖片</button>
+                            <button type="button" id="remove-image-btn" onclick="removeSelectedImage()" class="hidden text-sm ml-2" style="color:#C4453F">移除圖片</button>
+                            <p class="text-xs mt-2" style="color:#B3A492">支援 jpg / png / webp，檔案大小上限 5MB</p>
+                        </div>
+                    </div>
+                </div>
                 <input id="youtube-url" class="form-input mb-6" placeholder="🎬 YouTube 影片連結（選填，例如 https://youtu.be/xxxx）">
                 <div class="mb-6">
                     <div class="flex justify-between items-center mb-3">
@@ -202,6 +216,16 @@
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
         const db = firebase.firestore();
+
+        // Cloudinary 圖片上傳設定
+        const CLOUDINARY_CLOUD_NAME = 'bumzwp9g';
+        const CLOUDINARY_UPLOAD_PRESET = 'barking';
+        const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+        const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+        const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+        let selectedImageFile = null; // 使用者本次選擇要上傳的新圖片
+        let currentImageUrl = '';     // 目前食譜的圖片網址(編輯時保留舊圖用)
 
         let currentUser = null;
         let allRecipes = [];
@@ -275,6 +299,7 @@
                 div.tabIndex = 0;
                 const icon = CATEGORY_ICONS[r.category] || '🍽️';
                 div.innerHTML = `
+                    ${r.imageUrl ? `<img src="${r.imageUrl}" class="w-full h-36 object-cover rounded-2xl mb-3" loading="lazy">` : ''}
                     <div class="flex justify-between items-start mb-3">
                         <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${r.category}</span>
                         ${r.youtubeUrl ? '<i class="fab fa-youtube text-lg" style="color:#C4453F"></i>' : ''}
@@ -356,6 +381,7 @@
                     </div>
                     <button onclick="closeDetail()" class="text-3xl leading-none shrink-0" style="color:#B3A492" aria-label="關閉">×</button>
                 </div>
+                ${recipe.imageUrl ? `<img src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover">` : ''}
                 <div class="px-6 sm:px-8 py-6">
                     <div class="flex gap-3 mb-8">
                         <input id="scale-servings" value="${recipe.servings}" type="number" class="form-input flex-1">
@@ -427,6 +453,13 @@
             document.getElementById('category').value = recipe.category;
             document.getElementById('servings').value = recipe.servings;
             document.getElementById('youtube-url').value = recipe.youtubeUrl || '';
+            resetImageField();
+            if (recipe.imageUrl) {
+                currentImageUrl = recipe.imageUrl;
+                document.getElementById('image-preview').src = recipe.imageUrl;
+                document.getElementById('image-preview-wrap').classList.remove('hidden');
+                document.getElementById('remove-image-btn').classList.remove('hidden');
+            }
             document.getElementById('ingredients-container').innerHTML = '';
             recipe.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, ing.amount, ing.unit));
             document.getElementById('steps-container').innerHTML = '';
@@ -454,7 +487,61 @@
             document.getElementById('youtube-url').value = '';
             document.getElementById('ingredients-container').innerHTML = '';
             document.getElementById('steps-container').innerHTML = '';
+            resetImageField();
             addIngredientField(); addStepField();
+        }
+
+        function resetImageField() {
+            selectedImageFile = null;
+            currentImageUrl = '';
+            document.getElementById('image-file-input').value = '';
+            document.getElementById('image-preview-wrap').classList.add('hidden');
+            document.getElementById('remove-image-btn').classList.add('hidden');
+            document.getElementById('image-preview').src = '';
+        }
+
+        function handleImageSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+                alert('只支援 jpg、png、webp 格式的圖片');
+                event.target.value = '';
+                return;
+            }
+            if (file.size > MAX_IMAGE_SIZE) {
+                alert('圖片檔案大小不能超過 5MB');
+                event.target.value = '';
+                return;
+            }
+            selectedImageFile = file;
+            const reader = new FileReader();
+            reader.onload = e => {
+                document.getElementById('image-preview').src = e.target.result;
+                document.getElementById('image-preview-wrap').classList.remove('hidden');
+                document.getElementById('remove-image-btn').classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function removeSelectedImage() {
+            selectedImageFile = null;
+            currentImageUrl = '';
+            document.getElementById('image-file-input').value = '';
+            document.getElementById('image-preview-wrap').classList.add('hidden');
+            document.getElementById('remove-image-btn').classList.add('hidden');
+            document.getElementById('image-preview').src = '';
+        }
+
+        function uploadImageToCloudinary(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+            return fetch(CLOUDINARY_UPLOAD_URL, { method: 'POST', body: formData })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.secure_url) return data.secure_url;
+                    throw new Error(data.error?.message || '圖片上傳失敗');
+                });
         }
 
         function closeAddModal() {
@@ -490,7 +577,7 @@
             container.appendChild(div);
         }
 
-        function saveRecipe() {
+        async function saveRecipe() {
             const id = document.getElementById('recipe-id').value;
             const name = document.getElementById('name').value.trim();
             if (!name) return alert("請輸入食譜名稱");
@@ -514,6 +601,23 @@
                 }
             }
 
+            const saveBtn = document.querySelector('#add-modal .btn-primary');
+            const originalBtnText = saveBtn.textContent;
+
+            let imageUrl = currentImageUrl; // 若沒有選新圖片，保留原本的（或編輯時移除後的空字串）
+            if (selectedImageFile) {
+                saveBtn.textContent = '📤 圖片上傳中...';
+                saveBtn.disabled = true;
+                try {
+                    imageUrl = await uploadImageToCloudinary(selectedImageFile);
+                } catch (err) {
+                    alert('圖片上傳失敗：' + err.message);
+                    saveBtn.textContent = originalBtnText;
+                    saveBtn.disabled = false;
+                    return;
+                }
+            }
+
             const data = {
                 name,
                 category: document.getElementById('category').value,
@@ -521,15 +625,20 @@
                 ingredients,
                 steps,
                 youtubeUrl: document.getElementById('youtube-url').value.trim(),
+                imageUrl: imageUrl || '',
                 authorName: currentUser.displayName,
                 authorId: currentUser.uid,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             };
 
+            saveBtn.textContent = '💾 儲存中...';
+
+            const finish = () => { saveBtn.textContent = originalBtnText; saveBtn.disabled = false; };
+
             if (id) {
-                db.collection("recipes").doc(id).update(data).then(() => { alert("更新成功！"); closeAddModal(); });
+                db.collection("recipes").doc(id).update(data).then(() => { alert("更新成功！"); closeAddModal(); finish(); }).catch(err => { alert('更新失敗：' + err.message); finish(); });
             } else {
-                db.collection("recipes").add(data).then(() => { alert("食譜已上傳！"); closeAddModal(); });
+                db.collection("recipes").add(data).then(() => { alert("食譜已上傳！"); closeAddModal(); finish(); }).catch(err => { alert('上傳失敗：' + err.message); finish(); });
             }
         }
     </script>
