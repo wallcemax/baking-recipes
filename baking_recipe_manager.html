@@ -97,6 +97,14 @@
             if (user) loadRecipes();
         });
 
+        const ADMIN_EMAIL = 'wallcemax@gmail.com';
+
+        function canEditRecipe(recipe) {
+            if (!currentUser) return false;
+            if (currentUser.email === ADMIN_EMAIL) return true;
+            return currentUser.uid === recipe.authorId;
+        }
+
         function googleLogin() { auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
         function logout() { auth.signOut(); }
 
@@ -214,10 +222,11 @@
                             <iframe id="yt-player" class="w-full h-full" src="${getYoutubeEmbedUrl(recipe.youtubeUrl)}" title="YouTube video" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
                         </div>
                     </div>` : ''}
+                    ${canEditRecipe(recipe) ? `
                     <div class="flex gap-4 mt-12">
                         <button onclick="editRecipe(${JSON.stringify(recipe).replace(/"/g, '&quot;')})" class="flex-1 bg-amber-500 text-white py-4 rounded-3xl">編輯</button>
-                        <button onclick="deleteRecipe('${recipe.id}')" class="flex-1 bg-red-500 text-white py-4 rounded-3xl">刪除</button>
-                    </div>
+                        <button onclick="deleteRecipe(${JSON.stringify(recipe).replace(/"/g, '&quot;')})" class="flex-1 bg-red-500 text-white py-4 rounded-3xl">刪除</button>
+                    </div>` : ''}
                 </div>
             `;
             document.getElementById('modal-content').innerHTML = html;
@@ -250,6 +259,7 @@
         }
 
         function editRecipe(recipe) {
+            if (!canEditRecipe(recipe)) { alert("你沒有權限編輯這個食譜"); return; }
             closeDetail();
             showAddModal();
             document.getElementById('modal-title').textContent = '編輯食譜';
@@ -267,9 +277,10 @@
             });
         }
 
-        function deleteRecipe(id) {
+        function deleteRecipe(recipe) {
+            if (!canEditRecipe(recipe)) { alert("你沒有權限刪除這個食譜"); return; }
             if (confirm("確定刪除此食譜？")) {
-                db.collection("recipes").doc(id).delete().then(() => {
+                db.collection("recipes").doc(recipe.id).delete().then(() => {
                     alert("食譜已刪除");
                     closeDetail();
                 });
