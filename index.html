@@ -723,6 +723,9 @@
                         <input id="scale-servings" value="${recipe.servings}" type="number" class="form-input flex-1">
                         <button onclick="scaleRecipe(${recipeJson})" class="btn-amber whitespace-nowrap">換算</button>
                     </div>
+                    <div class="mb-8">
+                        <div id="detail-nutrition"></div>
+                    </div>
                     <div class="mb-10">
                         <h3 class="font-display font-semibold text-lg mb-4">食材</h3>
                         <div id="detail-ingredients"></div>
@@ -794,6 +797,49 @@
             return null;
         }
 
+        // 常見食材熱量與三大營養素（每 100g），用來估算每份熱量／蛋白質／脂肪／碳水。
+        // 數值為食品成分資料庫常見概略值，僅供參考，非精確營養標示。
+        // 之後若要涵蓋更多食材，可以在這裡手動擴充，或改成從 Firestore 讀取
+        // （查不到的新食材可以先用 AI 估算一次、存進 Firestore 快取，之後就不用再問 AI）。
+        const INGREDIENT_NUTRITION_MAP = [
+            { keywords: ['高筋麵粉', '低筋麵粉', '中筋麵粉', '麵粉', 'flour'], kcal: 364, protein: 10.3, fat: 1.0, carb: 76.3 },
+            { keywords: ['細砂糖', '砂糖', '白糖', '二砂', 'sugar'], kcal: 387, protein: 0, fat: 0, carb: 99.9 },
+            { keywords: ['糖粉', 'icing sugar', 'powdered sugar'], kcal: 389, protein: 0, fat: 0, carb: 99.8 },
+            { keywords: ['無鹽奶油', '有鹽奶油', '奶油', 'butter'], kcal: 717, protein: 0.9, fat: 81.1, carb: 0.1 },
+            { keywords: ['全蛋', '雞蛋', '蛋黃', '蛋白', 'egg'], kcal: 143, protein: 12.6, fat: 9.9, carb: 0.7 },
+            { keywords: ['鮮奶油', '動物性', 'whipping cream', 'heavy cream', 'cream'], kcal: 340, protein: 2.1, fat: 36.1, carb: 2.8 },
+            { keywords: ['牛奶', '鮮奶', 'milk'], kcal: 61, protein: 3.2, fat: 3.3, carb: 4.8 },
+            { keywords: ['煉乳', 'condensed milk'], kcal: 321, protein: 7.9, fat: 8.7, carb: 54.9 },
+            { keywords: ['優格', '優酪乳', 'yogurt'], kcal: 61, protein: 3.5, fat: 3.3, carb: 4.7 },
+            { keywords: ['巧克力', '苦甜巧克力', '黑巧克力', 'chocolate'], kcal: 546, protein: 4.9, fat: 31.3, carb: 61.2 },
+            { keywords: ['可可粉', 'cocoa'], kcal: 228, protein: 19.6, fat: 13.7, carb: 57.9 },
+            { keywords: ['蜂蜜', 'honey'], kcal: 304, protein: 0.3, fat: 0, carb: 82.4 },
+            { keywords: ['楓糖', 'maple syrup'], kcal: 260, protein: 0, fat: 0.2, carb: 67.0 },
+            { keywords: ['橄欖油', '沙拉油', '植物油', '葵花油', '油', 'oil'], kcal: 884, protein: 0, fat: 100, carb: 0 },
+            { keywords: ['白飯', '米飯', 'rice'], kcal: 130, protein: 2.7, fat: 0.3, carb: 28.2 },
+            { keywords: ['雞胸肉', '雞腿肉', '雞肉', 'chicken'], kcal: 167, protein: 20.0, fat: 9.0, carb: 0 },
+            { keywords: ['豬肉', '梅花肉', '里肌肉', 'pork'], kcal: 242, protein: 19.3, fat: 18.0, carb: 0 },
+            { keywords: ['牛肉', 'beef'], kcal: 250, protein: 20.0, fat: 18.0, carb: 0 },
+            { keywords: ['鮭魚', 'salmon'], kcal: 208, protein: 20.4, fat: 13.4, carb: 0 },
+            { keywords: ['馬鈴薯', '洋芋', 'potato'], kcal: 77, protein: 2.0, fat: 0.1, carb: 17.5 },
+            { keywords: ['地瓜', '番薯', 'sweet potato'], kcal: 86, protein: 1.6, fat: 0.1, carb: 20.1 },
+            { keywords: ['洋蔥', 'onion'], kcal: 40, protein: 1.1, fat: 0.1, carb: 9.3 },
+            { keywords: ['紅蘿蔔', '胡蘿蔔', 'carrot'], kcal: 41, protein: 0.9, fat: 0.2, carb: 9.6 },
+            { keywords: ['花椰菜', '青花菜', 'broccoli'], kcal: 34, protein: 2.8, fat: 0.4, carb: 6.6 },
+            { keywords: ['菠菜', 'spinach'], kcal: 23, protein: 2.9, fat: 0.4, carb: 3.6 },
+            { keywords: ['豆腐', 'tofu'], kcal: 76, protein: 8.1, fat: 4.8, carb: 1.9 },
+        ];
+
+        // 依食材名稱關鍵字比對熱量資料；找不到時回傳 null
+        function guessIngredientNutrition(name) {
+            if (!name) return null;
+            const lower = name.toLowerCase();
+            for (const entry of INGREDIENT_NUTRITION_MAP) {
+                if (entry.keywords.some(k => lower.includes(k.toLowerCase()))) return entry;
+            }
+            return null;
+        }
+
         // 將常見體積單位換算成 ml；支援 大匙／tbsp／茶匙／tsp／ml／毫升／l／公升
         function convertToMilliliters(amount, unit) {
             switch ((unit || '').trim().toLowerCase()) {
@@ -844,6 +890,46 @@
             // 若全部食材都沒有填分類，視為同一組計算總重
             const hasAnyGroup = recipe.ingredients.some(ing => (ing.group || '').trim());
             const ingredientsForDisplay = hasAnyGroup ? fillIngredientGroups(recipe.ingredients) : recipe.ingredients;
+
+            // ---------- 熱量／營養素估算 ----------
+            // 只針對能換算成公克，且能在食材資料庫中比對到的食材計入；
+            // 非重量/體積單位（如「顆」）或資料庫查無的食材則略過，並在畫面上提醒使用者
+            let totalKcal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, uncountedCount = 0;
+            recipe.ingredients.forEach(ing => {
+                const grams = convertToGrams(ing.amount * factor, ing.unit, ing.name);
+                if (grams === null) { uncountedCount++; return; }
+                const nutri = guessIngredientNutrition(ing.name);
+                if (!nutri) { uncountedCount++; return; }
+                totalKcal += grams / 100 * nutri.kcal;
+                totalProtein += grams / 100 * nutri.protein;
+                totalFat += grams / 100 * nutri.fat;
+                totalCarb += grams / 100 * nutri.carb;
+            });
+
+            const nutritionBox = document.getElementById('detail-nutrition');
+            if (nutritionBox) {
+                if (totalKcal === 0 && uncountedCount === recipe.ingredients.length) {
+                    nutritionBox.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">此食譜的食材目前都尚未收錄於熱量資料庫，暫時無法估算熱量</div>`;
+                } else {
+                    const perKcal = (totalKcal * (1 - LOSS_RATE)) / newServings;
+                    const perProtein = (totalProtein * (1 - LOSS_RATE)) / newServings;
+                    const perFat = (totalFat * (1 - LOSS_RATE)) / newServings;
+                    const perCarb = (totalCarb * (1 - LOSS_RATE)) / newServings;
+                    nutritionBox.innerHTML = `
+                        <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
+                            <div class="flex items-baseline gap-2 mb-2">
+                                <span class="font-display font-bold text-2xl" style="color:var(--jam)">${perKcal.toFixed(0)}</span>
+                                <span class="text-sm" style="color:var(--espresso-soft)">大卡 / 每份（估算）</span>
+                            </div>
+                            <div class="flex flex-wrap gap-x-4 gap-y-1 text-sm" style="color:var(--espresso-soft)">
+                                <span>蛋白質 ${perProtein.toFixed(1)} g</span>
+                                <span>脂肪 ${perFat.toFixed(1)} g</span>
+                                <span>碳水 ${perCarb.toFixed(1)} g</span>
+                            </div>
+                            ${uncountedCount > 0 ? `<p class="text-xs mt-2" style="color:#B3A492">⚠️ 有 ${uncountedCount} 項食材（非重量/體積單位，或尚未收錄於食材資料庫）未列入熱量計算，實際熱量僅供參考</p>` : ''}
+                        </div>`;
+                }
+            }
 
             // 先算出各分類（或全部）的總重量（克），扣除 3.6% 損耗後除以份數，得到單份重量
             const groupGrams = {};
