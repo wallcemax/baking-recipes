@@ -122,6 +122,10 @@
     </style>
 </head>
 <body class="min-h-screen">
+    <div id="inapp-browser-banner" class="hidden px-4 py-3 text-sm flex items-center justify-between gap-3" style="background:#FCE9C8; color:var(--espresso)">
+        <span>⚠️ 偵測到你可能是透過 App（如 Messenger／Instagram／Line）內建瀏覽器開啟本頁，Google 登入需要在一般瀏覽器（Chrome／Safari）中才能使用。請點右上角「⋯」選擇「在瀏覽器中開啟」。</span>
+        <button onclick="this.parentElement.classList.add('hidden')" class="text-lg leading-none shrink-0" aria-label="關閉提示">×</button>
+    </div>
     <div class="max-w-6xl mx-auto px-4 sm:px-6 pb-28 md:pb-10">
         <header class="sticky top-0 z-30 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 mb-6 bg-[var(--cream)]/90 backdrop-blur border-b" style="border-color:var(--line)">
             <div class="flex justify-between items-center gap-3">
@@ -217,7 +221,7 @@
                         <label class="font-semibold">作法</label>
                         <button type="button" onclick="addStepField()" class="text-sm font-medium" style="color:var(--jam)"><i class="fas fa-plus mr-1"></i>新增</button>
                     </div>
-                    <p class="text-xs mb-3" style="color:#B3A492">💡 影片時間點（mm:ss）點擊後可跳到該片段；預估分鐘可在食譜頁啟動該步驟的計時器</p>
+                    <p class="text-xs mb-3" style="color:#B3A492">💡 影片時間點（mm:ss）點擊後可跳到該片段；預估分鐘可在食譜頁啟動該步驟的計時器；相機圖示可為該步驟加一張圖片</p>
                     <div id="steps-container" class="space-y-2.5"></div>
                 </div>
             </div>
@@ -277,7 +281,19 @@
             return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
         }
 
+        // 偵測 Facebook / Instagram / Line / 微信等 App 內建瀏覽器
+        // Google 基於安全政策，一律拒絕在這類內建瀏覽器內完成登入，
+        // 就算之後切換到「真正的」Chrome/Safari，只要還是同一個 App 開啟的分頁，一樣會失敗
+        function isInAppBrowser() {
+            const ua = navigator.userAgent || navigator.vendor || window.opera || '';
+            return /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Twitter|TikTok/i.test(ua);
+        }
+
         function googleLogin() {
+            if (isInAppBrowser()) {
+                alert('偵測到你目前是透過 Messenger／Instagram／Line 等 App 內建的瀏覽器開啟這個網站。\n\nGoogle 基於安全考量，不允許在這類內建瀏覽器裡完成登入（就算切到分頁看起來像 Chrome 也一樣）。\n\n請先點畫面右上角「⋯」選單，選擇「在瀏覽器中開啟」，或是直接關閉 App、用 Chrome／Safari 重新開啟本網站網址，再嘗試登入。');
+                return;
+            }
             const provider = new firebase.auth.GoogleAuthProvider();
             if (isMobileDevice()) {
                 // 手機瀏覽器的彈出視窗支援度不一，改用整頁導轉方式登入，減少卡在中間狀態的機會
@@ -289,11 +305,22 @@
                 auth.signInWithPopup(provider).catch(err => {
                     if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
                         auth.signInWithRedirect(provider);
+                    } else if (err.code === 'auth/operation-not-supported-in-this-environment' || err.code === 'auth/disallowed-useragent') {
+                        alert('目前瀏覽器環境不支援 Google 登入，請改用 Chrome 或 Safari 開啟本網站。');
                     } else {
                         console.warn('登入發生錯誤', err);
                     }
                 });
             }
+        }
+
+        // 頁面載入時，如果偵測到是 App 內建瀏覽器，提前顯示提示橫幅，
+        // 避免使用者按了登入才發現卡住
+        if (isInAppBrowser()) {
+            window.addEventListener('DOMContentLoaded', () => {
+                const banner = document.getElementById('inapp-browser-banner');
+                if (banner) banner.classList.remove('hidden');
+            });
         }
 
         // 處理登入導轉流程回來後的結果；如果使用者在流程中按了上一頁導致狀態遺失，
@@ -372,19 +399,39 @@
             }, err => console.warn('讀取我的最愛失敗', err));
         }
 
+        function updateFavoriteIcons(recipeId) {
+            const isFav = userFavorites.has(recipeId);
+            document.querySelectorAll(`[data-fav-id="${recipeId}"] i`).forEach(icon => {
+                icon.classList.toggle('fas', isFav);
+                icon.classList.toggle('far', !isFav);
+            });
+        }
+
         function toggleFavorite(recipeId, event) {
             if (event) event.stopPropagation();
             if (!currentUser) { alert('請先登入才能收藏食譜'); return; }
+            const wasFav = userFavorites.has(recipeId);
+
+            // 樂觀更新：先立即切換畫面上的愛心圖示，不用等 Firestore 往返
+            if (wasFav) userFavorites.delete(recipeId); else userFavorites.add(recipeId);
+            updateFavoriteIcons(recipeId);
+
             const favId = `${currentUser.uid}_${recipeId}`;
             const ref = db.collection('favorites').doc(favId);
-            if (userFavorites.has(recipeId)) {
-                ref.delete().catch(err => alert('取消收藏失敗：' + err.message));
+            if (wasFav) {
+                ref.delete().catch(err => {
+                    userFavorites.add(recipeId); updateFavoriteIcons(recipeId);
+                    alert('取消收藏失敗：' + err.message);
+                });
             } else {
                 ref.set({
                     userId: currentUser.uid,
                     recipeId,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                }).catch(err => alert('收藏失敗：' + err.message));
+                }).catch(err => {
+                    userFavorites.delete(recipeId); updateFavoriteIcons(recipeId);
+                    alert('收藏失敗：' + err.message);
+                });
             }
         }
 
@@ -420,7 +467,7 @@
                 const icon = CATEGORY_ICONS[r.category] || '🍽️';
                 const isFav = userFavorites.has(r.id);
                 div.innerHTML = `
-                    <button onclick="toggleFavorite('${r.id}', event)" class="fav-btn absolute top-4 right-4 z-10" aria-label="收藏">
+                    <button onclick="toggleFavorite('${r.id}', event)" data-fav-id="${r.id}" class="fav-btn absolute top-4 right-4 z-10" aria-label="收藏">
                         <i class="${isFav ? 'fas' : 'far'} fa-heart" style="color:var(--jam)"></i>
                     </button>
                     ${r.imageUrl ? `<img src="${r.imageUrl}" class="w-full h-36 object-cover rounded-2xl mb-3" loading="lazy">` : ''}
@@ -514,16 +561,26 @@
         }
 
         // ---------- 步驟計時器 ----------
+        // 播放一聲像烤箱計時器一樣的「叮」聲（基音 + 泛音，快速起音、緩慢衰減）
         function playBeep() {
             try {
                 const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.connect(gain); gain.connect(ctx.destination);
-                osc.frequency.value = 880;
-                gain.gain.setValueAtTime(0.2, ctx.currentTime);
-                osc.start();
-                osc.stop(ctx.currentTime + 0.4);
+                const now = ctx.currentTime;
+                const playTone = (freq, gainPeak, delay) => {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain); gain.connect(ctx.destination);
+                    osc.type = 'sine';
+                    osc.frequency.value = freq;
+                    const t0 = now + delay;
+                    gain.gain.setValueAtTime(0.0001, t0);
+                    gain.gain.exponentialRampToValueAtTime(gainPeak, t0 + 0.015);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.9);
+                    osc.start(t0);
+                    osc.stop(t0 + 0.95);
+                };
+                playTone(1318.5, 0.28, 0);   // 主音
+                playTone(2637.0, 0.10, 0);   // 高八度泛音，讓聲音更像「叮」
             } catch(e) {}
         }
 
@@ -585,7 +642,7 @@
                         <h2 class="font-display text-2xl sm:text-3xl font-bold mt-3 leading-snug">${recipe.name}</h2>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
-                        <button onclick="toggleFavorite('${recipe.id}')" class="fav-btn" style="background:var(--cream)" aria-label="收藏">
+                        <button onclick="toggleFavorite('${recipe.id}')" data-fav-id="${recipe.id}" class="fav-btn" style="background:var(--cream)" aria-label="收藏">
                             <i class="${isFav ? 'fas' : 'far'} fa-heart" style="color:var(--jam)"></i>
                         </button>
                         <button onclick="closeDetail()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
@@ -607,10 +664,12 @@
                             const text = typeof s === 'string' ? s : (s.text || '');
                             const ts = typeof s === 'string' ? null : (s.timestamp ?? null);
                             const duration = typeof s === 'string' ? null : (s.durationMinutes ?? null);
+                            const stepImageUrl = typeof s === 'string' ? null : (s.imageUrl || null);
                             const videoBadge = (ts !== null && recipe.youtubeUrl) ? `<button onclick="seekVideo(${ts}, ${JSON.stringify(recipe.youtubeUrl).replace(/"/g, '&quot;')})" class="inline-flex items-center gap-1 mt-2 mr-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#F4E4EA; color:var(--jam)"><i class="fas fa-play text-[10px]"></i> ${formatTimestamp(ts)}</button>` : '';
                             const timerSpanId = `step-timer-${i}`;
                             const timerBadge = duration ? `<button id="step-timer-btn-${i}" onclick="startStepTimer('${timerSpanId}', ${duration})" class="inline-flex items-center gap-1 mt-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#EFEAE0; color:var(--espresso-soft)"><i class="fas fa-clock text-[10px]"></i> <span id="${timerSpanId}">${formatTimestamp(Math.round(duration * 60))}</span></button>` : '';
-                            return `<div class="flex gap-4 mb-5"><span class="font-semibold shrink-0" style="color:var(--jam)">${i+1}.</span><div class="flex-1"><p class="leading-relaxed">${text}</p><div>${videoBadge}${timerBadge}</div></div></div>`;
+                            const stepImage = stepImageUrl ? `<img src="${stepImageUrl}" class="rounded-xl mt-3 max-w-[220px] w-full" loading="lazy">` : '';
+                            return `<div class="flex gap-4 mb-5"><span class="font-semibold shrink-0" style="color:var(--jam)">${i+1}.</span><div class="flex-1"><p class="leading-relaxed">${text}</p><div>${videoBadge}${timerBadge}</div>${stepImage}</div></div>`;
                         }).join('')}
                     </div>
                     ${recipe.youtubeUrl && getYoutubeEmbedUrl(recipe.youtubeUrl) ? `
@@ -635,23 +694,59 @@
             scaleRecipe(recipe);
         }
 
+        // 將食材份量換算成公克；非重量單位（如 ml、tsp、顆）回傳 null，不計入總重
+        function convertToGrams(amount, unit) {
+            switch ((unit || '').trim().toLowerCase()) {
+                case 'g': return amount;
+                case 'kg': return amount * 1000;
+                case 'oz': return amount * 28.3495;
+                case 'lb': return amount * 453.592;
+                default: return null;
+            }
+        }
+
         function scaleRecipe(recipe) {
             const newServings = parseInt(document.getElementById('scale-servings').value) || recipe.servings;
             const factor = newServings / recipe.servings;
-            let html = '';
-            let lastGroup = null;
-            let first = true;
+            const LOSS_RATE = 0.035; // 損耗率 3.5%
+
+            // 若全部食材都沒有填分類，視為同一組計算總重
+            const hasAnyGroup = recipe.ingredients.some(ing => (ing.group || '').trim());
+
+            // 先算出各分類（或全部）的總重量（克），扣除 3.5% 損耗後除以份數，得到單份重量
+            const groupGrams = {};
             recipe.ingredients.forEach(ing => {
-                const group = ing.group || '';
-                if (group !== lastGroup) {
-                    if (group) {
-                        html += `<h4 class="font-semibold ${first ? '' : 'mt-5'} mb-2" style="color:var(--honey)">${group}</h4>`;
-                    }
-                    lastGroup = group;
-                }
-                first = false;
-                html += `<div class="flex justify-between px-5 py-3 rounded-2xl mb-2" style="background:var(--cream)"><span>${ing.name}</span><span class="font-medium">${(ing.amount * factor).toFixed(1)} ${ing.unit}</span></div>`;
+                const key = hasAnyGroup ? (ing.group || '（未分類）') : '__ALL__';
+                const grams = convertToGrams(ing.amount * factor, ing.unit);
+                if (grams !== null) groupGrams[key] = (groupGrams[key] || 0) + grams;
             });
+
+            const perServingBadge = (key) => {
+                const totalG = groupGrams[key];
+                if (!totalG) return '';
+                const perServing = (totalG * (1 - LOSS_RATE)) / newServings;
+                return `<span class="text-xs font-normal ml-2" style="color:#B3A492">每份約 ${perServing.toFixed(1)} g（已扣3.5%損耗）</span>`;
+            };
+
+            let html = '';
+            if (!hasAnyGroup) {
+                html += `<h4 class="font-semibold mb-2" style="color:var(--honey)">食材總計${perServingBadge('__ALL__')}</h4>`;
+                recipe.ingredients.forEach(ing => {
+                    html += `<div class="flex justify-between px-5 py-3 rounded-2xl mb-2" style="background:var(--cream)"><span>${ing.name}</span><span class="font-medium">${(ing.amount * factor).toFixed(1)} ${ing.unit}</span></div>`;
+                });
+            } else {
+                let lastGroup = null;
+                let first = true;
+                recipe.ingredients.forEach(ing => {
+                    const group = ing.group || '（未分類）';
+                    if (group !== lastGroup) {
+                        html += `<h4 class="font-semibold ${first ? '' : 'mt-5'} mb-2" style="color:var(--honey)">${group}${perServingBadge(group)}</h4>`;
+                        lastGroup = group;
+                        first = false;
+                    }
+                    html += `<div class="flex justify-between px-5 py-3 rounded-2xl mb-2" style="background:var(--cream)"><span>${ing.name}</span><span class="font-medium">${(ing.amount * factor).toFixed(1)} ${ing.unit}</span></div>`;
+                });
+            }
             document.getElementById('detail-ingredients').innerHTML = html;
         }
 
@@ -681,8 +776,8 @@
             recipe.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, ing.amount, ing.unit));
             document.getElementById('steps-container').innerHTML = '';
             recipe.steps.forEach(s => {
-                if (typeof s === 'string') addStepField(s, '', '');
-                else addStepField(s.text || '', (s.timestamp !== undefined && s.timestamp !== null) ? formatTimestamp(s.timestamp) : '', s.durationMinutes || '');
+                if (typeof s === 'string') addStepField(s, '', '', '');
+                else addStepField(s.text || '', (s.timestamp !== undefined && s.timestamp !== null) ? formatTimestamp(s.timestamp) : '', s.durationMinutes || '', s.imageUrl || '');
             });
         }
 
@@ -708,8 +803,8 @@
             recipe.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, ing.amount, ing.unit));
             document.getElementById('steps-container').innerHTML = '';
             recipe.steps.forEach(s => {
-                if (typeof s === 'string') addStepField(s, '', '');
-                else addStepField(s.text || '', (s.timestamp !== undefined && s.timestamp !== null) ? formatTimestamp(s.timestamp) : '', s.durationMinutes || '');
+                if (typeof s === 'string') addStepField(s, '', '', '');
+                else addStepField(s.text || '', (s.timestamp !== undefined && s.timestamp !== null) ? formatTimestamp(s.timestamp) : '', s.durationMinutes || '', s.imageUrl || '');
             });
         }
 
@@ -807,19 +902,71 @@
             container.appendChild(div);
         }
 
-        function addStepField(text='', timestamp='', duration='') {
+        function addStepField(text='', timestamp='', duration='', imageUrl='') {
             const container = document.getElementById('steps-container');
             const idx = container.children.length;
             const div = document.createElement('div');
-            div.className = "flex gap-2 items-center";
+            div.className = "step-row-wrap rounded-2xl p-2.5";
+            div.style.border = "1px solid var(--line)";
             div.innerHTML = `
-                <span class="font-medium shrink-0" style="color:var(--jam)">${idx+1}.</span>
-                <input value="${text}" id="step-${idx}" placeholder="說明這個步驟..." class="form-input flex-1 !px-3 !py-2.5">
-                <input value="${timestamp}" id="step-ts-${idx}" placeholder="00:00" title="影片時間點 (mm:ss)" class="form-input w-20 shrink-0 !px-2 !py-2.5 text-sm text-center">
-                <input value="${duration}" type="number" min="0" step="0.5" id="step-duration-${idx}" placeholder="分鐘" title="這個步驟大約需要幾分鐘（選填，用來啟動計時器）" class="form-input w-16 shrink-0 !px-2 !py-2.5 text-sm text-center">
-                <button type="button" onclick="this.parentElement.remove()" class="text-lg shrink-0" style="color:#C4453F">×</button>
+                <div class="flex gap-2 items-center">
+                    <span class="font-medium shrink-0" style="color:var(--jam)">${idx+1}.</span>
+                    <input value="${text}" id="step-${idx}" placeholder="說明這個步驟..." class="form-input flex-1 !px-3 !py-2.5">
+                    <input value="${timestamp}" id="step-ts-${idx}" placeholder="00:00" title="影片時間點 (mm:ss)" class="form-input w-20 shrink-0 !px-2 !py-2.5 text-sm text-center">
+                    <input value="${duration}" type="number" min="0" step="0.5" id="step-duration-${idx}" placeholder="分鐘" title="這個步驟大約需要幾分鐘（選填，用來啟動計時器）" class="form-input w-16 shrink-0 !px-2 !py-2.5 text-sm text-center">
+                    <button type="button" onclick="triggerStepImageInput(${idx})" title="新增這個步驟的圖片" class="shrink-0 w-9 h-9 rounded-full flex items-center justify-center" style="background:var(--cream)">
+                        <i class="fas fa-camera text-sm" style="color:var(--espresso-soft)"></i>
+                    </button>
+                    <input type="file" id="step-image-file-${idx}" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="handleStepImageSelect(event, ${idx})">
+                    <input type="hidden" id="step-image-${idx}" value="${imageUrl}">
+                    <button type="button" onclick="this.closest('.step-row-wrap').remove()" class="text-lg shrink-0" style="color:#C4453F">×</button>
+                </div>
+                <div id="step-image-preview-wrap-${idx}" class="${imageUrl ? '' : 'hidden'} mt-2 ml-7 flex items-center gap-2">
+                    <img id="step-image-preview-${idx}" src="${imageUrl}" class="w-16 h-16 object-cover rounded-xl" style="border:1px solid var(--line)">
+                    <button type="button" onclick="removeStepImage(${idx})" class="text-xs" style="color:#C4453F">移除圖片</button>
+                </div>
             `;
             container.appendChild(div);
+        }
+
+        function triggerStepImageInput(idx) {
+            document.getElementById(`step-image-file-${idx}`).click();
+        }
+
+        function handleStepImageSelect(event, idx) {
+            const file = event.target.files[0];
+            if (!file) return;
+            if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+                alert('只支援 jpg、png、webp 格式的圖片');
+                event.target.value = '';
+                return;
+            }
+            if (file.size > MAX_IMAGE_SIZE) {
+                alert('圖片檔案大小不能超過 5MB');
+                event.target.value = '';
+                return;
+            }
+            const wrap = document.getElementById(`step-image-preview-wrap-${idx}`);
+            const previewImg = document.getElementById(`step-image-preview-${idx}`);
+            const reader = new FileReader();
+            reader.onload = e => {
+                previewImg.src = e.target.result;
+                wrap.classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+
+            uploadImageToCloudinary(file).then(url => {
+                document.getElementById(`step-image-${idx}`).value = url;
+                previewImg.src = url;
+            }).catch(err => {
+                alert('步驟圖片上傳失敗：' + err.message);
+            });
+        }
+
+        function removeStepImage(idx) {
+            document.getElementById(`step-image-${idx}`).value = '';
+            document.getElementById(`step-image-file-${idx}`).value = '';
+            document.getElementById(`step-image-preview-wrap-${idx}`).classList.add('hidden');
         }
 
         async function saveRecipe() {
@@ -842,9 +989,11 @@
                 if (s && s.value.trim()) {
                     const tsInput = document.getElementById(`step-ts-${i}`);
                     const durInput = document.getElementById(`step-duration-${i}`);
+                    const imgInput = document.getElementById(`step-image-${i}`);
                     const timestamp = tsInput ? parseTimestamp(tsInput.value) : null;
                     const durationMinutes = (durInput && durInput.value !== '') ? parseFloat(durInput.value) : null;
-                    steps.push({ text: s.value.trim(), timestamp: timestamp, durationMinutes: durationMinutes });
+                    const imageUrl = (imgInput && imgInput.value) ? imgInput.value : null;
+                    steps.push({ text: s.value.trim(), timestamp: timestamp, durationMinutes: durationMinutes, imageUrl: imageUrl });
                 }
             }
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'baking-recipe-cache-v1';
+const CACHE_NAME = 'baking-recipe-cache-v2';
 const APP_SHELL = [
   './',
   './index.html',
@@ -26,20 +26,39 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
-  const url = new URL(event.request.url);
+  const req = event.request;
+  const url = new URL(req.url);
 
-  // 只快取自己網站的靜態資源；Firebase / Cloudinary 等外部 API 一律直接連網路，
-  // 避免快取到過期的食譜資料或圖片上傳結果
+  // 只處理自己網站的資源；Firebase / Cloudinary 等外部 API 一律直接連網路
   if (url.origin !== self.location.origin) return;
-  if (event.request.method !== 'GET') return;
+  if (req.method !== 'GET') return;
 
+  const isHtmlRequest = req.mode === 'navigate' ||
+    (req.headers.get('accept') || '').includes('text/html');
+
+  if (isHtmlRequest) {
+    // 網頁本身一律先嘗試連網路，確保每次更新後使用者都能拿到最新版本；
+    // 只有在離線時才退回快取的舊版本，避免舊版一直被快取卡住
+    event.respondWith(
+      fetch(req)
+        .then(res => {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
+          return res;
+        })
+        .catch(() => caches.match(req).then(cached => cached || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // 其他靜態資源（圖示、manifest）維持快取優先，加快載入速度
   event.respondWith(
-    caches.match(event.request).then(cached => {
-      const networkFetch = fetch(event.request)
+    caches.match(req).then(cached => {
+      const networkFetch = fetch(req)
         .then(response => {
           if (response && response.status === 200) {
             const clone = response.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+            caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
           }
           return response;
         })
