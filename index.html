@@ -1379,6 +1379,12 @@
         用途：本地食材熱量對照表查不到的食材，改用這裡呼叫 Gemini 估算。
         這段程式碼「還沒設定好之前完全不會出錯」——只是安靜地不啟用，網站其他功能不受影響。
 
+        ⚠️ 這裡刻意用「獨立的第二個 Firebase App 實例」來跑 AI Logic / App Check，
+        跟主要的 firebase.app()（Auth／Firestore 用的那個）完全分開。
+        這樣不管 AI Logic 或 App Check 那邊出什麼問題（例如尚未完成主控台設定、
+        權杖刷新失敗等），都只會讓 AI 估算功能停用，絕對不會拖累到食譜讀取、登入
+        等核心功能——這是先前「AI Logic 一出錯，連食譜都讀不到」問題的修正。
+
         部署前，你需要先在 Firebase 主控台完成這些步驟：
         1. 主控台 > AI Logic > 開始使用 (Get started)，選擇「Gemini Developer API」，
            依照畫面指示註冊你的 Web App
@@ -1386,31 +1392,45 @@
            - 先到 https://www.google.com/recaptcha/admin 註冊網站，網域填
              wallcemax.github.io，取得一組「網站金鑰 (Site Key)」
            - 回到 Firebase 主控台 App Check 頁面，貼上這組網站金鑰完成註冊
-           - 確認 App Check > API 分頁裡，「Firebase AI Logic」那一列狀態是「已強制」
+           - 確認 App Check > API 分頁裡，「Firebase AI Logic」那一列狀態是「已強制」，
+             「Cloud Firestore」跟「Authentication」建議維持「監控中」或「未強制」即可
         3. 把下面的 RECAPTCHA_SITE_KEY 換成你在步驟 2 拿到的網站金鑰
         4. 型號名稱 (model) 請以 Firebase 主控台「開始使用」流程實際顯示的建議型號為準
            （AI 模型名稱常常更新，目前用的是 gemini-3.5-flash，部署前請對照主控台/官方文件確認是否有更新的型號）
     -->
     <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
         import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app-check.js";
         import { getAI, GoogleAIBackend, getGenerativeModel } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-ai.js";
 
         const RECAPTCHA_SITE_KEY = '6LdhikwtAAAAABB_qD-K1UOHUL3pOZFt2M7FuYyh';
 
+        // 跟主要網站用的是同一組 Firebase 專案設定，只是另外開一個「具名的 App 實例」，
+        // 讓 App Check／AI Logic 的初始化跟主要 App（Auth／Firestore）互不影響
+        const firebaseConfigForAI = {
+            apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
+            authDomain: "recipe-synchronization.firebaseapp.com",
+            projectId: "recipe-synchronization",
+            storageBucket: "recipe-synchronization.firebasestorage.app",
+            messagingSenderId: "559668909743",
+            appId: "1:559668909743:web:63dc34572b98839479265a"
+        };
+
         let aiModel = null;
         try {
             if (RECAPTCHA_SITE_KEY && !RECAPTCHA_SITE_KEY.startsWith('請填入')) {
-                initializeAppCheck(firebase.app(), {
+                const aiApp = initializeApp(firebaseConfigForAI, 'aiLogicSecondaryApp');
+                initializeAppCheck(aiApp, {
                     provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY),
                     isTokenAutoRefreshEnabled: true
                 });
-                const ai = getAI(firebase.app(), { backend: new GoogleAIBackend() });
+                const ai = getAI(aiApp, { backend: new GoogleAIBackend() });
                 aiModel = getGenerativeModel(ai, { model: 'gemini-3.5-flash' });
             } else {
                 console.info('Firebase AI Logic 尚未設定 reCAPTCHA 網站金鑰，AI 食材熱量估算功能目前停用中');
             }
         } catch (err) {
-            console.warn('Firebase AI Logic 初始化失敗（可能尚未完成主控台設定）', err);
+            console.warn('Firebase AI Logic 初始化失敗（可能尚未完成主控台設定，不影響網站其他功能）', err);
         }
 
         // 提供給下方一般 <script>（非 module）呼叫的全域介面
