@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>🍰 烘焙食譜共享系統</title>
+    <title>🍰 共享食譜</title>
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#A8324A">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="烘焙食譜">
+    <meta name="apple-mobile-web-app-title" content="共享食譜">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
     <link rel="icon" href="icon-192.png">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -111,22 +111,11 @@
             .recipe-card { transition: none; }
         }
 
-        .icon-btn {
-            width: 2.75rem; height: 2.75rem; border-radius: 1rem;
-            display: flex; align-items: center; justify-content: center;
-            background: var(--paper); border: 1px solid var(--line); position: relative; flex-shrink: 0;
-        }
-        .cart-badge {
-            position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 4px;
-            border-radius: 999px; background: var(--jam); color: #fff; font-size: 10px; font-weight: 700;
-            display: flex; align-items: center; justify-content: center;
-        }
         .fav-btn {
             width: 2.25rem; height: 2.25rem; border-radius: 999px;
             display: flex; align-items: center; justify-content: center;
             background: rgba(255,255,255,0.92);
         }
-        .shopping-item.checked-off { opacity: .4; text-decoration: line-through; }
 
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; }
@@ -139,15 +128,11 @@
                 <div class="flex items-center gap-3 min-w-0">
                     <div class="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center text-2xl sm:text-3xl shrink-0" style="background:var(--jam)">🍰</div>
                     <div class="min-w-0">
-                        <h1 class="font-display text-xl sm:text-3xl font-bold leading-tight truncate">烘焙食譜</h1>
-                        <p class="text-xs sm:text-sm hidden sm:block" style="color:var(--jam)">共享食譜系統</p>
+                        <h1 class="font-display text-xl sm:text-3xl font-bold leading-tight truncate">共享食譜</h1>
+                        <p class="text-xs sm:text-sm hidden sm:block" style="color:var(--jam)">美味交流站</p>
                     </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
-                    <button onclick="openShoppingList()" class="icon-btn" aria-label="購物清單">
-                        <i class="fas fa-cart-shopping" style="color:var(--jam)"></i>
-                        <span id="cart-badge" class="cart-badge hidden">0</span>
-                    </button>
                     <div id="user-info" class="flex items-center gap-3 shrink-0"></div>
                 </div>
             </div>
@@ -171,6 +156,7 @@
         </div>
 
         <div id="recipes-grid" class="grid gap-5" style="grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));"></div>
+        <div id="pagination" class="flex justify-center items-center gap-2 mt-8"></div>
     </div>
 
     <!-- 手機版新增按鈕 (FAB) -->
@@ -196,7 +182,10 @@
                 <div class="grid grid-cols-2 gap-4 mb-4">
                     <select id="category" class="form-input">
                         <option value="蛋糕">🎂 蛋糕</option><option value="麵包">🍞 麵包</option><option value="餅乾">🍪 餅乾</option>
-                        <option value="塔派">🥧 塔派</option><option value="慕斯">🍮 慕斯</option><option value="其他">🍽️ 其他</option>
+                        <option value="塔派">🥧 塔派</option><option value="慕斯">🍮 慕斯</option>
+                        <option value="中式烹飪">🥢 中式烹飪</option><option value="西式烹飪">🍝 西式烹飪</option><option value="日式烹飪">🍣 日式烹飪</option>
+                        <option value="健康餐">🥗 健康餐</option><option value="寶寶食品">🍼 寶寶食品</option>
+                        <option value="其他">🍽️ 其他</option>
                     </select>
                     <input id="servings" type="number" value="8" class="form-input">
                 </div>
@@ -239,11 +228,6 @@
         </div>
     </div>
 
-    <!-- 購物清單 Modal -->
-    <div id="shopping-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
-        <div class="bg-white w-full md:max-w-2xl max-h-[85vh] rounded-t-[2rem] md:rounded-[2rem] overflow-y-auto sheet-panel" id="shopping-modal-content"></div>
-    </div>
-
     <script>
         const firebaseConfig = {
           apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
@@ -278,8 +262,10 @@
         let stepTimers = {};
 
         const ADMIN_EMAIL = 'wallcemax@gmail.com';
-        const CATEGORY_LIST = ['全部', '蛋糕', '麵包', '餅乾', '塔派', '慕斯', '其他'];
-        const CATEGORY_ICONS = { '蛋糕': '🎂', '麵包': '🍞', '餅乾': '🍪', '塔派': '🥧', '慕斯': '🍮', '其他': '🍽️' };
+        const CATEGORY_LIST = ['全部', '蛋糕', '麵包', '餅乾', '塔派', '慕斯', '中式烹飪', '西式烹飪', '日式烹飪', '健康餐', '寶寶食品', '其他'];
+        const CATEGORY_ICONS = { '蛋糕': '🎂', '麵包': '🍞', '餅乾': '🍪', '塔派': '🥧', '慕斯': '🍮', '中式烹飪': '🥢', '西式烹飪': '🍝', '日式烹飪': '🍣', '健康餐': '🥗', '寶寶食品': '🍼', '其他': '🍽️' };
+        const RECIPES_PER_PAGE = 10;
+        let currentPage = 1;
 
         function canEditRecipe(recipe) {
             if (!currentUser) return false;
@@ -382,7 +368,7 @@
             if (!currentUser) return;
             db.collection('favorites').where('userId', '==', currentUser.uid).onSnapshot(snap => {
                 userFavorites = new Set(snap.docs.map(d => d.data().recipeId));
-                filterRecipes();
+                filterRecipes(false);
             }, err => console.warn('讀取我的最愛失敗', err));
         }
 
@@ -405,13 +391,15 @@
         function loadRecipes() {
             db.collection("recipes").orderBy("createdAt", "desc").onSnapshot(snap => {
                 allRecipes = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
-                filterRecipes();
+                filterRecipes(false);
             });
         }
 
         function renderRecipes(recipes) {
             const grid = document.getElementById('recipes-grid');
+            const pagination = document.getElementById('pagination');
             grid.innerHTML = '';
+            pagination.innerHTML = '';
             if (recipes.length === 0) {
                 grid.innerHTML = `<div class="col-span-full text-center py-20" style="color:#B3A492">
                     <div class="text-5xl mb-3">🍞</div>
@@ -419,7 +407,13 @@
                 </div>`;
                 return;
             }
-            recipes.forEach(r => {
+
+            const totalPages = Math.max(1, Math.ceil(recipes.length / RECIPES_PER_PAGE));
+            if (currentPage > totalPages) currentPage = totalPages;
+            const start = (currentPage - 1) * RECIPES_PER_PAGE;
+            const pageItems = recipes.slice(start, start + RECIPES_PER_PAGE);
+
+            pageItems.forEach(r => {
                 const div = document.createElement('div');
                 div.className = "recipe-card p-6";
                 div.tabIndex = 0;
@@ -441,9 +435,25 @@
                 div.onkeydown = (e) => { if (e.key === 'Enter') showDetail(r); };
                 grid.appendChild(div);
             });
+
+            if (totalPages > 1) {
+                let html = `<button onclick="goToPage(${currentPage - 1})" class="chip" ${currentPage === 1 ? 'disabled style="opacity:.4"' : ''}>‹ 上一頁</button>`;
+                for (let p = 1; p <= totalPages; p++) {
+                    html += `<button onclick="goToPage(${p})" class="chip ${p === currentPage ? 'active' : ''}">${p}</button>`;
+                }
+                html += `<button onclick="goToPage(${currentPage + 1})" class="chip" ${currentPage === totalPages ? 'disabled style="opacity:.4"' : ''}>下一頁 ›</button>`;
+                pagination.innerHTML = html;
+            }
         }
 
-        function filterRecipes() {
+        function goToPage(page) {
+            currentPage = page;
+            filterRecipes();
+            document.getElementById('recipes-grid').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function filterRecipes(resetPage = true) {
+            if (resetPage) currentPage = 1;
             const term = document.getElementById('search-input').value.toLowerCase();
             const filtered = allRecipes.filter(r => {
                 const matchesTerm = r.name.toLowerCase().includes(term);
@@ -587,7 +597,6 @@
                         <input id="scale-servings" value="${recipe.servings}" type="number" class="form-input flex-1">
                         <button onclick="scaleRecipe(${recipeJson})" class="btn-amber whitespace-nowrap">換算</button>
                     </div>
-                    <button onclick="addToShoppingList(${recipeJson})" class="btn-secondary w-full mb-8"><i class="fas fa-cart-plus mr-2"></i>加入購物清單</button>
                     <div class="mb-10">
                         <h3 class="font-display font-semibold text-lg mb-4">食材</h3>
                         <div id="detail-ingredients"></div>
@@ -600,8 +609,7 @@
                             const duration = typeof s === 'string' ? null : (s.durationMinutes ?? null);
                             const videoBadge = (ts !== null && recipe.youtubeUrl) ? `<button onclick="seekVideo(${ts}, ${JSON.stringify(recipe.youtubeUrl).replace(/"/g, '&quot;')})" class="inline-flex items-center gap-1 mt-2 mr-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#F4E4EA; color:var(--jam)"><i class="fas fa-play text-[10px]"></i> ${formatTimestamp(ts)}</button>` : '';
                             const timerSpanId = `step-timer-${i}`;
-                            const timerLabel = duration ? formatTimestamp(Math.round(duration * 60)) : '開始計時';
-                            const timerBadge = `<button id="step-timer-btn-${i}" onclick="startStepTimer('${timerSpanId}', ${duration || 0})" class="inline-flex items-center gap-1 mt-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#EFEAE0; color:var(--espresso-soft)"><i class="fas fa-clock text-[10px]"></i> <span id="${timerSpanId}">${timerLabel}</span></button>`;
+                            const timerBadge = duration ? `<button id="step-timer-btn-${i}" onclick="startStepTimer('${timerSpanId}', ${duration})" class="inline-flex items-center gap-1 mt-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#EFEAE0; color:var(--espresso-soft)"><i class="fas fa-clock text-[10px]"></i> <span id="${timerSpanId}">${formatTimestamp(Math.round(duration * 60))}</span></button>` : '';
                             return `<div class="flex gap-4 mb-5"><span class="font-semibold shrink-0" style="color:var(--jam)">${i+1}.</span><div class="flex-1"><p class="leading-relaxed">${text}</p><div>${videoBadge}${timerBadge}</div></div></div>`;
                         }).join('')}
                     </div>
@@ -857,17 +865,14 @@
                 }
             }
 
-            const data = {
+            const baseData = {
                 name,
                 category: document.getElementById('category').value,
                 servings: parseInt(document.getElementById('servings').value) || 1,
                 ingredients,
                 steps,
                 youtubeUrl: document.getElementById('youtube-url').value.trim(),
-                imageUrl: imageUrl || '',
-                authorName: currentUser.displayName,
-                authorId: currentUser.uid,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                imageUrl: imageUrl || ''
             };
 
             saveBtn.textContent = '💾 儲存中...';
@@ -876,119 +881,16 @@
             const finish = () => { saveBtn.textContent = originalBtnText; saveBtn.disabled = false; };
 
             if (id) {
-                db.collection("recipes").doc(id).update(data).then(() => { alert("更新成功！"); closeAddModal(); finish(); }).catch(err => { alert('更新失敗：' + err.message); finish(); });
+                // 編輯模式：不覆寫原作者資訊與建立時間，避免管理員編輯他人食譜後，
+                // 原作者反而無法再編輯自己的食譜
+                db.collection("recipes").doc(id).update(baseData).then(() => { alert("更新成功！"); closeAddModal(); finish(); }).catch(err => { alert('更新失敗：' + err.message); finish(); });
             } else {
-                db.collection("recipes").add(data).then(() => { alert("食譜已上傳！"); closeAddModal(); finish(); }).catch(err => { alert('上傳失敗：' + err.message); finish(); });
+                baseData.authorName = currentUser.displayName;
+                baseData.authorId = currentUser.uid;
+                baseData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+                db.collection("recipes").add(baseData).then(() => { alert("食譜已上傳！"); closeAddModal(); finish(); }).catch(err => { alert('上傳失敗：' + err.message); finish(); });
             }
         }
-
-        // ---------- 購物清單 ----------
-        function loadShoppingListFromStorage() {
-            try { return JSON.parse(localStorage.getItem('shoppingList') || '[]'); }
-            catch(e) { return []; }
-        }
-        let shoppingList = loadShoppingListFromStorage();
-
-        function saveShoppingList() {
-            try { localStorage.setItem('shoppingList', JSON.stringify(shoppingList)); } catch(e) {}
-            updateCartBadge();
-        }
-
-        function updateCartBadge() {
-            const badge = document.getElementById('cart-badge');
-            if (shoppingList.length > 0) {
-                badge.textContent = shoppingList.length;
-                badge.classList.remove('hidden');
-            } else {
-                badge.classList.add('hidden');
-            }
-        }
-
-        function addToShoppingList(recipe) {
-            const servingsInput = document.getElementById('scale-servings');
-            const servings = (servingsInput && parseInt(servingsInput.value)) || recipe.servings;
-            shoppingList.push({
-                recipeId: recipe.id,
-                name: recipe.name,
-                servings,
-                baseServings: recipe.servings,
-                ingredients: recipe.ingredients
-            });
-            saveShoppingList();
-            alert(`已將「${recipe.name}」加入購物清單！`);
-        }
-
-        function removeFromShoppingList(index) {
-            shoppingList.splice(index, 1);
-            saveShoppingList();
-            renderShoppingList();
-        }
-
-        function clearShoppingList() {
-            if (!confirm('確定要清空購物清單嗎？')) return;
-            shoppingList = [];
-            saveShoppingList();
-            renderShoppingList();
-        }
-
-        function computeAggregatedIngredients() {
-            const map = {};
-            shoppingList.forEach(item => {
-                const factor = item.servings / (item.baseServings || item.servings || 1);
-                (item.ingredients || []).forEach(ing => {
-                    const key = `${ing.name}|${ing.unit || ''}`;
-                    if (!map[key]) map[key] = { name: ing.name, unit: ing.unit || '', amount: 0 };
-                    map[key].amount += (ing.amount || 0) * factor;
-                });
-            });
-            return Object.values(map).sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
-        }
-
-        function openShoppingList() {
-            renderShoppingList();
-            document.getElementById('shopping-modal').classList.remove('hidden');
-        }
-
-        function closeShoppingList() {
-            document.getElementById('shopping-modal').classList.add('hidden');
-        }
-
-        function renderShoppingList() {
-            const aggregated = computeAggregatedIngredients();
-            const html = `
-                <div class="sticky top-0 z-10 flex justify-between items-center gap-4 px-6 sm:px-8 py-5 border-b bg-white" style="border-color:var(--line)">
-                    <h2 class="font-display text-xl sm:text-2xl font-bold">🛒 購物清單</h2>
-                    <button onclick="closeShoppingList()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
-                </div>
-                <div class="px-6 sm:px-8 py-6">
-                    ${shoppingList.length === 0 ? `
-                        <p class="text-center py-10" style="color:#B3A492">購物清單是空的，到食譜詳細頁按「加入購物清單」試試看</p>
-                    ` : `
-                        <div class="mb-8">
-                            <h3 class="font-display font-semibold text-lg mb-3">已加入的食譜</h3>
-                            ${shoppingList.map((item, i) => `
-                                <div class="flex justify-between items-center px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)">
-                                    <span>${item.name}<span class="text-xs ml-2" style="color:var(--espresso-soft)">(${item.servings} 人份)</span></span>
-                                    <button onclick="removeFromShoppingList(${i})" class="text-lg" style="color:#C4453F">×</button>
-                                </div>
-                            `).join('')}
-                        </div>
-                        <div class="mb-6">
-                            <h3 class="font-display font-semibold text-lg mb-3">合併採買清單（點一下打勾）</h3>
-                            ${aggregated.map(ing => `
-                                <div onclick="this.classList.toggle('checked-off')" class="shopping-item flex justify-between px-5 py-3 rounded-2xl mb-2 cursor-pointer" style="background:var(--paper); border:1px solid var(--line)">
-                                    <span>${ing.name}</span><span class="font-medium">${ing.amount.toFixed(1)} ${ing.unit}</span>
-                                </div>
-                            `).join('')}
-                        </div>
-                        <button onclick="clearShoppingList()" class="btn-secondary w-full">清空購物清單</button>
-                    `}
-                </div>
-            `;
-            document.getElementById('shopping-modal-content').innerHTML = html;
-        }
-
-        updateCartBadge();
 
         // ---------- PWA：註冊 Service Worker ----------
         if ('serviceWorker' in navigator) {
