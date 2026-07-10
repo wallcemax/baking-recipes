@@ -99,6 +99,11 @@
         .chip.active { background: var(--jam); color: #fff; border-color: var(--jam); }
         .chip-row { display: flex; gap: 0.5rem; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; padding-bottom: 2px; }
         .chip-row::-webkit-scrollbar { display: none; }
+        /* 桌機（>=768px）版面寬度足夠，改用自動換行取代橫向捲動，
+           避免分類標籤在寬螢幕上被裁切、看起來像消失或跑版 */
+        @media (min-width: 768px) {
+            .chip-row { flex-wrap: wrap; overflow-x: visible; padding-bottom: 0; }
+        }
 
         .modal-backdrop { background: rgba(58,42,30,0.55); }
         .sheet-panel { animation: sheetUp .35s cubic-bezier(.22,1,.36,1); }
@@ -148,7 +153,7 @@
                     <i class="fas fa-search absolute left-5 top-1/2 -translate-y-1/2" style="color:#B3A492"></i>
                     <input id="search-input" onkeyup="filterRecipes()" placeholder="搜尋食譜名稱..." class="form-input pl-12">
                 </div>
-                <button onclick="showAddModal()" class="btn-primary hidden md:flex items-center gap-2 whitespace-nowrap">
+                <button id="add-recipe-btn-desktop" onclick="showAddModal()" class="btn-primary hidden md:flex items-center gap-2 whitespace-nowrap">
                     <i class="fas fa-plus"></i> 新增食譜
                 </button>
             </div>
@@ -164,7 +169,7 @@
     </div>
 
     <!-- 手機版新增按鈕 (FAB) -->
-    <button onclick="showAddModal()" class="md:hidden fixed bottom-6 right-6 w-14 h-14 rounded-full flex items-center justify-center text-2xl z-40 btn-primary" style="padding:0" aria-label="新增食譜">
+    <button id="add-recipe-btn-fab" onclick="showAddModal()" class="md:hidden fixed bottom-6 right-6 w-14 h-14 rounded-full flex items-center justify-center text-2xl z-40 btn-primary" style="padding:0" aria-label="新增食譜">
         <i class="fas fa-plus"></i>
     </button>
 
@@ -185,13 +190,21 @@
                 <input id="name" class="form-input mb-4 text-lg" placeholder="食譜名稱">
                 <div class="grid grid-cols-2 gap-4 mb-4">
                     <select id="category" class="form-input">
-                        <option value="蛋糕/糕餅">🎂 蛋糕/糕餅</option><option value="麵包/包子">🍞 麵包/包子</option><option value="餅乾/塔派">🍪 餅乾/塔派</option>
-                        <option value="慕斯/布丁">🍮 慕斯/布丁</option>
+                        <option value="蛋糕">🎂 蛋糕</option><option value="麵包">🍞 麵包</option><option value="餅乾">🍪 餅乾</option>
+                        <option value="塔派">🥧 塔派</option><option value="慕斯">🍮 慕斯</option>
                         <option value="中式烹飪">🥢 中式烹飪</option><option value="西式烹飪">🍝 西式烹飪</option><option value="日式烹飪">🍣 日式烹飪</option>
                         <option value="健康餐">🥗 健康餐</option><option value="寶寶食品">🍼 寶寶食品</option>
                         <option value="其他">🍽️ 其他</option>
                     </select>
                     <input id="servings" type="number" value="8" class="form-input">
+                </div>
+                <div class="mb-4">
+                    <label class="font-semibold block mb-2">🔒 公開設定</label>
+                    <select id="visibility" class="form-input">
+                        <option value="public">🌍 公開（所有人都能看到）</option>
+                        <option value="private">🔒 私人（只有我自己看得到）</option>
+                        <option value="draft">📝 草稿（尚未完成，只有我看得到）</option>
+                    </select>
                 </div>
                 <div class="mb-6">
                     <label class="font-semibold block mb-3">📷 食譜封面照片（選填）</label>
@@ -213,7 +226,8 @@
                         <label class="font-semibold">食材</label>
                         <button type="button" onclick="addIngredientField()" class="text-sm font-medium" style="color:var(--jam)"><i class="fas fa-plus mr-1"></i>新增</button>
                     </div>
-                    <p class="text-xs mb-3" style="color:#B3A492">💡 在「分類」欄位輸入相同名稱（例如 A 餅皮 / B 內餡），即可將食材自動分組顯示</p>
+                    <p class="text-xs mb-3" style="color:#B3A492">💡 在「分類」欄位輸入相同名稱（例如 A 餅皮 / B 內餡），即可將食材自動分組顯示；同一組內若後面的食材不再填分類，會自動歸類到上面最近一次填寫的分類</p>
+                    <p class="text-xs mb-3" style="color:#B3A492">💡 單位支援 大匙／tbsp／茶匙／tsp／ml／毫升，系統會依食材名稱自動辨識並換算成公克計算總重</p>
                     <div id="ingredients-container" class="space-y-2.5"></div>
                 </div>
                 <div>
@@ -266,8 +280,9 @@
         let stepTimers = {};
 
         const ADMIN_EMAIL = 'wallcemax@gmail.com';
-        const CATEGORY_LIST = ['全部', '蛋糕/糕餅', '麵包/包子', '餅乾/塔派', '慕斯/布丁', '中式烹飪', '西式烹飪', '日式烹飪', '健康餐', '寶寶食品', '其他'];
-        const CATEGORY_ICONS = { '蛋糕/糕餅': '🎂', '麵包/包子': '🍞', '餅乾/塔派': '🍪', '慕斯/布丁': '🍮', '中式烹飪': '🥢', '西式烹飪': '🍝', '日式烹飪': '🍣', '健康餐': '🥗', '寶寶食品': '🍼', '其他': '🍽️' };
+        const CATEGORY_LIST = ['全部', '蛋糕', '麵包', '餅乾', '塔派', '慕斯', '中式烹飪', '西式烹飪', '日式烹飪', '健康餐', '寶寶食品', '其他'];
+        const CATEGORY_ICONS = { '蛋糕': '🎂', '麵包': '🍞', '餅乾': '🍪', '塔派': '🥧', '慕斯': '🍮', '中式烹飪': '🥢', '西式烹飪': '🍝', '日式烹飪': '🍣', '健康餐': '🥗', '寶寶食品': '🍼', '其他': '🍽️' };
+        const VISIBILITY_LABELS = { private: { label: '🔒 私人', bg: '#EFEAE0', color: 'var(--espresso-soft)' }, draft: { label: '📝 草稿', bg: '#FCE9C8', color: 'var(--honey)' } };
         const RECIPES_PER_PAGE = 10;
         let currentPage = 1;
 
@@ -277,8 +292,21 @@
             return currentUser.uid === recipe.authorId;
         }
 
+        // 除了公開食譜，私人／草稿食譜只有作者本人（或管理員）看得到
+        function canViewRecipe(recipe) {
+            if (!recipe.visibility || recipe.visibility === 'public') return true;
+            if (!currentUser) return false;
+            if (currentUser.email === ADMIN_EMAIL) return true;
+            return currentUser.uid === recipe.authorId;
+        }
+
         function isMobileDevice() {
             return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        }
+
+        // 偵測目前是否以「已安裝的 PWA」模式獨立執行（例如加到主畫面後開啟）
+        function isStandalonePWA() {
+            return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
         }
 
         // 偵測 Facebook / Instagram / Line / 微信等 App 內建瀏覽器
@@ -289,28 +317,46 @@
             return /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Twitter|TikTok/i.test(ua);
         }
 
+        // 統一處理登入錯誤，盡量給使用者可以實際操作的下一步，而不是卡住沒反應
+        function handleLoginError(err, provider) {
+            console.warn('登入發生錯誤', err && err.code, err && err.message);
+            if (!err || !err.code) return;
+            if (err.code === 'auth/operation-not-supported-in-this-environment' || err.code === 'auth/disallowed-useragent') {
+                // 已安裝的 PWA 在部分系統（尤其 iOS）會被 Google 視為不受支援的內嵌瀏覽器環境，
+                // 這種情況一律無法透過導轉或彈出視窗完成登入，只能請使用者改用一般瀏覽器
+                alert('目前環境（可能是已安裝的 App／PWA 模式）不被 Google 登入支援。\n\n請改用 Chrome 或 Safari，直接輸入網址開啟本網站後再登入；登入成功後，已安裝的 App 圖示一樣可以正常使用。');
+                return;
+            }
+            if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
+                if (provider) auth.signInWithRedirect(provider).catch(e => handleLoginError(e, null));
+                return;
+            }
+            if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled') {
+                return; // 使用者自行取消，不需要額外提示
+            }
+            alert('登入時發生問題，請重新整理頁面後再試一次（錯誤代碼：' + err.code + '）');
+        }
+
         function googleLogin() {
             if (isInAppBrowser()) {
                 alert('偵測到你目前是透過 Messenger／Instagram／Line 等 App 內建的瀏覽器開啟這個網站。\n\nGoogle 基於安全考量，不允許在這類內建瀏覽器裡完成登入（就算切到分頁看起來像 Chrome 也一樣）。\n\n請先點畫面右上角「⋯」選單，選擇「在瀏覽器中開啟」，或是直接關閉 App、用 Chrome／Safari 重新開啟本網站網址，再嘗試登入。');
                 return;
             }
             const provider = new firebase.auth.GoogleAuthProvider();
-            if (isMobileDevice()) {
-                // 手機瀏覽器的彈出視窗支援度不一，改用整頁導轉方式登入，減少卡在中間狀態的機會
-                auth.signInWithRedirect(provider).catch(err => {
-                    console.warn('登入導轉發生錯誤', err);
-                    alert('登入時發生問題，請重新整理頁面後再試一次');
-                });
-            } else {
+            auth.useDeviceLanguage();
+            if (isMobileDevice() || isStandalonePWA()) {
+                // 手機瀏覽器與已安裝的 PWA（尤其是 Android／TWA）大多支援彈出視窗登入，
+                // 優先嘗試彈出視窗；只有在被瀏覽器封鎖時才退回整頁導轉，
+                // 因為已安裝的 PWA 若走整頁導轉，部分系統會在導轉回來後遺失登入狀態，導致「登入了但沒反應」
                 auth.signInWithPopup(provider).catch(err => {
                     if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
-                        auth.signInWithRedirect(provider);
-                    } else if (err.code === 'auth/operation-not-supported-in-this-environment' || err.code === 'auth/disallowed-useragent') {
-                        alert('目前瀏覽器環境不支援 Google 登入，請改用 Chrome 或 Safari 開啟本網站。');
+                        auth.signInWithRedirect(provider).catch(e => handleLoginError(e, null));
                     } else {
-                        console.warn('登入發生錯誤', err);
+                        handleLoginError(err, provider);
                     }
                 });
+            } else {
+                auth.signInWithPopup(provider).catch(err => handleLoginError(err, provider));
             }
         }
 
@@ -324,10 +370,8 @@
         }
 
         // 處理登入導轉流程回來後的結果；如果使用者在流程中按了上一頁導致狀態遺失，
-        // 這裡會安靜地攔截錯誤，不會讓整個頁面卡住
-        auth.getRedirectResult().catch(err => {
-            console.warn('登入流程被中斷：', err.code, err.message);
-        });
+        // 這裡會安靜地攔截錯誤，不會讓整個頁面卡住；若是環境不支援登入，主動提示使用者
+        auth.getRedirectResult().catch(err => handleLoginError(err, null));
 
         // 從瀏覽器上一頁 / 下一頁快取（bfcache）恢復頁面時，重新整理避免畫面卡在中間狀態
         window.addEventListener('pageshow', event => {
@@ -337,6 +381,15 @@
         });
 
         function logout() { auth.signOut(); }
+
+        // 依登入狀態顯示或隱藏「新增食譜」按鈕（含桌機按鈕與手機 FAB）
+        function updateAddButtonsVisibility() {
+            const desktopBtn = document.getElementById('add-recipe-btn-desktop');
+            const fabBtn = document.getElementById('add-recipe-btn-fab');
+            const show = !!currentUser;
+            if (desktopBtn) desktopBtn.style.display = show ? '' : 'none';
+            if (fabBtn) fabBtn.style.display = show ? '' : 'none';
+        }
 
         auth.onAuthStateChanged(user => {
             currentUser = user;
@@ -355,8 +408,10 @@
                 showMyRecipesOnly = false;
                 document.getElementById('chip-fav')?.classList.remove('active');
                 document.getElementById('chip-mine')?.classList.remove('active');
+                loadRecipes();
                 filterRecipes();
             }
+            updateAddButtonsVisibility();
         });
 
         function initCategoryChips() {
@@ -436,8 +491,16 @@
         }
 
         function loadRecipes() {
-            db.collection("recipes").orderBy("createdAt", "desc").onSnapshot(snap => {
+            // 不倚賴 Firestore 端的 orderBy（避免舊資料缺少 updatedAt 欄位而被排除），
+            // 改為抓回全部後在前端依「最新編輯時間」排序：updatedAt 沒有就退回 createdAt
+            db.collection("recipes").onSnapshot(snap => {
                 allRecipes = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+                allRecipes.sort((a, b) => {
+                    const toMillis = t => (t && typeof t.toMillis === 'function') ? t.toMillis() : 0;
+                    const aTime = toMillis(a.updatedAt) || toMillis(a.createdAt);
+                    const bTime = toMillis(b.updatedAt) || toMillis(b.createdAt);
+                    return bTime - aTime;
+                });
                 filterRecipes(false);
             });
         }
@@ -466,6 +529,8 @@
                 div.tabIndex = 0;
                 const icon = CATEGORY_ICONS[r.category] || '🍽️';
                 const isFav = userFavorites.has(r.id);
+                const visInfo = VISIBILITY_LABELS[r.visibility];
+                const visBadge = visInfo ? `<span class="px-2.5 py-0.5 text-[11px] font-medium rounded-full ml-1.5" style="background:${visInfo.bg}; color:${visInfo.color}">${visInfo.label}</span>` : '';
                 div.innerHTML = `
                     <button onclick="toggleFavorite('${r.id}', event)" data-fav-id="${r.id}" class="fav-btn absolute top-4 right-4 z-10" aria-label="收藏">
                         <i class="${isFav ? 'fas' : 'far'} fa-heart" style="color:var(--jam)"></i>
@@ -475,7 +540,7 @@
                         <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${r.category}</span>
                         ${r.youtubeUrl ? '<i class="fab fa-youtube text-lg" style="color:#C4453F"></i>' : ''}
                     </div>
-                    <h3 class="font-display font-bold text-xl mb-1.5 leading-snug">${r.name}</h3>
+                    <h3 class="font-display font-bold text-xl mb-1.5 leading-snug">${r.name}${visBadge}</h3>
                     <p class="text-sm" style="color:var(--espresso-soft)">${r.servings} 人份 • ${r.authorName||''}</p>
                 `;
                 div.onclick = () => showDetail(r);
@@ -507,7 +572,7 @@
                 const matchesCategory = selectedCategory === '全部' || r.category === selectedCategory;
                 const matchesFav = !showFavoritesOnly || userFavorites.has(r.id);
                 const matchesMine = !showMyRecipesOnly || (currentUser && r.authorId === currentUser.uid);
-                return matchesTerm && matchesCategory && matchesFav && matchesMine;
+                return matchesTerm && matchesCategory && matchesFav && matchesMine && canViewRecipe(r);
             });
             renderRecipes(filtered);
         }
@@ -635,10 +700,12 @@
             const icon = CATEGORY_ICONS[recipe.category] || '🍽️';
             const isFav = userFavorites.has(recipe.id);
             const recipeJson = JSON.stringify(recipe).replace(/"/g, '&quot;');
+            const visInfo = VISIBILITY_LABELS[recipe.visibility];
+            const visBadge = visInfo ? `<span class="px-3 py-1 text-xs font-medium rounded-full ml-2" style="background:${visInfo.bg}; color:${visInfo.color}">${visInfo.label}</span>` : '';
             const html = `
                 <div class="sticky top-0 z-10 flex justify-between items-start gap-4 px-6 sm:px-8 py-5 border-b bg-white" style="border-color:var(--line)">
                     <div class="min-w-0">
-                        <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${recipe.category}</span>
+                        <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${recipe.category}</span>${visBadge}
                         <h2 class="font-display text-2xl sm:text-3xl font-bold mt-3 leading-snug">${recipe.name}</h2>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
@@ -694,30 +761,93 @@
             scaleRecipe(recipe);
         }
 
-        // 將食材份量換算成公克；非重量單位（如 ml、tsp、顆）回傳 null，不計入總重
-        function convertToGrams(amount, unit) {
+        // 依食材名稱關鍵字，猜測常見烘焙／烹飪食材的密度 (g/ml)，
+        // 用來把「大匙、tbsp、茶匙、tsp、ml、毫升」等體積單位自動換算成公克
+        const INGREDIENT_DENSITY_MAP = [
+            { keywords: ['鮮奶油', '動物性', 'whipping cream', 'heavy cream', 'cream'], density: 1.01 },
+            { keywords: ['牛奶', '鮮奶', 'milk'], density: 1.03 },
+            { keywords: ['煉乳', 'condensed milk'], density: 1.30 },
+            { keywords: ['優格', '優酪乳', 'yogurt'], density: 1.03 },
+            { keywords: ['蜂蜜', 'honey'], density: 1.42 },
+            { keywords: ['楓糖', 'maple syrup'], density: 1.32 },
+            { keywords: ['醬油', 'soy sauce'], density: 1.15 },
+            { keywords: ['白醋', '烏醋', '醋', 'vinegar'], density: 1.01 },
+            { keywords: ['橄欖油', '沙拉油', '植物油', '葵花油', '油', 'oil'], density: 0.92 },
+            { keywords: ['細砂糖', '砂糖', '白糖', '二砂', 'sugar'], density: 0.85 },
+            { keywords: ['糖粉', 'icing sugar', 'powdered sugar'], density: 0.56 },
+            { keywords: ['高筋麵粉', '低筋麵粉', '中筋麵粉', '麵粉', 'flour'], density: 0.53 },
+            { keywords: ['可可粉', 'cocoa'], density: 0.51 },
+            { keywords: ['無鹽奶油', '有鹽奶油', '奶油', 'butter'], density: 0.96 },
+            { keywords: ['鹽', 'salt'], density: 1.20 },
+            { keywords: ['水', 'water'], density: 1.00 },
+        ];
+
+        // 依食材名稱關鍵字比對密度；找不到時回傳 null
+        function guessIngredientDensity(name) {
+            if (!name) return null;
+            const lower = name.toLowerCase();
+            for (const entry of INGREDIENT_DENSITY_MAP) {
+                if (entry.keywords.some(k => lower.includes(k.toLowerCase()))) return entry.density;
+            }
+            return null;
+        }
+
+        // 將常見體積單位換算成 ml；支援 大匙／tbsp／茶匙／tsp／ml／毫升／l／公升
+        function convertToMilliliters(amount, unit) {
+            switch ((unit || '').trim().toLowerCase()) {
+                case 'ml': case '毫升': return amount;
+                case 'l': case '公升': return amount * 1000;
+                case 'tbsp': case '大匙': case '湯匙': return amount * 15;
+                case 'tsp': case '茶匙': case '小匙': return amount * 5;
+                default: return null;
+            }
+        }
+
+        // 將食材份量換算成公克。
+        // 重量單位直接換算；體積單位（大匙/tbsp/茶匙/tsp/ml/毫升）則自動辨別食材名稱抓取密度，
+        // 換算成 ml 後再乘以密度得到公克數；無法辨識密度的食材則以水的密度 1 g/ml 估算。
+        // 其他無法辨識的單位（如「顆」）回傳 null，不計入總重。
+        function convertToGrams(amount, unit, name) {
             switch ((unit || '').trim().toLowerCase()) {
                 case 'g': return amount;
                 case 'kg': return amount * 1000;
                 case 'oz': return amount * 28.3495;
                 case 'lb': return amount * 453.592;
-                default: return null;
             }
+            const ml = convertToMilliliters(amount, unit);
+            if (ml !== null) {
+                const density = guessIngredientDensity(name);
+                return ml * (density !== null ? density : 1.00);
+            }
+            return null;
+        }
+
+        // 依序將沒有填分類的食材，自動歸類到「上一個」有填分類的食材群組
+        // （例如：蛋糕體 底下接著幾個沒填分類的食材，仍然算在「蛋糕體」裡，
+        // 而不是被誤判成獨立的「未分類」群組）
+        function fillIngredientGroups(ingredients) {
+            let lastGroup = '';
+            return ingredients.map(ing => {
+                const g = (ing.group || '').trim();
+                if (g) { lastGroup = g; return { ...ing, group: g }; }
+                return { ...ing, group: lastGroup || '（未分類）' };
+            });
         }
 
         function scaleRecipe(recipe) {
             const newServings = parseInt(document.getElementById('scale-servings').value) || recipe.servings;
             const factor = newServings / recipe.servings;
-            const LOSS_RATE = 0.035; // 損耗率 3.5%
+            const LOSS_RATE = 0.036; // 損耗率 3.6%
 
             // 若全部食材都沒有填分類，視為同一組計算總重
             const hasAnyGroup = recipe.ingredients.some(ing => (ing.group || '').trim());
+            const ingredientsForDisplay = hasAnyGroup ? fillIngredientGroups(recipe.ingredients) : recipe.ingredients;
 
-            // 先算出各分類（或全部）的總重量（克），扣除 3.5% 損耗後除以份數，得到單份重量
+            // 先算出各分類（或全部）的總重量（克），扣除 3.6% 損耗後除以份數，得到單份重量
             const groupGrams = {};
-            recipe.ingredients.forEach(ing => {
+            ingredientsForDisplay.forEach(ing => {
                 const key = hasAnyGroup ? (ing.group || '（未分類）') : '__ALL__';
-                const grams = convertToGrams(ing.amount * factor, ing.unit);
+                const grams = convertToGrams(ing.amount * factor, ing.unit, ing.name);
                 if (grams !== null) groupGrams[key] = (groupGrams[key] || 0) + grams;
             });
 
@@ -725,19 +855,19 @@
                 const totalG = groupGrams[key];
                 if (!totalG) return '';
                 const perServing = (totalG * (1 - LOSS_RATE)) / newServings;
-                return `<span class="text-xs font-normal ml-2" style="color:#B3A492">每份約 ${perServing.toFixed(1)} g（已扣3.5%損耗）</span>`;
+                return `<span class="text-xs font-normal ml-2" style="color:#B3A492">每份約 ${perServing.toFixed(1)} g（已扣3.6%損耗）</span>`;
             };
 
             let html = '';
             if (!hasAnyGroup) {
                 html += `<h4 class="font-semibold mb-2" style="color:var(--honey)">食材總計${perServingBadge('__ALL__')}</h4>`;
-                recipe.ingredients.forEach(ing => {
+                ingredientsForDisplay.forEach(ing => {
                     html += `<div class="flex justify-between px-5 py-3 rounded-2xl mb-2" style="background:var(--cream)"><span>${ing.name}</span><span class="font-medium">${(ing.amount * factor).toFixed(1)} ${ing.unit}</span></div>`;
                 });
             } else {
                 let lastGroup = null;
                 let first = true;
-                recipe.ingredients.forEach(ing => {
+                ingredientsForDisplay.forEach(ing => {
                     const group = ing.group || '（未分類）';
                     if (group !== lastGroup) {
                         html += `<h4 class="font-semibold ${first ? '' : 'mt-5'} mb-2" style="color:var(--honey)">${group}${perServingBadge(group)}</h4>`;
@@ -764,6 +894,7 @@
             document.getElementById('name').value = recipe.name;
             document.getElementById('category').value = recipe.category;
             document.getElementById('servings').value = recipe.servings;
+            document.getElementById('visibility').value = recipe.visibility || 'public';
             document.getElementById('youtube-url').value = recipe.youtubeUrl || '';
             resetImageField();
             if (recipe.imageUrl) {
@@ -791,6 +922,7 @@
             document.getElementById('name').value = recipe.name + '（複製）';
             document.getElementById('category').value = recipe.category;
             document.getElementById('servings').value = recipe.servings;
+            document.getElementById('visibility').value = 'public';
             document.getElementById('youtube-url').value = recipe.youtubeUrl || '';
             resetImageField();
             if (recipe.imageUrl) {
@@ -819,10 +951,12 @@
         }
 
         function showAddModal() {
+            if (!currentUser) { alert('請先登入才能新增食譜'); return; }
             document.getElementById('add-modal').classList.remove('hidden');
             document.getElementById('modal-title').textContent = '新增食譜';
             document.getElementById('recipe-id').value = '';
             document.getElementById('name').value = '';
+            document.getElementById('visibility').value = 'public';
             document.getElementById('youtube-url').value = '';
             document.getElementById('ingredients-container').innerHTML = '';
             document.getElementById('steps-container').innerHTML = '';
@@ -1018,10 +1152,12 @@
                 name,
                 category: document.getElementById('category').value,
                 servings: parseInt(document.getElementById('servings').value) || 1,
+                visibility: document.getElementById('visibility').value || 'public',
                 ingredients,
                 steps,
                 youtubeUrl: document.getElementById('youtube-url').value.trim(),
-                imageUrl: imageUrl || ''
+                imageUrl: imageUrl || '',
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             };
 
             saveBtn.textContent = '💾 儲存中...';
@@ -1031,7 +1167,7 @@
 
             if (id) {
                 // 編輯模式：不覆寫原作者資訊與建立時間，避免管理員編輯他人食譜後，
-                // 原作者反而無法再編輯自己的食譜
+                // 原作者反而無法再編輯自己的食譜；但會更新 updatedAt，讓首頁排序反映最新編輯
                 db.collection("recipes").doc(id).update(baseData).then(() => { alert("更新成功！"); closeAddModal(); finish(); }).catch(err => { alert('更新失敗：' + err.message); finish(); });
             } else {
                 baseData.authorName = currentUser.displayName;
