@@ -143,6 +143,7 @@
                     </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
+                    <button id="admin-nutrition-btn" onclick="showAdminNutritionModal()" class="hidden btn-secondary text-xs sm:text-sm whitespace-nowrap">🛠 食材熱量管理</button>
                     <div id="user-info" class="flex items-center gap-3 shrink-0"></div>
                 </div>
             </div>
@@ -177,6 +178,45 @@
     <!-- 食譜詳細 Modal -->
     <div id="detail-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
         <div class="bg-white w-full md:max-w-2xl max-h-[92vh] md:max-h-[88vh] rounded-t-[2rem] md:rounded-[2rem] overflow-y-auto sheet-panel" id="modal-content"></div>
+    </div>
+
+    <!-- 食材熱量資料管理 Modal（只有管理者看得到） -->
+    <div id="admin-nutrition-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">🛠 食材熱量資料管理</h2>
+                <button onclick="closeAdminNutritionModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <p class="text-xs mb-4" style="color:#B3A492">在這裡輸入的資料會存進共用資料庫，之後全站食譜計算熱量時都會優先使用這裡的數字，不會再讓 AI 重新估算這個食材。</p>
+                <input id="admin-nutri-name" placeholder="食材名稱（例如：全脂奶粉）" class="form-input mb-3">
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="text-xs block mb-1" style="color:#B3A492">熱量 kcal / 100g</label>
+                        <input id="admin-nutri-kcal" type="number" step="0.1" class="form-input">
+                    </div>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:#B3A492">蛋白質 g / 100g</label>
+                        <input id="admin-nutri-protein" type="number" step="0.1" class="form-input">
+                    </div>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:#B3A492">脂肪 g / 100g</label>
+                        <input id="admin-nutri-fat" type="number" step="0.1" class="form-input">
+                    </div>
+                    <div>
+                        <label class="text-xs block mb-1" style="color:#B3A492">碳水 g / 100g</label>
+                        <input id="admin-nutri-carb" type="number" step="0.1" class="form-input">
+                    </div>
+                    <div class="col-span-2">
+                        <label class="text-xs block mb-1" style="color:#B3A492">鈉 mg / 100g</label>
+                        <input id="admin-nutri-sodium" type="number" step="1" class="form-input">
+                    </div>
+                </div>
+                <button onclick="saveAdminNutrition()" class="btn-primary w-full mb-8">💾 儲存這筆食材資料</button>
+                <h3 class="font-display font-semibold text-lg mb-3">目前已收錄／AI 估算過的食材</h3>
+                <div id="admin-nutri-list" class="space-y-2"></div>
+            </div>
+        </div>
     </div>
 
     <!-- 新增/編輯 Modal -->
@@ -383,13 +423,21 @@
 
         function logout() { auth.signOut(); }
 
-        // 依登入狀態顯示或隱藏「新增食譜」按鈕（含桌機按鈕與手機 FAB）
+        function isAdmin() {
+            return !!(currentUser && currentUser.email === ADMIN_EMAIL);
+        }
+
+        // 依登入狀態顯示或隱藏「新增食譜」按鈕（含桌機按鈕與手機 FAB），
+        // 以及只有管理者帳號才看得到的「食材熱量管理」按鈕
         function updateAddButtonsVisibility() {
             const desktopBtn = document.getElementById('add-recipe-btn-desktop');
             const fabBtn = document.getElementById('add-recipe-btn-fab');
             const show = !!currentUser;
             if (desktopBtn) desktopBtn.style.display = show ? '' : 'none';
             if (fabBtn) fabBtn.style.display = show ? '' : 'none';
+
+            const adminBtn = document.getElementById('admin-nutrition-btn');
+            if (adminBtn) adminBtn.style.display = isAdmin() ? '' : 'none';
         }
 
         auth.onAuthStateChanged(user => {
@@ -871,12 +919,13 @@
             try {
                 if (typeof window.__fetchGeminiIngredientNutrition !== 'function') { aiNutritionCache[name] = null; return null; }
                 const data = await window.__fetchGeminiIngredientNutrition(name);
+                if (data) data.source = 'ai_estimated'; // 統一標記來源，畫面上才能正確顯示「AI 估算」徽章
                 aiNutritionCache[name] = data;
                 if (data && currentUser) {
                     // 只有登入使用者的查詢會寫入共用快取，降低被惡意寫入垃圾資料的風險；
                     // 未登入者一樣能查詢／看到結果，只是不會幫忙寫快取
                     db.collection('ingredientNutrition').doc(docId).set({
-                        name, ...data, source: 'ai_estimated',
+                        name, ...data,
                         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                     }).catch(err => console.warn('寫入食材熱量快取失敗', err && err.message));
                 }
@@ -885,6 +934,97 @@
                 console.warn('AI 熱量估算暫時無法使用（可能尚未完成 Firebase AI Logic 設定）', err && err.message);
                 aiNutritionCache[name] = null;
                 return null;
+            }
+        }
+
+        // ---------- 管理者專屬：食材熱量資料手動管理 ----------
+        function showAdminNutritionModal() {
+            if (!isAdmin()) return;
+            document.getElementById('admin-nutrition-modal').classList.remove('hidden');
+            ['name', 'kcal', 'protein', 'fat', 'carb', 'sodium'].forEach(f => {
+                const el = document.getElementById(`admin-nutri-${f}`);
+                if (el) el.value = '';
+            });
+            loadAdminNutritionList();
+        }
+
+        function closeAdminNutritionModal() {
+            document.getElementById('admin-nutrition-modal').classList.add('hidden');
+        }
+
+        async function saveAdminNutrition() {
+            if (!isAdmin()) { alert('只有管理者能編輯食材熱量資料'); return; }
+            const name = document.getElementById('admin-nutri-name').value.trim();
+            if (!name) { alert('請輸入食材名稱'); return; }
+            const docId = name.replace(/\//g, '_').slice(0, 200);
+            const data = {
+                name,
+                kcal: parseFloat(document.getElementById('admin-nutri-kcal').value) || 0,
+                protein: parseFloat(document.getElementById('admin-nutri-protein').value) || 0,
+                fat: parseFloat(document.getElementById('admin-nutri-fat').value) || 0,
+                carb: parseFloat(document.getElementById('admin-nutri-carb').value) || 0,
+                sodium: parseFloat(document.getElementById('admin-nutri-sodium').value) || 0,
+                source: 'admin_manual',
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            };
+            try {
+                await db.collection('ingredientNutrition').doc(docId).set(data);
+                aiNutritionCache[name] = data; // 立即更新這次瀏覽的暫存，不用等重新整理就能生效
+                alert('已儲存！之後計算熱量時會優先使用這筆資料，AI 不會再重新估算這個食材');
+                loadAdminNutritionList();
+            } catch (err) {
+                alert('儲存失敗：' + err.message);
+            }
+        }
+
+        function editAdminNutrition(data) {
+            document.getElementById('admin-nutri-name').value = data.name || '';
+            document.getElementById('admin-nutri-kcal').value = data.kcal || 0;
+            document.getElementById('admin-nutri-protein').value = data.protein || 0;
+            document.getElementById('admin-nutri-fat').value = data.fat || 0;
+            document.getElementById('admin-nutri-carb').value = data.carb || 0;
+            document.getElementById('admin-nutri-sodium').value = data.sodium || 0;
+            window.scrollTo({ top: 0 });
+        }
+
+        async function deleteAdminNutrition(docId, name) {
+            if (!isAdmin()) return;
+            if (!confirm(`確定刪除「${name}」的熱量資料？下次遇到這個食材會重新讓 AI 估算。`)) return;
+            try {
+                await db.collection('ingredientNutrition').doc(docId).delete();
+                delete aiNutritionCache[name];
+                loadAdminNutritionList();
+            } catch (err) {
+                alert('刪除失敗：' + err.message);
+            }
+        }
+
+        async function loadAdminNutritionList() {
+            const listEl = document.getElementById('admin-nutri-list');
+            if (!listEl) return;
+            listEl.innerHTML = '<p class="text-sm" style="color:#B3A492">載入中…</p>';
+            try {
+                const snap = await db.collection('ingredientNutrition').orderBy('updatedAt', 'desc').limit(50).get();
+                if (snap.empty) { listEl.innerHTML = '<p class="text-sm" style="color:#B3A492">目前還沒有任何資料</p>'; return; }
+                listEl.innerHTML = snap.docs.map(doc => {
+                    const d = doc.data();
+                    const badge = d.source === 'admin_manual'
+                        ? `<span style="color:var(--sage)">✅ 管理者輸入</span>`
+                        : `<span style="color:var(--honey)">🤖 AI 估算</span>`;
+                    const dataForEdit = JSON.stringify(d).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+                    return `<div class="flex justify-between items-center px-4 py-3 rounded-2xl" style="background:var(--cream)">
+                        <div class="min-w-0">
+                            <p class="font-medium truncate">${d.name || doc.id}</p>
+                            <p class="text-xs">${badge} · ${(d.kcal || 0).toFixed ? d.kcal.toFixed(0) : d.kcal} kcal/100g</p>
+                        </div>
+                        <div class="flex gap-2 shrink-0">
+                            <button onclick='editAdminNutrition(${dataForEdit})' class="text-sm font-medium" style="color:var(--jam)">編輯</button>
+                            <button onclick="deleteAdminNutrition('${doc.id}', '${(d.name || doc.id).replace(/'/g, "\\'")}')" class="text-sm font-medium" style="color:#C4453F">刪除</button>
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch (err) {
+                listEl.innerHTML = `<p class="text-sm" style="color:#C4453F">載入失敗：${err.message}</p>`;
             }
         }
 
@@ -967,15 +1107,15 @@
             if (!nutritionBox) return;
             nutritionBox.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">熱量計算中…</div>`;
 
-            let totalKcal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, totalSodium = 0, uncountedNames = [], aiUsedCount = 0;
+            let totalKcal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, totalSodium = 0, uncountedNames = [], aiUsedCount = 0, manualUsedCount = 0;
             await Promise.all(recipe.ingredients.map(async ing => {
                 const grams = convertToGrams(ing.amount * factor, ing.unit, ing.name);
                 if (grams === null) { uncountedNames.push(ing.name); return; }
                 let nutri = guessIngredientNutrition(ing.name);
-                let fromAI = false;
+                let sourceTag = nutri ? null : null; // 本地表比對到的不特別標示來源
                 if (!nutri) {
                     nutri = await fetchAINutrition(ing.name);
-                    fromAI = !!nutri;
+                    if (nutri) sourceTag = nutri.source === 'admin_manual' ? 'manual' : 'ai';
                 }
                 if (!nutri) { uncountedNames.push(ing.name); return; }
                 totalKcal += grams / 100 * nutri.kcal;
@@ -983,7 +1123,8 @@
                 totalFat += grams / 100 * nutri.fat;
                 totalCarb += grams / 100 * nutri.carb;
                 totalSodium += grams / 100 * (nutri.sodium || 0);
-                if (fromAI) aiUsedCount++;
+                if (sourceTag === 'ai') aiUsedCount++;
+                if (sourceTag === 'manual') manualUsedCount++;
             }));
 
             // 若 modal 在等待期間被關閉／換了別的食譜，這個節點可能已經不在畫面上了，
@@ -1012,6 +1153,7 @@
                         <span>碳水 ${perCarb.toFixed(1)} g</span>
                         <span>鈉 ${perSodium.toFixed(0)} mg</span>
                     </div>
+                    ${manualUsedCount > 0 ? `<p class="text-xs mt-2" style="color:var(--sage)">✅ 有 ${manualUsedCount} 項食材使用管理者確認過的數據</p>` : ''}
                     ${aiUsedCount > 0 ? `<p class="text-xs mt-2" style="color:var(--sage)">🤖 有 ${aiUsedCount} 項食材是由 AI 即時估算（尚未收錄於本地食材資料庫），準確度僅供參考</p>` : ''}
                     ${uncountedNames.length > 0 ? `<p class="text-xs mt-2" style="color:#B3A492">⚠️ 以下食材未列入熱量計算：${uncountedNames.join('、')}（非重量/體積單位，或無法辨識），實際熱量僅供參考</p>` : ''}
                 </div>`;
