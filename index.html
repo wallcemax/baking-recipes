@@ -967,17 +967,17 @@
             if (!nutritionBox) return;
             nutritionBox.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">熱量計算中…</div>`;
 
-            let totalKcal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, totalSodium = 0, uncountedCount = 0, aiUsedCount = 0;
+            let totalKcal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, totalSodium = 0, uncountedNames = [], aiUsedCount = 0;
             await Promise.all(recipe.ingredients.map(async ing => {
                 const grams = convertToGrams(ing.amount * factor, ing.unit, ing.name);
-                if (grams === null) { uncountedCount++; return; }
+                if (grams === null) { uncountedNames.push(ing.name); return; }
                 let nutri = guessIngredientNutrition(ing.name);
                 let fromAI = false;
                 if (!nutri) {
                     nutri = await fetchAINutrition(ing.name);
                     fromAI = !!nutri;
                 }
-                if (!nutri) { uncountedCount++; return; }
+                if (!nutri) { uncountedNames.push(ing.name); return; }
                 totalKcal += grams / 100 * nutri.kcal;
                 totalProtein += grams / 100 * nutri.protein;
                 totalFat += grams / 100 * nutri.fat;
@@ -991,7 +991,7 @@
             const liveBox = document.getElementById('detail-nutrition');
             if (!liveBox) return;
 
-            if (totalKcal === 0 && uncountedCount === recipe.ingredients.length) {
+            if (totalKcal === 0 && uncountedNames.length === recipe.ingredients.length) {
                 liveBox.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">此食譜的食材目前都尚未收錄於熱量資料庫，暫時無法估算熱量</div>`;
                 return;
             }
@@ -1013,7 +1013,7 @@
                         <span>鈉 ${perSodium.toFixed(0)} mg</span>
                     </div>
                     ${aiUsedCount > 0 ? `<p class="text-xs mt-2" style="color:var(--sage)">🤖 有 ${aiUsedCount} 項食材是由 AI 即時估算（尚未收錄於本地食材資料庫），準確度僅供參考</p>` : ''}
-                    ${uncountedCount > 0 ? `<p class="text-xs mt-2" style="color:#B3A492">⚠️ 有 ${uncountedCount} 項食材（非重量/體積單位，或無法辨識）未列入熱量計算，實際熱量僅供參考</p>` : ''}
+                    ${uncountedNames.length > 0 ? `<p class="text-xs mt-2" style="color:#B3A492">⚠️ 以下食材未列入熱量計算：${uncountedNames.join('、')}（非重量/體積單位，或無法辨識），實際熱量僅供參考</p>` : ''}
                 </div>`;
         }
 
