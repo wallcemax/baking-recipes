@@ -20,7 +20,6 @@
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-functions-compat.js"></script>
     <style>
         :root {
             --cream: #FBF3E7;
@@ -848,21 +847,41 @@
             return null;
         }
 
-        // ---------- 本地表查不到時，改問雲端 AI 估算 ----------
-        // 需要先部署 cloud-functions-nutrition 後端才會生效；還沒部署前呼叫會失敗，
-        // 這裡會安靜地忽略錯誤（記在 console 供除錯），不影響網站其他功能
-        const AI_NUTRITION_REGION = 'asia-east1'; // 要跟 Cloud Function 裡設定的 region 一致
-        let aiNutritionCache = {}; // 同一次瀏覽期間的暫存，避免同個食材重複呼叫雲端函式
+        // ---------- 本地表查不到時，改問 Firebase AI Logic（Gemini）估算 ----------
+        // 需要先在 Firebase 主控台完成 AI Logic + App Check 設定才會生效（見上方 module script 的說明註解），
+        // 還沒設定完成前呼叫會安靜地回傳 null，不影響網站其他功能
+        let aiNutritionCache = {}; // 同一次瀏覽期間的暫存，避免同個食材重複問 Firestore／AI
         async function fetchAINutrition(name) {
             if (Object.prototype.hasOwnProperty.call(aiNutritionCache, name)) return aiNutritionCache[name];
+            const docId = name.trim().replace(/\//g, '_').slice(0, 200);
+
+            // 先查 Firestore 快取（任何人都能讀），避免同一食材被全站重複詢問 AI
             try {
-                if (typeof firebase.functions !== 'function') { aiNutritionCache[name] = null; return null; }
-                const fn = firebase.app().functions(AI_NUTRITION_REGION).httpsCallable('getIngredientNutrition');
-                const result = await fn({ name });
-                aiNutritionCache[name] = result.data || null;
-                return aiNutritionCache[name];
+                const cacheDoc = await db.collection('ingredientNutrition').doc(docId).get();
+                if (cacheDoc.exists) {
+                    aiNutritionCache[name] = cacheDoc.data();
+                    return aiNutritionCache[name];
+                }
             } catch (err) {
-                console.warn('AI 熱量估算暫時無法使用（後端可能尚未部署）', err && err.message);
+                console.warn('讀取食材熱量快取失敗', err && err.message);
+            }
+
+            // 快取沒有 → 呼叫 Gemini 估算
+            try {
+                if (typeof window.__fetchGeminiIngredientNutrition !== 'function') { aiNutritionCache[name] = null; return null; }
+                const data = await window.__fetchGeminiIngredientNutrition(name);
+                aiNutritionCache[name] = data;
+                if (data && currentUser) {
+                    // 只有登入使用者的查詢會寫入共用快取，降低被惡意寫入垃圾資料的風險；
+                    // 未登入者一樣能查詢／看到結果，只是不會幫忙寫快取
+                    db.collection('ingredientNutrition').doc(docId).set({
+                        name, ...data, source: 'ai_estimated',
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    }).catch(err => console.warn('寫入食材熱量快取失敗', err && err.message));
+                }
+                return data;
+            } catch (err) {
+                console.warn('AI 熱量估算暫時無法使用（可能尚未完成 Firebase AI Logic 設定）', err && err.message);
                 aiNutritionCache[name] = null;
                 return null;
             }
@@ -1351,6 +1370,63 @@
                 });
             });
         }
+    </script>
+
+    <!--
+        Firebase AI Logic（Gemini，前端直接呼叫，金鑰不外洩）
+        ------------------------------------------------------------
+        用途：本地食材熱量對照表查不到的食材，改用這裡呼叫 Gemini 估算。
+        這段程式碼「還沒設定好之前完全不會出錯」——只是安靜地不啟用，網站其他功能不受影響。
+
+        部署前，你需要先在 Firebase 主控台完成這些步驟：
+        1. 主控台 > AI Logic > 開始使用 (Get started)，選擇「Gemini Developer API」，
+           依照畫面指示註冊你的 Web App
+        2. 主控台 > App Check，替你的 Web App 選擇「reCAPTCHA v3」提供者：
+           - 先到 https://www.google.com/recaptcha/admin 註冊網站，網域填
+             wallcemax.github.io，取得一組「網站金鑰 (Site Key)」
+           - 回到 Firebase 主控台 App Check 頁面，貼上這組網站金鑰完成註冊
+           - 確認 App Check > API 分頁裡，「Firebase AI Logic」那一列狀態是「已強制」
+        3. 把下面的 RECAPTCHA_SITE_KEY 換成你在步驟 2 拿到的網站金鑰
+        4. 型號名稱 (model) 請以 Firebase 主控台「開始使用」流程實際顯示的建議型號為準
+           （AI 模型名稱常常更新，這裡先填一個目前常見的預設值，部署前請對照主控台確認）
+    -->
+    <script type="module">
+        import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app-check.js";
+        import { getAI, GoogleAIBackend, getGenerativeModel } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-ai.js";
+
+        const RECAPTCHA_SITE_KEY = '6LdhikwtAAAAABB_qD-K1UOHUL3pOZFt2M7FuYyh';
+
+        let aiModel = null;
+        try {
+            if (RECAPTCHA_SITE_KEY && !RECAPTCHA_SITE_KEY.startsWith('請填入')) {
+                initializeAppCheck(firebase.app(), {
+                    provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY),
+                    isTokenAutoRefreshEnabled: true
+                });
+                const ai = getAI(firebase.app(), { backend: new GoogleAIBackend() });
+                aiModel = getGenerativeModel(ai, { model: 'gemini-2.5-flash' });
+            } else {
+                console.info('Firebase AI Logic 尚未設定 reCAPTCHA 網站金鑰，AI 食材熱量估算功能目前停用中');
+            }
+        } catch (err) {
+            console.warn('Firebase AI Logic 初始化失敗（可能尚未完成主控台設定）', err);
+        }
+
+        // 提供給下方一般 <script>（非 module）呼叫的全域介面
+        window.__fetchGeminiIngredientNutrition = async function (name) {
+            if (!aiModel) return null;
+            const prompt = `請估算食材「${name}」（繁體中文，烘焙／料理食譜情境）每 100 克的營養數據。只回傳一個 JSON 物件，不要有其他文字、不要用 markdown code block，格式：{"kcal":數字,"protein":數字,"fat":數字,"carb":數字,"sodium":數字}`;
+            const result = await aiModel.generateContent(prompt);
+            const text = result.response.text().replace(/```json|```/g, '').trim();
+            const parsed = JSON.parse(text);
+            return {
+                kcal: Number(parsed.kcal) || 0,
+                protein: Number(parsed.protein) || 0,
+                fat: Number(parsed.fat) || 0,
+                carb: Number(parsed.carb) || 0,
+                sodium: Number(parsed.sodium) || 0,
+            };
+        };
     </script>
 </body>
 </html>
