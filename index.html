@@ -787,12 +787,13 @@
             { keywords: ['水', 'water'], density: 1.00 },
         ];
 
-        // 依食材名稱關鍵字比對密度；找不到時回傳 null
+        // 依食材名稱關鍵字比對密度；雙向比對（名稱包含關鍵字，或關鍵字包含名稱），
+        // 這樣像「糖」這種比關鍵字「砂糖」更短的通用名稱也能對到；找不到時回傳 null
         function guessIngredientDensity(name) {
             if (!name) return null;
             const lower = name.toLowerCase();
             for (const entry of INGREDIENT_DENSITY_MAP) {
-                if (entry.keywords.some(k => lower.includes(k.toLowerCase()))) return entry.density;
+                if (entry.keywords.some(k => { const kl = k.toLowerCase(); return lower.includes(kl) || kl.includes(lower); })) return entry.density;
             }
             return null;
         }
@@ -828,14 +829,41 @@
             { keywords: ['花椰菜', '青花菜', 'broccoli'], kcal: 34, protein: 2.8, fat: 0.4, carb: 6.6 },
             { keywords: ['菠菜', 'spinach'], kcal: 23, protein: 2.9, fat: 0.4, carb: 3.6 },
             { keywords: ['豆腐', 'tofu'], kcal: 76, protein: 8.1, fat: 4.8, carb: 1.9 },
+            { keywords: ['鹽', 'salt'], kcal: 0, protein: 0, fat: 0, carb: 0 },
+            { keywords: ['水', 'water'], kcal: 0, protein: 0, fat: 0, carb: 0 },
         ];
 
-        // 依食材名稱關鍵字比對熱量資料；找不到時回傳 null
+        // 依食材名稱關鍵字比對熱量資料；雙向比對（名稱包含關鍵字，或關鍵字包含名稱），
+        // 這樣像「糖」這種比關鍵字「砂糖」更短的通用名稱也能對到；找不到時回傳 null
         function guessIngredientNutrition(name) {
             if (!name) return null;
             const lower = name.toLowerCase();
             for (const entry of INGREDIENT_NUTRITION_MAP) {
-                if (entry.keywords.some(k => lower.includes(k.toLowerCase()))) return entry;
+                if (entry.keywords.some(k => { const kl = k.toLowerCase(); return lower.includes(kl) || kl.includes(lower); })) return entry;
+            }
+            return null;
+        }
+
+        // 常見「以顆／粒／個」計量的食材，內建每單位大約幾公克，讓這類食材也能換算成公克計算熱量。
+        // 數值為概略平均值，僅供估算參考。順序上較specific的項目（如蛋黃/蛋白）需排在「雞蛋/全蛋」之前，
+        // 避免被較廣泛的關鍵字先比對到
+        const PIECE_WEIGHT_MAP = [
+            { keywords: ['蛋黃'], gramsPerUnit: 20 },
+            { keywords: ['蛋白'], gramsPerUnit: 30 },
+            { keywords: ['全蛋', '雞蛋'], gramsPerUnit: 50 },
+            { keywords: ['檸檬'], gramsPerUnit: 100 },
+            { keywords: ['香蕉'], gramsPerUnit: 120 },
+            { keywords: ['蘋果'], gramsPerUnit: 180 },
+            { keywords: ['大蒜', '蒜頭', '蒜瓣'], gramsPerUnit: 5 },
+        ];
+        // 會被視為「計量單位」而嘗試比對食材個別重量的單位（顆/粒/個等）
+        const COUNT_UNIT_WORDS = ['顆', '粒', '個', '顆粒'];
+
+        function guessPieceWeight(name) {
+            if (!name) return null;
+            const lower = name.toLowerCase();
+            for (const entry of PIECE_WEIGHT_MAP) {
+                if (entry.keywords.some(k => { const kl = k.toLowerCase(); return lower.includes(kl) || kl.includes(lower); })) return entry.gramsPerUnit;
             }
             return null;
         }
@@ -854,9 +882,11 @@
         // 將食材份量換算成公克。
         // 重量單位直接換算；體積單位（大匙/tbsp/茶匙/tsp/ml/毫升）則自動辨別食材名稱抓取密度，
         // 換算成 ml 後再乘以密度得到公克數；無法辨識密度的食材則以水的密度 1 g/ml 估算。
-        // 其他無法辨識的單位（如「顆」）回傳 null，不計入總重。
+        // 「顆/粒/個」等計量單位，會嘗試依食材名稱比對常見單顆重量（如雞蛋、檸檬）換算成公克。
+        // 其餘無法辨識的單位回傳 null，不計入總重。
         function convertToGrams(amount, unit, name) {
-            switch ((unit || '').trim().toLowerCase()) {
+            const u = (unit || '').trim();
+            switch (u.toLowerCase()) {
                 case 'g': return amount;
                 case 'kg': return amount * 1000;
                 case 'oz': return amount * 28.3495;
@@ -866,6 +896,10 @@
             if (ml !== null) {
                 const density = guessIngredientDensity(name);
                 return ml * (density !== null ? density : 1.00);
+            }
+            if (COUNT_UNIT_WORDS.includes(u)) {
+                const pieceWeight = guessPieceWeight(name);
+                if (pieceWeight !== null) return amount * pieceWeight;
             }
             return null;
         }
