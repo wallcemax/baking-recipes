@@ -134,50 +134,10 @@
         .step-checkbox i { transition: color .2s; }
         .step-row { transition: opacity .2s; }
 
-        /* 手機/平板橫向：極簡料理模式（高對比暖色調 + 左右分割可各自捲動 + 字體放大）
-           做法：直接覆蓋 CSS 變數本身，這樣不管顏色是寫在 class 裡還是 inline style，
-           只要用的是 var(--cream) 這類變數就會自動跟著變，不用一個一個屬性去覆蓋 */
-        @media (orientation: landscape) and (max-width: 1180px) {
-            #detail-modal.landscape-cooking-mode {
-                --cream: #241A13;
-                --paper: #2F2219;
-                --espresso: #F5EBDF;
-                --espresso-soft: #D9C4AE;
-                --line: #4A392E;
-                --jam: #F0A8C4;
-                --honey: #F4C15E;
-                --sage: #9BC49B;
-            }
-            #detail-modal.landscape-cooking-mode {
-                align-items: center !important;
-            }
-            #detail-modal.landscape-cooking-mode #modal-content {
-                background: var(--paper);
-                color: var(--espresso);
-                width: 96vw !important;
-                max-width: 96vw !important;
-                max-height: 94vh !important;
-                border-radius: 1.5rem !important;
-            }
-            #detail-modal.landscape-cooking-mode .cook-split-wrap {
-                display: grid;
-                grid-template-columns: 1fr 1.3fr;
-                gap: 1.75rem;
-                align-items: start;
-            }
-            #detail-modal.landscape-cooking-mode #cook-ingredients-block,
-            #detail-modal.landscape-cooking-mode #cook-steps-block {
-                max-height: 68vh;
-                overflow-y: auto;
-                padding-right: 0.5rem;
-            }
-            #detail-modal.landscape-cooking-mode h2,
-            #detail-modal.landscape-cooking-mode h3,
-            #detail-modal.landscape-cooking-mode p,
-            #detail-modal.landscape-cooking-mode span {
-                font-size: 1.15em;
-            }
-        }
+        /* 手機/平板橫向：極簡料理模式的樣式改由 JavaScript 直接寫入 inline style（見 applyCookingMode 函式），
+           不再依賴 @media 查詢或 CSS 變數繼承——inline style 優先權最高，不會被任何 CSS 規則覆蓋掉，
+           避免不同瀏覽器/PWA 對 media query 支援度不一致導致樣式套用不了的問題 */
+        .cook-mode-text-lg { font-size: 1.15em !important; }
     </style>
 </head>
 <body class="min-h-screen">
@@ -1673,17 +1633,88 @@
         }
 
         // ---------- 手機/平板橫向：極簡料理模式 ----------
-        const landscapeCookingQuery = window.matchMedia('(orientation: landscape) and (max-width: 1180px)');
+        // 改用 window.innerWidth / innerHeight 直接比較（比 CSS 的 orientation media feature
+        // 在各種瀏覽器/PWA 環境下更一致），並且用 JS 直接寫 inline style（優先權最高，
+        // 不會被任何 CSS 規則、Tailwind CDN 動態產生的樣式蓋掉）
+        function isLandscapeSmallScreen() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            return w > h && w <= 1180;
+        }
+
+        const COOKING_MODE_VARS = {
+            '--cream': '#241A13', '--paper': '#2F2219', '--espresso': '#F5EBDF',
+            '--espresso-soft': '#D9C4AE', '--line': '#4A392E', '--jam': '#F0A8C4',
+            '--honey': '#F4C15E', '--sage': '#9BC49B',
+        };
+
+        function applyCookingMode(modal) {
+            modal.classList.add('landscape-cooking-mode');
+            modal.style.setProperty('align-items', 'center', 'important');
+            Object.entries(COOKING_MODE_VARS).forEach(([k, v]) => modal.style.setProperty(k, v));
+
+            const content = document.getElementById('modal-content');
+            if (content) {
+                content.style.setProperty('background', COOKING_MODE_VARS['--paper'], 'important');
+                content.style.setProperty('color', COOKING_MODE_VARS['--espresso'], 'important');
+                content.style.setProperty('width', '96vw', 'important');
+                content.style.setProperty('max-width', '96vw', 'important');
+                content.style.setProperty('max-height', '94vh', 'important');
+                content.style.setProperty('border-radius', '1.5rem', 'important');
+                content.querySelectorAll('h2, h3, p, span, label, .step-text').forEach(el => el.classList.add('cook-mode-text-lg'));
+            }
+            const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
+            if (splitWrap) {
+                splitWrap.style.setProperty('display', 'grid', 'important');
+                splitWrap.style.setProperty('grid-template-columns', '1fr 1.3fr', 'important');
+                splitWrap.style.setProperty('gap', '1.75rem', 'important');
+                splitWrap.style.setProperty('align-items', 'start', 'important');
+            }
+            ['cook-ingredients-block', 'cook-steps-block'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.style.setProperty('max-height', '68vh', 'important');
+                    el.style.setProperty('overflow-y', 'auto', 'important');
+                }
+            });
+        }
+
+        function removeCookingMode(modal) {
+            modal.classList.remove('landscape-cooking-mode');
+            modal.style.removeProperty('align-items');
+            Object.keys(COOKING_MODE_VARS).forEach(k => modal.style.removeProperty(k));
+
+            const content = document.getElementById('modal-content');
+            if (content) {
+                ['background', 'color', 'width', 'max-width', 'max-height', 'border-radius'].forEach(p => content.style.removeProperty(p));
+                content.querySelectorAll('.cook-mode-text-lg').forEach(el => el.classList.remove('cook-mode-text-lg'));
+            }
+            const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
+            if (splitWrap) {
+                ['display', 'grid-template-columns', 'gap', 'align-items'].forEach(p => splitWrap.style.removeProperty(p));
+            }
+            ['cook-ingredients-block', 'cook-steps-block'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) { el.style.removeProperty('max-height'); el.style.removeProperty('overflow-y'); }
+            });
+        }
+
         function updateCookingModeClass() {
             const modal = document.getElementById('detail-modal');
             if (!modal) return;
             const isOpen = !modal.classList.contains('hidden');
-            modal.classList.toggle('landscape-cooking-mode', isOpen && landscapeCookingQuery.matches);
+            if (isOpen && isLandscapeSmallScreen()) {
+                applyCookingMode(modal);
+            } else {
+                removeCookingMode(modal);
+            }
         }
-        landscapeCookingQuery.addEventListener('change', updateCookingModeClass);
         window.addEventListener('resize', updateCookingModeClass);
         window.addEventListener('orientationchange', updateCookingModeClass);
-        // 保險機制：部分手機瀏覽器的方向改變事件不太可靠，食譜頁開著時額外每 0.5 秒檢查一次，
+        if (window.screen && window.screen.orientation) {
+            window.screen.orientation.addEventListener('change', updateCookingModeClass);
+        }
+        // 保險機制：部分手機瀏覽器／PWA 的方向改變事件不太可靠，食譜頁開著時額外每 0.5 秒檢查一次，
         // 確保橫向/直向切換一定會被偵測到
         let cookingModePollId = null;
         function startCookingModePoll() {
@@ -1727,7 +1758,7 @@
             stopCookingModePoll();
             const modal = document.getElementById('detail-modal');
             modal.classList.add('hidden');
-            modal.classList.remove('landscape-cooking-mode');
+            removeCookingMode(modal);
         }
 
         function editRecipe(recipe) {
