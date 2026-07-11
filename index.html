@@ -980,7 +980,7 @@
             const visInfo = VISIBILITY_LABELS[recipe.visibility];
             const visBadge = visInfo ? `<span class="px-3 py-1 text-xs font-medium rounded-full ml-2" style="background:${visInfo.bg}; color:${visInfo.color}">${visInfo.label}</span>` : '';
             const html = `
-                <div class="sticky top-0 z-10 flex justify-between items-start gap-4 px-6 sm:px-8 py-5 border-b bg-white" style="border-color:var(--line)">
+                <div class="sticky top-0 z-10 flex justify-between items-start gap-4 px-6 sm:px-8 py-5 border-b bg-white" id="detail-header-row" style="border-color:var(--line)">
                     <div class="min-w-0">
                         <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${recipe.category}</span>${visBadge}
                         <h2 class="font-display text-2xl sm:text-3xl font-bold mt-3 leading-snug">${recipe.name}</h2>
@@ -992,8 +992,9 @@
                         <button onclick="closeDetail()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
                     </div>
                 </div>
-                ${recipe.imageUrl ? `<img src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover">` : ''}
+                ${recipe.imageUrl ? `<img id="detail-image" src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover">` : ''}
                 <div class="px-6 sm:px-8 py-6">
+                    <div id="detail-top-controls">
                     ${recipe.sizeValue ? `<p class="text-xs mb-2" style="color:#B3A492">原始：${recipe.sizeValue}${recipe.sizeUnit} × ${recipe.servings} 個。換算時會同時依尺寸（面積比）與數量計算份量</p>` : ''}
                     <div class="flex gap-3 mb-4 flex-wrap">
                         <input id="scale-servings" value="${recipe.servings}" type="number" class="form-input flex-1" style="min-width:100px" placeholder="數量">
@@ -1002,6 +1003,7 @@
                     </div>
                     <div class="mb-8">
                         <div id="detail-nutrition"></div>
+                    </div>
                     </div>
                     <div class="cook-split-wrap">
                     <div class="mb-10" id="cook-ingredients-block">
@@ -1041,7 +1043,7 @@
                     </div>
                     </div>
                     ${recipe.youtubeUrl && getYoutubeEmbedUrl(recipe.youtubeUrl) ? `
-                    <div class="mb-2">
+                    <div class="mb-2" id="detail-video-section">
                         <h3 class="font-display font-semibold text-lg mb-4"><i class="fab fa-youtube mr-1" style="color:#C4453F"></i> 教學影片</h3>
                         <div class="aspect-video rounded-2xl overflow-hidden bg-black">
                             <iframe id="yt-player" class="w-full h-full" src="${getYoutubeEmbedUrl(recipe.youtubeUrl)}" title="YouTube video" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
@@ -1049,7 +1051,7 @@
                     </div>` : ''}
                 </div>
                 ${currentUser ? `
-                <div class="sticky bottom-0 flex gap-3 px-6 sm:px-8 py-4 border-t bg-white flex-wrap" style="border-color:var(--line)">
+                <div class="sticky bottom-0 flex gap-3 px-6 sm:px-8 py-4 border-t bg-white flex-wrap" id="detail-action-row" style="border-color:var(--line)">
                     ${canEditRecipe(recipe) ? `
                         <button onclick="editRecipe(${recipeJson})" class="btn-amber flex-1">編輯</button>
                         <button onclick="deleteRecipe(${recipeJson})" class="btn-danger flex-1">刪除</button>
@@ -1661,11 +1663,12 @@
             } catch (e) {}
         }
 
+        const COOKING_HIDE_IDS = ['detail-header-row', 'detail-image', 'detail-top-controls', 'detail-video-section', 'detail-action-row'];
+
         function applyCookingMode(modal) {
             modal.classList.add('landscape-cooking-mode');
             Object.entries(COOKING_MODE_VARS).forEach(([k, v]) => modal.style.setProperty(k, v));
-            // 背景遮罩改成不透明的深色，並移除內距，讓內容真的能撐滿整個螢幕，
-            // 徹底蓋掉底下的頁首、分類標籤等其他按鈕，視覺上乾淨許多
+            // 背景遮罩改成不透明的深色，並移除內距，讓內容真的能撐滿整個螢幕
             modal.style.setProperty('background', COOKING_MODE_VARS['--cream'], 'important');
             modal.style.setProperty('padding', '0', 'important');
             modal.style.setProperty('align-items', 'stretch', 'important');
@@ -1683,17 +1686,29 @@
                 content.style.setProperty('margin', '0', 'important');
                 content.querySelectorAll('h2, h3, p, span, label, .step-text').forEach(el => el.classList.add('cook-mode-text-lg'));
             }
+            // 極簡料理模式只留左右兩欄（食材／作法），照片、標題列、換算/熱量區塊、
+            // 教學影片、底下編輯/刪除/複製當範本，全部隱藏，方便專心左右滑動看內容
+            COOKING_HIDE_IDS.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.setProperty('display', 'none', 'important');
+            });
+
             const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
             if (splitWrap) {
                 splitWrap.style.setProperty('display', 'grid', 'important');
                 splitWrap.style.setProperty('grid-template-columns', '1fr 1.3fr', 'important');
                 splitWrap.style.setProperty('gap', '1.75rem', 'important');
                 splitWrap.style.setProperty('align-items', 'start', 'important');
+                splitWrap.style.setProperty('height', '100vh', 'important');
+                splitWrap.style.setProperty('padding', '1.5rem', 'important');
+                splitWrap.style.setProperty('margin', '0', 'important');
+                splitWrap.style.setProperty('box-sizing', 'border-box', 'important');
             }
             ['cook-ingredients-block', 'cook-steps-block'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) {
-                    el.style.setProperty('max-height', '74vh', 'important');
+                    el.style.setProperty('max-height', '100%', 'important');
+                    el.style.setProperty('height', '100%', 'important');
                     el.style.setProperty('overflow-y', 'auto', 'important');
                 }
             });
@@ -1705,10 +1720,20 @@
             if (!document.getElementById('cook-fullscreen-btn')) {
                 const btn = document.createElement('button');
                 btn.id = 'cook-fullscreen-btn';
-                btn.textContent = '⛶ 全螢幕';
-                btn.style.cssText = 'position:fixed;top:10px;right:56px;z-index:60;padding:6px 14px;border-radius:999px;background:rgba(255,255,255,0.15);color:#F5EBDF;font-size:13px;border:1px solid rgba(255,255,255,0.3);';
+                btn.textContent = '⛶';
+                btn.title = '全螢幕';
+                btn.style.cssText = 'position:fixed;top:10px;right:10px;z-index:60;width:36px;height:36px;border-radius:999px;background:rgba(255,255,255,0.15);color:#F5EBDF;font-size:15px;border:1px solid rgba(255,255,255,0.3);';
                 btn.onclick = attemptFullscreen;
                 document.body.appendChild(btn);
+            }
+            if (!document.getElementById('cook-exit-btn')) {
+                const exitBtn = document.createElement('button');
+                exitBtn.id = 'cook-exit-btn';
+                exitBtn.textContent = '×';
+                exitBtn.title = '關閉食譜';
+                exitBtn.style.cssText = 'position:fixed;top:10px;left:10px;z-index:60;width:36px;height:36px;border-radius:999px;background:rgba(255,255,255,0.15);color:#F5EBDF;font-size:22px;line-height:1;border:1px solid rgba(255,255,255,0.3);';
+                exitBtn.onclick = closeDetail;
+                document.body.appendChild(exitBtn);
             }
         }
 
@@ -1725,16 +1750,22 @@
                 ['background', 'color', 'width', 'height', 'max-width', 'max-height', 'border-radius', 'margin'].forEach(p => content.style.removeProperty(p));
                 content.querySelectorAll('.cook-mode-text-lg').forEach(el => el.classList.remove('cook-mode-text-lg'));
             }
+            COOKING_HIDE_IDS.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.removeProperty('display');
+            });
             const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
             if (splitWrap) {
-                ['display', 'grid-template-columns', 'gap', 'align-items'].forEach(p => splitWrap.style.removeProperty(p));
+                ['display', 'grid-template-columns', 'gap', 'align-items', 'height', 'padding', 'margin', 'box-sizing'].forEach(p => splitWrap.style.removeProperty(p));
             }
             ['cook-ingredients-block', 'cook-steps-block'].forEach(id => {
                 const el = document.getElementById(id);
-                if (el) { el.style.removeProperty('max-height'); el.style.removeProperty('overflow-y'); }
+                if (el) { el.style.removeProperty('max-height'); el.style.removeProperty('height'); el.style.removeProperty('overflow-y'); }
             });
             const fsBtn = document.getElementById('cook-fullscreen-btn');
             if (fsBtn) fsBtn.remove();
+            const exitBtn = document.getElementById('cook-exit-btn');
+            if (exitBtn) exitBtn.remove();
             exitFullscreenIfActive();
         }
 
