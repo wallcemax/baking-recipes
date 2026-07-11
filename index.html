@@ -2033,14 +2033,17 @@
         }
 
         // ---------- 相機文字辨識（OCR，Tesseract.js）----------
-        // 第一次使用才會動態載入 Tesseract.js（約 2-3MB），避免拖慢一般瀏覽網站的載入速度
+        // 第一次使用才會動態載入 Tesseract.js（約 2-3MB），避免拖慢一般瀏覽網站的載入速度。
+        // 版本號鎖死（不用 @5 這種浮動版本號），避免 CDN 解析到跟語言包不相容的最新版本組合，
+        // 這是先前辨識結果整段亂碼最可能的原因
+        const TESSERACT_VERSION = '5.1.1';
         let tesseractLoadPromise = null;
         function loadTesseract() {
             if (window.Tesseract) return Promise.resolve();
             if (tesseractLoadPromise) return tesseractLoadPromise;
             tesseractLoadPromise = new Promise((resolve, reject) => {
                 const script = document.createElement('script');
-                script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+                script.src = `https://cdn.jsdelivr.net/npm/tesseract.js@${TESSERACT_VERSION}/dist/tesseract.min.js`;
                 script.onload = resolve;
                 script.onerror = () => reject(new Error('OCR 辨識引擎載入失敗，請檢查網路連線'));
                 document.head.appendChild(script);
@@ -2050,9 +2053,19 @@
 
         async function runOCR(file) {
             await loadTesseract();
-            // chi_tra=繁體中文，eng=英文/數字，混合辨識最適合中文食譜/包裝標示
-            const result = await Tesseract.recognize(file, 'chi_tra+eng');
-            return result.data.text || '';
+            // 明確指定 worker/core 路徑版本，跟上面鎖定的 tesseract.js 版本一致，
+            // 避免版本不一致造成語言包讀取不完整、辨識結果變成亂碼
+            const worker = await Tesseract.createWorker('chi_tra', 1, {
+                workerPath: `https://cdn.jsdelivr.net/npm/tesseract.js@${TESSERACT_VERSION}/dist/worker.min.js`,
+                corePath: `https://cdn.jsdelivr.net/npm/tesseract.js-core@${TESSERACT_VERSION}`,
+                langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+            });
+            try {
+                const { data } = await worker.recognize(file);
+                return data.text || '';
+            } finally {
+                await worker.terminate();
+            }
         }
 
         // ----- 新增食譜：拍照辨識食材清單 -----
