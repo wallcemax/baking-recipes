@@ -148,9 +148,16 @@
                 --honey: #F4C15E;
                 --sage: #9BC49B;
             }
+            #detail-modal.landscape-cooking-mode {
+                align-items: center !important;
+            }
             #detail-modal.landscape-cooking-mode #modal-content {
                 background: var(--paper);
                 color: var(--espresso);
+                width: 96vw !important;
+                max-width: 96vw !important;
+                max-height: 94vh !important;
+                border-radius: 1.5rem !important;
             }
             #detail-modal.landscape-cooking-mode .cook-split-wrap {
                 display: grid;
@@ -756,9 +763,26 @@
 
         // ---------- 步驟計時器 ----------
         // 播放一聲像烤箱計時器一樣的「叮」聲（基音 + 泛音，快速起音、緩慢衰減）
+        // 共用一個 AudioContext，並在「按下開始計時」這個真正的使用者點擊當下解鎖，
+        // 之後計時結束時（背景 setTimeout 觸發，非直接點擊）才能正常播放聲音，
+        // 不會被瀏覽器的自動播放政策靜音（這是先前鈴聲太小聲/沒聲音的主因）
+        let sharedAudioCtx = null;
+        function ensureAudioContext() {
+            try {
+                if (!sharedAudioCtx) {
+                    sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (sharedAudioCtx.state === 'suspended') {
+                    sharedAudioCtx.resume().catch(() => {});
+                }
+            } catch (e) {}
+        }
+
         function playBeep() {
             try {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                ensureAudioContext();
+                const ctx = sharedAudioCtx;
+                if (!ctx) return;
                 const now = ctx.currentTime;
                 const playTone = (freq, gainPeak, delay) => {
                     const osc = ctx.createOscillator();
@@ -773,9 +797,12 @@
                     osc.start(t0);
                     osc.stop(t0 + 0.95);
                 };
-                playTone(1318.5, 0.28, 0);   // 主音
-                playTone(2637.0, 0.10, 0);   // 高八度泛音，讓聲音更像「叮」
-            } catch(e) {}
+                // 連響三聲、拉高音量，比原本單響一聲更明顯、更不容易被忽略
+                [0, 0.4, 0.8].forEach(delay => {
+                    playTone(1318.5, 0.55, delay);   // 主音
+                    playTone(2637.0, 0.22, delay);   // 高八度泛音，讓聲音更像「叮」
+                });
+            } catch (e) {}
         }
 
         // 更新沙漏動畫：fraction 0（剛開始，沙全在上面）→ 1（時間到，沙全在下面）
@@ -798,7 +825,7 @@
                     await reg.showNotification('⏰ 計時時間到！', {
                         body: stepLabel ? `「${stepLabel}」時間到囉，該進行下一步了` : '該進行下一步了',
                         icon: './icon-192.png',
-                        vibrate: [120, 90, 120, 90, 400],
+                        vibrate: [180, 100, 180, 100, 500],
                         tag: 'recipe-timer',
                     });
                     return;
@@ -807,7 +834,7 @@
                 }
             }
             playBeep();
-            if (navigator.vibrate) navigator.vibrate([120, 90, 120, 90, 400]);
+            if (navigator.vibrate) navigator.vibrate([180, 100, 180, 100, 500]);
         }
 
         function updateHourglass(idx, fraction) {
@@ -822,6 +849,7 @@
             const btn = document.getElementById(spanId.replace('step-timer-', 'step-timer-btn-'));
             if (!span || !btn) return;
             ensureNotificationPermission();
+            ensureAudioContext(); // 一定要在「點擊」這個當下解鎖音訊，之後背景響鈴才會有聲音
 
             if (!stepTimers[spanId]) {
                 const totalSeconds = minutes > 0 ? Math.round(minutes * 60) : 0;
@@ -833,6 +861,7 @@
                     intervalId: null,
                     completionTimeoutId: null,
                     endTime: null,
+                    lastPulsedSecond: null,
                 };
             }
             const t = stepTimers[spanId];
@@ -865,9 +894,11 @@
                 t.intervalId = setInterval(() => {
                     const remaining = Math.max(0, Math.round((t.endTime - Date.now()) / 1000));
                     if (t.totalSeconds > 0) updateHourglass(idx, 1 - (remaining / t.totalSeconds));
-                    // 最後 5 秒：頁面開著時額外加上有節奏的脈搏式震動提醒
-                    if (remaining <= 5 && remaining > 0 && navigator.vibrate) {
-                        navigator.vibrate([90, 60, 90]);
+                    // 最後 5 秒：每一秒都用比較強、比較長的震動節奏提醒，並且用 lastPulsedSecond
+                    // 避免同一秒被重複觸發（保留但加強原本的節奏震動）
+                    if (remaining <= 5 && remaining > 0 && navigator.vibrate && t.lastPulsedSecond !== remaining) {
+                        t.lastPulsedSecond = remaining;
+                        navigator.vibrate([150, 80, 150]);
                     }
                     if (remaining <= 0) { clearInterval(t.intervalId); span.textContent = '時間到！'; return; }
                     span.textContent = formatTimestamp(remaining);
@@ -1073,6 +1104,7 @@
             updateStepsProgress();
             requestWakeLock();
             updateCookingModeClass();
+            startCookingModePoll();
             scaleRecipe(recipe);
         }
 
@@ -1641,7 +1673,7 @@
         }
 
         // ---------- 手機/平板橫向：極簡料理模式 ----------
-        const landscapeCookingQuery = window.matchMedia('(orientation: landscape) and (max-width: 1024px)');
+        const landscapeCookingQuery = window.matchMedia('(orientation: landscape) and (max-width: 1180px)');
         function updateCookingModeClass() {
             const modal = document.getElementById('detail-modal');
             if (!modal) return;
@@ -1650,6 +1682,17 @@
         }
         landscapeCookingQuery.addEventListener('change', updateCookingModeClass);
         window.addEventListener('resize', updateCookingModeClass);
+        window.addEventListener('orientationchange', updateCookingModeClass);
+        // 保險機制：部分手機瀏覽器的方向改變事件不太可靠，食譜頁開著時額外每 0.5 秒檢查一次，
+        // 確保橫向/直向切換一定會被偵測到
+        let cookingModePollId = null;
+        function startCookingModePoll() {
+            stopCookingModePoll();
+            cookingModePollId = setInterval(updateCookingModeClass, 500);
+        }
+        function stopCookingModePoll() {
+            if (cookingModePollId) { clearInterval(cookingModePollId); cookingModePollId = null; }
+        }
 
         // ---------- 螢幕防休眠（Wake Lock） ----------
         // 開啟食譜詳細頁時啟動，避免邊做邊看手機時螢幕自動變暗/鎖定；關閉詳細頁時釋放
@@ -1681,7 +1724,10 @@
         function closeDetail() {
             clearAllStepTimers();
             releaseWakeLock();
-            document.getElementById('detail-modal').classList.add('hidden');
+            stopCookingModePoll();
+            const modal = document.getElementById('detail-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('landscape-cooking-mode');
         }
 
         function editRecipe(recipe) {
