@@ -1244,6 +1244,87 @@
             return null;
         }
 
+        // ---------- 密度查詢優先順序：Firestore → 本地密度表 → AI 估算 ----------
+        // 用於「大匙/tbsp/茶匙/tsp/ml/毫升」等體積單位換算成公克時，本地表查不到密度的食材
+        let densityCache = {}; // 同一次瀏覽期間的暫存，避免同個食材重複問 Firestore／AI
+        async function resolveIngredientDensity(name) {
+            if (Object.prototype.hasOwnProperty.call(densityCache, name)) return densityCache[name];
+            const trimmedName = name.trim();
+            const docId = trimmedName.replace(/\//g, '_').slice(0, 200);
+
+            // ① 優先查 Firestore（跟熱量資料共用同一份文件的 density 欄位，包含管理者手動輸入的資料）
+            try {
+                const cacheDoc = await db.collection('ingredientNutrition').doc(docId).get();
+                if (cacheDoc.exists && typeof cacheDoc.data().density === 'number') {
+                    densityCache[name] = cacheDoc.data().density;
+                    return densityCache[name];
+                }
+            } catch (err) {
+                console.warn('讀取食材密度快取失敗', err && err.message);
+            }
+
+            // ①-2 查「關聯關鍵字」（同一套別名機制，例如「植物油」對應到「沙拉油」那筆資料）
+            try {
+                const aliasSnap = await db.collection('ingredientNutrition')
+                    .where('keywords', 'array-contains', trimmedName)
+                    .limit(1)
+                    .get();
+                if (!aliasSnap.empty && typeof aliasSnap.docs[0].data().density === 'number') {
+                    densityCache[name] = aliasSnap.docs[0].data().density;
+                    return densityCache[name];
+                }
+            } catch (err) {
+                console.warn('讀取食材密度關聯關鍵字失敗', err && err.message);
+            }
+
+            // ② Firestore 沒有 → 查本地密度表
+            const local = guessIngredientDensity(name);
+            if (local !== null) {
+                densityCache[name] = local;
+                return local;
+            }
+
+            // ③ 都查不到 → 呼叫 AI 估算密度，並寫回 Firestore（用 merge，避免蓋掉同一份文件裡已有的熱量資料）
+            try {
+                if (typeof window.__fetchGeminiIngredientDensity !== 'function') { densityCache[name] = null; return null; }
+                const density = await window.__fetchGeminiIngredientDensity(name);
+                densityCache[name] = density;
+                if (density !== null && currentUser) {
+                    db.collection('ingredientNutrition').doc(docId).set({
+                        name, keywords: [name], density,
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true }).catch(err => console.warn('寫入密度快取失敗', err && err.message));
+                }
+                return density;
+            } catch (err) {
+                console.warn('AI 密度估算暫時無法使用（可能尚未完成 Firebase AI Logic 設定）', err && err.message);
+                densityCache[name] = null;
+                return null;
+            }
+        }
+
+        // 將食材份量換算成公克（非同步版本，體積單位查不到密度時會依序查 Firestore／本地表／AI）。
+        // 重量單位直接換算；「顆/粒/個」等計量單位比對常見單顆重量；其餘無法辨識的單位回傳 null
+        async function resolveGrams(amount, unit, name) {
+            const u = (unit || '').trim();
+            switch (u.toLowerCase()) {
+                case 'g': return amount;
+                case 'kg': return amount * 1000;
+                case 'oz': return amount * 28.3495;
+                case 'lb': return amount * 453.592;
+            }
+            const ml = convertToMilliliters(amount, unit);
+            if (ml !== null) {
+                const density = await resolveIngredientDensity(name);
+                return ml * (density !== null ? density : 1.00);
+            }
+            if (COUNT_UNIT_WORDS.includes(u)) {
+                const pieceWeight = guessPieceWeight(name);
+                if (pieceWeight !== null) return amount * pieceWeight;
+            }
+            return null;
+        }
+
         // 依序將沒有填分類的食材，自動歸類到「上一個」有填分類的食材群組
         // （例如：蛋糕體 底下接著幾個沒填分類的食材，仍然算在「蛋糕體」裡，
         // 而不是被誤判成獨立的「未分類」群組）
@@ -1266,7 +1347,7 @@
             let totalKcal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, totalSodium = 0, uncountedNames = [];
             let tfndUsedCount = 0, manualUsedCount = 0, aiUsedCount = 0;
             await Promise.all(recipe.ingredients.map(async ing => {
-                const grams = convertToGrams(ing.amount * factor, ing.unit, ing.name);
+                const grams = await resolveGrams(ing.amount * factor, ing.unit, ing.name);
                 if (grams === null) { uncountedNames.push(ing.name); return; }
                 const nutri = await resolveIngredientNutrition(ing.name);
                 if (!nutri) { uncountedNames.push(ing.name); return; }
@@ -1335,27 +1416,16 @@
             const hasAnyGroup = recipe.ingredients.some(ing => (ing.group || '').trim());
             const ingredientsForDisplay = hasAnyGroup ? fillIngredientGroups(recipe.ingredients) : recipe.ingredients;
 
-            // 熱量／營養素計算改成非同步（Firestore → 本地資料庫 → AI 依序查詢），不卡住下面的食材重量清單渲染
+            // 熱量／營養素計算改成非同步（Firestore → 本地資料庫 → AI 依序查詢），不卡住下面的食材清單渲染
             updateNutritionBox(recipe, factor, newServings, LOSS_RATE);
 
-            // 先算出各分類（或全部）的總重量（克），扣除 3.6% 損耗後除以份數，得到單份重量
-            const groupGrams = {};
-            ingredientsForDisplay.forEach(ing => {
-                const key = hasAnyGroup ? (ing.group || '（未分類）') : '__ALL__';
-                const grams = convertToGrams(ing.amount * factor, ing.unit, ing.name);
-                if (grams !== null) groupGrams[key] = (groupGrams[key] || 0) + grams;
-            });
-
-            const perServingBadge = (key) => {
-                const totalG = groupGrams[key];
-                if (!totalG) return '';
-                const perServing = (totalG * (1 - LOSS_RATE)) / newServings;
-                return `<span class="text-xs font-normal ml-2" style="color:#B3A492">每份約 ${perServing.toFixed(1)} g（已扣3.6%損耗）</span>`;
-            };
-
+            // 食材清單本身（品名/份量）先同步顯示，重量小計徽章之後非同步補上
+            // （大匙/茶匙等體積單位，本地表查不到密度時會改問 AI，需要時間）
             let html = '';
+            const groupOrder = []; // 依畫面出現順序記錄每個群組 key，配合 index 產生徽章 id
             if (!hasAnyGroup) {
-                html += `<h4 class="font-semibold mb-2" style="color:var(--honey)">食材總計${perServingBadge('__ALL__')}</h4>`;
+                groupOrder.push('__ALL__');
+                html += `<h4 class="font-semibold mb-2" style="color:var(--honey)">食材總計<span id="group-badge-0" class="text-xs font-normal ml-2" style="color:#B3A492"></span></h4>`;
                 ingredientsForDisplay.forEach(ing => {
                     html += `<div class="flex justify-between px-5 py-3 rounded-2xl mb-2" style="background:var(--cream)"><span>${ing.name}</span><span class="font-medium">${(ing.amount * factor).toFixed(1)} ${ing.unit}</span></div>`;
                 });
@@ -1365,7 +1435,9 @@
                 ingredientsForDisplay.forEach(ing => {
                     const group = ing.group || '（未分類）';
                     if (group !== lastGroup) {
-                        html += `<h4 class="font-semibold ${first ? '' : 'mt-5'} mb-2" style="color:var(--honey)">${group}${perServingBadge(group)}</h4>`;
+                        groupOrder.push(group);
+                        const idx = groupOrder.length - 1;
+                        html += `<h4 class="font-semibold ${first ? '' : 'mt-5'} mb-2" style="color:var(--honey)">${group}<span id="group-badge-${idx}" class="text-xs font-normal ml-2" style="color:#B3A492"></span></h4>`;
                         lastGroup = group;
                         first = false;
                     }
@@ -1373,6 +1445,27 @@
                 });
             }
             document.getElementById('detail-ingredients').innerHTML = html;
+
+            updateIngredientWeightBadges(factor, newServings, LOSS_RATE, hasAnyGroup, ingredientsForDisplay, groupOrder);
+        }
+
+        // 非同步計算各分類的總重量並填入畫面上的徽章（大匙/茶匙等體積單位查不到密度時會改問 AI，
+        // 所以獨立成 async 函式，避免卡住上面食材清單的即時顯示）
+        async function updateIngredientWeightBadges(factor, newServings, LOSS_RATE, hasAnyGroup, ingredientsForDisplay, groupOrder) {
+            const groupGrams = {};
+            await Promise.all(ingredientsForDisplay.map(async ing => {
+                const key = hasAnyGroup ? (ing.group || '（未分類）') : '__ALL__';
+                const grams = await resolveGrams(ing.amount * factor, ing.unit, ing.name);
+                if (grams !== null) groupGrams[key] = (groupGrams[key] || 0) + grams;
+            }));
+            groupOrder.forEach((key, idx) => {
+                const el = document.getElementById(`group-badge-${idx}`);
+                if (!el) return; // modal 可能已經關閉，或換了別的食譜
+                const totalG = groupGrams[key];
+                if (!totalG) return;
+                const perServing = (totalG * (1 - LOSS_RATE)) / newServings;
+                el.textContent = `每份約 ${perServing.toFixed(1)} g（已扣3.6%損耗）`;
+            });
         }
 
         function closeDetail() {
@@ -1768,6 +1861,18 @@
                 carb: Number(parsed.carb) || 0,
                 sodium: Number(parsed.sodium) || 0,
             };
+        };
+
+        // 估算食材密度（g/ml），用於「大匙/tbsp/茶匙/tsp/ml/毫升」等體積單位換算成公克，
+        // 本地密度表查不到時才會用到
+        window.__fetchGeminiIngredientDensity = async function (name) {
+            if (!aiModel) return null;
+            const prompt = `請估算食材「${name}」（繁體中文，烘焙／料理食譜情境）的密度，單位為公克/毫升(g/ml)。只回傳一個數字，不要有任何其他文字、不要有單位、不要用 JSON 或 markdown，例如：0.96`;
+            const result = await aiModel.generateContent(prompt);
+            const text = result.response.text().trim();
+            const match = text.match(/[\d.]+/);
+            const num = match ? parseFloat(match[0]) : NaN;
+            return isNaN(num) ? null : num;
         };
     </script>
 </body>
