@@ -125,6 +125,48 @@
 
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; }
+
+        /* 完成慶祝彈窗 */
+        @keyframes celebratePop { from { transform: scale(.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .celebrate-pop { animation: celebratePop .35s cubic-bezier(.22,1,.36,1); }
+
+        /* 步驟勾選 */
+        .step-checkbox i { transition: color .2s; }
+        .step-row { transition: opacity .2s; }
+
+        /* 手機/平板橫向：極簡料理模式（高對比暖色調 + 左右分割可各自捲動 + 字體放大） */
+        @media (orientation: landscape) and (max-width: 1024px) {
+            #detail-modal.landscape-cooking-mode #modal-content {
+                background: #241a13; color: #F3E6D8;
+            }
+            #detail-modal.landscape-cooking-mode .cook-split-wrap {
+                display: grid;
+                grid-template-columns: 1fr 1.3fr;
+                gap: 1.75rem;
+                align-items: start;
+            }
+            #detail-modal.landscape-cooking-mode #cook-ingredients-block,
+            #detail-modal.landscape-cooking-mode #cook-steps-block {
+                max-height: 68vh;
+                overflow-y: auto;
+                padding-right: 0.5rem;
+            }
+            #detail-modal.landscape-cooking-mode h2,
+            #detail-modal.landscape-cooking-mode h3 {
+                color: #FBEFE2 !important;
+                font-size: 1.2em;
+            }
+            #detail-modal.landscape-cooking-mode p,
+            #detail-modal.landscape-cooking-mode span:not(.fa):not(.fas) {
+                font-size: 1.12em;
+            }
+            #detail-modal.landscape-cooking-mode .step-text { color: #F3E6D8; }
+            #detail-modal.landscape-cooking-mode [style*="background:var(--cream)"],
+            #detail-modal.landscape-cooking-mode [style*="background: var(--cream)"] {
+                background: #3A2C21 !important;
+                color: #F3E6D8 !important;
+            }
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -189,6 +231,8 @@
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p class="text-xs mb-4" style="color:#B3A492">在這裡輸入的資料會存進共用資料庫，之後全站食譜計算熱量時都會優先使用這裡的數字，不會再讓 AI 重新估算這個食材。</p>
+                <button type="button" onclick="triggerAdminOCR()" class="btn-secondary text-sm mb-4"><i class="fas fa-camera mr-1"></i>拍照辨識營養標示</button>
+                <input type="file" id="admin-ocr-input" accept="image/*" capture="environment" class="hidden" onchange="handleAdminOCR(event)">
                 <input id="admin-nutri-name" placeholder="食材名稱（例如：泡打粉）" class="form-input mb-3">
                 <div class="mb-3">
                     <input id="admin-nutri-keywords" placeholder="關聯關鍵字（選填，逗號分隔，例如：蘇打粉,發粉,baking powder）" class="form-input">
@@ -283,10 +327,15 @@
                 <div class="mb-6">
                     <div class="flex justify-between items-center mb-3">
                         <label class="font-semibold">食材</label>
-                        <button type="button" onclick="addIngredientField()" class="text-sm font-medium" style="color:var(--jam)"><i class="fas fa-plus mr-1"></i>新增</button>
+                        <div class="flex items-center gap-3">
+                            <button type="button" onclick="triggerIngredientOCR()" class="text-sm font-medium" style="color:var(--honey)"><i class="fas fa-camera mr-1"></i>拍照辨識</button>
+                            <button type="button" onclick="addIngredientField()" class="text-sm font-medium" style="color:var(--jam)"><i class="fas fa-plus mr-1"></i>新增</button>
+                        </div>
                     </div>
+                    <input type="file" id="ingredient-ocr-input" accept="image/*" capture="environment" class="hidden" onchange="handleIngredientOCR(event)">
                     <p class="text-xs mb-3" style="color:#B3A492">💡 在「分類」欄位輸入相同名稱（例如 A 餅皮 / B 內餡），即可將食材自動分組顯示；同一組內若後面的食材不再填分類，會自動歸類到上面最近一次填寫的分類</p>
                     <p class="text-xs mb-3" style="color:#B3A492">💡 單位支援 大匙／tbsp／茶匙／tsp／ml／毫升，系統會依食材名稱自動辨識並換算成公克計算總重</p>
+                    <p class="text-xs mb-3" style="color:#B3A492">📷 「拍照辨識」可以拍手寫食譜卡或包裝標示，自動嘗試解析成食材列表，辨識結果請務必檢查修正</p>
                     <div id="ingredients-container" class="space-y-2.5"></div>
                 </div>
                 <div>
@@ -337,12 +386,14 @@
         let showMyRecipesOnly = false;
         let userFavorites = new Set();
         let stepTimers = {};
+        let checkedSteps = new Set();
+        let currentDetailStepsTotal = 0;
 
         const ADMIN_EMAIL = 'wallcemax@gmail.com';
         const CATEGORY_LIST = ['全部', '蛋糕/糕餅', '麵包/包子', '餅乾/塔派', '慕斯/布丁', '中式烹飪', '西式烹飪', '日式烹飪', '健康餐', '寶寶食品', '其他'];
         const CATEGORY_ICONS = { '蛋糕/糕餅': '🎂', '麵包/包子': '🍞', '餅乾/塔派': '🍪', '慕斯/布丁': '🍮', '中式烹飪': '🥢', '西式烹飪': '🍝', '日式烹飪': '🍣', '健康餐': '🥗', '寶寶食品': '🍼', '其他': '🍽️' };
         const VISIBILITY_LABELS = { private: { label: '🔒 私人', bg: '#EFEAE0', color: 'var(--espresso-soft)' }, draft: { label: '📝 草稿', bg: '#FCE9C8', color: 'var(--honey)' } };
-        const RECIPES_PER_PAGE = 10;
+        const RECIPES_PER_PAGE = 12;
         let currentPage = 1;
 
         function canEditRecipe(recipe) {
@@ -723,13 +774,23 @@
             } catch(e) {}
         }
 
-        function startStepTimer(spanId, minutes) {
+        // 更新沙漏動畫：fraction 0（剛開始，沙全在上面）→ 1（時間到，沙全在下面）
+        function updateHourglass(idx, fraction) {
+            const top = document.getElementById(`hourglass-top-${idx}`);
+            const bottom = document.getElementById(`hourglass-bottom-${idx}`);
+            if (top) top.style.transform = `scaleY(${Math.max(0, 1 - fraction)})`;
+            if (bottom) bottom.style.transform = `scaleY(${Math.min(1, fraction)})`;
+        }
+
+        function startStepTimer(spanId, minutes, idx) {
             const span = document.getElementById(spanId);
             const btn = document.getElementById(spanId.replace('step-timer-', 'step-timer-btn-'));
             if (!span || !btn) return;
             if (!stepTimers[spanId]) {
+                const totalSeconds = minutes > 0 ? Math.round(minutes * 60) : 0;
                 stepTimers[spanId] = {
-                    remaining: minutes > 0 ? Math.round(minutes * 60) : 0,
+                    remaining: totalSeconds,
+                    totalSeconds,
                     mode: minutes > 0 ? 'countdown' : 'stopwatch',
                     elapsed: 0,
                     running: false,
@@ -748,14 +809,21 @@
             t.intervalId = setInterval(() => {
                 if (t.mode === 'countdown') {
                     t.remaining -= 1;
+                    if (t.totalSeconds > 0) updateHourglass(idx, 1 - (t.remaining / t.totalSeconds));
                     if (t.remaining <= 0) {
                         clearInterval(t.intervalId);
                         t.running = false;
                         span.textContent = '時間到！';
                         btn.style.background = 'var(--sage)'; btn.style.color = '#fff';
+                        updateHourglass(idx, 1);
                         playBeep();
-                        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                        // 「短震、短震、長震」的節奏式震動，跟一般單純的長震做出區隔，提示感更明確
+                        if (navigator.vibrate) navigator.vibrate([120, 90, 120, 90, 400]);
                         return;
+                    }
+                    // 最後 5 秒：除了聲音之外，加上有節奏的脈搏式震動提醒
+                    if (t.remaining <= 5 && navigator.vibrate) {
+                        navigator.vibrate([90, 60, 90]);
                     }
                     span.textContent = formatTimestamp(t.remaining);
                 } else {
@@ -768,6 +836,100 @@
         function clearAllStepTimers() {
             Object.values(stepTimers).forEach(t => t.intervalId && clearInterval(t.intervalId));
             stepTimers = {};
+        }
+
+        // ---------- 步驟勾選與完成進度 ----------
+        function toggleStepCheck(idx) {
+            const wasChecked = checkedSteps.has(idx);
+            if (wasChecked) checkedSteps.delete(idx); else checkedSteps.add(idx);
+            const btn = document.getElementById(`step-check-${idx}`);
+            const icon = btn ? btn.querySelector('i') : null;
+            const textEl = document.getElementById(`step-text-${idx}`);
+            const nowChecked = !wasChecked;
+            if (btn) {
+                btn.style.background = nowChecked ? 'var(--jam)' : 'transparent';
+            }
+            if (icon) icon.style.display = nowChecked ? 'inline' : 'none';
+            if (icon) icon.style.color = nowChecked ? '#fff' : 'var(--jam)';
+            if (textEl) {
+                textEl.style.color = nowChecked ? '#B3A492' : '';
+                textEl.style.textDecoration = nowChecked ? 'line-through' : 'none';
+            }
+            updateStepsProgress();
+        }
+
+        function updateStepsProgress() {
+            const total = currentDetailStepsTotal || 0;
+            const done = checkedSteps.size;
+            const pct = total ? Math.round(done / total * 100) : 0;
+            const textEl = document.getElementById('steps-progress-text');
+            const fillEl = document.getElementById('steps-progress-fill');
+            if (textEl) textEl.textContent = `目前進度：${pct}%`;
+            if (fillEl) fillEl.style.width = pct + '%';
+            const finishBtn = document.getElementById('finish-recipe-btn');
+            if (finishBtn) {
+                const complete = total > 0 && done === total;
+                finishBtn.disabled = !complete;
+                finishBtn.classList.toggle('opacity-50', !complete);
+            }
+        }
+
+        function finishRecipe() {
+            if (!currentDetailStepsTotal || checkedSteps.size < currentDetailStepsTotal) return;
+            launchConfetti();
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 flex items-center justify-center z-[9998] px-6';
+            overlay.style.background = 'rgba(58,42,30,0.45)';
+            overlay.innerHTML = `<div class="bg-white rounded-[2rem] px-8 sm:px-12 py-8 sm:py-10 text-center shadow-2xl celebrate-pop">
+                <div class="text-6xl mb-3">🎉</div>
+                <h2 class="font-display text-2xl sm:text-3xl font-bold mb-2" style="color:var(--jam)">恭喜美味出爐！</h2>
+                <p class="text-sm mb-6" style="color:var(--espresso-soft)">辛苦了，好好享受你的成果吧</p>
+                <button onclick="this.closest('.fixed').remove()" class="btn-primary">太棒了！</button>
+            </div>`;
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+            setTimeout(() => { if (overlay.parentElement) overlay.remove(); }, 8000);
+        }
+
+        // 純前端 canvas 彩色紙屑動畫，不依賴外部套件
+        function launchConfetti() {
+            const canvas = document.createElement('canvas');
+            canvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:9999;pointer-events:none;';
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            document.body.appendChild(canvas);
+            const ctx = canvas.getContext('2d');
+            const colors = ['#A8324A', '#C98A2C', '#6F8C6E', '#E8A0BF', '#F4D35E', '#862A3D'];
+            const pieces = Array.from({ length: 160 }, () => ({
+                x: Math.random() * canvas.width,
+                y: -20 - Math.random() * canvas.height * 0.5,
+                w: 6 + Math.random() * 6,
+                h: 10 + Math.random() * 8,
+                color: colors[Math.floor(Math.random() * colors.length)],
+                speedY: 2.5 + Math.random() * 3.5,
+                speedX: (Math.random() - 0.5) * 3,
+                rotation: Math.random() * 360,
+                rotationSpeed: (Math.random() - 0.5) * 12,
+            }));
+            let frame = 0;
+            function draw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                pieces.forEach(p => {
+                    p.y += p.speedY;
+                    p.x += p.speedX;
+                    p.rotation += p.rotationSpeed;
+                    ctx.save();
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.rotation * Math.PI / 180);
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+                    ctx.restore();
+                });
+                frame++;
+                if (frame < 160) requestAnimationFrame(draw);
+                else canvas.remove();
+            }
+            draw();
         }
 
         function showDetail(recipe) {
@@ -800,12 +962,19 @@
                     <div class="mb-8">
                         <div id="detail-nutrition"></div>
                     </div>
-                    <div class="mb-10">
+                    <div class="cook-split-wrap">
+                    <div class="mb-10" id="cook-ingredients-block">
                         <h3 class="font-display font-semibold text-lg mb-4">食材</h3>
                         <div id="detail-ingredients"></div>
                     </div>
-                    <div class="mb-10">
-                        <h3 class="font-display font-semibold text-lg mb-4">作法</h3>
+                    <div class="mb-10" id="cook-steps-block">
+                        <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                            <h3 class="font-display font-semibold text-lg">作法</h3>
+                            <span id="steps-progress-text" class="text-sm font-medium" style="color:var(--jam)">目前進度：0%</span>
+                        </div>
+                        <div class="w-full h-2 rounded-full mb-5 overflow-hidden" style="background:var(--line)">
+                            <div id="steps-progress-fill" class="h-2 rounded-full" style="width:0%; background:var(--jam); transition:width .3s ease"></div>
+                        </div>
                         ${recipe.steps.map((s,i) => {
                             const text = typeof s === 'string' ? s : (s.text || '');
                             const ts = typeof s === 'string' ? null : (s.timestamp ?? null);
@@ -813,10 +982,22 @@
                             const stepImageUrl = typeof s === 'string' ? null : (s.imageUrl || null);
                             const videoBadge = (ts !== null && recipe.youtubeUrl) ? `<button onclick="seekVideo(${ts}, ${JSON.stringify(recipe.youtubeUrl).replace(/"/g, '&quot;')})" class="inline-flex items-center gap-1 mt-2 mr-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#F4E4EA; color:var(--jam)"><i class="fas fa-play text-[10px]"></i> ${formatTimestamp(ts)}</button>` : '';
                             const timerSpanId = `step-timer-${i}`;
-                            const timerBadge = duration ? `<button id="step-timer-btn-${i}" onclick="startStepTimer('${timerSpanId}', ${duration})" class="inline-flex items-center gap-1 mt-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#EFEAE0; color:var(--espresso-soft)"><i class="fas fa-clock text-[10px]"></i> <span id="${timerSpanId}">${formatTimestamp(Math.round(duration * 60))}</span></button>` : '';
+                            const hourglassSvg = `<svg width="15" height="15" viewBox="0 0 24 24" class="shrink-0"><path d="M5 3h14v3l-6 6 6 6v3H5v-3l6-6-6-6V3z" fill="none" stroke="currentColor" stroke-width="1.3"/><g id="hourglass-top-${i}" style="transform-origin:12px 6px; transform:scaleY(1)"><path d="M7 4.3h10l-5 5z" fill="currentColor"/></g><g id="hourglass-bottom-${i}" style="transform-origin:12px 18px; transform:scaleY(0)"><path d="M7 19.7h10l-5 -5z" fill="currentColor"/></g></svg>`;
+                            const timerBadge = duration ? `<button id="step-timer-btn-${i}" onclick="startStepTimer('${timerSpanId}', ${duration}, ${i})" class="inline-flex items-center gap-1 mt-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#EFEAE0; color:var(--espresso-soft)">${hourglassSvg} <span id="${timerSpanId}">${formatTimestamp(Math.round(duration * 60))}</span></button>` : '';
                             const stepImage = stepImageUrl ? `<img src="${stepImageUrl}" class="rounded-xl mt-3 max-w-[220px] w-full" loading="lazy">` : '';
-                            return `<div class="flex gap-4 mb-5"><span class="font-semibold shrink-0" style="color:var(--jam)">${i+1}.</span><div class="flex-1"><p class="leading-relaxed">${text}</p><div>${videoBadge}${timerBadge}</div>${stepImage}</div></div>`;
+                            return `<div class="flex gap-4 mb-5 step-row">
+                                <button onclick="toggleStepCheck(${i})" id="step-check-${i}" class="step-checkbox shrink-0 w-7 h-7 rounded-full border-2 flex items-center justify-center mt-0.5 transition-colors" style="border-color:var(--jam)" aria-label="標記完成">
+                                    <i class="fas fa-check text-xs" style="color:var(--jam); display:none"></i>
+                                </button>
+                                <div class="flex-1">
+                                    <p id="step-text-${i}" class="leading-relaxed step-text">${text}</p>
+                                    <div>${videoBadge}${timerBadge}</div>
+                                    ${stepImage}
+                                </div>
+                            </div>`;
                         }).join('')}
+                        <button id="finish-recipe-btn" onclick="finishRecipe()" disabled class="btn-primary w-full mt-2 opacity-50">🎉 大功告成！</button>
+                    </div>
                     </div>
                     ${recipe.youtubeUrl && getYoutubeEmbedUrl(recipe.youtubeUrl) ? `
                     <div class="mb-2">
@@ -837,6 +1018,11 @@
             `;
             document.getElementById('modal-content').innerHTML = html;
             document.getElementById('detail-modal').classList.remove('hidden');
+            checkedSteps = new Set();
+            currentDetailStepsTotal = recipe.steps.length;
+            updateStepsProgress();
+            requestWakeLock();
+            updateCookingModeClass();
             scaleRecipe(recipe);
         }
 
@@ -1404,8 +1590,47 @@
             });
         }
 
+        // ---------- 手機/平板橫向：極簡料理模式 ----------
+        const landscapeCookingQuery = window.matchMedia('(orientation: landscape) and (max-width: 1024px)');
+        function updateCookingModeClass() {
+            const modal = document.getElementById('detail-modal');
+            if (!modal) return;
+            const isOpen = !modal.classList.contains('hidden');
+            modal.classList.toggle('landscape-cooking-mode', isOpen && landscapeCookingQuery.matches);
+        }
+        landscapeCookingQuery.addEventListener('change', updateCookingModeClass);
+        window.addEventListener('resize', updateCookingModeClass);
+
+        // ---------- 螢幕防休眠（Wake Lock） ----------
+        // 開啟食譜詳細頁時啟動，避免邊做邊看手機時螢幕自動變暗/鎖定；關閉詳細頁時釋放
+        let wakeLock = null;
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => { wakeLock = null; });
+                }
+            } catch (err) {
+                console.warn('螢幕防休眠啟動失敗（部分瀏覽器或省電模式下可能無法使用）', err && err.message);
+            }
+        }
+        function releaseWakeLock() {
+            if (wakeLock) {
+                wakeLock.release().catch(() => {});
+                wakeLock = null;
+            }
+        }
+        // 部分瀏覽器切到背景再切回來時，Wake Lock 會自動失效，回到前景時如果食譜頁還開著就重新申請
+        document.addEventListener('visibilitychange', () => {
+            const modal = document.getElementById('detail-modal');
+            if (document.visibilityState === 'visible' && modal && !modal.classList.contains('hidden')) {
+                requestWakeLock();
+            }
+        });
+
         function closeDetail() {
             clearAllStepTimers();
+            releaseWakeLock();
             document.getElementById('detail-modal').classList.add('hidden');
         }
 
@@ -1708,6 +1933,109 @@
                 baseData.authorId = currentUser.uid;
                 baseData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
                 db.collection("recipes").add(baseData).then(() => { alert("食譜已上傳！"); closeAddModal(); finish(); }).catch(err => { alert('上傳失敗：' + err.message); finish(); });
+            }
+        }
+
+        // ---------- 相機文字辨識（OCR，Tesseract.js）----------
+        // 第一次使用才會動態載入 Tesseract.js（約 2-3MB），避免拖慢一般瀏覽網站的載入速度
+        let tesseractLoadPromise = null;
+        function loadTesseract() {
+            if (window.Tesseract) return Promise.resolve();
+            if (tesseractLoadPromise) return tesseractLoadPromise;
+            tesseractLoadPromise = new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+                script.onload = resolve;
+                script.onerror = () => reject(new Error('OCR 辨識引擎載入失敗，請檢查網路連線'));
+                document.head.appendChild(script);
+            });
+            return tesseractLoadPromise;
+        }
+
+        async function runOCR(file) {
+            await loadTesseract();
+            // chi_tra=繁體中文，eng=英文/數字，混合辨識最適合中文食譜/包裝標示
+            const result = await Tesseract.recognize(file, 'chi_tra+eng');
+            return result.data.text || '';
+        }
+
+        // ----- 新增食譜：拍照辨識食材清單 -----
+        function triggerIngredientOCR() {
+            document.getElementById('ingredient-ocr-input').click();
+        }
+
+        async function handleIngredientOCR(event) {
+            const file = event.target.files[0];
+            event.target.value = '';
+            if (!file) return;
+            const btn = document.querySelector('[onclick="triggerIngredientOCR()"]');
+            const originalText = btn ? btn.innerHTML : '';
+            if (btn) { btn.innerHTML = '辨識中…（首次使用需下載引擎，請稍候）'; btn.disabled = true; }
+            try {
+                const text = await runOCR(file);
+                const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+                const unitPattern = /(公克|公斤|克|kg|g|ml|毫升|大匙|茶匙|tbsp|tsp|顆|個|片|條|根)/i;
+                const numPattern = /(\d+\.?\d*)/;
+                let addedCount = 0;
+                lines.forEach(line => {
+                    const numMatch = line.match(numPattern);
+                    if (!numMatch) return;
+                    const unitMatch = line.match(unitPattern);
+                    const amount = parseFloat(numMatch[1]);
+                    const unit = unitMatch ? unitMatch[1] : 'g';
+                    let name = line.replace(numPattern, '').replace(unitPattern, '').replace(/[:：,，、]/g, '').trim();
+                    if (name && amount) { addIngredientField('', name, amount, unit); addedCount++; }
+                });
+                if (addedCount > 0) {
+                    alert(`辨識完成！已自動加入 ${addedCount} 項食材，請檢查並修正內容（拍照辨識不一定 100% 準確）`);
+                } else {
+                    alert('辨識完成，但沒有偵測到「名稱+數字+單位」這種格式的食材，請手動輸入。\n\n辨識出的原始文字：\n' + text.slice(0, 300));
+                }
+            } catch (err) {
+                alert('辨識失敗：' + err.message);
+            } finally {
+                if (btn) { btn.innerHTML = originalText; btn.disabled = false; }
+            }
+        }
+
+        // ----- 管理者食材熱量：拍照辨識營養標示 -----
+        function triggerAdminOCR() {
+            document.getElementById('admin-ocr-input').click();
+        }
+
+        async function handleAdminOCR(event) {
+            const file = event.target.files[0];
+            event.target.value = '';
+            if (!file) return;
+            const btn = document.querySelector('[onclick="triggerAdminOCR()"]');
+            const originalText = btn ? btn.innerHTML : '';
+            if (btn) { btn.innerHTML = '辨識中…（首次使用需下載引擎，請稍候）'; btn.disabled = true; }
+            try {
+                const text = await runOCR(file);
+                const grab = (pattern) => {
+                    const m = text.match(pattern);
+                    return m ? parseFloat(m[1]) : null;
+                };
+                const kcal = grab(/熱量[^\d]{0,6}(\d+\.?\d*)/);
+                const protein = grab(/蛋白質[^\d]{0,6}(\d+\.?\d*)/);
+                const fat = grab(/脂肪[^\d]{0,6}(\d+\.?\d*)/);
+                const carb = grab(/碳水化合物[^\d]{0,6}(\d+\.?\d*)/);
+                const sodium = grab(/鈉[^\d]{0,6}(\d+\.?\d*)/);
+                let filled = 0;
+                if (kcal !== null) { document.getElementById('admin-nutri-kcal').value = kcal; filled++; }
+                if (protein !== null) { document.getElementById('admin-nutri-protein').value = protein; filled++; }
+                if (fat !== null) { document.getElementById('admin-nutri-fat').value = fat; filled++; }
+                if (carb !== null) { document.getElementById('admin-nutri-carb').value = carb; filled++; }
+                if (sodium !== null) { document.getElementById('admin-nutri-sodium').value = sodium; filled++; }
+                if (filled > 0) {
+                    alert(`辨識完成，已自動填入 ${filled} 個欄位，請務必檢查數字是否正確\n\n⚠️ 特別注意：包裝上的營養標示常常是「每一份」而不是「每100克」，如果標示的份量不是100克，請自行換算後再儲存`);
+                } else {
+                    alert('沒有辨識到標準格式的營養標示欄位，請手動輸入。\n\n辨識出的原始文字：\n' + text.slice(0, 300));
+                }
+            } catch (err) {
+                alert('辨識失敗：' + err.message);
+            } finally {
+                if (btn) { btn.innerHTML = originalText; btn.disabled = false; }
             }
         }
 
