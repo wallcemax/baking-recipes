@@ -134,10 +134,23 @@
         .step-checkbox i { transition: color .2s; }
         .step-row { transition: opacity .2s; }
 
-        /* 手機/平板橫向：極簡料理模式（高對比暖色調 + 左右分割可各自捲動 + 字體放大） */
-        @media (orientation: landscape) and (max-width: 1024px) {
+        /* 手機/平板橫向：極簡料理模式（高對比暖色調 + 左右分割可各自捲動 + 字體放大）
+           做法：直接覆蓋 CSS 變數本身，這樣不管顏色是寫在 class 裡還是 inline style，
+           只要用的是 var(--cream) 這類變數就會自動跟著變，不用一個一個屬性去覆蓋 */
+        @media (orientation: landscape) and (max-width: 1180px) {
+            #detail-modal.landscape-cooking-mode {
+                --cream: #241A13;
+                --paper: #2F2219;
+                --espresso: #F5EBDF;
+                --espresso-soft: #D9C4AE;
+                --line: #4A392E;
+                --jam: #F0A8C4;
+                --honey: #F4C15E;
+                --sage: #9BC49B;
+            }
             #detail-modal.landscape-cooking-mode #modal-content {
-                background: #241a13; color: #F3E6D8;
+                background: var(--paper);
+                color: var(--espresso);
             }
             #detail-modal.landscape-cooking-mode .cook-split-wrap {
                 display: grid;
@@ -152,19 +165,10 @@
                 padding-right: 0.5rem;
             }
             #detail-modal.landscape-cooking-mode h2,
-            #detail-modal.landscape-cooking-mode h3 {
-                color: #FBEFE2 !important;
-                font-size: 1.2em;
-            }
+            #detail-modal.landscape-cooking-mode h3,
             #detail-modal.landscape-cooking-mode p,
-            #detail-modal.landscape-cooking-mode span:not(.fa):not(.fas) {
-                font-size: 1.12em;
-            }
-            #detail-modal.landscape-cooking-mode .step-text { color: #F3E6D8; }
-            #detail-modal.landscape-cooking-mode [style*="background:var(--cream)"],
-            #detail-modal.landscape-cooking-mode [style*="background: var(--cream)"] {
-                background: #3A2C21 !important;
-                color: #F3E6D8 !important;
+            #detail-modal.landscape-cooking-mode span {
+                font-size: 1.15em;
             }
         }
     </style>
@@ -775,6 +779,37 @@
         }
 
         // 更新沙漏動畫：fraction 0（剛開始，沙全在上面）→ 1（時間到，沙全在下面）
+        // ---------- 背景計時提醒：通知權限 + 系統通知（比純頁面內 vibrate() 更有機會在背景生效） ----------
+        let notificationPermissionRequested = false;
+        function ensureNotificationPermission() {
+            if (!('Notification' in window)) return;
+            if (notificationPermissionRequested) return;
+            notificationPermissionRequested = true;
+            if (Notification.permission === 'default') {
+                Notification.requestPermission().catch(() => {});
+            }
+        }
+
+        // 計時結束時呼叫：頁面在背景才發系統通知（帶震動），頁面開著就只用頁面內震動＋音效，避免重複打擾
+        async function notifyTimerDone(stepLabel) {
+            if (document.hidden && 'Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker) {
+                try {
+                    const reg = await navigator.serviceWorker.ready;
+                    await reg.showNotification('⏰ 計時時間到！', {
+                        body: stepLabel ? `「${stepLabel}」時間到囉，該進行下一步了` : '該進行下一步了',
+                        icon: './icon-192.png',
+                        vibrate: [120, 90, 120, 90, 400],
+                        tag: 'recipe-timer',
+                    });
+                    return;
+                } catch (err) {
+                    console.warn('系統通知發送失敗，改用頁面內提示', err && err.message);
+                }
+            }
+            playBeep();
+            if (navigator.vibrate) navigator.vibrate([120, 90, 120, 90, 400]);
+        }
+
         function updateHourglass(idx, fraction) {
             const top = document.getElementById(`hourglass-top-${idx}`);
             const bottom = document.getElementById(`hourglass-bottom-${idx}`);
@@ -786,55 +821,70 @@
             const span = document.getElementById(spanId);
             const btn = document.getElementById(spanId.replace('step-timer-', 'step-timer-btn-'));
             if (!span || !btn) return;
+            ensureNotificationPermission();
+
             if (!stepTimers[spanId]) {
                 const totalSeconds = minutes > 0 ? Math.round(minutes * 60) : 0;
                 stepTimers[spanId] = {
-                    remaining: totalSeconds,
                     totalSeconds,
                     mode: minutes > 0 ? 'countdown' : 'stopwatch',
                     elapsed: 0,
                     running: false,
-                    intervalId: null
+                    intervalId: null,
+                    completionTimeoutId: null,
+                    endTime: null,
                 };
             }
             const t = stepTimers[spanId];
             if (t.running) {
                 clearInterval(t.intervalId);
+                clearTimeout(t.completionTimeoutId);
                 t.running = false;
                 btn.style.background = '#EFEAE0'; btn.style.color = 'var(--espresso-soft)';
                 return;
             }
             t.running = true;
             btn.style.background = 'var(--jam)'; btn.style.color = '#fff';
-            t.intervalId = setInterval(() => {
-                if (t.mode === 'countdown') {
-                    t.remaining -= 1;
-                    if (t.totalSeconds > 0) updateHourglass(idx, 1 - (t.remaining / t.totalSeconds));
-                    if (t.remaining <= 0) {
-                        clearInterval(t.intervalId);
-                        t.running = false;
-                        span.textContent = '時間到！';
-                        btn.style.background = 'var(--sage)'; btn.style.color = '#fff';
-                        updateHourglass(idx, 1);
-                        playBeep();
-                        // 「短震、短震、長震」的節奏式震動，跟一般單純的長震做出區隔，提示感更明確
-                        if (navigator.vibrate) navigator.vibrate([120, 90, 120, 90, 400]);
-                        return;
-                    }
-                    // 最後 5 秒：除了聲音之外，加上有節奏的脈搏式震動提醒
-                    if (t.remaining <= 5 && navigator.vibrate) {
+
+            if (t.mode === 'countdown') {
+                // 用「絕對結束時間」取代每秒遞減，這樣就算 UI 更新的 interval 被瀏覽器降頻／延遲，
+                // 用 Date.now() 反推出來的剩餘秒數還是準確的，不會累積誤差
+                t.endTime = Date.now() + t.totalSeconds * 1000;
+
+                // 「時間到」這個動作本身另外用 setTimeout 精準排定（跟畫面更新的 interval 分開），
+                // 分頁切到背景時，這個仍有機會比 setInterval 更準時觸發
+                t.completionTimeoutId = setTimeout(() => {
+                    clearInterval(t.intervalId);
+                    t.running = false;
+                    span.textContent = '時間到！';
+                    btn.style.background = 'var(--sage)'; btn.style.color = '#fff';
+                    updateHourglass(idx, 1);
+                    notifyTimerDone();
+                }, t.totalSeconds * 1000);
+
+                t.intervalId = setInterval(() => {
+                    const remaining = Math.max(0, Math.round((t.endTime - Date.now()) / 1000));
+                    if (t.totalSeconds > 0) updateHourglass(idx, 1 - (remaining / t.totalSeconds));
+                    // 最後 5 秒：頁面開著時額外加上有節奏的脈搏式震動提醒
+                    if (remaining <= 5 && remaining > 0 && navigator.vibrate) {
                         navigator.vibrate([90, 60, 90]);
                     }
-                    span.textContent = formatTimestamp(t.remaining);
-                } else {
+                    if (remaining <= 0) { clearInterval(t.intervalId); span.textContent = '時間到！'; return; }
+                    span.textContent = formatTimestamp(remaining);
+                }, 1000);
+            } else {
+                t.intervalId = setInterval(() => {
                     t.elapsed += 1;
                     span.textContent = formatTimestamp(t.elapsed);
-                }
-            }, 1000);
+                }, 1000);
+            }
         }
 
         function clearAllStepTimers() {
-            Object.values(stepTimers).forEach(t => t.intervalId && clearInterval(t.intervalId));
+            Object.values(stepTimers).forEach(t => {
+                if (t.intervalId) clearInterval(t.intervalId);
+                if (t.completionTimeoutId) clearTimeout(t.completionTimeoutId);
+            });
             stepTimers = {};
         }
 
@@ -1783,10 +1833,10 @@
             const div = document.createElement('div');
             div.className = "grid grid-cols-12 gap-2";
             div.innerHTML = `
-                <input value="${group}" id="ing-group-${idx}" placeholder="分類(如 A 餅皮)" class="form-input col-span-3 !px-3 !py-2.5 text-sm" style="color:var(--jam)">
-                <input value="${name}" id="ing-name-${idx}" placeholder="食材" class="form-input col-span-3 !px-3 !py-2.5">
-                <input value="${amt}" type="number" id="ing-amt-${idx}" class="form-input col-span-2 !px-3 !py-2.5">
-                <input value="${unit}" id="ing-unit-${idx}" class="form-input col-span-3 !px-3 !py-2.5">
+                <input value="${group}" id="ing-group-${idx}" placeholder="分類(如 A 餅皮)" class="form-input col-span-2 !px-2 !py-2.5 text-xs" style="color:var(--jam)">
+                <input value="${name}" id="ing-name-${idx}" placeholder="食材" class="form-input col-span-5 !px-3 !py-2.5 text-base">
+                <input value="${amt}" type="number" id="ing-amt-${idx}" class="form-input col-span-2 !px-2 !py-2.5">
+                <input value="${unit}" id="ing-unit-${idx}" class="form-input col-span-2 !px-2 !py-2.5 text-sm">
                 <button type="button" onclick="this.parentElement.remove()" class="col-span-1 text-lg" style="color:#C4453F">×</button>
             `;
             container.appendChild(div);
@@ -1801,9 +1851,9 @@
             div.innerHTML = `
                 <div class="flex gap-2 items-center">
                     <span class="font-medium shrink-0" style="color:var(--jam)">${idx+1}.</span>
-                    <input value="${text}" id="step-${idx}" placeholder="說明這個步驟..." class="form-input flex-1 !px-3 !py-2.5">
-                    <input value="${timestamp}" id="step-ts-${idx}" placeholder="00:00" title="影片時間點 (mm:ss)" class="form-input w-20 shrink-0 !px-2 !py-2.5 text-sm text-center">
-                    <input value="${duration}" type="number" min="0" step="0.5" id="step-duration-${idx}" placeholder="分鐘" title="這個步驟大約需要幾分鐘（選填，用來啟動計時器）" class="form-input w-16 shrink-0 !px-2 !py-2.5 text-sm text-center">
+                    <input value="${text}" id="step-${idx}" placeholder="說明這個步驟..." class="form-input flex-1 !px-3 !py-2.5 text-base">
+                    <input value="${timestamp}" id="step-ts-${idx}" placeholder="00:00" title="影片時間點 (mm:ss)" class="form-input w-16 shrink-0 !px-1.5 !py-2.5 text-xs text-center">
+                    <input value="${duration}" type="number" min="0" step="0.5" id="step-duration-${idx}" placeholder="分鐘" title="這個步驟大約需要幾分鐘（選填，用來啟動計時器）" class="form-input w-14 shrink-0 !px-1.5 !py-2.5 text-xs text-center">
                     <button type="button" onclick="triggerStepImageInput(${idx})" title="新增這個步驟的圖片" class="shrink-0 w-9 h-9 rounded-full flex items-center justify-center" style="background:var(--cream)">
                         <i class="fas fa-camera text-sm" style="color:var(--espresso-soft)"></i>
                     </button>
