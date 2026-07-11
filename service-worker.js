@@ -1,10 +1,11 @@
-const CACHE_NAME = 'baking-recipe-cache-v2';
+const CACHE_NAME = 'baking-recipe-cache-v3';
 const APP_SHELL = [
   './',
   './index.html',
   './manifest.json',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './tfnd-nutrition.json'
 ];
 
 self.addEventListener('install', event => {
