@@ -237,7 +237,21 @@
                         <option value="健康餐">🥗 健康餐</option><option value="寶寶食品">🍼 寶寶食品</option>
                         <option value="其他">🍽️ 其他</option>
                     </select>
-                    <input id="servings" type="number" value="8" class="form-input">
+                    <div>
+                        <input id="servings" type="number" value="8" class="form-input" placeholder="成品數量">
+                        <p class="text-xs mt-1" style="color:#B3A492">實際成品數量（例如：做出幾個蛋糕）</p>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <label class="font-semibold block mb-2">📏 尺寸（選填）</label>
+                    <div class="grid grid-cols-2 gap-4">
+                        <input id="size-value" type="number" step="0.1" class="form-input" placeholder="例如：6">
+                        <select id="size-unit" class="form-input">
+                            <option value="吋">吋</option>
+                            <option value="公分">公分</option>
+                        </select>
+                    </div>
+                    <p class="text-xs mt-1" style="color:#B3A492">填了尺寸，換算份量時可以同時依尺寸（面積比）與數量計算，例如「6吋蛋糕1個」換算成「8吋蛋糕3個」；不填就只依數量換算</p>
                 </div>
                 <div class="mb-4">
                     <label class="font-semibold block mb-2">🔒 公開設定</label>
@@ -437,7 +451,12 @@
             if (fabBtn) fabBtn.style.display = show ? '' : 'none';
 
             const adminBtn = document.getElementById('admin-nutrition-btn');
-            if (adminBtn) adminBtn.style.display = isAdmin() ? '' : 'none';
+            if (adminBtn) {
+                // 這顆按鈕本身有 "hidden" class，把 inline style 清空(style.display='')
+                // 沒辦法蓋過 class 的 display:none，一定要指定實際的值才會顯示出來
+                adminBtn.classList.toggle('hidden', !isAdmin());
+                adminBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
+            }
         }
 
         auth.onAuthStateChanged(user => {
@@ -590,7 +609,7 @@
                         ${r.youtubeUrl ? '<i class="fab fa-youtube text-lg" style="color:#C4453F"></i>' : ''}
                     </div>
                     <h3 class="font-display font-bold text-xl mb-1.5 leading-snug">${r.name}${visBadge}</h3>
-                    <p class="text-sm" style="color:var(--espresso-soft)">${r.servings} 人份 • ${r.authorName||''}</p>
+                    <p class="text-sm" style="color:var(--espresso-soft)">${r.sizeValue ? `${r.sizeValue}${r.sizeUnit} · ` : ''}${r.servings} 個 • ${r.authorName||''}</p>
                 `;
                 div.onclick = () => showDetail(r);
                 div.onkeydown = (e) => { if (e.key === 'Enter') showDetail(r); };
@@ -768,8 +787,10 @@
                 </div>
                 ${recipe.imageUrl ? `<img src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover">` : ''}
                 <div class="px-6 sm:px-8 py-6">
-                    <div class="flex gap-3 mb-4">
-                        <input id="scale-servings" value="${recipe.servings}" type="number" class="form-input flex-1">
+                    ${recipe.sizeValue ? `<p class="text-xs mb-2" style="color:#B3A492">原始：${recipe.sizeValue}${recipe.sizeUnit} × ${recipe.servings} 個。換算時會同時依尺寸（面積比）與數量計算份量</p>` : ''}
+                    <div class="flex gap-3 mb-4 flex-wrap">
+                        <input id="scale-servings" value="${recipe.servings}" type="number" class="form-input flex-1" style="min-width:100px" placeholder="數量">
+                        ${recipe.sizeValue ? `<input id="scale-size" value="${recipe.sizeValue}" type="number" step="0.1" class="form-input flex-1" style="min-width:100px" placeholder="尺寸（${recipe.sizeUnit}）">` : ''}
                         <button onclick="scaleRecipe(${recipeJson})" class="btn-amber whitespace-nowrap">換算</button>
                     </div>
                     <div class="mb-8">
@@ -847,6 +868,92 @@
             return null;
         }
 
+        // 官方食材熱量資料庫（衛福部食品營養成分資料庫節錄，每 100g），
+        // 由使用者上傳的官方 CSV 檔案篩選常見烘焙／烹飪食材整理而成，準確度優於 AI 估算，
+        // 比對時優先於下面的手動整理表（TFND = 台灣食品營養成分資料庫）
+        const TFND_NUTRITION_MAP = [
+            { keywords: ['低筋麵粉'], kcal: 364, protein: 8.1, fat: 1.2, carb: 78.2, sodium: 1 },
+            { keywords: ['中筋麵粉'], kcal: 361, protein: 11.5, fat: 1.3, carb: 74.1, sodium: 4 },
+            { keywords: ['高筋麵粉'], kcal: 362, protein: 12.9, fat: 1.2, carb: 73.1, sodium: 1 },
+            { keywords: ['糯米粉'], kcal: 360, protein: 4.5, fat: 0.4, carb: 82.3, sodium: 16 },
+            { keywords: ['玉米粉', '玉米澱粉'], kcal: 369, protein: 0.3, fat: 0.4, carb: 88.3, sodium: 14 },
+            { keywords: ['燕麥片', '燕麥'], kcal: 393, protein: 12.3, fat: 9.7, carb: 64.1, sodium: 3 },
+            { keywords: ['土司', '吐司'], kcal: 289, protein: 9.5, fat: 6.3, carb: 48.6, sodium: 443 },
+            { keywords: ['地瓜', '番薯', '甘藷'], kcal: 119, protein: 1.3, fat: 0.1, carb: 27.5, sodium: 73 },
+            { keywords: ['馬鈴薯', '洋芋'], kcal: 77, protein: 2.6, fat: 0.2, carb: 15.8, sodium: 3 },
+            { keywords: ['薏仁'], kcal: 378, protein: 14.1, fat: 6.1, carb: 66.2, sodium: 2 },
+            { keywords: ['紅豆'], kcal: 328, protein: 20.9, fat: 0.6, carb: 61.5, sodium: 1 },
+            { keywords: ['綠豆'], kcal: 344, protein: 22.8, fat: 1.1, carb: 63.0, sodium: 1 },
+            { keywords: ['全蛋', '雞蛋', '蛋黃', '蛋白'], kcal: 135, protein: 12.7, fat: 8.9, carb: 1.6, sodium: 138 },
+            { keywords: ['全脂奶粉'], kcal: 504, protein: 26.4, fat: 28.2, carb: 37.0, sodium: 337 },
+            { keywords: ['脫脂奶粉', '奶粉'], kcal: 420, protein: 32.8, fat: 11.6, carb: 46.1, sodium: 352 },
+            { keywords: ['無鹽奶油'], kcal: 733, protein: 0.6, fat: 82.7, carb: 0.9, sodium: 6 },
+            { keywords: ['有鹽奶油'], kcal: 699, protein: 0.7, fat: 77.5, carb: 3.7, sodium: 624 },
+            { keywords: ['優格', '優酪乳', '發酵乳'], kcal: 90, protein: 4.1, fat: 3.2, carb: 11.3, sodium: 52 },
+            { keywords: ['煉乳'], kcal: 137, protein: 6.5, fat: 8.3, carb: 9.1, sodium: 187 },
+            { keywords: ['糖粉'], kcal: 399, protein: 0, fat: 0.2, carb: 99.3, sodium: 1 },
+            { keywords: ['黑糖', '紅糖'], kcal: 369, protein: 0.5, fat: 0.7, carb: 95.3, sodium: 10 },
+            { keywords: ['冰糖'], kcal: 387, protein: 0, fat: 0, carb: 99.9, sodium: 1 },
+            { keywords: ['橄欖油'], kcal: 884, protein: 0, fat: 100, carb: 0, sodium: 0 },
+            { keywords: ['可可粉'], kcal: 464, protein: 20.8, fat: 22.8, carb: 43.8, sodium: 26 },
+            { keywords: ['蜂蜜'], kcal: 315, protein: 0.1, fat: 0.1, carb: 81.5, sodium: 0 },
+            { keywords: ['麥芽糖'], kcal: 325, protein: 0, fat: 0, carb: 84.1, sodium: 0 },
+            { keywords: ['抹茶粉'], kcal: 361, protein: 23.4, fat: 6.4, carb: 63.0, sodium: 4 },
+            { keywords: ['醬油'], kcal: 90, protein: 7.8, fat: 0, carb: 14.7, sodium: 4997 },
+            { keywords: ['味噌'], kcal: 215, protein: 10.6, fat: 4.5, carb: 33.1, sodium: 4153 },
+            { keywords: ['味醂'], kcal: 220, protein: 0.5, fat: 0.0, carb: 54.5, sodium: 108 },
+            { keywords: ['烏醋'], kcal: 37, protein: 0.5, fat: 0.0, carb: 8.7, sodium: 1571 },
+            { keywords: ['白醋', '米醋'], kcal: 10, protein: 0.1, fat: 0, carb: 2.4, sodium: 8 },
+            { keywords: ['椰漿'], kcal: 208, protein: 1.1, fat: 23.1, carb: 0, sodium: 23 },
+            { keywords: ['椰奶'], kcal: 49, protein: 0.2, fat: 2.1, carb: 7.4, sodium: 19 },
+            { keywords: ['酵母'], kcal: 347, protein: 46.3, fat: 0.0, carb: 40.4, sodium: 140 },
+            { keywords: ['豬絞肉'], kcal: 212, protein: 18.7, fat: 14.6, carb: 0, sodium: 58 },
+            { keywords: ['牛五花'], kcal: 430, protein: 15.7, fat: 40.3, carb: 0, sodium: 45 },
+            { keywords: ['羊肉'], kcal: 198, protein: 18.8, fat: 13.0, carb: 0, sodium: 73 },
+            { keywords: ['虱目魚'], kcal: 179, protein: 21.8, fat: 9.5, carb: 0.2, sodium: 41 },
+            { keywords: ['吳郭魚', '台灣鯛', '鯛魚'], kcal: 110, protein: 18.2, fat: 3.6, carb: 2.5, sodium: 46 },
+            { keywords: ['蜆'], kcal: 51, protein: 8.9, fat: 1.4, carb: 9.8, sodium: 20 },
+            { keywords: ['小卷'], kcal: 246, protein: 53.2, fat: 2.1, carb: 4.7, sodium: 1378 },
+            { keywords: ['章魚'], kcal: 61, protein: 13.0, fat: 0.6, carb: 0.9, sodium: 230 },
+            { keywords: ['海帶', '昆布'], kcal: 19, protein: 0.7, fat: 0.1, carb: 4.2, sodium: 216 },
+            { keywords: ['紫菜'], kcal: 268, protein: 28.1, fat: 0.9, carb: 47.9, sodium: 968 },
+            { keywords: ['杏鮑菇'], kcal: 41, protein: 2.7, fat: 0.2, carb: 8.3, sodium: 3 },
+            { keywords: ['香菇'], kcal: 39, protein: 3.0, fat: 0.1, carb: 7.6, sodium: 1 },
+            { keywords: ['金針菇'], kcal: 37, protein: 2.6, fat: 0.3, carb: 7.2, sodium: 2 },
+            { keywords: ['白洋蔥', '黃洋蔥', '洋蔥'], kcal: 42, protein: 1.0, fat: 0.2, carb: 9.5, sodium: 2 },
+            { keywords: ['紫洋蔥'], kcal: 32, protein: 0.9, fat: 0.1, carb: 7.3, sodium: 4 },
+            { keywords: ['花椰菜', '青花菜', '白花椰'], kcal: 23, protein: 1.8, fat: 0.1, carb: 4.5, sodium: 14 },
+            { keywords: ['菠菜'], kcal: 18, protein: 2.2, fat: 0.3, carb: 2.4, sodium: 43 },
+            { keywords: ['傳統豆腐', '豆腐'], kcal: 88, protein: 8.5, fat: 3.4, carb: 6.0, sodium: 2 },
+            { keywords: ['百頁豆腐'], kcal: 196, protein: 13.4, fat: 13.1, carb: 6.3, sodium: 425 },
+            { keywords: ['青江菜'], kcal: 11, protein: 1.2, fat: 0.1, carb: 1.9, sodium: 78 },
+            { keywords: ['南瓜'], kcal: 74, protein: 1.9, fat: 0.2, carb: 17.3, sodium: 1 },
+            { keywords: ['甜玉米', '玉米'], kcal: 107, protein: 3.3, fat: 2.5, carb: 17.8, sodium: 2 },
+            { keywords: ['毛豆'], kcal: 129, protein: 14.6, fat: 3.3, carb: 12.5, sodium: 1 },
+            { keywords: ['青蔥', '蔥'], kcal: 31, protein: 1.3, fat: 0.2, carb: 6.6, sodium: 1 },
+            { keywords: ['大蒜', '蒜頭'], kcal: 122, protein: 6.7, fat: 0.2, carb: 26.4, sodium: 4 },
+            { keywords: ['薑'], kcal: 28, protein: 1.0, fat: 0.3, carb: 6.1, sodium: 7 },
+            { keywords: ['檸檬'], kcal: 33, protein: 0.7, fat: 0.5, carb: 7.4, sodium: 4 },
+            { keywords: ['柳橙'], kcal: 44, protein: 0.8, fat: 0.1, carb: 11.0, sodium: 5 },
+            { keywords: ['蘋果'], kcal: 50, protein: 0.3, fat: 0.2, carb: 13.1, sodium: 2 },
+            { keywords: ['香蕉', '北蕉'], kcal: 85, protein: 1.5, fat: 0.1, carb: 22.1, sodium: 0 },
+            { keywords: ['草莓'], kcal: 39, protein: 1.0, fat: 0.2, carb: 9.3, sodium: 7 },
+            { keywords: ['核桃'], kcal: 667, protein: 15.4, fat: 67.9, carb: 11.2, sodium: 5 },
+            { keywords: ['杏仁'], kcal: 554, protein: 9.7, fat: 36.4, carb: 47.1, sodium: 172 },
+            { keywords: ['腰果'], kcal: 568, protein: 18.3, fat: 45.5, carb: 30.3, sodium: 11 },
+            { keywords: ['花生'], kcal: 331, protein: 15.3, fat: 27.2, carb: 12.2, sodium: 1 },
+            { keywords: ['白芝麻', '芝麻'], kcal: 598, protein: 22.3, fat: 54.9, carb: 15.0, sodium: 39 },
+            { keywords: ['黑芝麻'], kcal: 551, protein: 22.2, fat: 48.1, carb: 17.6, sodium: 2 },
+            { keywords: ['奇異果'], kcal: 56, protein: 1.1, fat: 0.3, carb: 14.0, sodium: 3 },
+            { keywords: ['芒果'], kcal: 54, protein: 0.6, fat: 0.3, carb: 13.8, sodium: 2 },
+            { keywords: ['鳳梨'], kcal: 53, protein: 0.7, fat: 0.1, carb: 13.6, sodium: 0 },
+            { keywords: ['木瓜'], kcal: 38, protein: 0.6, fat: 0.1, carb: 9.9, sodium: 3 },
+            { keywords: ['水梨', '梨子'], kcal: 34, protein: 0.4, fat: 0.0, carb: 9.0, sodium: 0 },
+            { keywords: ['葡萄'], kcal: 64, protein: 0.5, fat: 0.3, carb: 16.6, sodium: 1 },
+            { keywords: ['西瓜'], kcal: 33, protein: 0.8, fat: 0.1, carb: 8.0, sodium: 1 },
+            { keywords: ['哈密瓜'], kcal: 28, protein: 0.7, fat: 0.1, carb: 6.9, sodium: 29 },
+            { keywords: ['培根'], kcal: 372, protein: 13.5, fat: 35.6, carb: 0, sodium: 610 },        ];
+
         // 常見食材熱量與三大營養素（每 100g），用來估算每份熱量／蛋白質／脂肪／碳水。
         // 數值為食品成分資料庫常見概略值，僅供參考，非精確營養標示。
         // 之後若要涵蓋更多食材，可以在這裡手動擴充，或改成從 Firestore 讀取
@@ -886,25 +993,32 @@
         ];
 
         // 依食材名稱關鍵字比對熱量資料；雙向比對（名稱包含關鍵字，或關鍵字包含名稱），
-        // 這樣像「糖」這種比關鍵字「砂糖」更短的通用名稱也能對到；找不到時回傳 null
+        // 這樣像「糖」這種比關鍵字「砂糖」更短的通用名稱也能對到；找不到時回傳 null。
+        // 優先查官方 TFND 資料庫節錄，查不到才查手動整理的常見食材備用表
         function guessIngredientNutrition(name) {
             if (!name) return null;
             const lower = name.toLowerCase();
-            for (const entry of INGREDIENT_NUTRITION_MAP) {
-                if (entry.keywords.some(k => { const kl = k.toLowerCase(); return lower.includes(kl) || kl.includes(lower); })) return entry;
-            }
-            return null;
+            const matchIn = (list, sourceTag) => {
+                for (const entry of list) {
+                    if (entry.keywords.some(k => { const kl = k.toLowerCase(); return lower.includes(kl) || kl.includes(lower); })) {
+                        if (!entry.source) entry.source = sourceTag; // 靜態資料，標記一次即可
+                        return entry;
+                    }
+                }
+                return null;
+            };
+            return matchIn(TFND_NUTRITION_MAP, 'tfnd_official') || matchIn(INGREDIENT_NUTRITION_MAP, 'local_fallback');
         }
 
-        // ---------- 本地表查不到時，改問 Firebase AI Logic（Gemini）估算 ----------
-        // 需要先在 Firebase 主控台完成 AI Logic + App Check 設定才會生效（見上方 module script 的說明註解），
-        // 還沒設定完成前呼叫會安靜地回傳 null，不影響網站其他功能
+        // ---------- 食材熱量查詢優先順序：Firestore 快取 → 本地食材資料庫 → AI（Gemini，可用網路搜尋輔助）----------
+        // 需要先在 Firebase 主控台完成 AI Logic + App Check 設定，AI 那一步才會生效
+        // （見上方 module script 的說明註解），還沒設定完成前 AI 那一步會安靜地回傳 null，不影響其他功能
         let aiNutritionCache = {}; // 同一次瀏覽期間的暫存，避免同個食材重複問 Firestore／AI
-        async function fetchAINutrition(name) {
+        async function resolveIngredientNutrition(name) {
             if (Object.prototype.hasOwnProperty.call(aiNutritionCache, name)) return aiNutritionCache[name];
             const docId = name.trim().replace(/\//g, '_').slice(0, 200);
 
-            // 先查 Firestore 快取（任何人都能讀），避免同一食材被全站重複詢問 AI
+            // ① 優先查 Firestore（管理者手動輸入過的資料、或先前任何人查過的 AI 估算結果，都存在這裡）
             try {
                 const cacheDoc = await db.collection('ingredientNutrition').doc(docId).get();
                 if (cacheDoc.exists) {
@@ -915,7 +1029,14 @@
                 console.warn('讀取食材熱量快取失敗', err && err.message);
             }
 
-            // 快取沒有 → 呼叫 Gemini 估算
+            // ② Firestore 沒有 → 查本地食材資料庫（官方 TFND 節錄 + 手動整理的常見食材）
+            const local = guessIngredientNutrition(name);
+            if (local) {
+                aiNutritionCache[name] = local;
+                return local;
+            }
+
+            // ③ 都查不到 → 呼叫 Gemini（可搭配網路搜尋）估算，並寫回 Firestore 共用快取
             try {
                 if (typeof window.__fetchGeminiIngredientNutrition !== 'function') { aiNutritionCache[name] = null; return null; }
                 const data = await window.__fetchGeminiIngredientNutrition(name);
@@ -1100,31 +1221,28 @@
             });
         }
 
-        // 計算並顯示每份熱量／營養素；本地表查不到的食材會非同步改問 AI（若後端已部署），
+        // 計算並顯示每個成品的熱量／營養素；查詢順序：Firestore 快取 → 本地食材資料庫 → AI，
         // 因此獨立成 async 函式，不會卡住食材重量清單的同步渲染
         async function updateNutritionBox(recipe, factor, newServings, LOSS_RATE) {
             const nutritionBox = document.getElementById('detail-nutrition');
             if (!nutritionBox) return;
             nutritionBox.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">熱量計算中…</div>`;
 
-            let totalKcal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, totalSodium = 0, uncountedNames = [], aiUsedCount = 0, manualUsedCount = 0;
+            let totalKcal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, totalSodium = 0, uncountedNames = [];
+            let tfndUsedCount = 0, manualUsedCount = 0, aiUsedCount = 0;
             await Promise.all(recipe.ingredients.map(async ing => {
                 const grams = convertToGrams(ing.amount * factor, ing.unit, ing.name);
                 if (grams === null) { uncountedNames.push(ing.name); return; }
-                let nutri = guessIngredientNutrition(ing.name);
-                let sourceTag = nutri ? null : null; // 本地表比對到的不特別標示來源
-                if (!nutri) {
-                    nutri = await fetchAINutrition(ing.name);
-                    if (nutri) sourceTag = nutri.source === 'admin_manual' ? 'manual' : 'ai';
-                }
+                const nutri = await resolveIngredientNutrition(ing.name);
                 if (!nutri) { uncountedNames.push(ing.name); return; }
                 totalKcal += grams / 100 * nutri.kcal;
                 totalProtein += grams / 100 * nutri.protein;
                 totalFat += grams / 100 * nutri.fat;
                 totalCarb += grams / 100 * nutri.carb;
                 totalSodium += grams / 100 * (nutri.sodium || 0);
-                if (sourceTag === 'ai') aiUsedCount++;
-                if (sourceTag === 'manual') manualUsedCount++;
+                if (nutri.source === 'tfnd_official') tfndUsedCount++;
+                else if (nutri.source === 'admin_manual') manualUsedCount++;
+                else if (nutri.source === 'ai_estimated') aiUsedCount++;
             }));
 
             // 若 modal 在等待期間被關閉／換了別的食譜，這個節點可能已經不在畫面上了，
@@ -1145,7 +1263,7 @@
                 <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
                     <div class="flex items-baseline gap-2 mb-2">
                         <span class="font-display font-bold text-2xl" style="color:var(--jam)">${perKcal.toFixed(0)}</span>
-                        <span class="text-sm" style="color:var(--espresso-soft)">大卡 / 每份（估算）</span>
+                        <span class="text-sm" style="color:var(--espresso-soft)">大卡 / 每個（估算）</span>
                     </div>
                     <div class="flex flex-wrap gap-x-4 gap-y-1 text-sm" style="color:var(--espresso-soft)">
                         <span>蛋白質 ${perProtein.toFixed(1)} g</span>
@@ -1153,22 +1271,36 @@
                         <span>碳水 ${perCarb.toFixed(1)} g</span>
                         <span>鈉 ${perSodium.toFixed(0)} mg</span>
                     </div>
+                    ${tfndUsedCount > 0 ? `<p class="text-xs mt-2" style="color:var(--sage)">📚 有 ${tfndUsedCount} 項食材使用衛福部食品營養成分資料庫官方數據</p>` : ''}
                     ${manualUsedCount > 0 ? `<p class="text-xs mt-2" style="color:var(--sage)">✅ 有 ${manualUsedCount} 項食材使用管理者確認過的數據</p>` : ''}
-                    ${aiUsedCount > 0 ? `<p class="text-xs mt-2" style="color:var(--sage)">🤖 有 ${aiUsedCount} 項食材是由 AI 即時估算（尚未收錄於本地食材資料庫），準確度僅供參考</p>` : ''}
+                    ${aiUsedCount > 0 ? `<p class="text-xs mt-2" style="color:var(--sage)">🤖 有 ${aiUsedCount} 項食材是由 AI 即時估算（尚未收錄於資料庫），準確度僅供參考</p>` : ''}
                     ${uncountedNames.length > 0 ? `<p class="text-xs mt-2" style="color:#B3A492">⚠️ 以下食材未列入熱量計算：${uncountedNames.join('、')}（非重量/體積單位，或無法辨識），實際熱量僅供參考</p>` : ''}
                 </div>`;
         }
 
         function scaleRecipe(recipe) {
             const newServings = parseInt(document.getElementById('scale-servings').value) || recipe.servings;
-            const factor = newServings / recipe.servings;
+            let factor;
+            if (recipe.sizeValue) {
+                // 有填尺寸：份量換算同時考慮「尺寸（面積比）」與「數量」。
+                // 圓形烘焙模具的容量大致隨直徑平方比例增減，這是烘焙常見的換算估算法，
+                // 例如 6吋→8吋，面積比約為 (8/6)^2 ≈ 1.78 倍，再乘以數量比例
+                const sizeInput = document.getElementById('scale-size');
+                const newSize = sizeInput ? (parseFloat(sizeInput.value) || recipe.sizeValue) : recipe.sizeValue;
+                const sizeRatio = Math.pow(newSize / recipe.sizeValue, 2);
+                const qtyRatio = newServings / recipe.servings;
+                factor = sizeRatio * qtyRatio;
+            } else {
+                // 沒有填尺寸：忽略尺寸欄位，單純依數量換算
+                factor = newServings / recipe.servings;
+            }
             const LOSS_RATE = 0.036; // 損耗率 3.6%
 
             // 若全部食材都沒有填分類，視為同一組計算總重
             const hasAnyGroup = recipe.ingredients.some(ing => (ing.group || '').trim());
             const ingredientsForDisplay = hasAnyGroup ? fillIngredientGroups(recipe.ingredients) : recipe.ingredients;
 
-            // 熱量／營養素計算改成非同步（本地查不到才會呼叫 AI），不卡住下面的食材重量清單渲染
+            // 熱量／營養素計算改成非同步（Firestore → 本地資料庫 → AI 依序查詢），不卡住下面的食材重量清單渲染
             updateNutritionBox(recipe, factor, newServings, LOSS_RATE);
 
             // 先算出各分類（或全部）的總重量（克），扣除 3.6% 損耗後除以份數，得到單份重量
@@ -1222,6 +1354,8 @@
             document.getElementById('name').value = recipe.name;
             document.getElementById('category').value = recipe.category;
             document.getElementById('servings').value = recipe.servings;
+            document.getElementById('size-value').value = recipe.sizeValue || '';
+            document.getElementById('size-unit').value = recipe.sizeUnit || '吋';
             document.getElementById('visibility').value = recipe.visibility || 'public';
             document.getElementById('youtube-url').value = recipe.youtubeUrl || '';
             resetImageField();
@@ -1250,6 +1384,8 @@
             document.getElementById('name').value = recipe.name + '（複製）';
             document.getElementById('category').value = recipe.category;
             document.getElementById('servings').value = recipe.servings;
+            document.getElementById('size-value').value = recipe.sizeValue || '';
+            document.getElementById('size-unit').value = recipe.sizeUnit || '吋';
             document.getElementById('visibility').value = 'public';
             document.getElementById('youtube-url').value = recipe.youtubeUrl || '';
             resetImageField();
@@ -1284,6 +1420,9 @@
             document.getElementById('modal-title').textContent = '新增食譜';
             document.getElementById('recipe-id').value = '';
             document.getElementById('name').value = '';
+            document.getElementById('servings').value = 8;
+            document.getElementById('size-value').value = '';
+            document.getElementById('size-unit').value = '吋';
             document.getElementById('visibility').value = 'public';
             document.getElementById('youtube-url').value = '';
             document.getElementById('ingredients-container').innerHTML = '';
@@ -1476,10 +1615,13 @@
                 }
             }
 
+            const sizeValueRaw = document.getElementById('size-value').value;
             const baseData = {
                 name,
                 category: document.getElementById('category').value,
                 servings: parseInt(document.getElementById('servings').value) || 1,
+                sizeValue: sizeValueRaw !== '' ? parseFloat(sizeValueRaw) : null,
+                sizeUnit: sizeValueRaw !== '' ? (document.getElementById('size-unit').value || '吋') : null,
                 visibility: document.getElementById('visibility').value || 'public',
                 ingredients,
                 steps,
@@ -1567,7 +1709,9 @@
                     isTokenAutoRefreshEnabled: true
                 });
                 const ai = getAI(aiApp, { backend: new GoogleAIBackend() });
-                aiModel = getGenerativeModel(ai, { model: 'gemini-3.5-flash' });
+                // tools: googleSearch 讓 Gemini 在估算時可以先搜尋網路上的真實資料，
+                // 而不是單純憑訓練記憶亂猜，對冷門食材的準確度會有幫助
+                aiModel = getGenerativeModel(ai, { model: 'gemini-3.5-flash', tools: [{ googleSearch: {} }] });
             } else {
                 console.info('Firebase AI Logic 尚未設定 reCAPTCHA 網站金鑰，AI 食材熱量估算功能目前停用中');
             }
