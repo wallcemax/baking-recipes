@@ -189,7 +189,11 @@
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p class="text-xs mb-4" style="color:#B3A492">在這裡輸入的資料會存進共用資料庫，之後全站食譜計算熱量時都會優先使用這裡的數字，不會再讓 AI 重新估算這個食材。</p>
-                <input id="admin-nutri-name" placeholder="食材名稱（例如：全脂奶粉）" class="form-input mb-3">
+                <input id="admin-nutri-name" placeholder="食材名稱（例如：泡打粉）" class="form-input mb-3">
+                <div class="mb-3">
+                    <input id="admin-nutri-keywords" placeholder="關聯關鍵字（選填，逗號分隔，例如：蘇打粉,發粉,baking powder）" class="form-input">
+                    <p class="text-xs mt-1" style="color:#B3A492">食譜裡如果用了這些名稱，都會直接對應到這筆資料，不會再讓 AI 重新估算</p>
+                </div>
                 <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
                         <label class="text-xs block mb-1" style="color:#B3A492">熱量 kcal / 100g</label>
@@ -1016,9 +1020,10 @@
         let aiNutritionCache = {}; // 同一次瀏覽期間的暫存，避免同個食材重複問 Firestore／AI
         async function resolveIngredientNutrition(name) {
             if (Object.prototype.hasOwnProperty.call(aiNutritionCache, name)) return aiNutritionCache[name];
-            const docId = name.trim().replace(/\//g, '_').slice(0, 200);
+            const trimmedName = name.trim();
+            const docId = trimmedName.replace(/\//g, '_').slice(0, 200);
 
-            // ① 優先查 Firestore（管理者手動輸入過的資料、或先前任何人查過的 AI 估算結果，都存在這裡）
+            // ① 優先查 Firestore：先精準比對文件 ID（食材主要名稱）
             try {
                 const cacheDoc = await db.collection('ingredientNutrition').doc(docId).get();
                 if (cacheDoc.exists) {
@@ -1027,6 +1032,21 @@
                 }
             } catch (err) {
                 console.warn('讀取食材熱量快取失敗', err && err.message);
+            }
+
+            // ①-2 精準比對沒找到 → 查「關聯關鍵字」（例如食譜寫「蘇打粉」，
+            // 但管理者是把它設定成「泡打粉」這筆資料的關聯關鍵字）
+            try {
+                const aliasSnap = await db.collection('ingredientNutrition')
+                    .where('keywords', 'array-contains', trimmedName)
+                    .limit(1)
+                    .get();
+                if (!aliasSnap.empty) {
+                    aiNutritionCache[name] = aliasSnap.docs[0].data();
+                    return aiNutritionCache[name];
+                }
+            } catch (err) {
+                console.warn('讀取食材關聯關鍵字失敗', err && err.message);
             }
 
             // ② Firestore 沒有 → 查本地食材資料庫（官方 TFND 節錄 + 手動整理的常見食材）
@@ -1046,7 +1066,7 @@
                     // 只有登入使用者的查詢會寫入共用快取，降低被惡意寫入垃圾資料的風險；
                     // 未登入者一樣能查詢／看到結果，只是不會幫忙寫快取
                     db.collection('ingredientNutrition').doc(docId).set({
-                        name, ...data,
+                        name, keywords: [name], ...data,
                         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                     }).catch(err => console.warn('寫入食材熱量快取失敗', err && err.message));
                 }
@@ -1062,7 +1082,7 @@
         function showAdminNutritionModal() {
             if (!isAdmin()) return;
             document.getElementById('admin-nutrition-modal').classList.remove('hidden');
-            ['name', 'kcal', 'protein', 'fat', 'carb', 'sodium'].forEach(f => {
+            ['name', 'keywords', 'kcal', 'protein', 'fat', 'carb', 'sodium'].forEach(f => {
                 const el = document.getElementById(`admin-nutri-${f}`);
                 if (el) el.value = '';
             });
@@ -1073,13 +1093,23 @@
             document.getElementById('admin-nutrition-modal').classList.add('hidden');
         }
 
+        // 把「關聯關鍵字」輸入框的文字（逗號或頓號分隔）整理成陣列，並自動把主要名稱也加進去，
+        // 確保用主要名稱查詢時一定找得到
+        function parseAdminKeywords(name) {
+            const raw = document.getElementById('admin-nutri-keywords').value || '';
+            const aliases = raw.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+            return Array.from(new Set([name, ...aliases]));
+        }
+
         async function saveAdminNutrition() {
             if (!isAdmin()) { alert('只有管理者能編輯食材熱量資料'); return; }
             const name = document.getElementById('admin-nutri-name').value.trim();
             if (!name) { alert('請輸入食材名稱'); return; }
             const docId = name.replace(/\//g, '_').slice(0, 200);
+            const keywords = parseAdminKeywords(name);
             const data = {
                 name,
+                keywords,
                 kcal: parseFloat(document.getElementById('admin-nutri-kcal').value) || 0,
                 protein: parseFloat(document.getElementById('admin-nutri-protein').value) || 0,
                 fat: parseFloat(document.getElementById('admin-nutri-fat').value) || 0,
@@ -1090,8 +1120,9 @@
             };
             try {
                 await db.collection('ingredientNutrition').doc(docId).set(data);
-                aiNutritionCache[name] = data; // 立即更新這次瀏覽的暫存，不用等重新整理就能生效
-                alert('已儲存！之後計算熱量時會優先使用這筆資料，AI 不會再重新估算這個食材');
+                // 立即更新這次瀏覽的暫存：主要名稱 + 所有關聯關鍵字都指到同一份資料，不用等重新整理就能生效
+                keywords.forEach(k => { aiNutritionCache[k] = data; });
+                alert('已儲存！之後計算熱量時會優先使用這筆資料，AI 不會再重新估算這些名稱');
                 loadAdminNutritionList();
             } catch (err) {
                 alert('儲存失敗：' + err.message);
@@ -1100,6 +1131,8 @@
 
         function editAdminNutrition(data) {
             document.getElementById('admin-nutri-name').value = data.name || '';
+            const aliases = (data.keywords || []).filter(k => k !== data.name);
+            document.getElementById('admin-nutri-keywords').value = aliases.join(', ');
             document.getElementById('admin-nutri-kcal').value = data.kcal || 0;
             document.getElementById('admin-nutri-protein').value = data.protein || 0;
             document.getElementById('admin-nutri-fat').value = data.fat || 0;
@@ -1110,7 +1143,7 @@
 
         async function deleteAdminNutrition(docId, name) {
             if (!isAdmin()) return;
-            if (!confirm(`確定刪除「${name}」的熱量資料？下次遇到這個食材會重新讓 AI 估算。`)) return;
+            if (!confirm(`確定刪除「${name}」的熱量資料？下次遇到這個食材（含所有關聯關鍵字）會重新讓 AI 估算。`)) return;
             try {
                 await db.collection('ingredientNutrition').doc(docId).delete();
                 delete aiNutritionCache[name];
@@ -1132,11 +1165,13 @@
                     const badge = d.source === 'admin_manual'
                         ? `<span style="color:var(--sage)">✅ 管理者輸入</span>`
                         : `<span style="color:var(--honey)">🤖 AI 估算</span>`;
+                    const aliases = (d.keywords || []).filter(k => k !== d.name);
+                    const aliasText = aliases.length ? ` · 別名：${aliases.join('、')}` : '';
                     const dataForEdit = JSON.stringify(d).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
                     return `<div class="flex justify-between items-center px-4 py-3 rounded-2xl" style="background:var(--cream)">
                         <div class="min-w-0">
                             <p class="font-medium truncate">${d.name || doc.id}</p>
-                            <p class="text-xs">${badge} · ${(d.kcal || 0).toFixed ? d.kcal.toFixed(0) : d.kcal} kcal/100g</p>
+                            <p class="text-xs">${badge} · ${(d.kcal || 0).toFixed ? d.kcal.toFixed(0) : d.kcal} kcal/100g${aliasText}</p>
                         </div>
                         <div class="flex gap-2 shrink-0">
                             <button onclick='editAdminNutrition(${dataForEdit})' class="text-sm font-medium" style="color:var(--jam)">編輯</button>
