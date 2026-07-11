@@ -872,18 +872,22 @@
             return null;
         }
 
-        // 官方食材熱量資料庫（衛福部食品營養成分資料庫節錄，每 100g），
-        // 由使用者上傳的官方 CSV 檔案篩選常見烘焙／烹飪食材整理而成，準確度優於 AI 估算，
-        // 比對時優先於下面的手動整理表（TFND = 台灣食品營養成分資料庫）
         // 官方食材熱量資料庫（衛福部食品營養成分資料庫節錄，每 100g）。
-        // 為了不讓 index.html 越來越肥大，改成獨立的 tfnd-nutrition.json 檔案，
-        // 頁面載入時用 fetch() 非同步讀取（瀏覽器/PWA 會自動快取，重複造訪幾乎瞬間載入）。
-        // 比對時優先於下面的手動整理表（TFND = 台灣食品營養成分資料庫）
+        // 分成兩層，各自獨立成 JSON 檔案，用 fetch() 非同步讀取（瀏覽器/PWA 會自動快取，重複造訪幾乎瞬間載入）：
+        //   ① tfnd-nutrition.json：手動整理的常見口語別名精簡表（例如「地瓜」「番薯」「甘藷」都對得到同一筆），優先查這層
+        //   ② tfnd-nutrition-full.json：完整官方資料庫節錄（2181 種食材，使用官方學術名稱），①查不到才查這層
+        // 兩層都查不到，才會進入下面手動整理的常見食材備用表，再查不到最後才問 AI
         let TFND_NUTRITION_MAP = [];
         const tfndLoadPromise = fetch('tfnd-nutrition.json')
             .then(res => res.json())
             .then(data => { TFND_NUTRITION_MAP = data; })
-            .catch(err => console.warn('載入官方食材營養資料庫失敗（不影響其他功能，會直接改用備用表／AI）', err));
+            .catch(err => console.warn('載入官方食材營養資料庫（精簡表）失敗（不影響其他功能，會直接改用完整表／備用表／AI）', err));
+
+        let TFND_FULL_NUTRITION_MAP = [];
+        const tfndFullLoadPromise = fetch('tfnd-nutrition-full.json')
+            .then(res => res.json())
+            .then(data => { TFND_FULL_NUTRITION_MAP = data; })
+            .catch(err => console.warn('載入官方食材營養資料庫（完整表）失敗（不影響其他功能，會直接改用備用表／AI）', err));
 
 
         // 常見食材熱量與三大營養素（每 100g），用來估算每份熱量／蛋白質／脂肪／碳水。
@@ -926,7 +930,7 @@
 
         // 依食材名稱關鍵字比對熱量資料；雙向比對（名稱包含關鍵字，或關鍵字包含名稱），
         // 這樣像「糖」這種比關鍵字「砂糖」更短的通用名稱也能對到；找不到時回傳 null。
-        // 優先查官方 TFND 資料庫節錄，查不到才查手動整理的常見食材備用表
+        // 查詢順序：①口語別名精簡表 → ②完整官方資料庫（2181種） → ③手動整理的常見食材備用表
         function guessIngredientNutrition(name) {
             if (!name) return null;
             const lower = name.toLowerCase();
@@ -939,7 +943,9 @@
                 }
                 return null;
             };
-            return matchIn(TFND_NUTRITION_MAP, 'tfnd_official') || matchIn(INGREDIENT_NUTRITION_MAP, 'local_fallback');
+            return matchIn(TFND_NUTRITION_MAP, 'tfnd_official')
+                || matchIn(TFND_FULL_NUTRITION_MAP, 'tfnd_official')
+                || matchIn(INGREDIENT_NUTRITION_MAP, 'local_fallback');
         }
 
         // ---------- 食材熱量查詢優先順序：Firestore 快取 → 本地食材資料庫 → AI（Gemini，可用網路搜尋輔助）----------
@@ -977,9 +983,9 @@
                 console.warn('讀取食材關聯關鍵字失敗', err && err.message);
             }
 
-            // ② Firestore 沒有 → 查本地食材資料庫（官方 TFND 節錄 + 手動整理的常見食材）
-            // 先確保 TFND JSON 檔案已經載入完成（通常很快，第二次造訪幾乎是瞬間，因為有瀏覽器快取）
-            await tfndLoadPromise;
+            // ② Firestore 沒有 → 查本地食材資料庫（官方 TFND 節錄兩層 + 手動整理的常見食材）
+            // 先確保兩份 TFND JSON 檔案都已經載入完成（通常很快，第二次造訪幾乎是瞬間，因為有瀏覽器快取）
+            await Promise.all([tfndLoadPromise, tfndFullLoadPromise]);
             const local = guessIngredientNutrition(name);
             if (local) {
                 aiNutritionCache[name] = local;
