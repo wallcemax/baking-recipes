@@ -1648,19 +1648,39 @@
             '--honey': '#F4C15E', '--sage': '#9BC49B',
         };
 
+        function attemptFullscreen() {
+            try {
+                const el = document.documentElement;
+                if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+                else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+            } catch (e) {}
+        }
+        function exitFullscreenIfActive() {
+            try {
+                if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+            } catch (e) {}
+        }
+
         function applyCookingMode(modal) {
             modal.classList.add('landscape-cooking-mode');
-            modal.style.setProperty('align-items', 'center', 'important');
             Object.entries(COOKING_MODE_VARS).forEach(([k, v]) => modal.style.setProperty(k, v));
+            // 背景遮罩改成不透明的深色，並移除內距，讓內容真的能撐滿整個螢幕，
+            // 徹底蓋掉底下的頁首、分類標籤等其他按鈕，視覺上乾淨許多
+            modal.style.setProperty('background', COOKING_MODE_VARS['--cream'], 'important');
+            modal.style.setProperty('padding', '0', 'important');
+            modal.style.setProperty('align-items', 'stretch', 'important');
+            modal.style.setProperty('justify-content', 'stretch', 'important');
 
             const content = document.getElementById('modal-content');
             if (content) {
                 content.style.setProperty('background', COOKING_MODE_VARS['--paper'], 'important');
                 content.style.setProperty('color', COOKING_MODE_VARS['--espresso'], 'important');
-                content.style.setProperty('width', '96vw', 'important');
-                content.style.setProperty('max-width', '96vw', 'important');
-                content.style.setProperty('max-height', '94vh', 'important');
-                content.style.setProperty('border-radius', '1.5rem', 'important');
+                content.style.setProperty('width', '100vw', 'important');
+                content.style.setProperty('height', '100vh', 'important');
+                content.style.setProperty('max-width', '100vw', 'important');
+                content.style.setProperty('max-height', '100vh', 'important');
+                content.style.setProperty('border-radius', '0', 'important');
+                content.style.setProperty('margin', '0', 'important');
                 content.querySelectorAll('h2, h3, p, span, label, .step-text').forEach(el => el.classList.add('cook-mode-text-lg'));
             }
             const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
@@ -1673,20 +1693,36 @@
             ['cook-ingredients-block', 'cook-steps-block'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) {
-                    el.style.setProperty('max-height', '68vh', 'important');
+                    el.style.setProperty('max-height', '74vh', 'important');
                     el.style.setProperty('overflow-y', 'auto', 'important');
                 }
             });
+
+            // 嘗試進入瀏覽器全螢幕模式，把網址列也一起藏起來。
+            // 部分瀏覽器要求「使用者手動點擊」才允許進入全螢幕（旋轉螢幕不算數），
+            // 所以自動嘗試之外，額外加一顆手動按鈕當備援
+            attemptFullscreen();
+            if (!document.getElementById('cook-fullscreen-btn')) {
+                const btn = document.createElement('button');
+                btn.id = 'cook-fullscreen-btn';
+                btn.textContent = '⛶ 全螢幕';
+                btn.style.cssText = 'position:fixed;top:10px;right:56px;z-index:60;padding:6px 14px;border-radius:999px;background:rgba(255,255,255,0.15);color:#F5EBDF;font-size:13px;border:1px solid rgba(255,255,255,0.3);';
+                btn.onclick = attemptFullscreen;
+                document.body.appendChild(btn);
+            }
         }
 
         function removeCookingMode(modal) {
             modal.classList.remove('landscape-cooking-mode');
             modal.style.removeProperty('align-items');
+            modal.style.removeProperty('justify-content');
+            modal.style.removeProperty('background');
+            modal.style.removeProperty('padding');
             Object.keys(COOKING_MODE_VARS).forEach(k => modal.style.removeProperty(k));
 
             const content = document.getElementById('modal-content');
             if (content) {
-                ['background', 'color', 'width', 'max-width', 'max-height', 'border-radius'].forEach(p => content.style.removeProperty(p));
+                ['background', 'color', 'width', 'height', 'max-width', 'max-height', 'border-radius', 'margin'].forEach(p => content.style.removeProperty(p));
                 content.querySelectorAll('.cook-mode-text-lg').forEach(el => el.classList.remove('cook-mode-text-lg'));
             }
             const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
@@ -1697,6 +1733,9 @@
                 const el = document.getElementById(id);
                 if (el) { el.style.removeProperty('max-height'); el.style.removeProperty('overflow-y'); }
             });
+            const fsBtn = document.getElementById('cook-fullscreen-btn');
+            if (fsBtn) fsBtn.remove();
+            exitFullscreenIfActive();
         }
 
         function updateCookingModeClass() {
