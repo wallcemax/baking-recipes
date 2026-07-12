@@ -1,4 +1,4 @@
-const CACHE_NAME = 'baking-recipe-cache-v6';
+const CACHE_NAME = 'baking-recipe-cache-v7';
 const APP_SHELL = [
   './',
   './index.html',
