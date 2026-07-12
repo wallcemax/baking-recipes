@@ -147,6 +147,12 @@
             100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(.8); opacity: 0; }
         }
 
+        /* 食譜小精靈吉祥物：待機時輕輕彈跳，吸引注意但不會太吵 */
+        @keyframes mascotBounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+
         /* 步驟勾選 */
         .step-checkbox i { transition: color .2s; }
         .step-row { transition: opacity .2s; }
@@ -316,7 +322,7 @@
                         <button type="button" onclick="addIngredientField()" class="text-sm font-medium" style="color:var(--jam)"><i class="fas fa-plus mr-1"></i>新增</button>
                     </div>
                     <p class="text-xs mb-3" style="color:#B3A492">💡 在「分類」欄位輸入相同名稱（例如 A 餅皮 / B 內餡），即可將食材自動分組顯示；同一組內若後面的食材不再填分類，會自動歸類到上面最近一次填寫的分類</p>
-                    <p class="text-xs mb-3" style="color:#B3A492">💡 單位支援 大匙／tbsp／茶匙／tsp／ml／毫升，系統會依食材名稱自動辨識並換算成公克計算總重</p>
+                    <p class="text-xs mb-3" style="color:#B3A492">💡 單位支援 大匙／tbsp／茶匙／tsp／ml／毫升／杯／cup，系統會依食材名稱自動辨識並換算成公克計算總重</p>
                     <div id="ingredients-container" class="space-y-2.5"></div>
                 </div>
                 <div>
@@ -554,6 +560,72 @@
             }).join('');
         }
         initCategoryChips();
+
+        // ---------- 食譜小精靈吉祥物：七隻各有個性，每次重新整理隨機出現一隻 ----------
+        const MASCOTS = [
+            {
+                emoji: '🍞', name: '小麥', personality: '溫暖治癒',
+                messages: ['累了嗎？先深呼吸一下，我陪你', '不管做得好不好，你已經很棒了', '廚房裡的時光，慢慢來就好', '今天的你，辛苦了', '小小的失敗也是美味的一部分', '我在這裡陪你，別擔心'],
+            },
+            {
+                emoji: '🥚', name: '蛋黃', personality: '活潑俏皮',
+                messages: ['欸欸，今天想搞點什麼花樣？', '偷偷告訴你，我肚子也餓了！', '叮咚～靈感送到！', '哈哈，動作快點，我等不及了！', '你知道嗎？我最愛看你做甜點了', '來嘛來嘛，一起玩烘焙！'],
+            },
+            {
+                emoji: '👨‍🍳', name: '主廚仔', personality: '嚴謹專業',
+                messages: ['記得先秤好食材，事半功倍', '溫度跟時間都要注意喔，這是關鍵', '細節決定成敗，加油', '先看過食譜再開始，比較不會手忙腳亂', '衛生跟安全永遠是第一位', '穩紮穩打，你會越來越厲害的'],
+            },
+            {
+                emoji: '🧁', name: '小柯', personality: '甜美愛撒嬌',
+                messages: ['人家肚子餓餓了啦～', '做點甜甜的東西嘛，拜託～', '你今天也好努力喔，抱抱', '可以先做我嗎（眨眼）', '甜點是心情的維他命唷', '跟我一起變甜蜜蜜吧'],
+            },
+            {
+                emoji: '🥐', name: '阿可', personality: '慵懶隨性',
+                messages: ['嗯～不急，慢慢來吧', '隨便煮煮，開心就好', '今天…想睡覺，但也想吃可頌', '壓力不要太大，廚房不是戰場', '順其自然，味道也會很棒的', '累的話，先休息一下也沒關係'],
+            },
+            {
+                emoji: '🍪', name: '脆脆', personality: '好奇多話',
+                messages: ['欸你知道餅乾為什麼是脆的嗎？', '我今天想到一百種吃法欸', '問你喔，你比較喜歡甜的還鹹的？', '欸欸你在做什麼，我也想看！', '話說我剛剛想到一個笑話…', '好奇問一下，今天心情如何？'],
+            },
+            {
+                emoji: '🍰', name: '莓莓', personality: '浪漫夢幻',
+                messages: ['廚房裡飄著的，是幸福的香氣', '每道料理都是一首小詩', '願你的今天，甜如初戀', '把心意揉進麵團裡吧', '美味，是最溫柔的告白', '讓我們一起編織美味的故事'],
+            },
+        ];
+
+        let currentMascot = null;
+
+        function getMascotMessage() {
+            if (!currentMascot) return '';
+            const pool = currentMascot.messages;
+            return pool[Math.floor(Math.random() * pool.length)];
+        }
+
+        function initMascot() {
+            if (document.getElementById('mascot-wrap')) return;
+            currentMascot = MASCOTS[Math.floor(Math.random() * MASCOTS.length)];
+            const wrap = document.createElement('div');
+            wrap.id = 'mascot-wrap';
+            wrap.style.cssText = 'position:fixed; left:14px; bottom:14px; z-index:40; cursor:pointer;';
+            wrap.innerHTML = `
+                <div id="mascot-bubble" class="hidden" style="background:var(--paper); border:1px solid var(--line); border-radius:1rem; padding:0.7rem 1rem; max-width:200px; font-size:0.8rem; line-height:1.4; margin-bottom:0.5rem; box-shadow:0 8px 20px -8px rgba(58,42,30,0.35); color:var(--espresso)"></div>
+                <div style="display:flex; align-items:center; gap:0.4rem;">
+                    <div id="mascot-avatar" style="width:3rem; height:3rem; border-radius:999px; background:var(--paper); border:2px solid var(--line); display:flex; align-items:center; justify-content:center; font-size:1.5rem; box-shadow:0 4px 10px rgba(58,42,30,0.2); animation:mascotBounce 3s ease-in-out infinite;">${currentMascot.emoji}</div>
+                </div>
+            `;
+            document.body.appendChild(wrap);
+            wrap.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const bubble = document.getElementById('mascot-bubble');
+                bubble.textContent = `${currentMascot.name}：${getMascotMessage()}`;
+                bubble.classList.remove('hidden');
+                clearTimeout(wrap._mascotHideTimer);
+                wrap._mascotHideTimer = setTimeout(() => bubble.classList.add('hidden'), 5000);
+            });
+        }
+        window.addEventListener('DOMContentLoaded', initMascot);
+        // 頁面載入這個 script 區塊時，DOMContentLoaded 可能已經觸發過了，保險再呼叫一次
+        if (document.readyState !== 'loading') initMascot();
 
         function filterByCategory(cat) {
             selectedCategory = cat;
@@ -1230,6 +1302,7 @@
             { keywords: ['無鹽奶油', '有鹽奶油', '奶油', 'butter'], density: 0.96 },
             { keywords: ['鹽', 'salt'], density: 1.20 },
             { keywords: ['水', 'water'], density: 1.00 },
+            { keywords: ['白米', '在來米', '糯米', '香米', '米', 'rice'], density: 0.85 },
         ];
 
         // 依食材名稱關鍵字比對密度；雙向比對（名稱包含關鍵字，或關鍵字包含名稱），
@@ -1517,13 +1590,14 @@
             return null;
         }
 
-        // 將常見體積單位換算成 ml；支援 大匙／tbsp／茶匙／tsp／ml／毫升／l／公升
+        // 將常見體積單位換算成 ml；支援 大匙／tbsp／茶匙／tsp／ml／毫升／l／公升／杯／cup
         function convertToMilliliters(amount, unit) {
             switch ((unit || '').trim().toLowerCase()) {
                 case 'ml': case '毫升': return amount;
                 case 'l': case '公升': return amount * 1000;
                 case 'tbsp': case '大匙': case '湯匙': return amount * 15;
                 case 'tsp': case '茶匙': case '小匙': return amount * 5;
+                case 'cup': case '杯': return amount * 240; // 烘焙食譜慣用的量杯容量（美制 1 杯 ≈ 236.6ml，取整為 240ml）
                 default: return null;
             }
         }
@@ -2131,9 +2205,9 @@
             div.className = "grid grid-cols-12 gap-2";
             div.innerHTML = `
                 <input value="${group}" id="ing-group-${idx}" placeholder="分類(如 A 餅皮)" class="form-input col-span-2 !px-2 !py-2.5 text-xs" style="color:var(--jam)">
-                <input value="${name}" id="ing-name-${idx}" placeholder="食材" class="form-input col-span-5 !px-3 !py-2.5 text-base">
-                <input value="${amt}" type="number" id="ing-amt-${idx}" class="form-input col-span-2 !px-2 !py-2.5">
-                <input value="${unit}" id="ing-unit-${idx}" class="form-input col-span-2 !px-2 !py-2.5 text-sm">
+                <input value="${name}" id="ing-name-${idx}" placeholder="食材" class="form-input col-span-6 !px-3 !py-2.5 text-base">
+                <input value="${amt}" type="number" id="ing-amt-${idx}" class="form-input col-span-1 !px-1 !py-2.5 text-sm">
+                <input value="${unit}" id="ing-unit-${idx}" class="form-input col-span-2 !px-1 !py-2.5 text-xs">
                 <button type="button" onclick="this.parentElement.remove()" class="col-span-1 text-lg" style="color:#C4453F">×</button>
             `;
             container.appendChild(div);
@@ -2148,9 +2222,9 @@
             div.innerHTML = `
                 <div class="flex gap-2 items-center">
                     <span class="font-medium shrink-0" style="color:var(--jam)">${idx+1}.</span>
-                    <input value="${text}" id="step-${idx}" placeholder="說明這個步驟..." class="form-input flex-1 !px-3 !py-2.5 text-base">
-                    <input value="${timestamp}" id="step-ts-${idx}" placeholder="00:00" title="影片時間點 (mm:ss)" class="form-input w-16 shrink-0 !px-1.5 !py-2.5 text-xs text-center">
-                    <input value="${duration}" type="number" min="0" step="0.5" id="step-duration-${idx}" placeholder="分鐘" title="這個步驟大約需要幾分鐘（選填，用來啟動計時器）" class="form-input w-14 shrink-0 !px-1.5 !py-2.5 text-xs text-center">
+                    <input value="${text}" id="step-${idx}" placeholder="說明這個步驟..." class="form-input flex-1 !px-3 !py-3 text-base">
+                    <input value="${timestamp}" id="step-ts-${idx}" placeholder="00:00" title="影片時間點 (mm:ss)" class="form-input w-14 shrink-0 !px-1 !py-2.5 text-xs text-center">
+                    <input value="${duration}" type="number" min="0" step="0.5" id="step-duration-${idx}" placeholder="分鐘" title="這個步驟大約需要幾分鐘（選填，用來啟動計時器）" class="form-input w-11 shrink-0 !px-1 !py-2.5 text-xs text-center">
                     <button type="button" onclick="triggerStepImageInput(${idx})" title="新增這個步驟的圖片" class="shrink-0 w-9 h-9 rounded-full flex items-center justify-center" style="background:var(--cream)">
                         <i class="fas fa-camera text-sm" style="color:var(--espresso-soft)"></i>
                     </button>
