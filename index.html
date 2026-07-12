@@ -799,22 +799,32 @@
 
         // 計時結束時呼叫：頁面在背景才發系統通知（帶震動），頁面開著就只用頁面內震動＋音效，避免重複打擾
         async function notifyTimerDone(stepLabel) {
-            if (document.hidden && 'Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker) {
-                try {
-                    const reg = await navigator.serviceWorker.ready;
-                    await reg.showNotification('⏰ 計時時間到！', {
-                        body: stepLabel ? `「${stepLabel}」時間到囉，該進行下一步了` : '該進行下一步了',
-                        icon: './icon-192.png',
-                        vibrate: [180, 100, 180, 100, 500],
-                        tag: 'recipe-timer',
-                    });
-                    return;
-                } catch (err) {
-                    console.warn('系統通知發送失敗，改用頁面內提示', err && err.message);
+            if (document.hidden) {
+                // 頁面在背景（切到主畫面/其他 App）→ 發系統通知提醒使用者該回來了，
+                // 通知本身帶震動，由作業系統處理
+                if ('Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker) {
+                    try {
+                        const reg = await navigator.serviceWorker.ready;
+                        await reg.showNotification('⏰ 計時時間到！', {
+                            body: stepLabel ? `「${stepLabel}」時間到囉，該進行下一步了` : '該進行下一步了',
+                            icon: './icon-192.png',
+                            vibrate: [180, 100, 180, 100, 500],
+                            tag: 'recipe-timer',
+                            renotify: true,
+                        });
+                        return;
+                    } catch (err) {
+                        console.warn('系統通知發送失敗，改用頁面內提示', err && err.message);
+                    }
                 }
+                // 沒有通知權限時的備援：還是嘗試頁面內的震動＋音效（不一定有效，但至少試一次）
+                playBeep();
+                if (navigator.vibrate) navigator.vibrate([180, 100, 180, 100, 500]);
+            } else {
+                // 頁面開著 → 只用頁面內的震動＋音效，不跳系統通知，避免重複打擾
+                playBeep();
+                if (navigator.vibrate) navigator.vibrate([180, 100, 180, 100, 500]);
             }
-            playBeep();
-            if (navigator.vibrate) navigator.vibrate([180, 100, 180, 100, 500]);
         }
 
         function updateHourglass(idx, fraction) {
