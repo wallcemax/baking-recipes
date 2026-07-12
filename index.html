@@ -2048,16 +2048,16 @@
         // 每日客群：對應到某個食譜分類，當天菜單如果有該分類的菜，會賣得更好、價格也稍微好一點；
         // 沒有對應分類也沒關係，生意就是一般般，不會扣分
         const TINY_DINER_CUSTOMER_GROUPS = [
-            { name: '上班族OL', icon: '👩‍💼', category: '蛋糕/糕餅' },
-            { name: '學生族群', icon: '🎒', category: '麵包/包子' },
-            { name: '銀髮長輩', icon: '👴', category: '中式烹飪' },
-            { name: '健身狂熱者', icon: '💪', category: '健康餐' },
-            { name: '甜點控', icon: '🍪', category: '餅乾/塔派' },
-            { name: '浪漫情侶', icon: '💑', category: '西式烹飪' },
-            { name: '動漫迷', icon: '🎌', category: '日式烹飪' },
-            { name: '新手爸媽', icon: '👶', category: '寶寶食品' },
-            { name: '美食探險家', icon: '🧭', category: '慕斯/布丁' },
-            { name: '在地熟客', icon: '🏘️', category: '其他' },
+            { name: '上班族OL', icon: '👩‍💼', category: '蛋糕/糕餅', dislike: '寶寶食品' },
+            { name: '學生族群', icon: '🎒', category: '麵包/包子', dislike: '健康餐' },
+            { name: '銀髮長輩', icon: '👴', category: '中式烹飪', dislike: '慕斯/布丁' },
+            { name: '健身狂熱者', icon: '💪', category: '健康餐', dislike: '蛋糕/糕餅' },
+            { name: '甜點控', icon: '🍪', category: '餅乾/塔派', dislike: '中式烹飪' },
+            { name: '浪漫情侶', icon: '💑', category: '西式烹飪', dislike: '麵包/包子' },
+            { name: '動漫迷', icon: '🎌', category: '日式烹飪', dislike: '寶寶食品' },
+            { name: '新手爸媽', icon: '👶', category: '寶寶食品', dislike: '其他' },
+            { name: '美食探險家', icon: '🧭', category: '慕斯/布丁', dislike: '麵包/包子' },
+            { name: '在地熟客', icon: '🏘️', category: '其他', dislike: '西式烹飪' },
         ];
         const TINY_DINER_GROUP_POP_BOOST = 1.8; // 對應分類的受歡迎度加成
         const TINY_DINER_GROUP_PRICE_BOOST = 1.15; // 對應分類的價格加成
@@ -2143,7 +2143,9 @@
         }
         function tinyDinerEffectivePopularity(dish) {
             const state = tinyDinerState;
-            const isMatch = state && state.todayGroup && dish.category === state.todayGroup.category;
+            if (!state || !state.todayGroup) return dish.popularity;
+            if (dish.category === state.todayGroup.dislike) return 0; // 討厭的分類完全賣不出去
+            const isMatch = dish.category === state.todayGroup.category;
             return isMatch ? dish.popularity * TINY_DINER_GROUP_POP_BOOST : dish.popularity;
         }
 
@@ -2204,14 +2206,20 @@
             const totalWeight = prepped.reduce((sum, p) => sum + p.effPop, 0);
             const events = [];
             for (let c = 0; c < customerCount; c++) {
-                let roll = Math.random() * totalWeight;
-                let picked = null;
-                for (const p of prepped) {
-                    roll -= p.effPop;
-                    if (roll <= 0) { picked = p; break; }
+                let picked;
+                if (totalWeight <= 0) {
+                    // 極端情況：整份菜單剛好都是今天客群討厭的分類，沒有人想買任何東西
+                    picked = prepped[Math.floor(Math.random() * prepped.length)];
+                } else {
+                    let roll = Math.random() * totalWeight;
+                    picked = null;
+                    for (const p of prepped) {
+                        roll -= p.effPop;
+                        if (roll <= 0 && p.effPop > 0) { picked = p; break; }
+                    }
+                    if (!picked) picked = prepped[prepped.length - 1];
                 }
-                if (!picked) picked = prepped[prepped.length - 1];
-                const success = picked.remaining > 0;
+                const success = totalWeight > 0 && picked.remaining > 0;
                 if (success) picked.remaining--;
                 events.push({
                     name: TINY_DINER_NAMES[Math.floor(Math.random() * TINY_DINER_NAMES.length)],
@@ -2289,12 +2297,14 @@
             const isProfit = result.profit >= 0;
             const group = state.todayGroup;
             const hadMatch = state.todayMenu.some(d => d.category === group.category);
+            const hadDislike = state.todayMenu.some(d => d.category === group.dislike);
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="text-center py-4 rounded-3xl mb-4" style="background:linear-gradient(180deg, var(--cream), var(--paper))">
                     <div class="text-5xl mb-2">${isProfit ? '📈' : '📉'}</div>
                     <p class="font-display text-xl font-bold" style="color:${isProfit ? 'var(--sage)' : '#C4453F'}">今日${isProfit ? '獲利' : '虧損'} $${Math.abs(Math.round(result.profit)).toLocaleString()}</p>
                 </div>
-                <p class="text-xs mb-3 text-center" style="color:#B3A492">${group.icon} 今天客群是「${group.name}」，${hadMatch ? `菜單裡剛好有「${group.category}」，賣得特別好！` : `菜單裡沒有「${group.category}」，生意就一般般`}</p>
+                <p class="text-xs mb-1 text-center" style="color:#B3A492">${group.icon} 今天客群是「${group.name}」，${hadMatch ? `菜單裡剛好有「${group.category}」，賣得特別好！` : `菜單裡沒有「${group.category}」，生意就一般般`}</p>
+                ${hadDislike ? `<p class="text-xs mb-3 text-center" style="color:#C4453F">⚠️ 菜單裡有「${group.dislike}」，這道菜今天完全賣不出去</p>` : '<div class="mb-3"></div>'}
                 <div class="grid grid-cols-2 gap-2 mb-4 text-sm">
                     <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:#B3A492">來客數</p><p class="font-bold">${result.customerCount} 位</p></div>
                     <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:#B3A492">成交 / 撲空</p><p class="font-bold">${result.served} / ${result.turnedAway}</p></div>
