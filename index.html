@@ -202,8 +202,6 @@
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p class="text-xs mb-4" style="color:#B3A492">在這裡輸入的資料會存進共用資料庫，之後全站食譜計算熱量時都會優先使用這裡的數字，不會再讓 AI 重新估算這個食材。</p>
-                <button type="button" onclick="triggerAdminOCR()" class="btn-secondary text-sm mb-4"><i class="fas fa-camera mr-1"></i>拍照辨識營養標示</button>
-                <input type="file" id="admin-ocr-input" accept="image/*" capture="environment" class="hidden" onchange="handleAdminOCR(event)">
                 <input id="admin-nutri-name" placeholder="食材名稱（例如：泡打粉）" class="form-input mb-3">
                 <div class="mb-3">
                     <input id="admin-nutri-keywords" placeholder="關聯關鍵字（選填，逗號分隔，例如：蘇打粉,發粉,baking powder）" class="form-input">
@@ -298,15 +296,10 @@
                 <div class="mb-6">
                     <div class="flex justify-between items-center mb-3">
                         <label class="font-semibold">食材</label>
-                        <div class="flex items-center gap-3">
-                            <button type="button" onclick="triggerIngredientOCR()" class="text-sm font-medium" style="color:var(--honey)"><i class="fas fa-camera mr-1"></i>拍照辨識</button>
-                            <button type="button" onclick="addIngredientField()" class="text-sm font-medium" style="color:var(--jam)"><i class="fas fa-plus mr-1"></i>新增</button>
-                        </div>
+                        <button type="button" onclick="addIngredientField()" class="text-sm font-medium" style="color:var(--jam)"><i class="fas fa-plus mr-1"></i>新增</button>
                     </div>
-                    <input type="file" id="ingredient-ocr-input" accept="image/*" capture="environment" class="hidden" onchange="handleIngredientOCR(event)">
                     <p class="text-xs mb-3" style="color:#B3A492">💡 在「分類」欄位輸入相同名稱（例如 A 餅皮 / B 內餡），即可將食材自動分組顯示；同一組內若後面的食材不再填分類，會自動歸類到上面最近一次填寫的分類</p>
                     <p class="text-xs mb-3" style="color:#B3A492">💡 單位支援 大匙／tbsp／茶匙／tsp／ml／毫升，系統會依食材名稱自動辨識並換算成公克計算總重</p>
-                    <p class="text-xs mb-3" style="color:#B3A492">📷 「拍照辨識」可以拍手寫食譜卡或包裝標示，自動嘗試解析成食材列表，辨識結果請務必檢查修正</p>
                     <div id="ingredients-container" class="space-y-2.5"></div>
                 </div>
                 <div>
@@ -2136,143 +2129,6 @@
             }
         }
 
-        // ---------- 相機圖片辨識（改用 Firebase AI Logic / Gemini 直接讀圖，取代傳統 OCR）----------
-        // Gemini 是多模態模型，可以直接「看懂」照片內容（含手寫字、包裝標示、排版），
-        // 不需要另外下載/初始化傳統 OCR 引擎，準確度通常也好很多。
-        // 需要先完成 Firebase AI Logic + App Check 設定才會生效（見上方 module script 的說明），
-        // 還沒設定完成前會顯示提示訊息，不影響網站其他功能
-
-        // 把照片縮小到合理解析度：手機拍照常常是 3000~4000px 長邊，AI 讀圖不需要這麼高的解析度，
-        // 縮小可以加快上傳、降低用量
-        function downscaleImageForOCR(file, maxDim = 1600) {
-            return new Promise((resolve) => {
-                const img = new Image();
-                const url = URL.createObjectURL(file);
-                img.onload = () => {
-                    URL.revokeObjectURL(url);
-                    let { width, height } = img;
-                    if (width <= maxDim && height <= maxDim) { resolve(file); return; }
-                    const scale = maxDim / Math.max(width, height);
-                    width = Math.round(width * scale);
-                    height = Math.round(height * scale);
-                    const canvas = document.createElement('canvas');
-                    canvas.width = width; canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, width, height);
-                    canvas.toBlob(blob => resolve(blob || file), 'image/jpeg', 0.85);
-                };
-                img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
-                img.src = url;
-            });
-        }
-
-        // 把圖片檔轉成 base64（Gemini API 需要的格式）
-        function fileToBase64(file) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => {
-                    const result = reader.result; // "data:image/jpeg;base64,xxxxx"
-                    resolve(result.split(',')[1] || '');
-                };
-                reader.onerror = () => reject(new Error('圖片讀取失敗'));
-                reader.readAsDataURL(file);
-            });
-        }
-
-        async function analyzeImage(file, promptText) {
-            if (typeof window.__analyzeImageWithGemini !== 'function') {
-                throw new Error('AI 圖片辨識尚未設定完成，請確認 Firebase AI Logic 與 App Check 是否已在主控台完成設定');
-            }
-            const scaled = await downscaleImageForOCR(file);
-            const base64 = await fileToBase64(scaled);
-            const text = await window.__analyzeImageWithGemini(base64, 'image/jpeg', promptText);
-            if (!text) throw new Error('AI 沒有回傳任何辨識結果，請換一張更清楚的照片再試一次');
-            return text;
-        }
-
-        // ----- 新增食譜：拍照辨識食材清單 -----
-        function triggerIngredientOCR() {
-            document.getElementById('ingredient-ocr-input').click();
-        }
-
-        async function handleIngredientOCR(event) {
-            const file = event.target.files[0];
-            event.target.value = '';
-            if (!file) return;
-            const btn = document.querySelector('[onclick="triggerIngredientOCR()"]');
-            const originalText = btn ? btn.innerHTML : '';
-            if (btn) { btn.innerHTML = '辨識中…'; btn.disabled = true; }
-            try {
-                const prompt = `這是一張食譜或食材清單的照片（可能是手寫或印刷體，繁體中文）。請幫我把裡面看得到的食材列出來，每一行一個食材，格式固定為「食材名稱 數量 單位」，例如：
-高筋麵粉 300 g
-細砂糖 50 g
-雞蛋 2 顆
-只回傳這種格式的清單，一行一項，不要加其他說明文字、不要用項目符號、不要用 markdown。看不清楚或無法判斷份量的項目請直接省略。`;
-                const text = await analyzeImage(file, prompt);
-                const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-                const unitPattern = /(公克|公斤|克|kg|g|ml|毫升|大匙|茶匙|tbsp|tsp|顆|個|片|條|根)/i;
-                const numPattern = /(\d+\.?\d*)/;
-                let addedCount = 0;
-                lines.forEach(line => {
-                    const numMatch = line.match(numPattern);
-                    if (!numMatch) return;
-                    const unitMatch = line.match(unitPattern);
-                    const amount = parseFloat(numMatch[1]);
-                    const unit = unitMatch ? unitMatch[1] : 'g';
-                    let name = line.replace(numPattern, '').replace(unitPattern, '').replace(/[:：,，、\-•*]/g, '').trim();
-                    if (name && amount) { addIngredientField('', name, amount, unit); addedCount++; }
-                });
-                if (addedCount > 0) {
-                    alert(`辨識完成！已自動加入 ${addedCount} 項食材，請檢查並修正內容（AI 辨識不一定 100% 準確）`);
-                } else {
-                    alert('AI 沒有整理出「名稱+數字+單位」這種格式的食材，請手動輸入。\n\nAI 回覆的原始內容：\n' + text.slice(0, 300));
-                }
-            } catch (err) {
-                alert('辨識失敗：' + err.message);
-            } finally {
-                if (btn) { btn.innerHTML = originalText; btn.disabled = false; }
-            }
-        }
-
-        // ----- 管理者食材熱量：拍照辨識營養標示 -----
-        function triggerAdminOCR() {
-            document.getElementById('admin-ocr-input').click();
-        }
-
-        async function handleAdminOCR(event) {
-            const file = event.target.files[0];
-            event.target.value = '';
-            if (!file) return;
-            const btn = document.querySelector('[onclick="triggerAdminOCR()"]');
-            const originalText = btn ? btn.innerHTML : '';
-            if (btn) { btn.innerHTML = '辨識中…'; btn.disabled = true; }
-            try {
-                const prompt = `這是一張食品營養標示的照片（繁體中文）。請找出熱量、蛋白質、脂肪、碳水化合物、鈉這五項數值，只回傳一個 JSON 物件，不要有其他文字、不要用 markdown code block，格式：
-{"kcal":數字,"protein":數字,"fat":數字,"carb":數字,"sodium":數字,"per":"標示上寫的計量基準，例如 100公克 或 每份30公克"}
-數值就直接照標示上寫的填入對應欄位，不用自己換算，per 欄位如實填寫標示上實際的計量基準文字。`;
-                const text = await analyzeImage(file, prompt);
-                const cleaned = text.replace(/```json|```/g, '').trim();
-                let parsed;
-                try { parsed = JSON.parse(cleaned); } catch (e) { throw new Error('AI 回覆的格式無法解析，請換一張更清楚的照片再試一次'); }
-                let filled = 0;
-                if (parsed.kcal !== undefined) { document.getElementById('admin-nutri-kcal').value = parsed.kcal; filled++; }
-                if (parsed.protein !== undefined) { document.getElementById('admin-nutri-protein').value = parsed.protein; filled++; }
-                if (parsed.fat !== undefined) { document.getElementById('admin-nutri-fat').value = parsed.fat; filled++; }
-                if (parsed.carb !== undefined) { document.getElementById('admin-nutri-carb').value = parsed.carb; filled++; }
-                if (parsed.sodium !== undefined) { document.getElementById('admin-nutri-sodium').value = parsed.sodium; filled++; }
-                if (filled > 0) {
-                    const perNote = parsed.per ? `\n\n標示上的計量基準：「${parsed.per}」` : '';
-                    alert(`辨識完成，已自動填入 ${filled} 個欄位，請務必檢查數字是否正確${perNote}\n\n⚠️ 這裡的欄位是「每100克」，如果標示基準不是 100 公克，請自行換算後再儲存`);
-                } else {
-                    alert('沒有辨識到營養標示欄位，請手動輸入。\n\nAI 回覆的原始內容：\n' + text.slice(0, 300));
-                }
-            } catch (err) {
-                alert('辨識失敗：' + err.message);
-            } finally {
-                if (btn) { btn.innerHTML = originalText; btn.disabled = false; }
-            }
-        }
-
         // ---------- PWA：註冊 Service Worker ----------
         // 網址加上版本號查詢字串，強迫瀏覽器把它當成不同的檔案處理，
         // 徹底繞過任何一層 HTTP 快取，確保一定會抓到最新的 service-worker.js
@@ -2373,18 +2229,6 @@
             const match = text.match(/[\d.]+/);
             const num = match ? parseFloat(match[0]) : NaN;
             return isNaN(num) ? null : num;
-        };
-
-        // 直接把照片丟給 Gemini「看」，取代傳統 OCR（Tesseract.js）文字辨識。
-        // Gemini 是多模態模型，能直接理解圖片內容（包含手寫字、包裝標示、排版），
-        // 準確度通常比傳統逐字辨識的 OCR 引擎好很多，也不用另外下載/初始化辨識引擎
-        window.__analyzeImageWithGemini = async function (base64Data, mimeType, promptText) {
-            if (!aiModel) return null;
-            const result = await aiModel.generateContent([
-                { inlineData: { data: base64Data, mimeType } },
-                { text: promptText },
-            ]);
-            return result.response.text();
         };
     </script>
 </body>
