@@ -153,6 +153,21 @@
             50% { transform: translateY(-6px); }
         }
 
+        /* 虛擬廚房挑戰賽：切菜食材的倒數消失動畫、燒焦時的搞笑抖動動畫 */
+        @keyframes dashPop {
+            0% { transform: scale(1); opacity: 1; }
+            70% { transform: scale(1); opacity: 1; }
+            100% { transform: scale(0.5); opacity: 0.2; }
+        }
+        @keyframes dashShake {
+            0%, 100% { transform: translateX(0) rotate(0deg); }
+            20% { transform: translateX(-8px) rotate(-6deg); }
+            40% { transform: translateX(8px) rotate(6deg); }
+            60% { transform: translateX(-6px) rotate(-4deg); }
+            80% { transform: translateX(6px) rotate(4deg); }
+        }
+        .dash-shake { animation: dashShake 0.5s ease-in-out 2; }
+
         /* 步驟勾選 */
         .step-checkbox i { transition: color .2s; }
         .step-row { transition: opacity .2s; }
@@ -947,6 +962,7 @@
         function closeGameModal(fromPopState) {
             qteCleanup();
             stockGameCleanup();
+            dashGameCleanup();
             document.getElementById('game-modal').classList.add('hidden');
             consumeModalHistoryState(fromPopState);
         }
@@ -954,6 +970,7 @@
         function renderGameMenu() {
             qteCleanup();
             stockGameCleanup();
+            dashGameCleanup();
             document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
             document.getElementById('game-modal-body').innerHTML = `
                 <button onclick="startQteGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:var(--cream); border:1px solid var(--line)">
@@ -961,16 +978,22 @@
                     <p class="font-display font-bold text-lg">神廚火候控制</p>
                     <p class="text-xs mt-1" style="color:#B3A492">指針快速移動，在綠色完美區間按下「關火」，考驗你的反應力！越後面關卡越難</p>
                 </button>
-                <button onclick="startStockGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:var(--cream); border:1px solid var(--line)">
+                <button onclick="startStockGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:var(--cream); border:1px solid var(--line)">
                     <div class="text-4xl mb-2">📈</div>
                     <p class="font-display font-bold text-lg">食材期貨大亨</p>
                     <p class="text-xs mt-1" style="color:#B3A492">30 天內低買高賣食材賺取利潤，留意新聞快訊，判斷價格走勢！</p>
                 </button>
+                <button onclick="startDashGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:var(--cream); border:1px solid var(--line)">
+                    <div class="text-4xl mb-2">🍽️</div>
+                    <p class="font-display font-bold text-lg">虛擬廚房挑戰賽</p>
+                    <p class="text-xs mt-1" style="color:#B3A492">切菜＋火候控制，過關後還會推薦同分類的真食譜給你！</p>
+                </button>
                 <div>
                     <h3 class="font-display font-semibold text-lg mb-3">🏆 排行榜</h3>
-                    <div class="flex gap-2 mb-3">
+                    <div class="flex gap-2 mb-3 flex-wrap">
                         <button onclick="showLeaderboard('qte')" class="chip">神廚火候控制</button>
                         <button onclick="showLeaderboard('stock')" class="chip">食材期貨大亨</button>
+                        <button onclick="showLeaderboard('dash')" class="chip">廚房挑戰賽</button>
                     </div>
                     <div id="leaderboard-list"><p class="text-sm" style="color:#B3A492">點上面的按鈕看排行榜</p></div>
                 </div>
@@ -1233,7 +1256,178 @@
             showGameOverScreen('stock', score, detail);
         }
 
-        const GAME_NAMES = { qte: '神廚火候控制', stock: '食材期貨大亨' };
+        // ---------- 虛擬廚房挑戰賽（切菜 → 火候 → 結算，過關後推薦同分類真食譜）----------
+        const DASH_DISHES = [
+            { name: '奶油炒野菇', category: '西式烹飪', ingredients: ['🍄', '🧈', '🧄', '🌿'] },
+            { name: '蔥爆牛肉', category: '中式烹飪', ingredients: ['🥩', '🧅', '🧄', '🌶️'] },
+            { name: '照燒雞腿', category: '日式烹飪', ingredients: ['🍗', '🧅', '🍯', '🌰'] },
+            { name: '田園蔬菜沙拉', category: '健康餐', ingredients: ['🥬', '🍅', '🥕', '🧀'] },
+            { name: '蜂蜜檸檬磅蛋糕', category: '蛋糕/糕餅', ingredients: ['🍋', '🍯', '🥚', '🧈'] },
+        ];
+        let dashGameState = null;
+
+        function dashGameCleanup() {
+            if (dashGameState) {
+                if (dashGameState.chopTimeoutId) clearTimeout(dashGameState.chopTimeoutId);
+                if (dashGameState.heatRafId) cancelAnimationFrame(dashGameState.heatRafId);
+                dashGameState.heatRunning = false;
+            }
+            dashGameState = null;
+        }
+
+        function startDashGame() {
+            if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            qteCleanup(); stockGameCleanup(); dashGameCleanup();
+            const dish = DASH_DISHES[Math.floor(Math.random() * DASH_DISHES.length)];
+            dashGameState = { dish, chopIndex: 0, chopHits: 0, chopTotal: dish.ingredients.length, chopResolved: false, chopTimeoutId: null, heatRunning: false, heatSuccess: false, heatRafId: null };
+            renderDashChopRound();
+        }
+
+        // 階段一：備料切菜——食材依序出現，消失前點一下才算切到
+        function renderDashChopRound() {
+            const state = dashGameState;
+            if (!state) return;
+            if (state.chopIndex >= state.chopTotal) { startDashHeat(); return; }
+            const dish = state.dish;
+            const emoji = dish.ingredients[state.chopIndex];
+            state.chopResolved = false;
+            document.getElementById('game-modal-title').textContent = `🔪 備料切菜（${dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-center text-sm mb-2" style="color:#B3A492">第 ${state.chopIndex + 1}/${state.chopTotal} 項食材 ・ 命中 ${state.chopHits}</p>
+                <div class="flex justify-center items-center" style="height:180px;">
+                    <button onclick="dashChopHit()" class="text-6xl" style="animation: dashPop 0.9s linear forwards;">${emoji}</button>
+                </div>
+                <p class="text-center text-xs" style="color:#B3A492">食材消失前點一下切它！</p>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-4">放棄遊戲</button>
+            `;
+            state.chopTimeoutId = setTimeout(() => {
+                if (state.chopResolved) return;
+                state.chopResolved = true;
+                state.chopIndex++;
+                setTimeout(renderDashChopRound, 200);
+            }, 900);
+        }
+        function dashChopHit() {
+            const state = dashGameState;
+            if (!state || state.chopResolved) return;
+            state.chopResolved = true;
+            clearTimeout(state.chopTimeoutId);
+            state.chopHits++;
+            state.chopIndex++;
+            setTimeout(renderDashChopRound, 200);
+        }
+
+        // 階段二：火候控制（沿用神廚火候控制的移動指針機制，這裡只需要一次判定）
+        function startDashHeat() {
+            const state = dashGameState;
+            if (!state) return;
+            state.heatPosition = 0;
+            state.heatDirection = 1;
+            state.heatSpeed = 2.2;
+            state.heatZoneWidth = 14;
+            state.heatZoneStart = 15 + Math.random() * (85 - state.heatZoneWidth - 15);
+            document.getElementById('game-modal-title').textContent = `🔥 火候控制（${state.dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-center text-sm mb-4" style="color:var(--jam)">在綠色區間按下「起鍋」，火太大會焦、太小會生！</p>
+                <div style="position:relative; height:36px; border-radius:999px; overflow:hidden; background:var(--line);">
+                    <div style="position:absolute; top:0; bottom:0; background:rgba(111,140,110,0.55); left:${state.heatZoneStart}%; width:${state.heatZoneWidth}%;"></div>
+                    <div id="dash-heat-pointer" style="position:absolute; top:-4px; bottom:-4px; width:4px; background:var(--jam); left:0%; border-radius:999px;"></div>
+                </div>
+                <button onclick="dashHeatAction()" class="btn-primary w-full mt-6 text-lg">🍳 起鍋！</button>
+            `;
+            state.heatRunning = true;
+            dashHeatLoop();
+        }
+        function dashHeatLoop() {
+            const state = dashGameState;
+            if (!state || !state.heatRunning) return;
+            state.heatPosition += state.heatDirection * state.heatSpeed;
+            if (state.heatPosition >= 100) { state.heatPosition = 100; state.heatDirection = -1; }
+            if (state.heatPosition <= 0) { state.heatPosition = 0; state.heatDirection = 1; }
+            const pointer = document.getElementById('dash-heat-pointer');
+            if (pointer) pointer.style.left = state.heatPosition + '%';
+            state.heatRafId = requestAnimationFrame(dashHeatLoop);
+        }
+        function dashHeatAction() {
+            const state = dashGameState;
+            if (!state || !state.heatRunning) return;
+            state.heatRunning = false;
+            if (state.heatRafId) cancelAnimationFrame(state.heatRafId);
+            state.heatSuccess = state.heatPosition >= state.heatZoneStart && state.heatPosition <= state.heatZoneStart + state.heatZoneWidth;
+            finishDashGame();
+        }
+
+        // 結算：依切菜命中率＋火候成功與否評分，燒焦時有搞笑抖動動畫，並推薦同分類真食譜
+        function finishDashGame() {
+            const state = dashGameState;
+            if (!state) return;
+            const chopScore = state.chopHits * 15;
+            const heatScore = state.heatSuccess ? 30 : 0;
+            const score = chopScore + heatScore;
+            let rating, emoji;
+            if (state.chopHits === state.chopTotal && state.heatSuccess) { rating = '特級料理'; emoji = '✨'; }
+            else if (state.chopHits >= state.chopTotal / 2 || state.heatSuccess) { rating = '普通'; emoji = '🍽️'; }
+            else { rating = '燒焦了！'; emoji = '🔥😱'; }
+            const dish = state.dish;
+            dashGameState = null;
+            renderDashResult(rating, emoji, score, dish);
+        }
+
+        function renderDashResult(rating, emoji, score, dish) {
+            document.getElementById('game-modal-title').textContent = '🍽️ 廚房挑戰賽';
+            const isBurnt = rating === '燒焦了！';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-6">
+                    <div class="text-6xl mb-3 ${isBurnt ? 'dash-shake' : ''}">${emoji}</div>
+                    <p class="font-display text-2xl font-bold mb-1" style="color:${isBurnt ? '#C4453F' : 'var(--jam)'}">${rating}</p>
+                    <p class="text-sm mb-4" style="color:#B3A492">「${dish.name}」挑戰結束 ・ 分數：<span class="font-bold" style="color:var(--honey)">${score}</span></p>
+                    <div class="flex gap-3 justify-center flex-wrap mb-6">
+                        <button onclick="submitGameScore('dash', ${score})" class="btn-primary">上傳分數到排行榜</button>
+                        <button onclick="renderGameMenu()" class="btn-secondary">返回選單</button>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="font-display font-semibold text-base mb-3">😋 想試試真正的「${dish.category}」食譜嗎？</h3>
+                    <div id="dash-recommend-list"><p class="text-sm" style="color:#B3A492">載入推薦中…</p></div>
+                </div>
+            `;
+            loadDashRecommendations(dish.category);
+        }
+
+        async function loadDashRecommendations(category) {
+            try {
+                const snap = await db.collection('recipes').where('category', '==', category).limit(15).get();
+                const candidates = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => !r.visibility || r.visibility === 'public');
+                const picks = candidates.sort(() => Math.random() - 0.5).slice(0, 3);
+                const list = document.getElementById('dash-recommend-list');
+                if (!list) return;
+                if (picks.length === 0) { list.innerHTML = `<p class="text-sm" style="color:#B3A492">目前這個分類還沒有食譜，去新增一篇吧！</p>`; return; }
+                list.innerHTML = picks.map((r, i) => `
+                    <div onclick="dashOpenRecipe(${i})" class="flex items-center gap-3 px-4 py-3 rounded-2xl mb-2 cursor-pointer" style="background:var(--cream)">
+                        ${r.imageUrl ? `<img src="${r.imageUrl}" class="w-12 h-12 rounded-xl object-cover shrink-0">` : `<div class="w-12 h-12 rounded-xl flex items-center justify-center text-xl shrink-0" style="background:var(--line)">🍽️</div>`}
+                        <div class="min-w-0">
+                            <p class="font-medium truncate">${r.name}</p>
+                            <p class="text-xs" style="color:#B3A492">${r.servings} 個</p>
+                        </div>
+                    </div>
+                `).join('');
+                window.__dashRecommendPicks = picks; // 暫存，給下面點擊用真正的食譜物件開啟詳細頁
+            } catch (err) {
+                const list = document.getElementById('dash-recommend-list');
+                if (list) list.innerHTML = `<p class="text-sm" style="color:#C4453F">推薦載入失敗：${err.message}</p>`;
+            }
+        }
+
+        function dashOpenRecipe(idx) {
+            const recipe = (window.__dashRecommendPicks || [])[idx];
+            if (!recipe) return;
+            qteCleanup(); stockGameCleanup(); dashGameCleanup();
+            // 直接隱藏遊戲彈窗、不動歷史紀錄，讓 showDetail() 接手同一筆已經 push 過的歷史狀態
+            document.getElementById('game-modal').classList.add('hidden');
+            showDetail(recipe);
+        }
+
+        const GAME_NAMES = { qte: '神廚火候控制', stock: '食材期貨大亨', dash: '虛擬廚房挑戰賽' };
         function showGameOverScreen(gameId, score, detailText) {
             const gameName = GAME_NAMES[gameId] || gameId;
             document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
@@ -1268,9 +1462,10 @@
         async function showLeaderboard(gameId) {
             document.getElementById('game-modal-title').textContent = '🏆 排行榜';
             document.getElementById('game-modal-body').innerHTML = `
-                <div class="flex gap-2 mb-4">
+                <div class="flex gap-2 mb-4 flex-wrap">
                     <button onclick="showLeaderboard('qte')" class="chip ${gameId === 'qte' ? 'active' : ''}">神廚火候控制</button>
                     <button onclick="showLeaderboard('stock')" class="chip ${gameId === 'stock' ? 'active' : ''}">食材期貨大亨</button>
+                    <button onclick="showLeaderboard('dash')" class="chip ${gameId === 'dash' ? 'active' : ''}">廚房挑戰賽</button>
                 </div>
                 <div id="leaderboard-list"><p class="text-sm" style="color:#B3A492">載入中…</p></div>
                 <button onclick="renderGameMenu()" class="btn-secondary w-full mt-4">返回選單</button>
