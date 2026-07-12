@@ -590,6 +590,19 @@
             { id: 'cumulative_90', type: 'cumulativeLogin', threshold: 90, title: { icon: '🍵', name: '心靈雞湯的' } },
             { id: 'cumulative_180', type: 'cumulativeLogin', threshold: 180, title: { icon: '🔍', name: '瞭若指掌的' } },
             { id: 'cumulative_365', type: 'cumulativeLogin', threshold: 365, title: { icon: '🌌', name: '全知全能的' }, achievement: { name: '滿等才是開始', desc: '感謝一下網站製作者吧。' } },
+
+            // ---- 收藏系列 ----
+            { id: 'fav_1', type: 'totalFavorites', threshold: 1, title: { icon: '❤️', name: '收藏家' } },
+            { id: 'fav_10', type: 'totalFavorites', threshold: 10, title: { icon: '🐛', name: '食譜書蟲' } },
+            { id: 'fav_50', type: 'totalFavorites', threshold: 50, title: { icon: '📚', name: '食譜圖書館' } },
+            { id: 'fav_100', type: 'totalFavorites', threshold: 100, achievement: { name: '書架都不夠大了', desc: '什麼都愛。什麼都不奇怪。' } },
+
+            // ---- 時段／連續新增系列 ----
+            { id: 'streak_create_3', type: 'recipeCreationStreak', threshold: 3, title: { icon: '🔥', name: '三日熱度' } },
+            { id: 'streak_create_7', type: 'recipeCreationStreak', threshold: 7, title: { icon: '📅', name: '一週主廚' } },
+            { id: 'late_night_1', type: 'lateNightCreate', threshold: 1, title: { icon: '🌙', name: '深夜食堂' } },
+            { id: 'early_morning_1', type: 'earlyMorningCreate', threshold: 1, title: { icon: '🌅', name: '早餐職人' } },
+            { id: 'afternoon_3', type: 'afternoonCreateCount', threshold: 3, title: { icon: '☕', name: '午茶時間' } },
         ];
 
         // ---------- 使用者成就進度追蹤 ----------
@@ -608,6 +621,11 @@
                 lastLoginDate: null,
                 currentStreak: 0,
                 cumulativeLoginDays: 0,
+                lastRecipeCreationDate: null,
+                recipeCreationStreak: 0,
+                lateNightCreateCount: 0,
+                earlyMorningCreateCount: 0,
+                afternoonCreateCount: 0,
             };
         }
 
@@ -674,6 +692,11 @@
                     case 'categoryFinish': current = ((userProgress.finishedRecipeIdsByCategory || {})[rule.category] || []).length; break;
                     case 'loginStreak': current = userProgress.currentStreak || 0; break;
                     case 'cumulativeLogin': current = userProgress.cumulativeLoginDays || 0; break;
+                    case 'totalFavorites': current = userFavorites.size || 0; break;
+                    case 'recipeCreationStreak': current = userProgress.recipeCreationStreak || 0; break;
+                    case 'lateNightCreate': current = userProgress.lateNightCreateCount || 0; break;
+                    case 'earlyMorningCreate': current = userProgress.earlyMorningCreateCount || 0; break;
+                    case 'afternoonCreateCount': current = userProgress.afternoonCreateCount || 0; break;
                 }
                 if (current >= rule.threshold) {
                     if (rule.title && !userProgress.unlockedTitleIds.includes(rule.id)) {
@@ -689,19 +712,53 @@
             return newlyUnlocked;
         }
 
+        // 把規則轉成人看得懂的「達成條件」文字，成就提醒彈窗跟個人頁面都會用到
+        function getRuleReason(rule) {
+            switch (rule.type) {
+                case 'totalRecipes': return `新增第 ${rule.threshold} 個食譜`;
+                case 'categoryRecipes': return `新增「${rule.category}」分類第 ${rule.threshold} 個食譜`;
+                case 'totalFinish': return `完成「大功告成」累計 ${rule.threshold} 次`;
+                case 'categoryFinish': return `「${rule.category}」分類完成「大功告成」累計 ${rule.threshold} 次`;
+                case 'loginStreak': return `連續登入 ${rule.threshold} 天`;
+                case 'cumulativeLogin': return `累計登入 ${rule.threshold} 天`;
+                case 'totalFavorites': return `收藏食譜累計 ${rule.threshold} 篇`;
+                case 'recipeCreationStreak': return `連續 ${rule.threshold} 天新增食譜`;
+                case 'lateNightCreate': return `在深夜（23點後）新增食譜`;
+                case 'earlyMorningCreate': return `在清晨（8點前）新增食譜`;
+                case 'afternoonCreateCount': return `在下午時段新增食譜累計 ${rule.threshold} 次`;
+                default: return '';
+            }
+        }
+
+        // 獲得新稱號/成就時的提醒：改成需要手動點掉的彈窗（比會自動消失的 toast 更不容易被錯過），
+        // 並且加上震動＋音效（沿用計時器提醒用的同一套機制），同時說明「為什麼獲得」
         function showAchievementToast(items) {
             items.forEach((item, i) => {
                 setTimeout(() => {
-                    const toast = document.createElement('div');
-                    const label = item.kind === 'title'
-                        ? `🏅 獲得新稱號：${item.rule.title.icon} ${item.rule.title.name}`
-                        : `🎖️ 獲得新成就：${item.rule.achievement.name}`;
-                    toast.textContent = label;
-                    toast.style.cssText = 'position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:10000; background:var(--jam); color:#fff; padding:0.85rem 1.5rem; border-radius:999px; font-size:0.9rem; font-weight:600; box-shadow:0 10px 25px -8px rgba(0,0,0,0.4); white-space:nowrap; opacity:0; transition:opacity .3s, top .3s;';
-                    document.body.appendChild(toast);
-                    requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.top = '24px'; });
-                    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3800);
-                }, i * 900);
+                    playBeep();
+                    if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+                    const isTitle = item.kind === 'title';
+                    const icon = isTitle ? item.rule.title.icon : '🎖️';
+                    const name = isTitle ? item.rule.title.name : item.rule.achievement.name;
+                    const kindLabel = isTitle ? '獲得新稱號' : '獲得新成就';
+                    const reason = getRuleReason(item.rule);
+                    const descLine = (!isTitle && item.rule.achievement.desc)
+                        ? `<p class="text-sm mt-2 italic" style="color:var(--espresso-soft)">「${item.rule.achievement.desc}」</p>` : '';
+                    const overlay = document.createElement('div');
+                    overlay.className = 'fixed inset-0 flex items-center justify-center z-[9998] px-6';
+                    overlay.style.background = 'rgba(58,42,30,0.45)';
+                    overlay.innerHTML = `<div class="bg-white rounded-[2rem] px-8 py-8 text-center shadow-2xl celebrate-pop max-w-sm">
+                        <div class="text-5xl mb-3">${icon}</div>
+                        <p class="text-xs font-semibold mb-1" style="color:var(--honey)">${kindLabel}</p>
+                        <h2 class="font-display text-xl font-bold mb-2" style="color:var(--jam)">${name}</h2>
+                        <p class="text-sm" style="color:var(--espresso-soft)">達成條件：${reason}</p>
+                        ${descLine}
+                        <button onclick="this.closest('.fixed').remove()" class="btn-primary mt-5">太棒了！</button>
+                    </div>`;
+                    document.body.appendChild(overlay);
+                    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+                    setTimeout(() => { if (overlay.parentElement) overlay.remove(); }, 6000);
+                }, i * 4200); // 一個一個顯示，避免多個成就同時解鎖時疊在一起看不清楚
             });
         }
 
@@ -711,6 +768,21 @@
             userProgress.totalRecipesCreated = (userProgress.totalRecipesCreated || 0) + 1;
             userProgress.categoryRecipesCreated = userProgress.categoryRecipesCreated || {};
             userProgress.categoryRecipesCreated[category] = (userProgress.categoryRecipesCreated[category] || 0) + 1;
+
+            // 連續新增食譜天數（跟登入連續天數是分開算的兩件事）
+            const today = todayDateString();
+            if (userProgress.lastRecipeCreationDate !== today) {
+                const yesterdayStr = todayDateString(new Date(Date.now() - 86400000));
+                userProgress.recipeCreationStreak = (userProgress.lastRecipeCreationDate === yesterdayStr) ? (userProgress.recipeCreationStreak || 0) + 1 : 1;
+                userProgress.lastRecipeCreationDate = today;
+            }
+
+            // 依新增當下的時段累計次數
+            const hour = new Date().getHours();
+            if (hour >= 23) userProgress.lateNightCreateCount = (userProgress.lateNightCreateCount || 0) + 1;
+            if (hour < 8) userProgress.earlyMorningCreateCount = (userProgress.earlyMorningCreateCount || 0) + 1;
+            if (hour >= 12 && hour < 18) userProgress.afternoonCreateCount = (userProgress.afternoonCreateCount || 0) + 1;
+
             const newly = checkUnlocks();
             await saveUserProgress();
             if (newly.length) showAchievementToast(newly);
@@ -770,12 +842,19 @@
 
             const titlesList = document.getElementById('profile-titles-list');
             titlesList.innerHTML = unlockedTitles.length
-                ? unlockedTitles.map(r => `<span class="px-3 py-1.5 rounded-full text-sm" style="background:var(--cream); border:1px solid var(--line)">${r.title.icon} ${r.title.name}</span>`).join('')
+                ? unlockedTitles.map(r => `<div class="px-3 py-2 rounded-2xl text-sm" style="background:var(--cream); border:1px solid var(--line)">
+                    <p class="font-semibold">${r.title.icon} ${r.title.name}</p>
+                    <p class="text-xs mt-0.5" style="color:#B3A492">${getRuleReason(r)}</p>
+                  </div>`).join('')
                 : `<p class="text-sm" style="color:#B3A492">還沒有獲得任何稱號，開始新增食譜、完成料理來解鎖吧！</p>`;
 
             const achList = document.getElementById('profile-achievements-list');
             achList.innerHTML = unlockedAchievements.length
-                ? unlockedAchievements.map(r => `<div class="px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)"><p class="font-semibold">🎖️ ${r.achievement.name}</p><p class="text-xs mt-1" style="color:#B3A492">${r.achievement.desc}</p></div>`).join('')
+                ? unlockedAchievements.map(r => `<div class="px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)">
+                    <p class="font-semibold">🎖️ ${r.achievement.name}</p>
+                    <p class="text-xs mt-1" style="color:#B3A492">達成條件：${getRuleReason(r)}</p>
+                    <p class="text-xs mt-1 italic" style="color:var(--espresso-soft)">「${r.achievement.desc}」</p>
+                  </div>`).join('')
                 : `<p class="text-sm" style="color:#B3A492">還沒有獲得任何成就</p>`;
         }
         async function equipTitle(titleId) {
@@ -789,6 +868,9 @@
             totalRecipes: '累計新增食譜數', categoryRecipes: '分類累計新增食譜數',
             totalFinish: '累計大功告成次數', categoryFinish: '分類累計大功告成次數',
             loginStreak: '連續登入天數', cumulativeLogin: '累計登入天數',
+            totalFavorites: '累計收藏食譜數',
+            recipeCreationStreak: '連續新增食譜天數', lateNightCreate: '深夜(23點後)新增食譜次數',
+            earlyMorningCreate: '清晨(8點前)新增食譜次數', afternoonCreateCount: '下午(12-18點)新增食譜次數',
         };
         function showAdminAchievementsModal() {
             if (!isAdmin()) return;
@@ -1084,6 +1166,13 @@
                     userId: currentUser.uid,
                     recipeId,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                }).then(() => {
+                    // 只有「新增」收藏才檢查解鎖，取消收藏不會讓已經拿到的稱號/成就消失，
+                    // 也不需要為了取消收藏特別做什麼檢查
+                    if (userProgress) {
+                        const newly = checkUnlocks();
+                        if (newly.length) { saveUserProgress(); showAchievementToast(newly); }
+                    }
                 }).catch(err => {
                     userFavorites.delete(recipeId); updateFavoriteIcons(recipeId);
                     alert('收藏失敗：' + err.message);
