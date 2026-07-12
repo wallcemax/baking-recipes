@@ -970,6 +970,7 @@
             stockGameCleanup();
             dashGameCleanup();
             dinerGameCleanup();
+            tinyDinerCleanup();
             document.getElementById('game-modal').classList.add('hidden');
             consumeModalHistoryState(fromPopState);
         }
@@ -979,6 +980,7 @@
             stockGameCleanup();
             dashGameCleanup();
             dinerGameCleanup();
+            tinyDinerCleanup();
             document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
             document.getElementById('game-modal-body').innerHTML = `
                 <button onclick="playSfx('click'); startQteGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:linear-gradient(135deg, #FCF2DC, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
@@ -996,10 +998,15 @@
                     <p class="font-display font-bold text-lg">虛擬廚房挑戰賽</p>
                     <p class="text-xs mt-1" style="color:#B3A492">切菜＋火候控制，過關後還會推薦同分類的真食譜給你！</p>
                 </button>
-                <button onclick="playSfx('click'); startDinerGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:linear-gradient(135deg, #EAE2F2, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
+                <button onclick="playSfx('click'); startDinerGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:linear-gradient(135deg, #EAE2F2, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
                     <div class="text-4xl mb-2">🌙</div>
                     <p class="font-display font-bold text-lg">深夜食堂</p>
                     <p class="text-xs mt-1" style="color:#B3A492">文字生存冒險，撐過 20 天的離奇夜晚，別讓生命、名聲或資金歸零！</p>
+                </button>
+                <button onclick="playSfx('click'); startTinyDinerGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:linear-gradient(135deg, #FDE8D8, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
+                    <div class="text-4xl mb-2">🏮</div>
+                    <p class="font-display font-bold text-lg">小餐廳經營模擬</p>
+                    <p class="text-xs mt-1" style="color:#B3A492">用平台真實食譜的熱量換算售價，排菜單、抓備料量，經營 10 天看誰賺最多！</p>
                 </button>
                 <div>
                     <h3 class="font-display font-semibold text-lg mb-3">🏆 排行榜</h3>
@@ -1008,6 +1015,7 @@
                         <button onclick="showLeaderboard('stock')" class="chip">食材期貨大亨</button>
                         <button onclick="showLeaderboard('dash')" class="chip">廚房挑戰賽</button>
                         <button onclick="showLeaderboard('diner')" class="chip">深夜食堂</button>
+                        <button onclick="showLeaderboard('tinydiner')" class="chip">餐廳經營</button>
                     </div>
                     <div id="leaderboard-list"><p class="text-sm" style="color:#B3A492">點上面的按鈕看排行榜</p></div>
                 </div>
@@ -1899,6 +1907,320 @@
             `;
         }
 
+
+        // ---------- 小餐廳經營模擬（Tiny Diner）----------
+        // 為了不觸發 AI 查詢（避免耗用 Gemini 免費額度），這裡另外寫一套只查
+        // 「Firestore 快取／本地食材資料庫」的版本，查不到就直接回傳 null，
+        // 不會像食譜詳細頁那樣繼續往下問 AI —— 遊戲只會挑選熱量資料「完整」的食譜
+        async function resolveIngredientNutritionNoAI(name) {
+            if (Object.prototype.hasOwnProperty.call(aiNutritionCache, name)) return aiNutritionCache[name];
+            const trimmedName = name.trim();
+            const docId = trimmedName.replace(/\//g, '_').slice(0, 200);
+            try {
+                const cacheDoc = await db.collection('ingredientNutrition').doc(docId).get();
+                if (cacheDoc.exists) return cacheDoc.data();
+            } catch (e) {}
+            try {
+                const aliasSnap = await db.collection('ingredientNutrition').where('keywords', 'array-contains', trimmedName).limit(1).get();
+                if (!aliasSnap.empty) return aliasSnap.docs[0].data();
+            } catch (e) {}
+            await Promise.all([tfndLoadPromise, tfndFullLoadPromise]);
+            const local = guessIngredientNutrition(name);
+            if (local) return local;
+            return null; // 沒有 AI 備援，查不到就是查不到
+        }
+        async function resolveIngredientDensityNoAI(name) {
+            if (Object.prototype.hasOwnProperty.call(densityCache, name)) return densityCache[name];
+            const trimmedName = name.trim();
+            const docId = trimmedName.replace(/\//g, '_').slice(0, 200);
+            try {
+                const cacheDoc = await db.collection('ingredientNutrition').doc(docId).get();
+                if (cacheDoc.exists && typeof cacheDoc.data().density === 'number') return cacheDoc.data().density;
+            } catch (e) {}
+            try {
+                const aliasSnap = await db.collection('ingredientNutrition').where('keywords', 'array-contains', trimmedName).limit(1).get();
+                if (!aliasSnap.empty && typeof aliasSnap.docs[0].data().density === 'number') return aliasSnap.docs[0].data().density;
+            } catch (e) {}
+            return guessIngredientDensity(name);
+        }
+        async function resolveGramsNoAI(amount, unit, name) {
+            const u = (unit || '').trim();
+            switch (u.toLowerCase()) {
+                case 'g': return amount;
+                case 'kg': return amount * 1000;
+                case 'oz': return amount * 28.3495;
+                case 'lb': return amount * 453.592;
+            }
+            const ml = convertToMilliliters(amount, unit);
+            if (ml !== null) {
+                const density = await resolveIngredientDensityNoAI(name);
+                if (density === null) return null;
+                return ml * density;
+            }
+            if (COUNT_UNIT_WORDS.includes(u)) {
+                const pieceWeight = guessPieceWeight(name);
+                if (pieceWeight !== null) return amount * pieceWeight;
+            }
+            return null;
+        }
+        // 算出一篇食譜的總熱量；只要有任何一項食材的資料不完整（熱量或重量換算查不到），
+        // 整篇食譜直接判定為「資料不完整」回傳 null，不會用進遊戲的候選菜單池
+        async function computeRecipeCaloriesNoAI(recipe) {
+            if (!recipe.ingredients || !recipe.ingredients.length) return null;
+            let totalKcal = 0;
+            for (const ing of recipe.ingredients) {
+                const nutrition = await resolveIngredientNutritionNoAI(ing.name);
+                if (!nutrition || typeof nutrition.kcal !== 'number') return null;
+                const grams = await resolveGramsNoAI(ing.amount, ing.unit, ing.name);
+                if (grams === null) return null;
+                totalKcal += (nutrition.kcal / 100) * grams;
+            }
+            const servings = recipe.servings > 0 ? recipe.servings : 1;
+            return Math.max(50, Math.round(totalKcal / servings)); // 換算成「每份」熱量，作為一份餐點的熱量基準
+        }
+
+        const TINY_DINER_KCAL_TO_PRICE = 0.18; // 每大卡換算的售價（新台幣）
+        const TINY_DINER_COST_RATIO = 0.4; // 食材成本估算為售價的 4 成（餐飲業常見的抓法）
+        const TINY_DINER_TOTAL_DAYS = 10;
+        let tinyDinerState = null;
+
+        function tinyDinerCleanup() { tinyDinerState = null; }
+
+        async function startTinyDinerGame() {
+            if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup(); tinyDinerCleanup();
+            ensureAudioContext();
+            document.getElementById('game-modal-title').textContent = '🏮 小餐廳經營模擬';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-10">
+                    <div class="text-4xl mb-3">🍳</div>
+                    <p class="text-sm" style="color:#B3A492">正在從真實食譜資料庫挑選有完整熱量資料的菜色…</p>
+                </div>
+            `;
+            try {
+                const snap = await db.collection('recipes').limit(200).get();
+                const candidates = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                    .filter(r => (!r.visibility || r.visibility === 'public') && r.ingredients && r.ingredients.length)
+                    .sort(() => Math.random() - 0.5);
+                const pool = [];
+                for (const recipe of candidates) {
+                    if (pool.length >= 15) break;
+                    const kcalPerServing = await computeRecipeCaloriesNoAI(recipe);
+                    if (kcalPerServing === null) continue; // 資料不完整，跳過，不觸發 AI
+                    pool.push({
+                        id: recipe.id,
+                        name: recipe.name,
+                        category: recipe.category,
+                        kcal: kcalPerServing,
+                        price: Math.max(20, Math.round(kcalPerServing * TINY_DINER_KCAL_TO_PRICE)),
+                        popularity: 0.6 + Math.random() * 0.8, // 每局隨機給一個受歡迎度權重
+                    });
+                }
+                if (pool.length < 4) {
+                    document.getElementById('game-modal-body').innerHTML = `
+                        <div class="text-center py-10">
+                            <div class="text-4xl mb-3">😥</div>
+                            <p class="text-sm mb-4" style="color:#B3A492">目前平台上熱量資料完整的食譜還不夠多（至少需要 4 篇），沒辦法開始這個遊戲。
+                            多去幾篇食譜的詳細頁看一下熱量估算，讓系統把資料存起來，之後就會有更多菜色可以選了！</p>
+                            <button onclick="renderGameMenu()" class="btn-secondary">返回選單</button>
+                        </div>
+                    `;
+                    return;
+                }
+                tinyDinerState = { day: 0, money: 5000, startMoney: 5000, pool, log: [] };
+                playSfx('click');
+                tinyDinerNextDay();
+            } catch (err) {
+                document.getElementById('game-modal-body').innerHTML = `<p class="text-center text-sm py-10" style="color:#C4453F">菜單池載入失敗：${err.message}</p><button onclick="renderGameMenu()" class="btn-secondary w-full">返回選單</button>`;
+            }
+        }
+
+        function tinyDinerNextDay() {
+            const state = tinyDinerState;
+            if (!state) return;
+            state.day++;
+            if (state.day > TINY_DINER_TOTAL_DAYS) { endTinyDinerGame(); return; }
+            state.todayMenu = [];
+            renderTinyDinerMenuSelect();
+        }
+
+        function renderTinyDinerMenuSelect() {
+            const state = tinyDinerState;
+            document.getElementById('game-modal-title').textContent = '🏮 小餐廳經營模擬';
+            const dayPct = Math.round((state.day / TINY_DINER_TOTAL_DAYS) * 100);
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="mb-3">
+                    <div class="flex justify-between items-center mb-1 text-xs" style="color:#B3A492">
+                        <span>第 ${state.day} / ${TINY_DINER_TOTAL_DAYS} 天</span>
+                        <span>資金：<span class="font-bold" style="color:var(--jam)">$${Math.round(state.money).toLocaleString()}</span></span>
+                    </div>
+                    <div style="height:6px; border-radius:999px; overflow:hidden; background:var(--line);">
+                        <div style="height:100%; width:${dayPct}%; background:linear-gradient(90deg, var(--honey), var(--jam));"></div>
+                    </div>
+                </div>
+                <p class="text-sm font-semibold mb-2">今天要賣什麼？挑 4~6 道菜（已選 <span id="tdn-count">0</span>/6）</p>
+                <div class="space-y-2 mb-4" style="max-height:44vh; overflow-y:auto;">
+                    ${state.pool.map((dish, i) => `
+                        <label class="flex items-center justify-between px-4 py-2.5 rounded-2xl cursor-pointer" style="background:var(--cream); border:1px solid var(--line);">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <input type="checkbox" onchange="tinyDinerToggleDish(${i}, this.checked)" class="shrink-0">
+                                <div class="min-w-0">
+                                    <p class="text-sm font-medium truncate">${dish.name}</p>
+                                    <p class="text-xs" style="color:#B3A492">${dish.category} ・ ${dish.kcal} kcal/份</p>
+                                </div>
+                            </div>
+                            <p class="font-bold text-sm shrink-0" style="color:var(--jam)">$${dish.price}</p>
+                        </label>
+                    `).join('')}
+                </div>
+                <button id="tdn-confirm-btn" onclick="tinyDinerConfirmMenu()" disabled class="btn-primary w-full opacity-40">確認菜單，進入備料階段</button>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">放棄遊戲</button>
+            `;
+        }
+
+        function tinyDinerToggleDish(i, checked) {
+            const state = tinyDinerState;
+            if (!state) return;
+            const dish = state.pool[i];
+            if (checked) {
+                if (state.todayMenu.length >= 6) { alert('最多只能選 6 道菜'); event.target.checked = false; return; }
+                state.todayMenu.push(dish);
+            } else {
+                state.todayMenu = state.todayMenu.filter(d => d.id !== dish.id);
+            }
+            document.getElementById('tdn-count').textContent = state.todayMenu.length;
+            const btn = document.getElementById('tdn-confirm-btn');
+            const ok = state.todayMenu.length >= 4 && state.todayMenu.length <= 6;
+            btn.disabled = !ok;
+            btn.style.opacity = ok ? '1' : '0.4';
+        }
+
+        function tinyDinerConfirmMenu() {
+            playSfx('click');
+            renderTinyDinerPrepPhase();
+        }
+
+        function renderTinyDinerPrepPhase() {
+            const state = tinyDinerState;
+            document.getElementById('game-modal-title').textContent = '📦 今日備料';
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-sm mb-1" style="color:#B3A492">今天預估會有 <b>10~20 位</b>客人上門，直接輸入每道菜要準備幾份（備太少客人吃不到，備太多賣不完會浪費食材成本）</p>
+                <p class="text-sm mb-4">目前資金：<span class="font-bold" style="color:var(--jam)">$${Math.round(state.money).toLocaleString()}</span></p>
+                <div class="space-y-2.5 mb-4">
+                    ${state.todayMenu.map((dish, i) => {
+                        const unitCost = Math.round(dish.price * TINY_DINER_COST_RATIO);
+                        return `<div class="px-4 py-3 rounded-2xl" style="background:var(--cream); border:1px solid var(--line);">
+                            <div class="flex justify-between items-center mb-1.5">
+                                <p class="text-sm font-medium">${dish.name}</p>
+                                <p class="text-xs" style="color:#B3A492">售價 $${dish.price} ・ 成本約 $${unitCost}/份</p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs shrink-0" style="color:#B3A492">準備份數</label>
+                                <input type="number" min="0" value="5" id="tdn-prep-${i}" oninput="tinyDinerUpdatePrepCost()" class="form-input !py-1.5 text-sm" style="width:80px;">
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+                <p class="text-sm mb-4">預估食材總成本：<span id="tdn-prep-cost" class="font-bold" style="color:#C4453F">$0</span></p>
+                <button onclick="tinyDinerConfirmPrep()" class="btn-primary w-full">開始今日營業</button>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">放棄遊戲</button>
+            `;
+            tinyDinerUpdatePrepCost();
+        }
+
+        function tinyDinerUpdatePrepCost() {
+            const state = tinyDinerState;
+            let totalCost = 0;
+            state.todayMenu.forEach((dish, i) => {
+                const el = document.getElementById(`tdn-prep-${i}`);
+                const qty = el ? Math.max(0, parseInt(el.value) || 0) : 0;
+                totalCost += qty * Math.round(dish.price * TINY_DINER_COST_RATIO);
+            });
+            const costEl = document.getElementById('tdn-prep-cost');
+            if (costEl) costEl.textContent = `$${totalCost.toLocaleString()}`;
+        }
+
+        function tinyDinerConfirmPrep() {
+            const state = tinyDinerState;
+            const prepped = state.todayMenu.map((dish, i) => {
+                const el = document.getElementById(`tdn-prep-${i}`);
+                const qty = el ? Math.max(0, parseInt(el.value) || 0) : 0;
+                return { dish, qty, remaining: qty };
+            });
+            const totalCost = prepped.reduce((sum, p) => sum + p.qty * Math.round(p.dish.price * TINY_DINER_COST_RATIO), 0);
+
+            // 模擬 10~20 位客人依受歡迎度加權隨機點餐
+            const customerCount = 10 + Math.floor(Math.random() * 11);
+            let revenue = 0, served = 0, turnedAway = 0;
+            const totalWeight = prepped.reduce((sum, p) => sum + p.dish.popularity, 0);
+            for (let c = 0; c < customerCount; c++) {
+                let roll = Math.random() * totalWeight;
+                let picked = null;
+                for (const p of prepped) {
+                    roll -= p.dish.popularity;
+                    if (roll <= 0) { picked = p; break; }
+                }
+                if (!picked) picked = prepped[prepped.length - 1];
+                if (picked.remaining > 0) {
+                    picked.remaining--;
+                    revenue += picked.dish.price;
+                    served++;
+                } else {
+                    turnedAway++;
+                }
+            }
+            const wasted = prepped.reduce((sum, p) => sum + p.remaining, 0);
+            const profit = revenue - totalCost;
+            state.money += profit;
+
+            playSfx(profit >= 0 ? 'success' : 'burnt');
+            renderTinyDinerDayResult({ customerCount, served, turnedAway, revenue, totalCost, profit, wasted });
+        }
+
+        function renderTinyDinerDayResult(result) {
+            const state = tinyDinerState;
+            document.getElementById('game-modal-title').textContent = `📊 第 ${state.day} 天結算`;
+            const isProfit = result.profit >= 0;
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-4 rounded-3xl mb-4" style="background:linear-gradient(180deg, var(--cream), var(--paper))">
+                    <div class="text-5xl mb-2">${isProfit ? '📈' : '📉'}</div>
+                    <p class="font-display text-xl font-bold" style="color:${isProfit ? 'var(--sage)' : '#C4453F'}">今日${isProfit ? '獲利' : '虧損'} $${Math.abs(Math.round(result.profit)).toLocaleString()}</p>
+                </div>
+                <div class="grid grid-cols-2 gap-2 mb-4 text-sm">
+                    <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:#B3A492">來客數</p><p class="font-bold">${result.customerCount} 位</p></div>
+                    <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:#B3A492">成交 / 撲空</p><p class="font-bold">${result.served} / ${result.turnedAway}</p></div>
+                    <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:#B3A492">營業額</p><p class="font-bold" style="color:var(--sage)">$${Math.round(result.revenue).toLocaleString()}</p></div>
+                    <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:#B3A492">食材成本</p><p class="font-bold" style="color:#C4453F">$${Math.round(result.totalCost).toLocaleString()}</p></div>
+                </div>
+                ${result.wasted > 0 ? `<p class="text-xs mb-4" style="color:#B3A492">⚠️ 有 ${result.wasted} 份備料沒賣完，成本已經算進去了，下次可以少備一點</p>` : ''}
+                ${result.turnedAway > 0 ? `<p class="text-xs mb-4" style="color:#B3A492">😥 有 ${result.turnedAway} 位客人撲空離開，下次可以多備一點熱門菜色</p>` : ''}
+                <p class="text-sm mb-4">目前總資金：<span class="font-bold" style="color:var(--jam)">$${Math.round(state.money).toLocaleString()}</span></p>
+                <button onclick="tinyDinerNextDay()" class="btn-primary w-full">${state.day >= TINY_DINER_TOTAL_DAYS ? '查看最終結算' : '進入下一天'}</button>
+            `;
+        }
+
+        function endTinyDinerGame() {
+            const state = tinyDinerState;
+            if (!state) return;
+            const netProfit = state.money - state.startMoney;
+            const score = Math.max(0, Math.round(netProfit / 20));
+            tinyDinerState = null;
+            playSfx(netProfit >= 0 ? 'perfect' : 'fail');
+            document.getElementById('game-modal-title').textContent = '🏮 小餐廳經營模擬';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-8">
+                    <div class="text-6xl mb-3 ${netProfit >= 0 ? 'celebrate-pop' : ''}">${netProfit >= 0 ? '🎉' : '😥'}</div>
+                    <p class="font-display text-2xl font-bold mb-2" style="color:${netProfit >= 0 ? 'var(--jam)' : '#C4453F'}">10 天經營結束！</p>
+                    <p class="text-sm mb-4" style="color:#B3A492">最終資金 $${Math.round(state.money).toLocaleString()}（${netProfit >= 0 ? '淨賺' : '淨賠'} $${Math.abs(Math.round(netProfit)).toLocaleString()}）</p>
+                    <p class="text-sm mb-6">分數：<span class="font-bold" style="color:var(--honey)">${score}</span></p>
+                    <div class="flex gap-3 justify-center flex-wrap">
+                        <button onclick="submitGameScore('tinydiner', ${score})" class="btn-primary">上傳分數到排行榜</button>
+                        <button onclick="renderGameMenu()" class="btn-secondary">返回選單</button>
+                    </div>
+                </div>
+            `;
+        }
+
         function dashOpenRecipe(idx) {
             const recipe = (window.__dashRecommendPicks || [])[idx];
             if (!recipe) return;
@@ -1908,7 +2230,7 @@
             showDetail(recipe);
         }
 
-        const GAME_NAMES = { qte: '神廚火候控制', stock: '食材期貨大亨', dash: '虛擬廚房挑戰賽', diner: '深夜食堂' };
+        const GAME_NAMES = { qte: '神廚火候控制', stock: '食材期貨大亨', dash: '虛擬廚房挑戰賽', diner: '深夜食堂', tinydiner: '小餐廳經營模擬' };
         function showGameOverScreen(gameId, score, detailText) {
             const gameName = GAME_NAMES[gameId] || gameId;
             document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
@@ -1948,6 +2270,7 @@
                     <button onclick="showLeaderboard('stock')" class="chip ${gameId === 'stock' ? 'active' : ''}">食材期貨大亨</button>
                     <button onclick="showLeaderboard('dash')" class="chip ${gameId === 'dash' ? 'active' : ''}">廚房挑戰賽</button>
                     <button onclick="showLeaderboard('diner')" class="chip ${gameId === 'diner' ? 'active' : ''}">深夜食堂</button>
+                    <button onclick="showLeaderboard('tinydiner')" class="chip ${gameId === 'tinydiner' ? 'active' : ''}">餐廳經營</button>
                 </div>
                 <div id="leaderboard-list"><p class="text-sm" style="color:#B3A492">載入中…</p></div>
                 <button onclick="renderGameMenu()" class="btn-secondary w-full mt-4">返回選單</button>
