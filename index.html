@@ -582,7 +582,7 @@
             { id: 'streak_5', type: 'loginStreak', threshold: 5, achievement: { name: '百膳笑為先', desc: '幫美食拍照請露出笑容?' } },
             { id: 'streak_7', type: 'loginStreak', threshold: 7, title: { icon: '😋', name: '饕客' } },
             { id: 'streak_10', type: 'loginStreak', threshold: 10, achievement: { name: 'JUST DO EAT', desc: '吃就對了不用多想。' } },
-            { id: 'streak_14', type: 'loginStreak', threshold: 14, title: { icon: '📅', name: '天天來的' }, achievement: { name: 'JUST DO EAT！', desc: '吃就對了不用多想。' } },
+            { id: 'streak_14', type: 'loginStreak', threshold: 14, title: { icon: '📅', name: '天天來的' } },
 
             // ---- 累計登入天數 ----
             { id: 'cumulative_30', type: 'cumulativeLogin', threshold: 30, title: { icon: '💕', name: '愛不釋手的' } },
@@ -2707,16 +2707,46 @@
             document.getElementById('image-preview').src = '';
         }
 
-        function uploadImageToCloudinary(file) {
+        // 上傳前先在瀏覽器端壓縮/縮小圖片，節省上傳流量跟 Cloudinary 儲存空間：
+        // 手機拍照原始檔案常常好幾 MB，壓縮後通常只剩幾百 KB，網頁顯示用幾乎看不出畫質差異
+        function compressImageForUpload(file, maxDim = 1600, quality = 0.82) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                const url = URL.createObjectURL(file);
+                img.onload = () => {
+                    URL.revokeObjectURL(url);
+                    let { width, height } = img;
+                    if (width > maxDim || height > maxDim) {
+                        const scale = maxDim / Math.max(width, height);
+                        width = Math.round(width * scale);
+                        height = Math.round(height * scale);
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width; canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    canvas.toBlob(blob => {
+                        if (blob && blob.size < file.size) {
+                            resolve(new File([blob], file.name.replace(/\.(png|webp)$/i, '.jpg'), { type: 'image/jpeg' }));
+                        } else {
+                            resolve(file); // 少數情況壓縮後反而變大（例如原本檔案就很小），就直接用原始檔案
+                        }
+                    }, 'image/jpeg', quality);
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+                img.src = url;
+            });
+        }
+
+        async function uploadImageToCloudinary(file) {
+            const compressed = await compressImageForUpload(file);
             const formData = new FormData();
-            formData.append('file', file);
+            formData.append('file', compressed);
             formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-            return fetch(CLOUDINARY_UPLOAD_URL, { method: 'POST', body: formData })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.secure_url) return data.secure_url;
-                    throw new Error(data.error?.message || '圖片上傳失敗');
-                });
+            const res = await fetch(CLOUDINARY_UPLOAD_URL, { method: 'POST', body: formData });
+            const data = await res.json();
+            if (data.secure_url) return data.secure_url;
+            throw new Error(data.error?.message || '圖片上傳失敗');
         }
 
         function closeAddModal(fromPopState) {
