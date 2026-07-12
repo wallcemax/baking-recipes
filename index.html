@@ -1999,9 +1999,19 @@
             `;
             try {
                 const snap = await db.collection('recipes').limit(200).get();
-                const candidates = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-                    .filter(r => (!r.visibility || r.visibility === 'public') && r.ingredients && r.ingredients.length)
-                    .sort(() => Math.random() - 0.5);
+                const allRecipes = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                    .filter(r => (!r.visibility || r.visibility === 'public') && r.ingredients && r.ingredients.length);
+                // 依照首頁排序邏輯排序（最新編輯在前），優先檢查首頁前 12 篇夠不夠用，
+                // 不夠的話才繼續往後面（隨機順序）找，減少不必要的檢查次數
+                allRecipes.sort((a, b) => {
+                    const toMillis = t => (t && typeof t.toMillis === 'function') ? t.toMillis() : 0;
+                    const aTime = toMillis(a.updatedAt) || toMillis(a.createdAt);
+                    const bTime = toMillis(b.updatedAt) || toMillis(b.createdAt);
+                    return bTime - aTime;
+                });
+                const top12 = allRecipes.slice(0, 12);
+                const rest = allRecipes.slice(12).sort(() => Math.random() - 0.5);
+                const candidates = [...top12, ...rest];
                 const pool = [];
                 for (const recipe of candidates) {
                     if (pool.length >= 15) break;
@@ -2035,12 +2045,30 @@
             }
         }
 
+        // 每日客群：對應到某個食譜分類，當天菜單如果有該分類的菜，會賣得更好、價格也稍微好一點；
+        // 沒有對應分類也沒關係，生意就是一般般，不會扣分
+        const TINY_DINER_CUSTOMER_GROUPS = [
+            { name: '上班族OL', icon: '👩‍💼', category: '蛋糕/糕餅' },
+            { name: '學生族群', icon: '🎒', category: '麵包/包子' },
+            { name: '銀髮長輩', icon: '👴', category: '中式烹飪' },
+            { name: '健身狂熱者', icon: '💪', category: '健康餐' },
+            { name: '甜點控', icon: '🍪', category: '餅乾/塔派' },
+            { name: '浪漫情侶', icon: '💑', category: '西式烹飪' },
+            { name: '動漫迷', icon: '🎌', category: '日式烹飪' },
+            { name: '新手爸媽', icon: '👶', category: '寶寶食品' },
+            { name: '美食探險家', icon: '🧭', category: '慕斯/布丁' },
+            { name: '在地熟客', icon: '🏘️', category: '其他' },
+        ];
+        const TINY_DINER_GROUP_POP_BOOST = 1.8; // 對應分類的受歡迎度加成
+        const TINY_DINER_GROUP_PRICE_BOOST = 1.15; // 對應分類的價格加成
+
         function tinyDinerNextDay() {
             const state = tinyDinerState;
             if (!state) return;
             state.day++;
             if (state.day > TINY_DINER_TOTAL_DAYS) { endTinyDinerGame(); return; }
             state.todayMenu = [];
+            state.todayGroup = TINY_DINER_CUSTOMER_GROUPS[Math.floor(Math.random() * TINY_DINER_CUSTOMER_GROUPS.length)];
             renderTinyDinerMenuSelect();
         }
 
@@ -2048,6 +2076,7 @@
             const state = tinyDinerState;
             document.getElementById('game-modal-title').textContent = '🏮 小餐廳經營模擬';
             const dayPct = Math.round((state.day / TINY_DINER_TOTAL_DAYS) * 100);
+            const group = state.todayGroup;
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="mb-3">
                     <div class="flex justify-between items-center mb-1 text-xs" style="color:#B3A492">
@@ -2058,20 +2087,29 @@
                         <div style="height:100%; width:${dayPct}%; background:linear-gradient(90deg, var(--honey), var(--jam));"></div>
                     </div>
                 </div>
+                <div class="flex items-center gap-3 px-4 py-3 rounded-2xl mb-3" style="background:rgba(244,228,234,0.5); border:1px solid var(--line);">
+                    <div class="text-3xl">${group.icon}</div>
+                    <div>
+                        <p class="text-xs" style="color:#B3A492">今天預測主要客群</p>
+                        <p class="text-sm font-semibold">${group.name} ・ 喜歡「${group.category}」</p>
+                    </div>
+                </div>
                 <p class="text-sm font-semibold mb-2">今天要賣什麼？挑 4~6 道菜（已選 <span id="tdn-count">0</span>/6）</p>
-                <div class="space-y-2 mb-4" style="max-height:44vh; overflow-y:auto;">
-                    ${state.pool.map((dish, i) => `
-                        <label class="flex items-center justify-between px-4 py-2.5 rounded-2xl cursor-pointer" style="background:var(--cream); border:1px solid var(--line);">
+                <p class="text-xs mb-2" style="color:#B3A492">💡 菜單裡如果有「${group.category}」的菜，今天會賣得特別好；沒有也沒關係，生意就一般般</p>
+                <div class="space-y-2 mb-4" style="max-height:40vh; overflow-y:auto;">
+                    ${state.pool.map((dish, i) => {
+                        const isMatch = dish.category === group.category;
+                        return `<label class="flex items-center justify-between px-4 py-2.5 rounded-2xl cursor-pointer" style="background:${isMatch ? 'rgba(244,228,234,0.5)' : 'var(--cream)'}; border:1px solid ${isMatch ? 'var(--jam)' : 'var(--line)'};">
                             <div class="flex items-center gap-2 min-w-0">
                                 <input type="checkbox" onchange="tinyDinerToggleDish(${i}, this.checked)" class="shrink-0">
                                 <div class="min-w-0">
-                                    <p class="text-sm font-medium truncate">${dish.name}</p>
+                                    <p class="text-sm font-medium truncate">${dish.name} ${isMatch ? '🔥' : ''}</p>
                                     <p class="text-xs" style="color:#B3A492">${dish.category} ・ ${dish.kcal} kcal/份</p>
                                 </div>
                             </div>
                             <p class="font-bold text-sm shrink-0" style="color:var(--jam)">$${dish.price}</p>
-                        </label>
-                    `).join('')}
+                        </label>`;
+                    }).join('')}
                 </div>
                 <button id="tdn-confirm-btn" onclick="tinyDinerConfirmMenu()" disabled class="btn-primary w-full opacity-40">確認菜單，進入備料階段</button>
                 <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">放棄遊戲</button>
@@ -2100,6 +2138,17 @@
             renderTinyDinerPrepPhase();
         }
 
+        function tinyDinerEffectivePrice(dish) {
+            const state = tinyDinerState;
+            const isMatch = state && state.todayGroup && dish.category === state.todayGroup.category;
+            return isMatch ? Math.round(dish.price * TINY_DINER_GROUP_PRICE_BOOST) : dish.price;
+        }
+        function tinyDinerEffectivePopularity(dish) {
+            const state = tinyDinerState;
+            const isMatch = state && state.todayGroup && dish.category === state.todayGroup.category;
+            return isMatch ? dish.popularity * TINY_DINER_GROUP_POP_BOOST : dish.popularity;
+        }
+
         function renderTinyDinerPrepPhase() {
             const state = tinyDinerState;
             document.getElementById('game-modal-title').textContent = '📦 今日備料';
@@ -2108,11 +2157,13 @@
                 <p class="text-sm mb-4">目前資金：<span class="font-bold" style="color:var(--jam)">$${Math.round(state.money).toLocaleString()}</span></p>
                 <div class="space-y-2.5 mb-4">
                     ${state.todayMenu.map((dish, i) => {
+                        const effPrice = tinyDinerEffectivePrice(dish);
+                        const isMatch = effPrice !== dish.price;
                         const unitCost = Math.round(dish.price * TINY_DINER_COST_RATIO);
-                        return `<div class="px-4 py-3 rounded-2xl" style="background:var(--cream); border:1px solid var(--line);">
+                        return `<div class="px-4 py-3 rounded-2xl" style="background:${isMatch ? 'rgba(244,228,234,0.5)' : 'var(--cream)'}; border:1px solid ${isMatch ? 'var(--jam)' : 'var(--line)'};">
                             <div class="flex justify-between items-center mb-1.5">
-                                <p class="text-sm font-medium">${dish.name}</p>
-                                <p class="text-xs" style="color:#B3A492">售價 $${dish.price} ・ 成本約 $${unitCost}/份</p>
+                                <p class="text-sm font-medium">${dish.name} ${isMatch ? '🔥 熱門' : ''}</p>
+                                <p class="text-xs" style="color:#B3A492">售價 ${isMatch ? `<span style="text-decoration:line-through">$${dish.price}</span> ` : ''}$${effPrice} ・ 成本約 $${unitCost}/份</p>
                             </div>
                             <div class="flex items-center gap-2">
                                 <label class="text-xs shrink-0" style="color:#B3A492">準備份數</label>
@@ -2148,19 +2199,19 @@
             const prepped = state.todayMenu.map((dish, i) => {
                 const el = document.getElementById(`tdn-prep-${i}`);
                 const qty = el ? Math.max(0, parseInt(el.value) || 0) : 0;
-                return { dish, qty, remaining: qty };
+                return { dish, qty, remaining: qty, effPrice: tinyDinerEffectivePrice(dish), effPop: tinyDinerEffectivePopularity(dish) };
             });
             const totalCost = prepped.reduce((sum, p) => sum + p.qty * Math.round(p.dish.price * TINY_DINER_COST_RATIO), 0);
 
             // 先把今天所有客人依受歡迎度加權隨機決定好（事件序列），再逐一播放動畫呈現
             const customerCount = 10 + Math.floor(Math.random() * 11);
-            const totalWeight = prepped.reduce((sum, p) => sum + p.dish.popularity, 0);
+            const totalWeight = prepped.reduce((sum, p) => sum + p.effPop, 0);
             const events = [];
             for (let c = 0; c < customerCount; c++) {
                 let roll = Math.random() * totalWeight;
                 let picked = null;
                 for (const p of prepped) {
-                    roll -= p.dish.popularity;
+                    roll -= p.effPop;
                     if (roll <= 0) { picked = p; break; }
                 }
                 if (!picked) picked = prepped[prepped.length - 1];
@@ -2170,6 +2221,7 @@
                     name: TINY_DINER_NAMES[Math.floor(Math.random() * TINY_DINER_NAMES.length)],
                     reason: TINY_DINER_REASONS[Math.floor(Math.random() * TINY_DINER_REASONS.length)],
                     dish: picked.dish,
+                    price: picked.effPrice,
                     success,
                 });
             }
@@ -2181,13 +2233,19 @@
         function renderTinyDinerEventFeed(events, totalCost, wasted, customerCount) {
             document.getElementById('game-modal-title').textContent = '🏮 今日營業中…';
             document.getElementById('game-modal-body').innerHTML = `
-                <div class="flex justify-between items-center mb-2 text-sm">
+                <div class="flex justify-between items-center mb-3 text-sm">
                     <p>來客 <span id="tdn-feed-count">0</span> / ${customerCount}</p>
                     <p>營業額：<span id="tdn-feed-revenue" class="font-bold" style="color:var(--sage)">$0</span></p>
                 </div>
-                <div id="tdn-feed-list" class="space-y-1.5" style="max-height:52vh; overflow-y:auto;"></div>
+                <!-- 固定大小的事件卡片，每位客人依序替換內容，不會讓版面一直長高 -->
+                <div id="tdn-event-card" class="rounded-3xl px-5 flex flex-col items-center justify-center text-center" style="height:150px; background:var(--cream); border:1px solid var(--line); transition:background .2s;">
+                    <p class="text-sm" style="color:#B3A492">準備開店…</p>
+                </div>
+                <div class="flex justify-center gap-1.5 mt-4">
+                    ${events.map((_, idx) => `<span id="tdn-dot-${idx}" style="width:6px; height:6px; border-radius:999px; background:var(--line); display:inline-block; transition:background .2s;"></span>`).join('')}
+                </div>
             `;
-            const listEl = document.getElementById('tdn-feed-list');
+            const cardEl = document.getElementById('tdn-event-card');
             let revenue = 0, served = 0, turnedAway = 0;
             let i = 0;
             const step = () => {
@@ -2195,29 +2253,36 @@
                     const profit = revenue - totalCost;
                     tinyDinerState.money += profit;
                     playSfx(profit >= 0 ? 'success' : 'burnt');
-                    setTimeout(() => renderTinyDinerDayResult({ customerCount, served, turnedAway, revenue, totalCost, profit, wasted }), 400);
+                    setTimeout(() => renderTinyDinerDayResult({ customerCount, served, turnedAway, revenue, totalCost, profit, wasted }), 600);
                     return;
                 }
                 const ev = events[i];
-                const row = document.createElement('div');
-                row.className = 'px-3 py-2 rounded-xl text-xs';
-                if (ev.success) {
-                    revenue += ev.dish.price;
-                    served++;
-                    row.style.cssText = 'background:rgba(155,196,155,0.25);';
-                    row.textContent = `😊 ${ev.name} 買了「${ev.dish.name}」，${ev.reason} +$${ev.dish.price}`;
-                    playSfx('tick');
-                } else {
-                    turnedAway++;
-                    row.style.cssText = 'background:rgba(196,69,63,0.12);';
-                    row.textContent = `😥 ${ev.name} 想吃「${ev.dish.name}」慶祝${ev.reason}，可惜已經賣完了，失望離開`;
-                }
-                listEl.appendChild(row);
-                listEl.scrollTop = listEl.scrollHeight;
-                document.getElementById('tdn-feed-count').textContent = i + 1;
-                document.getElementById('tdn-feed-revenue').textContent = `$${revenue.toLocaleString()}`;
-                i++;
-                setTimeout(step, 180);
+                const dot = document.getElementById(`tdn-dot-${i}`);
+                if (dot) dot.style.background = ev.success ? 'var(--sage)' : '#C4453F';
+                cardEl.style.opacity = '0';
+                setTimeout(() => {
+                    if (ev.success) {
+                        revenue += ev.price;
+                        served++;
+                        cardEl.style.background = 'rgba(155,196,155,0.25)';
+                        cardEl.innerHTML = `<div class="text-3xl mb-2">😊</div>
+                            <p class="text-sm font-medium mb-1">${ev.name} 買了「${ev.dish.name}」</p>
+                            <p class="text-xs mb-1" style="color:#B3A492">為了${ev.reason}</p>
+                            <p class="font-bold text-lg" style="color:var(--sage)">+$${ev.price}</p>`;
+                        playSfx('tick');
+                    } else {
+                        turnedAway++;
+                        cardEl.style.background = 'rgba(196,69,63,0.12)';
+                        cardEl.innerHTML = `<div class="text-3xl mb-2">😥</div>
+                            <p class="text-sm font-medium mb-1">${ev.name} 想吃「${ev.dish.name}」</p>
+                            <p class="text-xs" style="color:#B3A492">為了${ev.reason}，可惜已經賣完了，失望離開</p>`;
+                    }
+                    cardEl.style.opacity = '1';
+                    document.getElementById('tdn-feed-count').textContent = i + 1;
+                    document.getElementById('tdn-feed-revenue').textContent = `$${revenue.toLocaleString()}`;
+                    i++;
+                    setTimeout(step, 850);
+                }, 150);
             };
             step();
         }
@@ -2226,11 +2291,14 @@
             const state = tinyDinerState;
             document.getElementById('game-modal-title').textContent = `📊 第 ${state.day} 天結算`;
             const isProfit = result.profit >= 0;
+            const group = state.todayGroup;
+            const hadMatch = state.todayMenu.some(d => d.category === group.category);
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="text-center py-4 rounded-3xl mb-4" style="background:linear-gradient(180deg, var(--cream), var(--paper))">
                     <div class="text-5xl mb-2">${isProfit ? '📈' : '📉'}</div>
                     <p class="font-display text-xl font-bold" style="color:${isProfit ? 'var(--sage)' : '#C4453F'}">今日${isProfit ? '獲利' : '虧損'} $${Math.abs(Math.round(result.profit)).toLocaleString()}</p>
                 </div>
+                <p class="text-xs mb-3 text-center" style="color:#B3A492">${group.icon} 今天客群是「${group.name}」，${hadMatch ? `菜單裡剛好有「${group.category}」，賣得特別好！` : `菜單裡沒有「${group.category}」，生意就一般般`}</p>
                 <div class="grid grid-cols-2 gap-2 mb-4 text-sm">
                     <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:#B3A492">來客數</p><p class="font-bold">${result.customerCount} 位</p></div>
                     <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:#B3A492">成交 / 撲空</p><p class="font-bold">${result.served} / ${result.turnedAway}</p></div>
