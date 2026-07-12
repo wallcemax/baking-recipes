@@ -180,6 +180,7 @@
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
                     <button id="admin-nutrition-btn" onclick="showAdminNutritionModal()" class="hidden btn-secondary text-xs sm:text-sm whitespace-nowrap">🛠 食材熱量管理</button>
+                    <button id="admin-achievements-btn" onclick="showAdminAchievementsModal()" class="hidden btn-secondary text-xs sm:text-sm whitespace-nowrap">📋 成就總覽</button>
                     <div id="user-info" class="flex items-center gap-3 shrink-0"></div>
                 </div>
             </div>
@@ -256,6 +257,42 @@
                 <h3 class="font-display font-semibold text-lg mb-3">目前已收錄／AI 估算過的食材</h3>
                 <div id="admin-nutri-list" class="space-y-2"></div>
             </div>
+        </div>
+    </div>
+
+    <!-- 個人成就頁面 Modal -->
+    <div id="profile-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-2xl max-h-[88vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">🏅 我的成就</h2>
+                <button onclick="closeProfileModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <div class="mb-6">
+                    <label class="font-semibold block mb-2">目前裝備的稱號</label>
+                    <select id="equipped-title-select" onchange="equipTitle(this.value)" class="form-input"></select>
+                    <p class="text-xs mt-1" style="color:#B3A492">裝備的稱號會顯示在你食譜卡片作者名字的左邊</p>
+                </div>
+                <div class="mb-8">
+                    <h3 class="font-display font-semibold text-lg mb-3">已獲得的稱號</h3>
+                    <div id="profile-titles-list" class="flex flex-wrap gap-2"></div>
+                </div>
+                <div>
+                    <h3 class="font-display font-semibold text-lg mb-3">已獲得的成就</h3>
+                    <div id="profile-achievements-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 管理者：所有成就/稱號條件總覽 Modal -->
+    <div id="admin-achievements-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-3xl max-h-[88vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">📋 所有成就／稱號條件</h2>
+                <button onclick="closeAdminAchievementsModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6" id="admin-achievements-list"></div>
         </div>
     </div>
 
@@ -397,6 +434,8 @@
             const detailModal = document.getElementById('detail-modal');
             const addModal = document.getElementById('add-modal');
             const adminModal = document.getElementById('admin-nutrition-modal');
+            const profileModal = document.getElementById('profile-modal');
+            const adminAchModal = document.getElementById('admin-achievements-modal');
             modalHistoryPushed = false; // 這筆歷史紀錄已經被返回鍵消耗掉了
             if (detailModal && !detailModal.classList.contains('hidden')) {
                 closeDetail(true);
@@ -404,10 +443,15 @@
                 closeAddModal(true);
             } else if (adminModal && !adminModal.classList.contains('hidden')) {
                 closeAdminNutritionModal(true);
+            } else if (profileModal && !profileModal.classList.contains('hidden')) {
+                closeProfileModal(true);
+            } else if (adminAchModal && !adminAchModal.classList.contains('hidden')) {
+                closeAdminAchievementsModal(true);
             }
             // 沒有任何彈窗開著時，代表使用者是在首頁按返回鍵，讓瀏覽器/系統走預設行為即可
         });
         let checkedSteps = new Set();
+        let currentDetailRecipe = null; // 目前開著的食譜，給「大功告成」的成就追蹤用
         let currentDetailStepsTotal = 0;
 
         const ADMIN_EMAIL = 'wallcemax@gmail.com';
@@ -416,6 +460,353 @@
         const VISIBILITY_LABELS = { private: { label: '🔒 私人', bg: '#EFEAE0', color: 'var(--espresso-soft)' }, draft: { label: '📝 草稿', bg: '#FCE9C8', color: 'var(--honey)' } };
         const RECIPES_PER_PAGE = 12;
         let currentPage = 1;
+
+        // ============================================================
+        // 個人化成就＆稱號系統
+        // ============================================================
+        // 稱號(TITLE)：可以「裝備」，裝備後顯示在食譜作者名字左側
+        // 成就(ACHIEVEMENT)：純紀錄，不能裝備
+        // 未達成的稱號／成就完全不顯示，也不透露達成條件
+        // ------------------------------------------------------------
+        // type 說明：
+        //   totalRecipes   - 累計新增食譜數（不因刪除而減少）
+        //   categoryRecipes- 累計新增某分類食譜數（不因刪除而減少）
+        //   totalFinish    - 累計「大功告成」次數（以不重複的食譜 id 計算，
+        //                     同一篇食譜重複按不會重複計算，防止洗成就）
+        //   categoryFinish - 累計某分類「大功告成」次數（同上，以不重複食譜 id 計算）
+        //   loginStreak    - 連續登入天數
+        //   cumulativeLogin- 累計登入天數（不需連續）
+        const ACHIEVEMENT_RULES = [
+            // ---- 總食譜數 ----
+            { id: 'total_1', type: 'totalRecipes', threshold: 1, title: { icon: '🥚', name: '初學廚師' }, achievement: { name: '剛踏入廚房', desc: '不知道能不能吃，試一下好了。' } },
+            { id: 'total_10', type: 'totalRecipes', threshold: 10, title: { icon: '🍳', name: '家常料理人' }, achievement: { name: '還是有點怕燙', desc: '油彈起來了快閃！' } },
+            { id: 'total_20', type: 'totalRecipes', threshold: 20, title: { icon: '👨‍🍳', name: '主廚' }, achievement: { name: '交給我沒問題', desc: '閃開！閃開！讓專業的來！' } },
+            { id: 'total_50', type: 'totalRecipes', threshold: 50, title: { icon: '⭐', name: '星級主廚' }, achievement: { name: '一閃一閃亮晶晶', desc: '可以去參加黑白大廚了。' } },
+            { id: 'total_100', type: 'totalRecipes', threshold: 100, title: { icon: '👑', name: '傳說中的料理人' }, achievement: { name: '哥只是個傳說', desc: '請不要羨慕哥，哥只是個傳說。' } },
+
+            // ---- 蛋糕/糕餅 ----
+            { id: 'cat_cake_1', type: 'categoryRecipes', category: '蛋糕/糕餅', threshold: 1, title: { icon: '🎂', name: '蓬鬆度初學者' } },
+            { id: 'cat_cake_5', type: 'categoryRecipes', category: '蛋糕/糕餅', threshold: 5, title: { icon: '🧁', name: '甜點工匠' } },
+            { id: 'cat_cake_10', type: 'categoryRecipes', category: '蛋糕/糕餅', threshold: 10, title: { icon: '🍰', name: '像蛋糕一樣甜的' }, achievement: { name: '又香又甜', desc: '自帶甜美濾鏡。' } },
+            // ---- 麵包/包子 ----
+            { id: 'cat_bread_1', type: 'categoryRecipes', category: '麵包/包子', threshold: 1, title: { icon: '🌾', name: '揉麵初學者' } },
+            { id: 'cat_bread_5', type: 'categoryRecipes', category: '麵包/包子', threshold: 5, title: { icon: '🍞', name: '麵糰馴服者' } },
+            { id: 'cat_bread_10', type: 'categoryRecipes', category: '麵包/包子', threshold: 10, title: { icon: '🥐', name: '薄如蟬翼的' }, achievement: { name: '穿了跟沒穿一樣', desc: '薄如蟬翼，輕若流霞。' } },
+            // ---- 餅乾/塔派 ----
+            { id: 'cat_cookie_1', type: 'categoryRecipes', category: '餅乾/塔派', threshold: 1, title: { icon: '🍪', name: '烘焙界新鮮人' } },
+            { id: 'cat_cookie_5', type: 'categoryRecipes', category: '餅乾/塔派', threshold: 5, title: { icon: '🥧', name: '酥皮魔法師' } },
+            { id: 'cat_cookie_10', type: 'categoryRecipes', category: '餅乾/塔派', threshold: 10, title: { icon: '✨', name: '酥脆的' }, achievement: { name: '酥酥脆脆', desc: '咔嚓作響，清脆悅耳。' } },
+            // ---- 慕斯/布丁 ----
+            { id: 'cat_mousse_1', type: 'categoryRecipes', category: '慕斯/布丁', threshold: 1, title: { icon: '🍮', name: '吉利丁新手' } },
+            { id: 'cat_mousse_5', type: 'categoryRecipes', category: '慕斯/布丁', threshold: 5, title: { icon: '💎', name: '舌尖上的絲絨' } },
+            { id: 'cat_mousse_10', type: 'categoryRecipes', category: '慕斯/布丁', threshold: 10, title: { icon: '🌊', name: '很有彈性的' }, achievement: { name: '絲滑有彈性', desc: '如初生嬰兒般嬌嫩。' } },
+            // ---- 中式烹飪 ----
+            { id: 'cat_cn_1', type: 'categoryRecipes', category: '中式烹飪', threshold: 1, title: { icon: '🥢', name: '拿大勺的實習生' } },
+            { id: 'cat_cn_5', type: 'categoryRecipes', category: '中式烹飪', threshold: 5, title: { icon: '🔥', name: '火候大師' } },
+            { id: 'cat_cn_10', type: 'categoryRecipes', category: '中式烹飪', threshold: 10, title: { icon: '🍲', name: '每天辦桌的' }, achievement: { name: '充滿鑊氣', desc: '鐵鍋與烈火交織的極致靈魂。' } },
+            // ---- 西式烹飪 ----
+            { id: 'cat_west_1', type: 'categoryRecipes', category: '西式烹飪', threshold: 1, title: { icon: '🍝', name: '西餐門外漢' } },
+            { id: 'cat_west_5', type: 'categoryRecipes', category: '西式烹飪', threshold: 5, title: { icon: '🍷', name: '餐酒館總監' } },
+            { id: 'cat_west_10', type: 'categoryRecipes', category: '西式烹飪', threshold: 10, title: { icon: '🔪', name: '地獄廚房的' }, achievement: { name: '戈登都說不過你', desc: '滿肚子洋墨水。' } },
+            // ---- 日式烹飪 ----
+            { id: 'cat_jp_1', type: 'categoryRecipes', category: '日式烹飪', threshold: 1, title: { icon: '🍙', name: '達人精神' } },
+            { id: 'cat_jp_5', type: 'categoryRecipes', category: '日式烹飪', threshold: 5, title: { icon: '🍣', name: '大將' } },
+            { id: 'cat_jp_10', type: 'categoryRecipes', category: '日式烹飪', threshold: 10, title: { icon: '🐟', name: '可生食的' }, achievement: { name: '精通旨味', desc: '各種食材的鮮，瞭若指掌。' } },
+            // ---- 健康餐 ----
+            { id: 'cat_health_1', type: 'categoryRecipes', category: '健康餐', threshold: 1, title: { icon: '🥗', name: '帶便當小資族' } },
+            { id: 'cat_health_5', type: 'categoryRecipes', category: '健康餐', threshold: 5, title: { icon: '🥑', name: '營養料理師' } },
+            { id: 'cat_health_10', type: 'categoryRecipes', category: '健康餐', threshold: 10, title: { icon: '🛡️', name: '百毒不侵的' }, achievement: { name: '健康成長', desc: '各種不健康食品絕緣體。' } },
+            // ---- 寶寶食品（原文 30-32 條寫成「健康餐」但內容明顯是寶寶主題，已修正為寶寶食品分類）----
+            { id: 'cat_baby_1', type: 'categoryRecipes', category: '寶寶食品', threshold: 1, title: { icon: '🍼', name: '新手爸媽的神隊友' } },
+            { id: 'cat_baby_5', type: 'categoryRecipes', category: '寶寶食品', threshold: 5, title: { icon: '👶', name: '幼兒園米其林主廚' } },
+            { id: 'cat_baby_10', type: 'categoryRecipes', category: '寶寶食品', threshold: 10, title: { icon: '🧸', name: '寶寶第一個朋友的' }, achievement: { name: '初生之犢不畏唬', desc: '成功長大了！' } },
+            // ---- 其他 ----
+            { id: 'cat_other_1', type: 'categoryRecipes', category: '其他', threshold: 1, title: { icon: '🧂', name: '生活調味家' } },
+            { id: 'cat_other_5', type: 'categoryRecipes', category: '其他', threshold: 5, title: { icon: '🌍', name: '異國料理人' } },
+            { id: 'cat_other_10', type: 'categoryRecipes', category: '其他', threshold: 10, title: { icon: '🧪', name: '料理發明家' }, achievement: { name: '實驗室不知道炸了幾次', desc: '爆炸對你來說不算什麼。' } },
+            { id: 'cat_other_20', type: 'categoryRecipes', category: '其他', threshold: 20, title: { icon: '🧠', name: '生活智慧王' }, achievement: { name: '還有什麼是你不會的?', desc: '都是小菜一碟。' } },
+            { id: 'cat_other_30', type: 'categoryRecipes', category: '其他', threshold: 30, title: { icon: '📚', name: '萬事通' }, achievement: { name: '問一次100元', desc: '沒有考慮開始收費?' } },
+            { id: 'cat_other_50', type: 'categoryRecipes', category: '其他', threshold: 50, title: { icon: '🌀', name: '穿越異世界的' }, achievement: { name: '穿越而來的未來知識', desc: '知曉古今中外一切知識。' } },
+
+            // ---- 大功告成：總次數 ----
+            { id: 'finish_total_1', type: 'totalFinish', threshold: 1, achievement: { name: '居然沒有爆炸!?', desc: '真是謝天謝地。' } },
+            { id: 'finish_total_5', type: 'totalFinish', threshold: 5, achievement: { name: '駕輕就熟', desc: '慢慢會越來越好。' } },
+            { id: 'finish_total_10', type: 'totalFinish', threshold: 10, achievement: { name: '以後我就住這了', desc: '開始準備相關定居程序。' } },
+            { id: 'finish_total_15', type: 'totalFinish', threshold: 15, achievement: { name: '開始想明天要吃什麼', desc: '吃什麼成為每天的煩惱。' } },
+            { id: 'finish_total_20', type: 'totalFinish', threshold: 20, title: { icon: '🍽️', name: '大胃王的' }, achievement: { name: '情緒價值已經無法滿足', desc: '胃口已經被養大了。' } },
+
+            // ---- 大功告成：蛋糕/糕餅 ----
+            { id: 'finish_cake_1', type: 'categoryFinish', category: '蛋糕/糕餅', threshold: 1, achievement: { name: '你喜歡吃鹹的還是甜的?', desc: '真讓人欲罷不能。' } },
+            { id: 'finish_cake_5', type: 'categoryFinish', category: '蛋糕/糕餅', threshold: 5, title: { icon: '🐜', name: '螞蟻人' }, achievement: { name: '連空氣都充滿了甜味', desc: '這裡應該不是台南吧?' } },
+            { id: 'finish_cake_10', type: 'categoryFinish', category: '蛋糕/糕餅', threshold: 10, achievement: { name: '住在糖果屋裡', desc: '隨手一抓都是糖。' } },
+            // ---- 大功告成：麵包/包子 ----
+            { id: 'finish_bread_1', type: 'categoryFinish', category: '麵包/包子', threshold: 1, achievement: { name: '手臂開始變粗壯', desc: '在小小的麵糰裡揉壓揉壓揉。' } },
+            { id: 'finish_bread_5', type: 'categoryFinish', category: '麵包/包子', threshold: 5, achievement: { name: '連酵母菌都聽你的', desc: '統治了微生物界。' } },
+            { id: 'finish_bread_10', type: 'categoryFinish', category: '麵包/包子', threshold: 10, title: { icon: '📈', name: '一路發的' }, achievement: { name: '發發發', desc: '每天都發發發。' } },
+            // ---- 大功告成：餅乾/塔派 ----
+            { id: 'finish_cookie_1', type: 'categoryFinish', category: '餅乾/塔派', threshold: 1, achievement: { name: '空氣變得更乾燥', desc: '烘乾就是第一步。' } },
+            { id: 'finish_cookie_5', type: 'categoryFinish', category: '餅乾/塔派', threshold: 5, achievement: { name: '拿穩擠花袋', desc: '各種形狀都難不倒。' } },
+            { id: 'finish_cookie_10', type: 'categoryFinish', category: '餅乾/塔派', threshold: 10, title: { icon: '🙇', name: '五體投地的' }, achievement: { name: '連約翰都屈服了', desc: '約翰屈服塔...。' } },
+            // ---- 大功告成：慕斯/布丁 ----
+            { id: 'finish_mousse_1', type: 'categoryFinish', category: '慕斯/布丁', threshold: 1, title: { icon: '🐢', name: '細嚼慢嚥' }, achievement: { name: '老人小孩食用注意', desc: '這是每個廠商都會加註的標語。' } },
+            { id: 'finish_mousse_5', type: 'categoryFinish', category: '慕斯/布丁', threshold: 5, achievement: { name: '專門研究史萊姆', desc: '對於凝固這件事越來越熟。' } },
+            { id: 'finish_mousse_10', type: 'categoryFinish', category: '慕斯/布丁', threshold: 10, title: { icon: '🚫', name: '不要玩食物的' }, achievement: { name: '像玩滑水道一樣', desc: '直接滑進胃中。' } },
+            // ---- 大功告成：中式烹飪 ----
+            { id: 'finish_cn_1', type: 'categoryFinish', category: '中式烹飪', threshold: 1, achievement: { name: '用筷子夾', desc: '難道要用刀叉?。' } },
+            { id: 'finish_cn_5', type: 'categoryFinish', category: '中式烹飪', threshold: 5, title: { icon: '👦', name: '小當家' }, achievement: { name: '中餐不是中午那一餐', desc: '外國人應該不懂中餐。' } },
+            { id: 'finish_cn_10', type: 'categoryFinish', category: '中式烹飪', threshold: 10, title: { icon: '㊕', name: '特級廚師的' }, achievement: { name: '蒸、煮、炒、炸、煎', desc: '精通了五大技法。' } },
+            // ---- 大功告成：西式烹飪 ----
+            { id: 'finish_west_1', type: 'categoryFinish', category: '西式烹飪', threshold: 1, achievement: { name: '剛學會用刀叉', desc: '平常都拿筷子麻..。' } },
+            { id: 'finish_west_5', type: 'categoryFinish', category: '西式烹飪', threshold: 5, title: { icon: '😈', name: '地獄廚師' }, achievement: { name: '西式調味料', desc: '別給我放醬油。' } },
+            { id: 'finish_west_10', type: 'categoryFinish', category: '西式烹飪', threshold: 10, title: { icon: '🌟', name: '星星知我心的' }, achievement: { name: '米其林密探來了', desc: '香味吸引米其林密探到來。' } },
+            // ---- 大功告成：日式烹飪 ----
+            { id: 'finish_jp_1', type: 'categoryFinish', category: '日式烹飪', threshold: 1, title: { icon: '🤷', name: 'who care+s' }, achievement: { name: '剛學會把醬油跟芥末分開吃', desc: '聽說有些日式廚師很介意。' } },
+            { id: 'finish_jp_5', type: 'categoryFinish', category: '日式烹飪', threshold: 5, achievement: { name: '我可以直接吃哇沙米', desc: '將嗆鼻衝腦的嗆辣視為快感。' } },
+            { id: 'finish_jp_10', type: 'categoryFinish', category: '日式烹飪', threshold: 10, title: { icon: '♨️', name: '充分加熱的' }, achievement: { name: '成為了道地日本人', desc: '對於日式料理的執著就像達人一般。' } },
+            // ---- 大功告成：健康餐 ----
+            { id: 'finish_health_1', type: 'categoryFinish', category: '健康餐', threshold: 1, title: { icon: '🏔️', name: '擎天崗' }, achievement: { name: '和牛吃到飽', desc: '我說得是和牛不是和牛。' } },
+            { id: 'finish_health_5', type: 'categoryFinish', category: '健康餐', threshold: 5, title: { icon: '🐮', name: '哞' }, achievement: { name: '要吃也要動', desc: '吃的健康動的更健康。' } },
+            { id: 'finish_health_10', type: 'categoryFinish', category: '健康餐', threshold: 10, achievement: { name: '養生主義者', desc: '養生界的楷模。' } },
+            // ---- 大功告成：寶寶食品 ----
+            { id: 'finish_baby_1', type: 'categoryFinish', category: '寶寶食品', threshold: 1, title: { icon: '👶', name: '哇哇大哭' }, achievement: { name: '一暝大一寸', desc: '吃得好睡得好寶寶沒煩惱。' } },
+            { id: 'finish_baby_5', type: 'categoryFinish', category: '寶寶食品', threshold: 5, title: { icon: '🍼', name: '奶媽' }, achievement: { name: '開始用吞得', desc: '牙都還沒長出來嘿。' } },
+            { id: 'finish_baby_10', type: 'categoryFinish', category: '寶寶食品', threshold: 10, achievement: { name: '寶寶感受到你的熱情', desc: '寶寶已經在敲碗了。' } },
+            // ---- 大功告成：其他 ----
+            { id: 'finish_other_1', type: 'categoryFinish', category: '其他', threshold: 1, achievement: { name: '未分類', desc: '這裡什麼都有。' } },
+            { id: 'finish_other_5', type: 'categoryFinish', category: '其他', threshold: 5, title: { icon: '🌀', name: '傳送門' }, achievement: { name: '開盲盒', desc: '就愛這種不確定感。' } },
+            { id: 'finish_other_10', type: 'categoryFinish', category: '其他', threshold: 10, title: { icon: '🔮', name: '來自未來的' }, achievement: { name: '想不到吃什麼就來這', desc: '已經嚴重罹患選擇困難。' } },
+
+            // ---- 連續登入 ----
+            { id: 'streak_1', type: 'loginStreak', threshold: 1, title: { icon: '🆕', name: '新來的' }, achievement: { name: '想吃什麼自己動手做', desc: '有手就動起來。' } },
+            { id: 'streak_2', type: 'loginStreak', threshold: 2, title: { icon: '🍄', name: '金針菇' }, achievement: { name: '原型食物', desc: 'See you tomorrow。' } },
+            { id: 'streak_5', type: 'loginStreak', threshold: 5, achievement: { name: '百膳笑為先', desc: '幫美食拍照請露出笑容?' } },
+            { id: 'streak_7', type: 'loginStreak', threshold: 7, title: { icon: '😋', name: '饕客' } },
+            { id: 'streak_10', type: 'loginStreak', threshold: 10, achievement: { name: 'JUST DO EAT', desc: '吃就對了不用多想。' } },
+            { id: 'streak_14', type: 'loginStreak', threshold: 14, title: { icon: '📅', name: '天天來的' }, achievement: { name: 'JUST DO EAT！', desc: '吃就對了不用多想。' } },
+
+            // ---- 累計登入天數 ----
+            { id: 'cumulative_30', type: 'cumulativeLogin', threshold: 30, title: { icon: '💕', name: '愛不釋手的' } },
+            { id: 'cumulative_60', type: 'cumulativeLogin', threshold: 60, title: { icon: '🎯', name: '上癮的' } },
+            { id: 'cumulative_90', type: 'cumulativeLogin', threshold: 90, title: { icon: '🍵', name: '心靈雞湯的' } },
+            { id: 'cumulative_180', type: 'cumulativeLogin', threshold: 180, title: { icon: '🔍', name: '瞭若指掌的' } },
+            { id: 'cumulative_365', type: 'cumulativeLogin', threshold: 365, title: { icon: '🌌', name: '全知全能的' }, achievement: { name: '滿等才是開始', desc: '感謝一下網站製作者吧。' } },
+        ];
+
+        // ---------- 使用者成就進度追蹤 ----------
+        let userProgress = null; // 目前登入者的進度資料
+        let authorTitleCache = {}; // uid -> {icon,name} | null，快取其他使用者的裝備稱號
+
+        function defaultUserProgress() {
+            return {
+                totalRecipesCreated: 0,
+                categoryRecipesCreated: {},
+                finishedRecipeIds: [],
+                finishedRecipeIdsByCategory: {},
+                unlockedTitleIds: [],
+                unlockedAchievementIds: [],
+                equippedTitleId: null,
+                lastLoginDate: null,
+                currentStreak: 0,
+                cumulativeLoginDays: 0,
+            };
+        }
+
+        function todayDateString(d) {
+            d = d || new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        async function loadUserProgress() {
+            if (!currentUser) { userProgress = null; return; }
+            try {
+                const doc = await db.collection('userProgress').doc(currentUser.uid).get();
+                userProgress = doc.exists ? Object.assign(defaultUserProgress(), doc.data()) : defaultUserProgress();
+            } catch (err) {
+                console.warn('讀取成就進度失敗', err && err.message);
+                userProgress = defaultUserProgress();
+            }
+            await recordLogin();
+        }
+
+        async function saveUserProgress() {
+            if (!currentUser || !userProgress) return;
+            try {
+                await db.collection('userProgress').doc(currentUser.uid).set(userProgress);
+            } catch (err) {
+                console.warn('儲存成就進度失敗', err && err.message);
+            }
+            // 同步一份公開可讀的最小資料（只有裝備的稱號），給其他人瀏覽食譜時查詢顯示用
+            try {
+                const equipped = userProgress.equippedTitleId ? ACHIEVEMENT_RULES.find(r => r.id === userProgress.equippedTitleId) : null;
+                await db.collection('userProfiles').doc(currentUser.uid).set({
+                    displayName: currentUser.displayName || '',
+                    equippedTitle: (equipped && equipped.title) ? { icon: equipped.title.icon, name: equipped.title.name } : null,
+                });
+                authorTitleCache[currentUser.uid] = (equipped && equipped.title) ? equipped.title : null;
+            } catch (err) {
+                console.warn('同步公開稱號資料失敗', err && err.message);
+            }
+        }
+
+        async function recordLogin() {
+            if (!userProgress) return;
+            const today = todayDateString();
+            if (userProgress.lastLoginDate === today) return; // 今天已經記過了，避免重整頁面就一直加
+            const yesterdayStr = todayDateString(new Date(Date.now() - 86400000));
+            userProgress.currentStreak = (userProgress.lastLoginDate === yesterdayStr) ? (userProgress.currentStreak || 0) + 1 : 1;
+            userProgress.cumulativeLoginDays = (userProgress.cumulativeLoginDays || 0) + 1;
+            userProgress.lastLoginDate = today;
+            const newly = checkUnlocks();
+            await saveUserProgress();
+            if (newly.length) showAchievementToast(newly);
+        }
+
+        // 檢查所有規則，把新達成的稱號/成就加進 unlockedTitleIds / unlockedAchievementIds，回傳新解鎖清單
+        function checkUnlocks() {
+            if (!userProgress) return [];
+            const newlyUnlocked = [];
+            ACHIEVEMENT_RULES.forEach(rule => {
+                let current = 0;
+                switch (rule.type) {
+                    case 'totalRecipes': current = userProgress.totalRecipesCreated || 0; break;
+                    case 'categoryRecipes': current = (userProgress.categoryRecipesCreated || {})[rule.category] || 0; break;
+                    case 'totalFinish': current = (userProgress.finishedRecipeIds || []).length; break;
+                    case 'categoryFinish': current = ((userProgress.finishedRecipeIdsByCategory || {})[rule.category] || []).length; break;
+                    case 'loginStreak': current = userProgress.currentStreak || 0; break;
+                    case 'cumulativeLogin': current = userProgress.cumulativeLoginDays || 0; break;
+                }
+                if (current >= rule.threshold) {
+                    if (rule.title && !userProgress.unlockedTitleIds.includes(rule.id)) {
+                        userProgress.unlockedTitleIds.push(rule.id);
+                        newlyUnlocked.push({ kind: 'title', rule });
+                    }
+                    if (rule.achievement && !userProgress.unlockedAchievementIds.includes(rule.id)) {
+                        userProgress.unlockedAchievementIds.push(rule.id);
+                        newlyUnlocked.push({ kind: 'achievement', rule });
+                    }
+                }
+            });
+            return newlyUnlocked;
+        }
+
+        function showAchievementToast(items) {
+            items.forEach((item, i) => {
+                setTimeout(() => {
+                    const toast = document.createElement('div');
+                    const label = item.kind === 'title'
+                        ? `🏅 獲得新稱號：${item.rule.title.icon} ${item.rule.title.name}`
+                        : `🎖️ 獲得新成就：${item.rule.achievement.name}`;
+                    toast.textContent = label;
+                    toast.style.cssText = 'position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:10000; background:var(--jam); color:#fff; padding:0.85rem 1.5rem; border-radius:999px; font-size:0.9rem; font-weight:600; box-shadow:0 10px 25px -8px rgba(0,0,0,0.4); white-space:nowrap; opacity:0; transition:opacity .3s, top .3s;';
+                    document.body.appendChild(toast);
+                    requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.top = '24px'; });
+                    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3800);
+                }, i * 900);
+            });
+        }
+
+        // 新增食譜成功時呼叫（只有「新增」才算，編輯既有食譜不算，避免灌水）
+        async function recordRecipeCreated(category) {
+            if (!userProgress) return;
+            userProgress.totalRecipesCreated = (userProgress.totalRecipesCreated || 0) + 1;
+            userProgress.categoryRecipesCreated = userProgress.categoryRecipesCreated || {};
+            userProgress.categoryRecipesCreated[category] = (userProgress.categoryRecipesCreated[category] || 0) + 1;
+            const newly = checkUnlocks();
+            await saveUserProgress();
+            if (newly.length) showAchievementToast(newly);
+        }
+
+        // 按下「大功告成」時呼叫；用「不重複的食譜 id」計算次數，
+        // 同一篇食譜重複按大功告成不會重複累加，防止洗成就/稱號
+        async function recordFinish(recipeId, category) {
+            if (!userProgress || !currentUser || !recipeId) return;
+            userProgress.finishedRecipeIds = userProgress.finishedRecipeIds || [];
+            userProgress.finishedRecipeIdsByCategory = userProgress.finishedRecipeIdsByCategory || {};
+            userProgress.finishedRecipeIdsByCategory[category] = userProgress.finishedRecipeIdsByCategory[category] || [];
+            let changed = false;
+            if (!userProgress.finishedRecipeIds.includes(recipeId)) { userProgress.finishedRecipeIds.push(recipeId); changed = true; }
+            if (!userProgress.finishedRecipeIdsByCategory[category].includes(recipeId)) { userProgress.finishedRecipeIdsByCategory[category].push(recipeId); changed = true; }
+            if (!changed) return;
+            const newly = checkUnlocks();
+            await saveUserProgress();
+            if (newly.length) showAchievementToast(newly);
+        }
+
+        // 查詢某使用者目前裝備的稱號（有快取，同一位作者的食譜卡片只會查一次）
+        async function fetchAuthorTitle(uid) {
+            if (!uid) return null;
+            if (Object.prototype.hasOwnProperty.call(authorTitleCache, uid)) return authorTitleCache[uid];
+            try {
+                const doc = await db.collection('userProfiles').doc(uid).get();
+                const title = (doc.exists && doc.data().equippedTitle) ? doc.data().equippedTitle : null;
+                authorTitleCache[uid] = title;
+                return title;
+            } catch (err) {
+                authorTitleCache[uid] = null;
+                return null;
+            }
+        }
+
+        // ---------- 個人成就頁面 ----------
+        function showProfileModal() {
+            if (!currentUser) { alert('請先登入才能查看個人成就'); return; }
+            document.getElementById('profile-modal').classList.remove('hidden');
+            renderProfileModal();
+            pushModalHistoryState();
+        }
+        function closeProfileModal(fromPopState) {
+            document.getElementById('profile-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
+        }
+        function renderProfileModal() {
+            if (!userProgress) return;
+            const unlockedTitles = ACHIEVEMENT_RULES.filter(r => r.title && userProgress.unlockedTitleIds.includes(r.id));
+            const unlockedAchievements = ACHIEVEMENT_RULES.filter(r => r.achievement && userProgress.unlockedAchievementIds.includes(r.id));
+
+            const select = document.getElementById('equipped-title-select');
+            select.innerHTML = `<option value="">（不裝備）</option>` + unlockedTitles.map(r =>
+                `<option value="${r.id}" ${userProgress.equippedTitleId === r.id ? 'selected' : ''}>${r.title.icon} ${r.title.name}</option>`
+            ).join('');
+
+            const titlesList = document.getElementById('profile-titles-list');
+            titlesList.innerHTML = unlockedTitles.length
+                ? unlockedTitles.map(r => `<span class="px-3 py-1.5 rounded-full text-sm" style="background:var(--cream); border:1px solid var(--line)">${r.title.icon} ${r.title.name}</span>`).join('')
+                : `<p class="text-sm" style="color:#B3A492">還沒有獲得任何稱號，開始新增食譜、完成料理來解鎖吧！</p>`;
+
+            const achList = document.getElementById('profile-achievements-list');
+            achList.innerHTML = unlockedAchievements.length
+                ? unlockedAchievements.map(r => `<div class="px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)"><p class="font-semibold">🎖️ ${r.achievement.name}</p><p class="text-xs mt-1" style="color:#B3A492">${r.achievement.desc}</p></div>`).join('')
+                : `<p class="text-sm" style="color:#B3A492">還沒有獲得任何成就</p>`;
+        }
+        async function equipTitle(titleId) {
+            if (!userProgress) return;
+            userProgress.equippedTitleId = titleId || null;
+            await saveUserProgress();
+        }
+
+        // ---------- 管理者：所有成就/稱號條件總覽 ----------
+        const ACHIEVEMENT_TYPE_LABELS = {
+            totalRecipes: '累計新增食譜數', categoryRecipes: '分類累計新增食譜數',
+            totalFinish: '累計大功告成次數', categoryFinish: '分類累計大功告成次數',
+            loginStreak: '連續登入天數', cumulativeLogin: '累計登入天數',
+        };
+        function showAdminAchievementsModal() {
+            if (!isAdmin()) return;
+            document.getElementById('admin-achievements-modal').classList.remove('hidden');
+            const list = document.getElementById('admin-achievements-list');
+            list.innerHTML = ACHIEVEMENT_RULES.map(r => `
+                <div class="px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)">
+                    <p class="text-xs" style="color:#B3A492">${ACHIEVEMENT_TYPE_LABELS[r.type] || r.type}${r.category ? '：' + r.category : ''} ≥ ${r.threshold}</p>
+                    ${r.title ? `<p class="text-sm mt-1">🏅 稱號：${r.title.icon} ${r.title.name}</p>` : ''}
+                    ${r.achievement ? `<p class="text-sm mt-1">🎖️ 成就：${r.achievement.name}（${r.achievement.desc}）</p>` : ''}
+                </div>
+            `).join('');
+            pushModalHistoryState();
+        }
+        function closeAdminAchievementsModal(fromPopState) {
+            document.getElementById('admin-achievements-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
+        }
 
         function canEditRecipe(recipe) {
             if (!currentUser) return false;
@@ -526,6 +917,11 @@
                 adminBtn.classList.toggle('hidden', !isAdmin());
                 adminBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
             }
+            const adminAchBtn = document.getElementById('admin-achievements-btn');
+            if (adminAchBtn) {
+                adminAchBtn.classList.toggle('hidden', !isAdmin());
+                adminAchBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
+            }
         }
 
         auth.onAuthStateChanged(user => {
@@ -535,14 +931,16 @@
                 const avatar = user.photoURL
                     ? `<img src="${user.photoURL}" class="w-9 h-9 rounded-full border" style="border-color:var(--line)">`
                     : `<div class="w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold" style="background:var(--honey)">${(user.displayName||'?').charAt(0)}</div>`;
-                info.innerHTML = `${avatar}<span class="hidden sm:inline text-sm font-medium truncate max-w-[8rem]">${user.displayName}</span><button onclick="logout()" class="text-xs sm:text-sm font-medium" style="color:var(--jam)">登出</button>`;
+                info.innerHTML = `<button onclick="showProfileModal()" class="text-xl leading-none" style="color:var(--jam)" title="我的成就" aria-label="我的成就">🏅</button>${avatar}<span class="hidden sm:inline text-sm font-medium truncate max-w-[8rem]">${user.displayName}</span><button onclick="logout()" class="text-xs sm:text-sm font-medium" style="color:var(--jam)">登出</button>`;
                 loadRecipes();
                 loadFavorites();
+                loadUserProgress();
             } else {
                 info.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-sm flex items-center gap-2"><i class="fab fa-google"></i> 登入</button>`;
                 userFavorites = new Set();
                 showFavoritesOnly = false;
                 showMyRecipesOnly = false;
+                userProgress = null;
                 document.getElementById('chip-fav')?.classList.remove('active');
                 document.getElementById('chip-mine')?.classList.remove('active');
                 loadRecipes();
@@ -761,11 +1159,18 @@
                         ${r.youtubeUrl ? '<i class="fab fa-youtube text-lg" style="color:#C4453F"></i>' : ''}
                     </div>
                     <h3 class="font-display font-bold text-xl mb-1.5 leading-snug">${r.name}${visBadge}</h3>
-                    <p class="text-sm" style="color:var(--espresso-soft)">${r.sizeValue ? `${r.sizeValue}${r.sizeUnit} · ` : ''}${r.servings} 個 • ${r.authorName||''}</p>
+                    <p class="text-sm" style="color:var(--espresso-soft)">${r.sizeValue ? `${r.sizeValue}${r.sizeUnit} · ` : ''}${r.servings} 個 • <span id="author-title-${r.id}"></span>${r.authorName||''}</p>
                 `;
                 div.onclick = () => showDetail(r);
                 div.onkeydown = (e) => { if (e.key === 'Enter') showDetail(r); };
                 grid.appendChild(div);
+                if (r.authorId) {
+                    fetchAuthorTitle(r.authorId).then(title => {
+                        if (!title) return;
+                        const el = document.getElementById(`author-title-${r.id}`);
+                        if (el) el.textContent = `${title.icon} ${title.name} `;
+                    });
+                }
             });
 
             if (totalPages > 1) {
@@ -1068,6 +1473,7 @@
 
         function finishRecipe() {
             if (!currentDetailStepsTotal || checkedSteps.size < currentDetailStepsTotal) return;
+            if (currentDetailRecipe) recordFinish(currentDetailRecipe.id, currentDetailRecipe.category);
             const variant = CELEBRATION_VARIANTS[Math.floor(Math.random() * CELEBRATION_VARIANTS.length)];
             launchConfetti();
             playCelebrationEffect(variant.effect);
@@ -1274,6 +1680,7 @@
             document.getElementById('detail-modal').classList.remove('hidden');
             checkedSteps = new Set();
             currentDetailStepsTotal = recipe.steps.length;
+            currentDetailRecipe = recipe;
             updateStepsProgress();
             requestWakeLock();
             updateCookingModeClass();
@@ -2353,7 +2760,12 @@
                 baseData.authorName = currentUser.displayName;
                 baseData.authorId = currentUser.uid;
                 baseData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
-                db.collection("recipes").add(baseData).then(() => { alert("食譜已上傳！"); closeAddModal(); finish(); }).catch(err => { alert('上傳失敗：' + err.message); finish(); });
+                db.collection("recipes").add(baseData).then(() => {
+                    alert("食譜已上傳！");
+                    closeAddModal();
+                    finish();
+                    recordRecipeCreated(baseData.category); // 只有「新增」才算，編輯不算，避免灌水
+                }).catch(err => { alert('上傳失敗：' + err.message); finish(); });
             }
         }
 
