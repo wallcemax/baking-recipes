@@ -2140,6 +2140,9 @@
             if (costEl) costEl.textContent = `$${totalCost.toLocaleString()}`;
         }
 
+        const TINY_DINER_NAMES = ['王小明', '陳小華', '林美玲', '張先生', '李小姐', '黃太太', '吳大哥', '蔡同學', '許阿姨', '楊經理', '周小姐', '劉先生', '鄭小妹', '謝老闆', '賴同學', '洪太太', '游先生', '蕭小姐', '范大哥', '簡阿伯'];
+        const TINY_DINER_REASONS = ['慶祝生日', '犒賞辛苦的自己', '跟好久不見的朋友聚餐', '深夜嘴饞睡不著', '終於等到最愛的口味上市', '路過被香味吸引', '特地從外地來嚐鮮', '慶祝升遷加薪', '紀念日想吃點好的', '純粹肚子餓', '加班後犒賞自己', '慶祝考試通過', '想念家鄉的味道', '跟著網路評價找上門', '單純想放鬆一下'];
+
         function tinyDinerConfirmPrep() {
             const state = tinyDinerState;
             const prepped = state.todayMenu.map((dish, i) => {
@@ -2149,10 +2152,10 @@
             });
             const totalCost = prepped.reduce((sum, p) => sum + p.qty * Math.round(p.dish.price * TINY_DINER_COST_RATIO), 0);
 
-            // 模擬 10~20 位客人依受歡迎度加權隨機點餐
+            // 先把今天所有客人依受歡迎度加權隨機決定好（事件序列），再逐一播放動畫呈現
             const customerCount = 10 + Math.floor(Math.random() * 11);
-            let revenue = 0, served = 0, turnedAway = 0;
             const totalWeight = prepped.reduce((sum, p) => sum + p.dish.popularity, 0);
+            const events = [];
             for (let c = 0; c < customerCount; c++) {
                 let roll = Math.random() * totalWeight;
                 let picked = null;
@@ -2161,20 +2164,62 @@
                     if (roll <= 0) { picked = p; break; }
                 }
                 if (!picked) picked = prepped[prepped.length - 1];
-                if (picked.remaining > 0) {
-                    picked.remaining--;
-                    revenue += picked.dish.price;
-                    served++;
-                } else {
-                    turnedAway++;
-                }
+                const success = picked.remaining > 0;
+                if (success) picked.remaining--;
+                events.push({
+                    name: TINY_DINER_NAMES[Math.floor(Math.random() * TINY_DINER_NAMES.length)],
+                    reason: TINY_DINER_REASONS[Math.floor(Math.random() * TINY_DINER_REASONS.length)],
+                    dish: picked.dish,
+                    success,
+                });
             }
             const wasted = prepped.reduce((sum, p) => sum + p.remaining, 0);
-            const profit = revenue - totalCost;
-            state.money += profit;
+            playSfx('click');
+            renderTinyDinerEventFeed(events, totalCost, wasted, customerCount);
+        }
 
-            playSfx(profit >= 0 ? 'success' : 'burnt');
-            renderTinyDinerDayResult({ customerCount, served, turnedAway, revenue, totalCost, profit, wasted });
+        function renderTinyDinerEventFeed(events, totalCost, wasted, customerCount) {
+            document.getElementById('game-modal-title').textContent = '🏮 今日營業中…';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="flex justify-between items-center mb-2 text-sm">
+                    <p>來客 <span id="tdn-feed-count">0</span> / ${customerCount}</p>
+                    <p>營業額：<span id="tdn-feed-revenue" class="font-bold" style="color:var(--sage)">$0</span></p>
+                </div>
+                <div id="tdn-feed-list" class="space-y-1.5" style="max-height:52vh; overflow-y:auto;"></div>
+            `;
+            const listEl = document.getElementById('tdn-feed-list');
+            let revenue = 0, served = 0, turnedAway = 0;
+            let i = 0;
+            const step = () => {
+                if (i >= events.length) {
+                    const profit = revenue - totalCost;
+                    tinyDinerState.money += profit;
+                    playSfx(profit >= 0 ? 'success' : 'burnt');
+                    setTimeout(() => renderTinyDinerDayResult({ customerCount, served, turnedAway, revenue, totalCost, profit, wasted }), 400);
+                    return;
+                }
+                const ev = events[i];
+                const row = document.createElement('div');
+                row.className = 'px-3 py-2 rounded-xl text-xs';
+                if (ev.success) {
+                    revenue += ev.dish.price;
+                    served++;
+                    row.style.cssText = 'background:rgba(155,196,155,0.25);';
+                    row.textContent = `😊 ${ev.name} 買了「${ev.dish.name}」，${ev.reason} +$${ev.dish.price}`;
+                    playSfx('tick');
+                } else {
+                    turnedAway++;
+                    row.style.cssText = 'background:rgba(196,69,63,0.12);';
+                    row.textContent = `😥 ${ev.name} 想吃「${ev.dish.name}」慶祝${ev.reason}，可惜已經賣完了，失望離開`;
+                }
+                listEl.appendChild(row);
+                listEl.scrollTop = listEl.scrollHeight;
+                document.getElementById('tdn-feed-count').textContent = i + 1;
+                document.getElementById('tdn-feed-revenue').textContent = `$${revenue.toLocaleString()}`;
+                i++;
+                setTimeout(step, 180);
+            };
+            step();
         }
 
         function renderTinyDinerDayResult(result) {
