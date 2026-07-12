@@ -969,6 +969,7 @@
             qteCleanup();
             stockGameCleanup();
             dashGameCleanup();
+            dinerGameCleanup();
             document.getElementById('game-modal').classList.add('hidden');
             consumeModalHistoryState(fromPopState);
         }
@@ -977,6 +978,7 @@
             qteCleanup();
             stockGameCleanup();
             dashGameCleanup();
+            dinerGameCleanup();
             document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
             document.getElementById('game-modal-body').innerHTML = `
                 <button onclick="playSfx('click'); startQteGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:linear-gradient(135deg, #FCF2DC, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
@@ -989,10 +991,15 @@
                     <p class="font-display font-bold text-lg">食材期貨大亨</p>
                     <p class="text-xs mt-1" style="color:#B3A492">30 天內低買高賣食材賺取利潤，留意新聞快訊，判斷價格走勢！</p>
                 </button>
-                <button onclick="playSfx('click'); startDashGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:linear-gradient(135deg, #E8F0E4, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
+                <button onclick="playSfx('click'); startDashGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:linear-gradient(135deg, #E8F0E4, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
                     <div class="text-4xl mb-2">🍽️</div>
                     <p class="font-display font-bold text-lg">虛擬廚房挑戰賽</p>
                     <p class="text-xs mt-1" style="color:#B3A492">切菜＋火候控制，過關後還會推薦同分類的真食譜給你！</p>
+                </button>
+                <button onclick="playSfx('click'); startDinerGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:linear-gradient(135deg, #EAE2F2, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
+                    <div class="text-4xl mb-2">🌙</div>
+                    <p class="font-display font-bold text-lg">深夜食堂</p>
+                    <p class="text-xs mt-1" style="color:#B3A492">文字生存冒險，撐過 20 天的離奇夜晚，別讓生命、名聲或資金歸零！</p>
                 </button>
                 <div>
                     <h3 class="font-display font-semibold text-lg mb-3">🏆 排行榜</h3>
@@ -1000,6 +1007,7 @@
                         <button onclick="showLeaderboard('qte')" class="chip">神廚火候控制</button>
                         <button onclick="showLeaderboard('stock')" class="chip">食材期貨大亨</button>
                         <button onclick="showLeaderboard('dash')" class="chip">廚房挑戰賽</button>
+                        <button onclick="showLeaderboard('diner')" class="chip">深夜食堂</button>
                     </div>
                     <div id="leaderboard-list"><p class="text-sm" style="color:#B3A492">點上面的按鈕看排行榜</p></div>
                 </div>
@@ -1463,6 +1471,434 @@
             }
         }
 
+        const DINER_EVENTS = [
+            { cat: 'A', name: `黑道大哥`, story: `今天來了一位黑道大哥，要求你在拉麵裡加巧克力，說是「試膽量」。`, a: `婉拒並招待一碗招牌湯底當賠罪`, b: `咬牙照做，端出巧克力拉麵`, c: `用高超廚藝說服他改喝真正厲害的隱藏版辣湯` },
+            { cat: 'A', name: `工程師`, story: `一位工程師客人堅持要你「用科學方法」精準控制湯頭溫度到小數點後一位。`, a: `耐心解釋手感也是一種精準`, b: `勉強拿出溫度計配合演出`, c: `現場展示職人手感，準到讓他心服口服` },
+            { cat: 'A', name: `外星人`, story: `一位自稱外星人的客人，堅持地球的鹽對他來說是「毒藥」，要求特調湯頭。`, a: `禮貌拒絕特殊要求`, b: `硬著頭皮試著調一份無鹽版本`, c: `運用調味知識做出風味不減的低鈉版本` },
+            { cat: 'A', name: `忍者`, story: `一位忍者客人要求「無聲無息」地上菜，不能發出任何碗筷聲響。`, a: `婉拒這種特殊服務`, b: `小心翼翼配合他的要求`, c: `展現多年練就的輕手輕腳端菜絕活` },
+            { cat: 'A', name: `武林高手`, story: `一位武林高手客人堅持要「以武會友」，要你用鍋鏟接他一招。`, a: `婉拒切磋，專心做生意`, b: `硬著頭皮接招試試看`, c: `以多年顛鍋功夫穩穩接下，贏得滿堂彩` },
+            { cat: 'A', name: `偶像`, story: `一位當紅偶像戴著口罩低調光顧，卻被眼尖的路人認出。`, a: `低調協助他從後門離開`, b: `順勢讓他多留一會兒簽名合照`, c: `巧妙安排座位，讓他能安心用完餐再走` },
+            { cat: 'A', name: `網紅`, story: `一位網紅客人堅持要直播「開箱」你的廚房內部。`, a: `婉拒進廚房直播`, b: `答應讓他簡單拍一下`, c: `設計一套適合鏡頭又不影響作業的拍攝動線` },
+            { cat: 'A', name: `美食家`, story: `一位知名美食家微服私訪，質疑你的湯頭「少了層次」。`, a: `虛心接受批評`, b: `跟他爭辯自己的堅持`, c: `現場加碼展示私房秘方調味` },
+            { cat: 'A', name: `阿嬤`, story: `一位阿嬤客人堅持要教你「古法秘方」，說你煮的湯少了媽媽的味道。`, a: `禮貌婉拒，維持自己的配方`, b: `虛心照阿嬤說的方式試試看`, c: `融合阿嬤的建議調整出更好的版本` },
+            { cat: 'A', name: `小學生`, story: `一群小學生湊零用錢，只夠買半碗拉麵，卻堅持要吃你的招牌口味。`, a: `婉拒但送他們幾片配料`, b: `半價賣給他們招牌口味`, c: `巧手調配出小份量但一樣好吃的版本` },
+            { cat: 'A', name: `魔法師`, story: `一位自稱魔法師的客人，堅持要用「魔法」幫你的湯頭加持。`, a: `婉拒這種特殊服務`, b: `半信半疑讓他試試看`, c: `順勢配合演出，用真功夫證明湯頭本身夠好` },
+            { cat: 'A', name: `吸血鬼`, story: `一位打扮成吸血鬼的客人堅持只在深夜出沒，要求延長營業時間。`, a: `婉拒延長營業`, b: `破例為他多開一小時`, c: `談出彈性的深夜限定時段` },
+            { cat: 'A', name: `狼人`, story: `一位客人自稱狼人，說滿月的晚上食量會變成平常的三倍。`, a: `婉拒破例加大份量`, b: `硬著頭皮多煮三倍份量`, c: `設計加大版套餐滿足他又不虧本` },
+            { cat: 'A', name: `機器人`, story: `一位打扮成機器人的客人，堅持要精確到公克的食材秤重服務。`, a: `婉拒這種精密要求`, b: `勉強找出秤子配合演出`, c: `展現職人手感，準度不輸秤子讓他驚豔` },
+            { cat: 'A', name: `AI`, story: `一位自稱是「AI」化身的客人，說能預測你店裡明天的生意好壞。`, a: `婉拒聽這種預測`, b: `好奇聽聽看他怎麼說`, c: `跟他討論經營策略，順勢學到一手` },
+            { cat: 'A', name: `警察`, story: `一位警察客人吃到一半接到通報，急著出勤卻還沒付錢。`, a: `揮手讓他先去忙，帳先記著`, b: `堅持先結帳才能走`, c: `幫他打包帶走，順便送上加油打氣的話` },
+            { cat: 'A', name: `消防員`, story: `一位消防員客人剛救火回來，滿身煙味，要求最快最補的一碗麵。`, a: `端出現成的家常口味`, b: `隨便煮一碗應付`, c: `特別調製一碗高熱量的體力恢復版拉麵` },
+            { cat: 'A', name: `和尚`, story: `一位和尚客人堅持只吃全素，卻指定要用你的葷湯底調味。`, a: `婉拒違背素食原則的做法`, b: `硬著頭皮用葷湯調味`, c: `特別熬製一鍋純素高湯滿足他` },
+            { cat: 'A', name: `海盜`, story: `一位打扮成海盜的客人，堅持要用「藏寶圖」抵一碗麵錢。`, a: `婉拒收下這種抵帳方式`, b: `半信半疑收下藏寶圖`, c: `鑑定藏寶圖真偽，順勢談出合理交易` },
+            { cat: 'A', name: `總裁`, story: `一位總裁客人堅持要包下整條巷子的攤位，只為了一個人用餐。`, a: `婉拒這種誇張要求`, b: `順勢答應這筆大生意`, c: `談出合理的部分包場方案` },
+            { cat: 'A', name: `黑道大哥`, story: `黑道大哥帶著小弟包場，要求今晚只做他們的生意，其他客人一律請走。`, a: `低頭道歉，說明小店做不起這種陣仗`, b: `照辦，請其他客人先行離開`, c: `端出招牌菜色，試圖說服他們讓其他客人一起用餐` },
+            { cat: 'A', name: `工程師`, story: `工程師客人抱怨你的排隊系統太落後，主動要幫你寫一套排隊 App。`, a: `婉拒好意，怕出狀況`, b: `答應讓他試試看`, c: `跟他討論怎麼設計才符合小吃店真正的需求` },
+            { cat: 'A', name: `外星人`, story: `外星人客人用奇怪的手勢付款，看起來像是某種不明貨幣。`, a: `婉拒這種付款方式`, b: `收下，好奇心驅使先收再說`, c: `跟他交涉，用食材技藝換取「真正有用」的東西` },
+            { cat: 'A', name: `忍者`, story: `忍者客人吃完飯直接消失無蹤，留下一張寫著「感謝」的紙條，沒付錢。`, a: `認了這頓，當作積德`, b: `追出去看能不能要回錢`, c: `用職人直覺猜出他會回來，靜靜等待` },
+            { cat: 'A', name: `武林高手`, story: `武林高手客人說你的拉麵「內力不足」，湯頭少了點真氣。`, a: `笑笑帶過不放心上`, b: `照他建議調整口味`, c: `現場展現熬湯真功夫說服他刮目相看` },
+            { cat: 'A', name: `偶像`, story: `偶像客人指定要「跟廣告拍攝時一模一樣」的擺盤。`, a: `婉拒還原不出來的要求`, b: `盡力模仿廣告畫面擺盤`, c: `用專業擺盤技巧做出更好看的版本` },
+            { cat: 'A', name: `網紅`, story: `網紅客人吃完後說要給一星負評，除非你請他吃霸王餐。`, a: `堅持原則不妥協`, b: `妥協招待這一餐`, c: `用真材實料的說明扭轉他的評價` },
+            { cat: 'A', name: `美食家`, story: `美食家客人要求看你熬湯的「獨家秘方筆記」。`, a: `婉拒透露商業機密`, b: `半推半就給他看部分內容`, c: `用言語巧妙帶過，展現真本事說服他` },
+            { cat: 'A', name: `阿嬤`, story: `阿嬤客人每次來都要多要幾根蔥，說是「疼你才這樣」。`, a: `微笑照給，不計較`, b: `婉轉解釋成本問題`, c: `額外加碼送阿嬤一份小菜表達心意` },
+            { cat: 'A', name: `小學生`, story: `小學生客人吵著要「隱藏版彩色拉麵」，說同學都吃過。`, a: `解釋沒有這種菜色`, b: `隨口answer敷衍過去`, c: `用天然食材調出繽紛版本滿足他們` },
+            { cat: 'A', name: `魔法師`, story: `魔法師客人說能用咒語辨別食材新鮮度，要求檢查你的冰箱。`, a: `婉拒讓陌生人檢查冰箱`, b: `半信半疑讓他看看`, c: `自信地開放冰箱，用實際狀況說服他` },
+            { cat: 'A', name: `吸血鬼`, story: `吸血鬼客人說大蒜對他「過敏」，要求全店食材不能碰到蒜頭。`, a: `婉拒調整整間店的作業流程`, b: `特別為他準備無蒜版本`, c: `設計獨立料理區滿足他又不影響其他客人` },
+            { cat: 'A', name: `狼人`, story: `狼人客人堅持肉一定要「半生不熟」才夠味。`, a: `婉拒為了衛生安全的堅持`, b: `破例照他要求處理`, c: `用專業火候技巧做出他滿意又安全的熟度` },
+            { cat: 'A', name: `機器人`, story: `機器人客人的「電池」突然沒電，倒在店裡動不了。`, a: `扶他到旁邊休息，倒杯熱水`, b: `隨他去，反正也沒造成麻煩`, c: `端上熱騰騰的湯麵幫他「充電」` },
+            { cat: 'A', name: `AI`, story: `AI客人堅持要用「演算法」幫你優化菜單排序。`, a: `婉拒調整既有菜單`, b: `讓他試著調整看看`, c: `跟他討論後採用部分建議微調` },
+            { cat: 'A', name: `警察`, story: `警察客人懷疑你店裡的食材來源，要求臨檢。`, a: `配合臨檢，坦然應對`, b: `婉轉打太極拖延一下`, c: `自信展示進貨憑證，光明正大應對` },
+            { cat: 'A', name: `消防員`, story: `消防員客人指出你店裡的瓦斯管線有安全疑慮。`, a: `立刻請人來檢查`, b: `先擱著，晚點再處理`, c: `當場請他協助檢查，順勢學習正確知識` },
+            { cat: 'A', name: `和尚`, story: `和尚客人吃完飯後，只留下一句「隨喜」就要離開，沒付錢。`, a: `笑笑接受這頓當作功德`, b: `追上去婉轉提醒該付款`, c: `跟他結個善緣，順便請教幾句佛理` },
+            { cat: 'A', name: `海盜`, story: `海盜客人堅持要「以物易物」，用一把生鏽的劍換三碗麵。`, a: `婉拒這種不對等交易`, b: `答應這筆交易`, c: `鑑定劍的價值，談出公道的份量` },
+            { cat: 'A', name: `總裁`, story: `總裁客人問能不能投資你的店，開遍全台灣。`, a: `婉拒這種擴張計畫`, b: `答應聽聽看提案`, c: `認真討論，談出保留小店精神的合作模式` },
+            { cat: 'A', name: `黑道大哥`, story: `黑道大哥吃完後說沒帶錢，要求記帳，還說「你知道我是誰吧」。`, a: `笑笑說沒關係，這頓算招待`, b: `答應記帳，賭他會不會真的回來還`, c: `半開玩笑地展現刀工技藝，換取他當場付現` },
+            { cat: 'A', name: `工程師`, story: `工程師客人半夜還在店裡用筆電加班，佔位不走。`, a: `客氣提醒打烊時間`, b: `隨他去，反正店裡也沒什麼客人`, c: `端上一碗宵夜換他自己識相收拾東西` },
+            { cat: 'A', name: `外星人`, story: `外星人客人說地球的湯匙設計太原始，要教你「更先進」的喝湯方式。`, a: `笑笑帶過，繼續用自己的方式`, b: `配合他試試看新喝法`, c: `跟他討論，順便展示職人手藝說服他湯匙沒問題` },
+            { cat: 'A', name: `忍者`, story: `忍者客人堅持要坐在店裡最陰暗的角落，還要求關掉那盞燈。`, a: `配合但保留基本照明`, b: `直接把燈關掉`, c: `用氣氛營造技巧，讓陰暗角落反而變成特色座位` },
+            { cat: 'A', name: `武林高手`, story: `武林高手客人要求比拚酒量，說喝贏了才吃得下麵。`, a: `婉拒拚酒`, b: `硬著頭皮陪他喝幾杯`, c: `用巧妙話術轉移話題，順勢請他直接開動` },
+            { cat: 'A', name: `偶像`, story: `偶像客人的粉絲團突然包圍店面，想堵人拍照。`, a: `婉拒讓粉絲進來，先請偶像從後門離開`, b: `讓粉絲進來排隊拍照，順便做生意`, c: `巧妙安撫粉絲情緒，維持店內秩序` },
+            { cat: 'A', name: `網紅`, story: `網紅客人想拍你「三分鐘吃完一碗拉麵」的挑戰影片。`, a: `婉拒這種噱頭企劃`, b: `配合拍攝這支影片`, c: `設計更有趣又安全的挑戰版本` },
+            { cat: 'A', name: `美食家`, story: `美食家客人說想寫一篇專欄介紹你的店，但要先「試菜三天」。`, a: `婉拒這種長期試菜安排`, b: `答應提供三天試菜`, c: `談出更合理的試菜方式，兼顧成本` },
+            { cat: 'A', name: `阿嬤`, story: `阿嬤客人堅持要幫你介紹「隔壁村的好對象」。`, a: `婉拒但心懷感謝`, b: `順著阿嬤聊下去`, c: `巧妙轉移話題，改聊拉麵配方` },
+            { cat: 'A', name: `小學生`, story: `小學生客人打翻了一整碗湯，嚇得快哭出來。`, a: `安慰他沒關係，重新煮一碗`, b: `讓他自己想辦法`, c: `邊安慰邊教他下次怎麼端才不會灑` },
+            { cat: 'A', name: `魔法師`, story: `魔法師客人想用「魔法藥水」抵帳，說喝了會走運。`, a: `婉拒收下不明液體`, b: `半信半疑收下抵帳`, c: `鑑定藥水成分，順勢談出合理交易` },
+            { cat: 'A', name: `吸血鬼`, story: `吸血鬼客人堅持要「血紅色」的湯頭，說這樣才有食慾。`, a: `婉拒這種誇張要求`, b: `用番茄紅醬硬著頭皮調出來`, c: `巧妙運用甜菜根等食材做出視覺效果又美味的版本` },
+            { cat: 'A', name: `狼人`, story: `狼人客人突然情緒失控，把桌子拍得砰砰響。`, a: `冷靜安撫，先讓他喘口氣`, b: `順著他的情緒陪他發洩`, c: `用溫暖的一碗湯麵穩定他的情緒` },
+            { cat: 'A', name: `機器人`, story: `機器人客人堅持用「條碼掃描」的方式結帳，要求你配合演出。`, a: `婉拒配合這種扮演`, b: `順著他的設定演一場`, c: `融入情境，用有趣的互動增加店裡話題` },
+            { cat: 'A', name: `AI`, story: `AI客人問能不能「複製」你的手藝，訓練成一個模型。`, a: `婉拒這種要求`, b: `半信半疑讓他觀察`, c: `自信展現真功夫，說明手藝無法被輕易複製` },
+            { cat: 'A', name: `警察`, story: `警察客人說隔壁店家檢舉你的攤位「佔用騎樓」。`, a: `配合退回合法範圍`, b: `堅持原本的擺攤方式`, c: `跟他解釋清楚，協調出雙方都能接受的空間` },
+            { cat: 'A', name: `消防員`, story: `消防員客人說想在店裡辦一場防火宣導講座。`, a: `婉拒占用營業時間`, b: `答應撥出一小時配合`, c: `主動幫忙宣傳，互惠合作` },
+            { cat: 'A', name: `和尚`, story: `和尚客人說想在店裡誦經迴向，希望能包場一小時。`, a: `婉拒占用營業時間`, b: `答應撥出時間配合`, c: `談出不影響生意的折衷時段` },
+            { cat: 'A', name: `海盜`, story: `海盜客人大聲嚷嚷要「全店最烈的酒」配麵。`, a: `婉拒沒有賣酒`, b: `隨口推薦附近店家`, c: `巧妙用濃郁湯頭滿足他對「烈」的期待` },
+            { cat: 'A', name: `總裁`, story: `總裁客人堅持要你「簽署保密協議」才能透露想合作的內容。`, a: `婉拒簽署不了解的文件`, b: `半信半疑簽了再說`, c: `仔細看過內容，理性評估後再決定` },
+            { cat: 'A', name: `黑道大哥`, story: `黑道大哥的小弟在店裡起鬨鬧事，砸了一個碗。`, a: `低調收拾，不追究賠償`, b: `順勢跟他們搏感情，希望他們常來捧場`, c: `用一手好菜技驚全場，讓場面瞬間冷靜下來` },
+            { cat: 'A', name: `工程師`, story: `工程師客人堅持拉麵的擺盤角度不符合「黃金比例」，要求重新擺過。`, a: `微笑帶過，不特別理會`, b: `配合他重新擺一次`, c: `用擺盤美學跟他辯論一番，順便展現真功夫` },
+            { cat: 'A', name: `外星人`, story: `外星人客人堅稱吃你的拉麵能「補充能量核心」，想要外帶一百碗。`, a: `婉拒這麼大量的訂單`, b: `硬著頭皮接下訂單`, c: `跟他討論份量，展現手藝爭取合理訂單` },
+            { cat: 'A', name: `忍者`, story: `忍者客人要求你比賽切菜速度，輸了要免費招待。`, a: `婉拒這種比賽`, b: `接受挑戰硬拚`, c: `展現刀工絕活痛快贏下比賽` },
+            { cat: 'A', name: `武林高手`, story: `武林高手客人徒手劈開你店裡的木頭菜單當「見面禮」。`, a: `苦笑收下毀損的菜單`, b: `順勢誇他厲害拉近關係`, c: `以廚藝回敬，端出需要真功夫才做得出的菜色` },
+            { cat: 'A', name: `偶像`, story: `偶像客人想免費代言你的店，交換條件是要天天供餐。`, a: `婉拒這種不對等的合作`, b: `答應天天供餐換取曝光`, c: `談出更合理的合作條件` },
+            { cat: 'A', name: `網紅`, story: `網紅客人堅持要跟你合拍「老闆的一天」Vlog。`, a: `婉拒被拍攝一整天`, b: `答應簡單入鏡幾個片段`, c: `主動設計幾個有趣橋段增加曝光效果` },
+            { cat: 'A', name: `美食家`, story: `美食家客人堅持你的拉麵應該進軍米其林evaluations。`, a: `謙虛表示還不夠格`, b: `半信半疑，讓他繼續說下去`, c: `認真請教評鑑細節，虛心求教` },
+            { cat: 'A', name: `阿嬤`, story: `阿嬤客人說想用自己種的菜跟你換一碗拉麵。`, a: `婉拒不收，直接招待她`, b: `答應用菜換一碗`, c: `鑑定食材品質，談出公道的交換方式` },
+            { cat: 'A', name: `小學生`, story: `小學生客人問可不可以用勞作作品換一碗麵。`, a: `婉拒但誇獎作品很棒`, b: `答應用作品換一碗`, c: `認真鑑賞作品，用鼓勵的方式收下` },
+            { cat: 'A', name: `魔法師`, story: `魔法師客人堅持要在店裡畫魔法陣「招財」。`, a: `婉拒在店內動工`, b: `答應讓他畫小小一個`, c: `跟他討論用不影響營業的方式合作` },
+            { cat: 'A', name: `吸血鬼`, story: `吸血鬼客人說晚上十一點後才是他的「用餐黃金時間」。`, a: `婉拒，維持正常打烊時間`, b: `特地為他留到十一點後`, c: `談出固定的深夜預約制` },
+            { cat: 'A', name: `狼人`, story: `狼人客人說滿月夜特別想念「野味」，問有沒有特殊菜色。`, a: `婉拒沒有這種菜色`, b: `硬著頭皮推薦重口味菜色`, c: `用香料調配出滿足野性又合法的美味` },
+            { cat: 'A', name: `機器人`, story: `機器人客人說他的「資料庫」顯示你的拉麵評分不夠高，要求解釋。`, a: `婉拒這種評分制度`, b: `認真解釋自己的堅持`, c: `現場展現手藝，用實力刷新他的評分` },
+            { cat: 'A', name: `AI`, story: `AI客人說根據數據分析，你的湯頭「甜度」有優化空間。`, a: `婉拒調整配方`, b: `照建議微調試試看`, c: `用實際試喝結果跟他理性討論` },
+            { cat: 'A', name: `警察`, story: `警察客人下班後常來報到，說吃你的麵能紓解壓力。`, a: `微笑招待，不多說什麼`, b: `多聊幾句關心他的工作`, c: `特別調製一碗「紓壓限定版」給他` },
+            { cat: 'A', name: `消防員`, story: `消防員客人吃完飯堅持要「以工代餐」，幫你整理廚房。`, a: `婉拒讓他幫忙`, b: `順勢讓他幫個小忙`, c: `陪他一起整理，順便聊聊天` },
+            { cat: 'A', name: `和尚`, story: `和尚客人堅持要幫你的店「加持」，說能招來更多客人。`, a: `婉拒這種特殊儀式`, b: `半信半疑讓他加持`, c: `順勢感謝好意，維持自己踏實經營的態度` },
+            { cat: 'A', name: `海盜`, story: `海盜客人堅持要「船長優先」插隊，惹惱其他排隊客人。`, a: `婉拒插隊，請他排隊`, b: `破例讓他優先`, c: `巧妙安撫雙方，維持排隊秩序` },
+            { cat: 'A', name: `總裁`, story: `總裁客人的司機在店外違規停車，被開了罰單，要你幫忙處理。`, a: `婉拒介入這種私事`, b: `幫忙跑一趟協調`, c: `巧妙居中協調，順勢跟總裁拉近關係` },
+            { cat: 'A', name: `黑道大哥`, story: `黑道大哥私下問你，能不能幫忙「處理」一批來路不明的高級食材。`, a: `婉拒，堅持只用正常進貨的食材`, b: `收下食材，先用著再說`, c: `用專業眼光鑑定食材來源，試著談出更好的條件` },
+            { cat: 'A', name: `工程師`, story: `工程師客人說想投資你的店，開一套「智慧拉麵攤」加盟計畫。`, a: `婉拒，想保持小店步調`, b: `答應聽聽看他的提案`, c: `端出招牌拉麵，用實力證明不需要靠噱頭` },
+            { cat: 'A', name: `外星人`, story: `外星人客人問能不能用「星際貨幣」換一碗，附贈一顆神秘石頭。`, a: `婉拒，只收正常貨幣`, b: `半信半疑收下石頭抵帳`, c: `鑑定石頭真偽，順勢展現識貨眼光談出好價錢` },
+            { cat: 'A', name: `忍者`, story: `忍者客人神出鬼沒地留下一筆鉅額小費，卻沒說原因。`, a: `收下但心裡毛毛的`, b: `開心收下不多想`, c: `追問原因，順便攀談交個朋友` },
+            { cat: 'A', name: `武林高手`, story: `武林高手客人想收你當徒弟，傳授「拉麵心法」。`, a: `婉拒拜師的邀約`, b: `半信半疑答應聽聽看`, c: `跟他交流廚藝心得，互相切磋成為朋友` },
+            { cat: 'A', name: `偶像`, story: `偶像客人吃到一半突然哭了，說想起了家鄉的味道。`, a: `遞上面紙，安靜陪伴`, b: `藉機聊聊家鄉的故事`, c: `特別加碼一道家常小菜安慰他` },
+            { cat: 'A', name: `網紅`, story: `網紅客人說想跟你的店辦「聯名限定拉麵」。`, a: `婉拒聯名合作`, b: `答應但條件隨他開`, c: `談出對雙方都公平的聯名方案` },
+            { cat: 'A', name: `美食家`, story: `美食家客人吃完後沉默不語，讓你緊張了整晚。`, a: `耐心等他開口，不多問`, b: `主動詢問他的感想`, c: `端出隱藏版菜色扭轉氣氛` },
+            { cat: 'A', name: `阿嬤`, story: `阿嬤客人擔心你太累，硬要留下來幫忙洗碗。`, a: `婉拒讓她幫忙，怕她累著`, b: `順勢讓阿嬤幫個小忙`, c: `陪阿嬤聊天，順便請她指點幾招` },
+            { cat: 'A', name: `小學生`, story: `小學生客人說長大以後要開一間比你更厲害的拉麵店。`, a: `笑笑鼓勵他有志氣`, b: `半開玩笑地跟他打賭`, c: `認真傳授一個小撇步給他` },
+            { cat: 'A', name: `魔法師`, story: `魔法師客人說你上輩子欠他一碗拉麵，這輩子要討回來。`, a: `笑笑當作有趣的說法招待他`, b: `半信半疑地招待`, c: `順著他的故事互動，成為店裡的話題` },
+            { cat: 'A', name: `吸血鬼`, story: `吸血鬼客人想用一枚「古董金幣」付帳。`, a: `婉拒收下來路不明的錢幣`, b: `半信半疑收下`, c: `鑑定金幣真偽，談出合理的折算方式` },
+            { cat: 'A', name: `狼人`, story: `狼人客人結帳時堅持要用「狼牙項鍊」抵帳。`, a: `婉拒收下這種抵押品`, b: `半信半疑收下當紀念品`, c: `鑑定價值，談出合理的折抵方案` },
+            { cat: 'A', name: `機器人`, story: `機器人客人堅持要跟你「交換情報」才願意付錢。`, a: `婉拒這種交易方式`, b: `半信半疑陪他聊聊`, c: `巧妙套出有用的市場情報` },
+            { cat: 'A', name: `AI`, story: `AI客人堅持要為你的店寫一份「最佳化營運報告」。`, a: `婉拒收下這份報告`, b: `收下報告參考看看`, c: `認真跟他討論報告內容，截取有用的部分` },
+            { cat: 'A', name: `警察`, story: `警察客人問你有沒有看到附近可疑的人物，正在辦案。`, a: `如實告知沒看到什麼`, b: `隨口編個線索應付`, c: `認真回想細節，提供真正有用的資訊` },
+            { cat: 'A', name: `消防員`, story: `消防員客人說附近發生小火警，你的店也在警戒範圍內。`, a: `配合疏散準備`, b: `半信半疑繼續營業`, c: `冷靜應對，同時安撫其他客人情緒` },
+            { cat: 'A', name: `和尚`, story: `和尚客人說看你面帶愁容，想開示幾句人生道理。`, a: `婉拒但道謝他的關心`, b: `耐心聽他說幾句`, c: `藉機聊聊經營的煩惱，獲得一些啟發` },
+            { cat: 'A', name: `海盜`, story: `海盜客人吃完後留下一句「這味道值得為它航行三大洋」就消失了。`, a: `笑笑當作一句稱讚收下`, b: `追出去確認有沒有付錢`, c: `把這句話寫成招牌標語，順勢宣傳` },
+            { cat: 'A', name: `總裁`, story: `總裁客人吃完後說這是他吃過最好吃的一餐，當場開出天價要買下配方。`, a: `婉拒販售獨家配方`, b: `心動考慮這筆交易`, c: `談出授權合作而非直接賣斷的方案` },
+            { cat: 'B', name: `停電`, story: `晚餐尖峰時段突然全店停電，客人在黑暗中等待。`, a: `點蠟燭安撫客人，暫停出餐`, b: `摸黑硬撐著繼續出餐`, c: `靠職人手感在黑暗中精準完成料理，順勢成為話題` },
+            { cat: 'B', name: `停水`, story: `水公司無預警停水，店裡沒水可以洗碗。`, a: `暫停營業去買桶裝水`, b: `硬撐著用有限存水繼續營業`, c: `跟隔壁店家借水應急，順便交好鄰居` },
+            { cat: 'B', name: `瓦斯`, story: `瓦斯行送錯瓦斯桶型號，爐火無法點燃。`, a: `暫停營業等正確的瓦斯桶送到`, b: `硬著頭皮想辦法克難加熱`, c: `緊急調度隔壁店家的瓦斯應急` },
+            { cat: 'B', name: `衛生局`, story: `衛生局人員無預警到店稽查。`, a: `配合稽查，坦然應對`, b: `找藉口拖延稽查時間`, c: `自信展現整潔的廚房環境，順利過關` },
+            { cat: 'B', name: `食材短缺`, story: `主要食材供應商臨時斷貨，明天的貨進不來。`, a: `縮減菜單應急`, b: `硬撐著找替代食材頂著`, c: `緊急聯繫多家供應商，找到品質相近的貨源` },
+            { cat: 'B', name: `颱風`, story: `颱風來襲，外面風雨交加，客人卻還是想吃碗熱麵。`, a: `提前打烊，注意安全第一`, b: `冒著風雨繼續營業`, c: `評估風雨狀況，安全前提下彈性應對` },
+            { cat: 'B', name: `地震`, story: `用餐尖峰時段突然地震，碗盤掉落摔碎。`, a: `先確保客人安全，暫停營業`, b: `假裝沒事繼續出餐`, c: `冷靜疏散客人，展現危機處理能力` },
+            { cat: 'B', name: `老鼠`, story: `店裡發現老鼠出沒的痕跡，客人看到後臉色一變。`, a: `誠實道歉，立刻處理`, b: `假裝沒看到，蒙混過去`, c: `當場展現處理能力，徹底解決問題` },
+            { cat: 'B', name: `火災`, story: `廚房爐火不慎引燃小火警，濃煙瀰漫。`, a: `立刻疏散客人，滅火器滅火`, b: `驚慌失措，手忙腳亂`, c: `冷靜迅速用滅火器控制火勢，展現臨危不亂` },
+            { cat: 'B', name: `漏水`, story: `樓上住戶漏水，滴到你店裡的座位區。`, a: `暫時封鎖受影響的座位`, b: `放任不管，客人自己閃`, c: `協調樓上住戶盡快處理，同時貼心安排客人` },
+            { cat: 'B', name: `停電`, story: `停電導致冰箱食材有退冰疑慮。`, a: `忍痛丟棄有疑慮的食材`, b: `賭一把繼續使用`, c: `逐一檢查食材狀況，留下真正安全的部分` },
+            { cat: 'B', name: `停水`, story: `停水讓你沒辦法煮麵，只能用僅存的水量。`, a: `縮減菜單，只供應能做的品項`, b: `硬撐著正常供應全菜單`, c: `精算用水量，巧妙調配出撐到恢復供水的方案` },
+            { cat: 'B', name: `瓦斯`, story: `瓦斯桶用到一半突然沒氣，客人正在等麵。`, a: `誠實告知客人稍等一下`, b: `拖延時間硬撐`, c: `快速更換備用瓦斯桶，展現熟練應變力` },
+            { cat: 'B', name: `衛生局`, story: `衛生局指出你的食材標示不夠清楚。`, a: `立刻補齊所有標示`, b: `隨便補一下應付了事`, c: `重新設計清楚美觀的標示系統` },
+            { cat: 'B', name: `食材短缺`, story: `食材價格突然飆漲，成本壓力暴增。`, a: `默默吸收成本壓力`, b: `直接調漲售價`, c: `調整菜單結構，維持品質又控制成本` },
+            { cat: 'B', name: `颱風`, story: `颱風過後，店面招牌被吹倒需要修復。`, a: `自己動手簡單修復`, b: `先擱著，晚點再處理`, c: `找專業人手快速修好，順便升級招牌` },
+            { cat: 'B', name: `地震`, story: `地震後發現廚房設備有些鬆動。`, a: `立刻停用檢查安全`, b: `先湊合著用`, c: `仔細檢查修復，確保長期使用安全` },
+            { cat: 'B', name: `老鼠`, story: `老鼠咬壞了一批儲存的食材。`, a: `忍痛丟棄受損食材`, b: `挑還能用的部分繼續用`, c: `重新規劃儲藏方式，杜絕後患` },
+            { cat: 'B', name: `火災`, story: `隔壁店家傳出火警，波及到你的店面。`, a: `配合消防隊疏散撤離`, b: `堅持留守顧店，捨不得離開`, c: `冷靜協助疏散其他客人，展現領導力` },
+            { cat: 'B', name: `漏水`, story: `漏水導致電線受潮，有觸電疑慮。`, a: `立即斷電檢查安全`, b: `先湊合著用，晚點再說`, c: `找專業電工徹底檢查排除隱患` },
+            { cat: 'B', name: `停電`, story: `停電讓收銀機故障，沒辦法找零。`, a: `先用紙筆手寫記帳`, b: `請客人自行投錢，不找零`, c: `臨機應變用手機轉帳解決問題` },
+            { cat: 'B', name: `停水`, story: `停水期間衛生局剛好來稽查用水衛生。`, a: `誠實說明停水狀況`, b: `含糊帶過，希望蒙混過關`, c: `出示水公司停水通知，理性溝通爭取體諒` },
+            { cat: 'B', name: `瓦斯`, story: `瓦斯公司通知你的管線需要緊急檢修。`, a: `立刻配合停業檢修`, b: `拖到營業結束才處理`, c: `協調出不影響尖峰時段的檢修時間` },
+            { cat: 'B', name: `衛生局`, story: `衛生局要求你參加食品安全講習。`, a: `配合安排時間參加`, b: `拖延不去，希望沒事`, c: `主動報名，順便學到實用知識精進手藝` },
+            { cat: 'B', name: `食材短缺`, story: `進貨的食材品質不如預期，看起來不太新鮮。`, a: `忍痛退貨換一批`, b: `將就著用`, c: `仔細挑選還能用的部分，物盡其用` },
+            { cat: 'B', name: `颱風`, story: `颱風天食材配送延遲，庫存告急。`, a: `暫時縮減菜單因應`, b: `硬撐著用有限食材供應`, c: `提前備貨規劃，撐過颱風天的空窗期` },
+            { cat: 'B', name: `地震`, story: `地震讓你想起以前歷經過的大地震回憶，心情低落。`, a: `找時間好好調適心情`, b: `假裝沒事，硬撐著工作`, c: `跟熟客聊聊，抒發心情後重新振作` },
+            { cat: 'B', name: `老鼠`, story: `你需要緊急找除鼠公司來處理鼠患問題。`, a: `立刻花錢請專業處理`, b: `先自己想辦法應付`, c: `貨比三家找到划算又有效的方案` },
+            { cat: 'B', name: `火災`, story: `小火警過後，你需要重新整理受損的廚房設備。`, a: `簡單修復堪用即可`, b: `先湊合著用受損設備`, c: `藉機全面升級廚房設備，塞翁失馬` },
+            { cat: 'B', name: `漏水`, story: `漏水弄濕了一批乾貨食材。`, a: `忍痛丟棄受潮食材`, b: `曬乾後繼續使用`, c: `仔細判斷，安全的留用、有疑慮的果斷丟棄` },
+            { cat: 'B', name: `停電`, story: `停電時間拖得比預期久，排隊人潮漸漸不耐煩。`, a: `誠懇道歉並提前打烊`, b: `硬撐著繼續營業到最後`, c: `現場加碼小菜安撫排隊的客人` },
+            { cat: 'B', name: `停水`, story: `停水讓廁所無法沖水，客人開始抱怨。`, a: `貼出告示暫停使用廁所`, b: `放任不管，先顧生意`, c: `緊急聯絡水車來支援，維持基本衛生` },
+            { cat: 'B', name: `瓦斯`, story: `瓦斯異味讓客人緊張詢問是否安全。`, a: `誠實說明正在檢查中`, b: `含糊帶過安撫客人`, c: `當場檢查清楚，用專業態度化解疑慮` },
+            { cat: 'B', name: `衛生局`, story: `衛生局收到匿名檢舉，說你的店有衛生疑慮。`, a: `配合說明，展現清白`, b: `心虛想辦法迴避稽查`, c: `冷靜應對，用實際環境證明清白` },
+            { cat: 'B', name: `食材短缺`, story: `你發現常用的食材突然缺貨到全區都買不到。`, a: `暫時下架相關菜色`, b: `硬著頭皮找次級替代品`, c: `發揮創意研發出用其他食材的替代版本` },
+            { cat: 'B', name: `颱風`, story: `颱風夜有客人受困在你店裡，沒辦法回家。`, a: `讓他留下來避風雨`, b: `婉拒收留，請他自行想辦法`, c: `熱情招待，順便聊聊天度過颱風夜` },
+            { cat: 'B', name: `地震`, story: `餘震不斷，客人紛紛猶豫要不要進店用餐。`, a: `貼出告示說明安全評估結果`, b: `什麼都不說，照常營業`, c: `主動說明安全狀況，安撫客人的不安` },
+            { cat: 'B', name: `老鼠`, story: `有客人在網路上爆料你的店有老鼠出沒。`, a: `誠懇道歉並公開改善過程`, b: `否認並試圖淡化這件事`, c: `邀請該客人回來實地確認改善成果` },
+            { cat: 'B', name: `火災`, story: `火警後保險公司來理賠評估。`, a: `誠實提供受損狀況`, b: `誇大損失想多拿理賠`, c: `誠實且詳細地說明，順利拿到合理理賠` },
+            { cat: 'B', name: `漏水`, story: `漏水問題拖了好幾天都沒改善，客人開始抱怨環境。`, a: `誠懇道歉並加快處理進度`, b: `置之不理，希望自然變乾`, c: `主動出錢請人徹底處理漏水源頭` },
+            { cat: 'B', name: `停電`, story: `停電剛好在你熬湯熬到一半時發生。`, a: `忍痛倒掉這鍋湯重新開始`, b: `硬著頭皮繼續用瓦斯爐完成`, c: `靠經驗判斷湯頭狀態，搶救回大半鍋湯` },
+            { cat: 'B', name: `停水`, story: `停水結束後，水質混濁不敢直接使用。`, a: `先靜置沉澱後再使用`, b: `省事直接拿來用`, c: `用濾水設備處理後才安心使用` },
+            { cat: 'B', name: `瓦斯`, story: `瓦斯漲價通知寄來，成本壓力大增。`, a: `默默吸收成本，不調整售價`, b: `直接調漲售價因應`, c: `微調份量與成本結構，維持合理售價` },
+            { cat: 'B', name: `衛生局`, story: `衛生局評鑑你的店為「優良攤商」，要頒獎表揚。`, a: `低調領獎，不張揚`, b: `大肆宣傳這個榮譽`, c: `藉這個機會好好整理店面形象` },
+            { cat: 'B', name: `食材短缺`, story: `有客人想大量訂購，但你的食材庫存根本不夠。`, a: `婉拒這筆訂單`, b: `硬著頭皮接下訂單再想辦法`, c: `緊急調貨，同時談出合理的交期` },
+            { cat: 'B', name: `颱風`, story: `颱風警報解除，客人重新湧入店裡，忙不過來。`, a: `從容應對，慢慢來`, b: `手忙腳亂硬撐著`, c: `冷靜調度，展現老練的應變能力` },
+            { cat: 'B', name: `地震`, story: `地震後你決定為店裡添購防災用品。`, a: `簡單準備基本用品`, b: `覺得沒必要，先擱著`, c: `認真規劃一套完整的防災應變方案` },
+            { cat: 'B', name: `老鼠`, story: `鼠患處理完後，店裡的口碑受到一些影響。`, a: `耐心經營，慢慢恢復信任`, b: `急著砸錢打廣告挽回形象`, c: `用實際的用心服務慢慢重建口碑` },
+            { cat: 'B', name: `火災`, story: `火警的消息傳開，客人擔心食安問題不敢上門。`, a: `耐心用時間證明店面安全`, b: `急著大打廣告挽回信任`, c: `主動公開整修過程，展現透明度贏回信任` },
+            { cat: 'B', name: `漏水`, story: `漏水修復後，你決定順便整修一下店面環境。`, a: `簡單清理恢復原狀就好`, b: `覺得沒必要多花錢整修`, c: `趁機做一次全面翻新，煥然一新` },
+            { cat: 'C', name: `拉麵之神`, story: `傳說中的拉麵之神下凡，想測試你是否有資格得到他的祝福。`, a: `謙虛地端出最樸實的家常口味`, b: `大膽端出你最狂野的實驗菜色`, c: `使出畢生絕學，賭上一切做出巔峰之作` },
+            { cat: 'C', name: `時空裂縫`, story: `店裡角落突然出現一道詭異的時空裂縫，隱約能看到未來的景象。`, a: `小心翼翼地遠離裂縫，不去理會`, b: `好奇地伸手探進裂縫`, c: `運用膽識探究裂縫，試圖帶回有用的訊息` },
+            { cat: 'C', name: `神秘商人`, story: `一位神秘商人推著奇怪的貨車出現，說有「稀世食材」要賣。`, a: `婉拒，堅持只用熟悉的食材`, b: `好奇買下一份試試看`, c: `仔細鑑定食材真偽，談出公道的價格` },
+            { cat: 'C', name: `妖怪`, story: `一隻化身成人形的妖怪來店裡用餐，堅持要吃「有靈氣」的食物。`, a: `婉拒這種特殊要求`, b: `端出用心熬煮的湯頭應付看看`, c: `運用食材知識，做出真正能打動妖怪的料理` },
+            { cat: 'C', name: `精靈`, story: `一位自稱是精靈的客人，說想用花瓣跟露水交換一碗麵。`, a: `婉拒，只收正常的貨幣`, b: `浪漫地答應這筆交易`, c: `欣賞這份心意，談出雙方都開心的方案` },
+            { cat: 'C', name: `鬼魂`, story: `打烊後，一位若隱若現的客人在店裡徘徊，說想再嚐一次老味道。`, a: `婉拒深夜不明訪客`, b: `壯著膽子招待這位客人`, c: `溫柔詢問他的故事，用心做出懷念的味道` },
+            { cat: 'C', name: `未來人`, story: `一位自稱來自未來的客人，說想在「歷史關鍵點」吃到你的拉麵。`, a: `婉拒相信這種說法`, b: `半信半疑款待這位客人`, c: `順著他的故事聊，套出一些有趣的未來情報` },
+            { cat: 'C', name: `平行宇宙`, story: `一位客人說自己來自「平行宇宙」，那裡的你開了一間截然不同的店。`, a: `禮貌聽聽就好，不當真`, b: `好奇詢問另一個自己過得如何`, c: `認真思考另一種可能性，獲得經營靈感` },
+            { cat: 'C', name: `許願井`, story: `店門口一夜之間冒出一口古老的許願井，客人紛紛好奇圍觀。`, a: `低調處理，避免造成混亂`, b: `順勢利用話題招攬生意`, c: `妥善規劃動線，把話題轉化成正面口碑` },
+            { cat: 'C', name: `神龍`, story: `傳說中鎮守此地的神龍化身老者現身，說想嚐嚐凡間美食。`, a: `恭敬地端出最基本的家常麵`, b: `大膽端出你最厲害的招牌菜`, c: `使出渾身解數，做出足以敬獻神明的一碗麵` },
+            { cat: 'C', name: `拉麵之神`, story: `拉麵之神化身成一位普通老翁，默默觀察你整晚的手藝。`, a: `維持平常心，正常做生意`, b: `刻意表現，想讓他印象深刻`, c: `端出隱藏許久的壓箱絕活菜色` },
+            { cat: 'C', name: `時空裂縫`, story: `時空裂縫中走出一位客人，說是「未來的你」派來的。`, a: `禮貌招待但保持懷疑`, b: `熱情相信並詳細詢問未來`, c: `冷靜求證，判斷這個人是否真的可信` },
+            { cat: 'C', name: `神秘商人`, story: `神秘商人想用你的招牌配方，換一件「傳說中的廚具」。`, a: `婉拒這筆交換`, b: `心動答應交換`, c: `仔細評估廚具價值，談出更好的交換條件` },
+            { cat: 'C', name: `妖怪`, story: `妖怪客人說能聞出你心裡的煩惱，主動提議幫忙解決。`, a: `婉拒讓妖怪介入私事`, b: `半信半疑接受幫助`, c: `跟妖怪聊聊，換一個新的角度看待煩惱` },
+            { cat: 'C', name: `精靈`, story: `精靈客人堅持你的店周圍該種滿香草才「有靈氣」。`, a: `婉拒大幅調整店面環境`, b: `答應種幾盆香草試試看`, c: `巧妙運用香草提升料理風味，一舉兩得` },
+            { cat: 'C', name: `鬼魂`, story: `鬼魂客人說很多年前這裡曾經是他熟悉的老店。`, a: `禮貌傾聽但不多做回應`, b: `好奇詢問更多過去的故事`, c: `認真聽完故事，決定重現一道當年的菜色` },
+            { cat: 'C', name: `未來人`, story: `未來人客人堅持你的店在未來會變得非常有名。`, a: `謙虛地表示還差得遠`, b: `半信半疑地開心一下`, c: `認真詢問細節，思考該怎麼提前布局` },
+            { cat: 'C', name: `平行宇宙`, story: `平行宇宙的客人說想比較兩邊拉麵的差異。`, a: `禮貌端出招牌口味`, b: `特地調整風味迎合對方口味`, c: `自信端出最有特色的版本，展現獨特性` },
+            { cat: 'C', name: `許願井`, story: `有傳言說對著許願井許願會實現，客人開始排隊許願。`, a: `婉拒配合這種傳言`, b: `順勢讓客人排隊順便消費`, c: `設計一個有趣又不誇張的許願小活動` },
+            { cat: 'C', name: `神龍`, story: `神龍客人說吃了你的拉麵，心情變得格外舒暢。`, a: `謙虛地道謝`, b: `開心地大肆宣傳這件事`, c: `把握機會，虛心請教如何精進手藝` },
+            { cat: 'C', name: `拉麵之神`, story: `拉麵之神說要收你的湯頭配方當「傳世之作」的候選。`, a: `婉拒，配方是自己的心血結晶`, b: `答應交出配方換取祝福`, c: `跟他切磋交流，展現對拉麵的熱愛與堅持` },
+            { cat: 'C', name: `時空裂縫`, story: `時空裂縫讓店裡的時間似乎變得不太一樣，客人來來去去很奇怪。`, a: `假裝沒發現，正常營業`, b: `順勢利用這個異象招攬生意`, c: `冷靜觀察規律，找出應對這個異象的方法` },
+            { cat: 'C', name: `神秘商人`, story: `神秘商人神秘兮兮地說，你的店有機會成為「傳說名店」，但需要付出代價。`, a: `婉拒這種模糊不清的交易`, b: `答應付出代價換取機會`, c: `追問清楚代價內容，理性評估後再決定` },
+            { cat: 'C', name: `妖怪`, story: `妖怪客人吃完後留下一撮奇異的毛髮當小費。`, a: `婉拒收下這種特殊小費`, b: `好奇收下留作紀念`, c: `鑑定這撮毛髮，發現意外的價值` },
+            { cat: 'C', name: `精靈`, story: `精靈客人說能聽懂食材的心聲，指出你有一批食材「不太開心」。`, a: `婉拒這種奇怪的說法`, b: `半信半疑檢查那批食材`, c: `認真檢查食材狀態，果然發現保存問題` },
+            { cat: 'C', name: `鬼魂`, story: `鬼魂客人吃完後，店裡的溫度突然變得溫暖起來。`, a: `當作巧合，不多想`, b: `覺得這是好兆頭，開心收下`, c: `感謝這份緣分，將這份溫暖延續下去` },
+            { cat: 'C', name: `未來人`, story: `未來人客人想用「未來科技」的小物件交換一碗麵。`, a: `婉拒收下不明物件`, b: `好奇收下這個交易`, c: `仔細研究這個物件，發現意外的實用價值` },
+            { cat: 'C', name: `平行宇宙`, story: `平行宇宙客人臨走前說了一句「這邊的選擇比較好」。`, a: `禮貌道謝，不多想`, b: `開心地把這句話當成肯定`, c: `深思這句話背後的意義，重新檢視經營方向` },
+            { cat: 'C', name: `許願井`, story: `許願井旁的硬幣被人偷走，客人議論紛紛。`, a: `不予理會，順其自然`, b: `報警處理這件小事`, c: `妥善設置監督機制，避免類似事件再發生` },
+            { cat: 'C', name: `神龍`, story: `神龍客人臨走前留下一片閃亮的鱗片，說是「保佑」。`, a: `恭敬收下當作紀念`, b: `好奇收下猜測它的價值`, c: `妥善收藏，同時感謝這份特別的緣分` },
+            { cat: 'D', name: `拉麵大賽`, story: `鎮上舉辦年度拉麵大賽，你被臨時抓去代表本區參賽。`, a: `低調棄權，專心顧好自己的店`, b: `硬著頭皮上場應戰`, c: `全力以赴，拿出畢生功力一決勝負` },
+            { cat: 'D', name: `黑道火拼`, story: `兩派黑道人馬在你店門口對峙，火藥味濃厚。`, a: `拉下鐵門暫避風頭`, b: `硬著頭皮繼續正常營業`, c: `沉穩應對，居中緩頰化解一觸即發的緊張` },
+            { cat: 'D', name: `食神`, story: `傳說級的食神親自登門踢館，要跟你來一場廚藝對決。`, a: `謙虛婉拒這場對決`, b: `硬著頭皮應戰`, c: `毫無畏懼，正面迎戰展現真本事` },
+            { cat: 'D', name: `AI主廚`, story: `一台號稱能複製任何料理的AI主廚機器人來踢館。`, a: `婉拒這場人機大戰`, b: `硬著頭皮應戰比拚`, c: `自信迎戰，展現機器無法取代的職人溫度` },
+            { cat: 'D', name: `百年老店`, story: `隔壁新開張的百年老店分店，擺明是要跟你較勁。`, a: `低調做好自己的本份`, b: `正面迎戰打價格戰`, c: `用真材實料的品質正面較勁，不打價格戰` },
+            { cat: 'D', name: `拉麵大賽`, story: `拉麵大賽的評審私下暗示，只要「意思意思」就能得高分。`, a: `婉拒賄賂評審的暗示`, b: `順勢意思意思打點一下`, c: `憑真本事正面對決，拒絕旁門左道` },
+            { cat: 'D', name: `黑道火拼`, story: `黑道火拼波及店面，招牌被砸壞。`, a: `默默承受這筆損失`, b: `找對方理論要求賠償`, c: `冷靜交涉，爭取到合理的賠償與道歉` },
+            { cat: 'D', name: `食神`, story: `食神品嚐後沉默良久，遲遲不給評語，讓你心跳加速。`, a: `耐心等待，不多問`, b: `忍不住主動詢問感想`, c: `自信詢問具體建議，虛心求教` },
+            { cat: 'D', name: `AI主廚`, story: `AI主廚精準複製出跟你一模一樣的拉麵，讓你錯愕。`, a: `承認技不如人，虛心學習`, b: `不服輸，堅持人情味才是關鍵`, c: `找出AI無法複製的細節，扳回一城` },
+            { cat: 'D', name: `百年老店`, story: `百年老店的老闆親自登門，想「切磋」湯頭功夫。`, a: `客氣婉拒這場切磋`, b: `硬著頭皮接受切磋`, c: `誠懇交流，互相學習彼此的獨門秘訣` },
+            { cat: 'D', name: `拉麵大賽`, story: `拉麵大賽現場你的對手是一位手藝驚人的神秘高手。`, a: `謹慎應戰，求穩不求快`, b: `冒險使出全新嘗試的菜色`, c: `使出壓箱絕活，正面迎戰不留餘地` },
+            { cat: 'D', name: `黑道火拼`, story: `其中一派人馬要你「選邊站」，否則以後別想做生意。`, a: `婉拒選邊，堅持中立`, b: `被迫選邊表態`, c: `憑著多年人脈與手腕，巧妙維持中立又不得罪人` },
+            { cat: 'D', name: `食神`, story: `食神說想收你的店當「傳人分店」，但條件嚴苛。`, a: `婉拒這個機會，維持獨立經營`, b: `答應接受嚴苛條件`, c: `談出對雙方都合理的合作方式` },
+            { cat: 'D', name: `AI主廚`, story: `AI主廚的公司想收購你的店，改造成「無人拉麵攤」。`, a: `婉拒這個收購提案`, b: `心動考慮這筆交易`, c: `談出保留人情味的合作模式` },
+            { cat: 'D', name: `百年老店`, story: `百年老店開出高薪想挖走你的手藝。`, a: `婉拒這份高薪邀約`, b: `心動考慮跳槽`, c: `堅持自己開店的初衷，婉轉拒絕` },
+            { cat: 'D', name: `拉麵大賽`, story: `拉麵大賽結果出爐前，謠言滿天飛，有人說黑幕重重。`, a: `不理會謠言，靜待結果`, b: `跟著大家議論紛紛`, c: `冷靜查證，維護比賽的公平與尊嚴` },
+            { cat: 'D', name: `黑道火拼`, story: `火拼過後，雙方老大都跑來你店裡「和解」，氣氛尷尬。`, a: `低調上菜，不多說話`, b: `順勢活絡氣氛拉近關係`, c: `巧妙運用一桌好菜化解雙方的心結` },
+            { cat: 'D', name: `食神`, story: `食神臨走前，留下一句意味深長的評語。`, a: `反覆咀嚼這句話的含意`, b: `不以為意，繼續做自己的事`, c: `把這句話當成精進手藝的指引，認真實踐` },
+            { cat: 'D', name: `AI主廚`, story: `這場人機對決引來大批媒體關注，壓力空前。`, a: `低調應對，不多發言`, b: `積極接受採訪曝光`, c: `從容應對媒體，順勢建立個人品牌形象` },
+            { cat: 'D', name: `百年老店`, story: `百年老店的名聲蓋過你的店，客人漸漸流失。`, a: `耐心堅持自己的風格`, b: `急著模仿對方的招牌菜色`, c: `找出自己的獨特定位，做出差異化` },
+            { cat: 'E', name: `過年`, story: `除夕夜還在營業，客人問能不能加點「年年有餘」的吉祥菜色。`, a: `婉拒臨時調整菜單`, b: `現場加菜迎合節慶氣氛`, c: `巧手用現有食材做出應景的吉祥菜色` },
+            { cat: 'E', name: `元宵`, story: `元宵節客人指定要吃「湯圓拉麵」這種奇怪組合。`, a: `婉拒這種奇怪組合`, b: `好奇試做這個組合`, c: `運用創意巧妙融合湯圓與拉麵，意外好吃` },
+            { cat: 'E', name: `端午`, story: `端午節客人問能不能用粽子的概念做一碗特別的拉麵。`, a: `婉拒跳脫既有菜單`, b: `嘗試做做看粽香拉麵`, c: `巧妙融合粽葉香氣，做出限定季節限定版` },
+            { cat: 'E', name: `中秋`, story: `中秋夜客人希望能在店外賞月吃麵，要求加開戶外座位。`, a: `婉拒臨時加開座位`, b: `臨時加開幾張戶外座位`, c: `妥善規劃出舒適的賞月用餐區，客人讚不絕口` },
+            { cat: 'E', name: `聖誕`, story: `聖誕夜情侶客人指定要「聖誕限定」的浪漫擺盤。`, a: `婉拒特殊擺盤要求`, b: `隨手擺個應景造型`, c: `用心設計出真正浪漫又不失美味的擺盤` },
+            { cat: 'E', name: `萬聖`, story: `萬聖節客人裝扮成各種鬼怪，要求菜色也要「應景嚇人」。`, a: `婉拒配合這種噱頭`, b: `隨口做個造型嚇人一下`, c: `發揮創意做出既嚇人又美味的萬聖限定拉麵` },
+            { cat: 'E', name: `過年`, story: `大年初一，你猶豫要不要開店，怕犯了「初一忌動刀」的禁忌。`, a: `配合習俗，初一公休`, b: `不理會禁忌，照常營業`, c: `尊重傳統但彈性調整，改用燉煮取代動刀` },
+            { cat: 'E', name: `元宵`, story: `元宵節猜燈謎活動吸引不少客人湊熱鬧，順便來吃麵。`, a: `低調照常營業，不特別參與`, b: `順勢跟著擺攤參與燈謎活動`, c: `自己設計幾則跟拉麵有關的燈謎增加話題` },
+            { cat: 'E', name: `端午`, story: `端午節龍舟賽的選手們，賽後餓壞了湧進你的店。`, a: `耐心一一慢慢出餐`, b: `手忙腳亂硬撐著出餐`, c: `冷靜調度，快速又不失品質地招待選手們` },
+            { cat: 'E', name: `中秋`, story: `中秋節烤肉的煙味飄進店裡，客人開玩笑問你要不要也來烤。`, a: `笑笑婉拒，維持本業`, b: `隨口答應烤幾串應景`, c: `巧妙推出烤物風味的限定拉麵，順勢跟上氣氛` },
+        ];
+
+        // ---------- 深夜食堂（文字 Roguelike 生存遊戲）----------
+        let dinerGameState = null;
+        const DINER_TOTAL_DAYS = 20;
+        // 每局固定安排 4 天是節日事件（第 5/10/15/20 天），其餘天數用機率抽：
+        // A/B 一般事件最常見、C 神秘事件較稀有、D Boss 事件最稀有
+        const DINER_HOLIDAY_DAYS = [5, 10, 15, 20];
+
+        function dinerGameCleanup() {
+            dinerGameState = null;
+        }
+
+        function startDinerGame() {
+            if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup();
+            ensureAudioContext(); // 在按下「開始」這個真正的點擊當下解鎖音效
+            const usedIndices = new Set();
+            dinerGameState = {
+                day: 0, life: 100, reputation: 50, money: 500,
+                usedIndices, ended: false,
+            };
+            playSfx('click');
+            dinerNextDay();
+        }
+
+        // 依照今天是不是節日、抽出今天要遇到的事件
+        function dinerPickEvent(day) {
+            const state = dinerGameState;
+            const isHoliday = DINER_HOLIDAY_DAYS.includes(day);
+            let pool;
+            if (isHoliday) {
+                pool = DINER_EVENTS.filter(e => e.cat === 'E');
+            } else {
+                const roll = Math.random();
+                let cat;
+                if (roll < 0.55) cat = 'A';
+                else if (roll < 0.85) cat = 'B';
+                else if (roll < 0.95) cat = 'C';
+                else cat = 'D';
+                pool = DINER_EVENTS.filter(e => e.cat === cat);
+            }
+            // 盡量避免同一局裡抽到重複事件（210 則事件、單局最多 20 天，理論上不用重複）
+            const indices = pool.map(e => DINER_EVENTS.indexOf(e)).filter(i => !state.usedIndices.has(i));
+            const finalPool = indices.length > 0 ? indices : pool.map(e => DINER_EVENTS.indexOf(e));
+            const chosenIndex = finalPool[Math.floor(Math.random() * finalPool.length)];
+            state.usedIndices.add(chosenIndex);
+            return DINER_EVENTS[chosenIndex];
+        }
+
+        function dinerNextDay() {
+            const state = dinerGameState;
+            if (!state || state.ended) return;
+            state.day++;
+            if (state.day > DINER_TOTAL_DAYS) { dinerEndGame(true); return; }
+            const event = dinerPickEvent(state.day);
+            state.currentEvent = event;
+            renderDinerDay(event);
+        }
+
+        const DINER_CAT_LABELS = { A: '奇葩顧客', B: '突發狀況', C: '✨神秘事件', D: '🔥重大挑戰', E: '🎉節日限定' };
+        const DINER_CAT_COLORS = { A: 'var(--jam)', B: '#8B7355', C: '#7B5FA6', D: '#C4453F', E: 'var(--honey)' };
+
+        function renderDinerDay(event) {
+            const state = dinerGameState;
+            document.getElementById('game-modal-title').textContent = '🌙 深夜食堂';
+            const dayPct = Math.round((state.day / DINER_TOTAL_DAYS) * 100);
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="mb-4">
+                    <div class="flex justify-between items-center mb-1 text-xs" style="color:#B3A492">
+                        <span>第 ${state.day} / ${DINER_TOTAL_DAYS} 天</span>
+                        <span style="color:${DINER_CAT_COLORS[event.cat]}; font-weight:600">${DINER_CAT_LABELS[event.cat]}</span>
+                    </div>
+                    <div style="height:6px; border-radius:999px; overflow:hidden; background:var(--line);">
+                        <div style="height:100%; width:${dayPct}%; background:linear-gradient(90deg, var(--honey), var(--jam)); transition:width .4s;"></div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-2 mb-4">
+                    ${dinerStatCard('❤️', '生命', state.life, '#C4453F')}
+                    ${dinerStatCard('⭐', '名聲', state.reputation, 'var(--honey)')}
+                    ${dinerStatCard('💰', '資金', state.money, 'var(--sage)')}
+                </div>
+                <div class="rounded-3xl px-5 py-5 mb-4" style="background:linear-gradient(180deg, var(--cream), var(--paper)); border:1px solid var(--line); min-height:90px;">
+                    <p class="font-display font-bold text-base mb-1" style="color:${DINER_CAT_COLORS[event.cat]}">「${event.name}」</p>
+                    <p class="text-sm leading-relaxed">${event.story}</p>
+                </div>
+                <div class="space-y-2.5">
+                    <button onclick="dinerChoose('a')" class="w-full text-left px-4 py-3 rounded-2xl transition" style="background:var(--cream); border:1px solid var(--line);">
+                        <span class="font-bold" style="color:var(--jam)">A</span> 　<span class="text-sm">${event.a}</span>
+                    </button>
+                    <button onclick="dinerChoose('b')" class="w-full text-left px-4 py-3 rounded-2xl transition" style="background:var(--cream); border:1px solid var(--line);">
+                        <span class="font-bold" style="color:var(--honey)">B</span> 　<span class="text-sm">${event.b}</span>
+                    </button>
+                    <button onclick="dinerChoose('c')" class="w-full text-left px-4 py-3 rounded-2xl transition" style="background:var(--cream); border:1px solid var(--line);">
+                        <span class="font-bold" style="color:#7B5FA6">C</span> 　<span class="text-sm">${event.c}</span>
+                    </button>
+                </div>
+                <p id="diner-result" class="text-center text-sm font-semibold mt-4" style="min-height:1.5rem;"></p>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">放棄遊戲</button>
+            `;
+        }
+
+        function dinerStatCard(icon, label, value, color) {
+            const pct = Math.max(0, Math.min(100, label === '資金' ? (value / 500 * 100) : value));
+            return `<div class="text-center px-2 py-2.5 rounded-2xl" style="background:var(--cream); border:1px solid var(--line);">
+                <div class="text-lg">${icon}</div>
+                <div class="font-bold text-sm" style="color:${color}">${Math.round(value)}</div>
+                <div style="height:4px; border-radius:999px; overflow:hidden; background:var(--line); margin-top:4px;">
+                    <div style="height:100%; width:${Math.max(0, Math.min(100, pct))}%; background:${color}; transition:width .4s;"></div>
+                </div>
+            </div>`;
+        }
+
+        function dinerChoose(option) {
+            const state = dinerGameState;
+            if (!state || state.ended) return;
+            const event = state.currentEvent;
+            const isBoss = event.cat === 'D';
+            const mult = isBoss ? 1.5 : 1;
+            const isHoliday = event.cat === 'E';
+            let resultText = '';
+            let lifeDelta = 0, repDelta = 0, moneyDelta = 0;
+
+            if (option === 'a') {
+                moneyDelta = -Math.round((10 + Math.random() * 10) * mult);
+                repDelta = Math.round((3 + Math.random() * 5) * mult);
+                resultText = `你選擇了 A：${event.a}`;
+                playSfx('click');
+            } else if (option === 'b') {
+                moneyDelta = Math.round((30 + Math.random() * 70) * mult);
+                repDelta = isHoliday
+                    ? Math.round(Math.random() * 15 * mult)
+                    : Math.round((Math.random() * 20 - 10) * mult);
+                resultText = `你選擇了 B：${event.b}`;
+                playSfx(moneyDelta > 0 ? 'buy' : 'sell');
+            } else {
+                const success = Math.random() < 0.5;
+                if (success) {
+                    moneyDelta = Math.round((80 + Math.random() * 70) * mult);
+                    repDelta = Math.round((10 + Math.random() * 10) * mult);
+                    resultText = `你選擇了 C：${event.c} → 🎉 成功了！`;
+                    playSfx('perfect');
+                } else {
+                    if (Math.random() < 0.5) {
+                        lifeDelta = -Math.round((20 + Math.random() * 20) * mult);
+                    } else {
+                        moneyDelta = -Math.round((30 + Math.random() * 30) * mult);
+                    }
+                    resultText = `你選擇了 C：${event.c} → 😱 失敗了…`;
+                    playSfx('burnt');
+                }
+            }
+
+            state.life = Math.max(0, state.life + lifeDelta);
+            state.reputation = Math.max(0, state.reputation + repDelta);
+            state.money = Math.max(0, state.money + moneyDelta);
+
+            const deltaParts = [];
+            if (lifeDelta) deltaParts.push(`生命${lifeDelta > 0 ? '+' : ''}${lifeDelta}`);
+            if (repDelta) deltaParts.push(`名聲${repDelta > 0 ? '+' : ''}${repDelta}`);
+            if (moneyDelta) deltaParts.push(`資金${moneyDelta > 0 ? '+' : ''}${moneyDelta}`);
+
+            const resultEl = document.getElementById('diner-result');
+            if (resultEl) {
+                resultEl.textContent = `${resultText}（${deltaParts.join('、') || '沒有變化'}）`;
+                resultEl.style.color = (lifeDelta < 0 || moneyDelta < 0) && !(lifeDelta === 0 && moneyDelta >= 0) ? '#C4453F' : 'var(--sage)';
+            }
+            if (navigator.vibrate) navigator.vibrate(lifeDelta < 0 ? [120, 60, 120] : [40]);
+
+            // 停用選項按鈕，避免連續點擊
+            document.querySelectorAll('#game-modal-body button[onclick^="dinerChoose"]').forEach(b => b.disabled = true);
+
+            setTimeout(() => {
+                if (state.life <= 0 || state.reputation <= 0 || state.money <= 0) {
+                    dinerEndGame(false);
+                } else {
+                    dinerNextDay();
+                }
+            }, 1400);
+        }
+
+        function dinerEndGame(survived) {
+            const state = dinerGameState;
+            if (!state) return;
+            state.ended = true;
+            const daysSurvived = Math.min(state.day, DINER_TOTAL_DAYS);
+            let score = daysSurvived * 15;
+            let title, emoji, desc;
+            if (survived) {
+                score += Math.round((state.life + state.reputation) / 4) + Math.round(state.money / 50);
+                title = '順利撐過 20 天！';
+                emoji = '🎊';
+                desc = `你的深夜食堂成功經營下來了。最終生命 ${Math.round(state.life)}、名聲 ${Math.round(state.reputation)}、資金 ${Math.round(state.money)}`;
+                playSfx('perfect');
+            } else {
+                const cause = state.life <= 0 ? '體力耗盡，撐不下去了' : state.reputation <= 0 ? '名聲掃地，再也沒有客人上門' : '資金見底，週轉不靈只能收攤';
+                title = `第 ${daysSurvived} 天，${cause}`;
+                emoji = '🌙💤';
+                desc = '深夜食堂的故事，就在這裡告一段落了。';
+                playSfx('burnt');
+            }
+            dinerGameState = null;
+            document.getElementById('game-modal-title').textContent = '🌙 深夜食堂';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-6 rounded-3xl mb-4" style="background:linear-gradient(180deg, var(--cream), var(--paper))">
+                    <div class="text-6xl mb-3 ${survived ? 'celebrate-pop' : 'dash-shake'}">${emoji}</div>
+                    <p class="font-display text-xl font-bold mb-1" style="color:${survived ? 'var(--jam)' : '#C4453F'}">${title}</p>
+                    <p class="text-sm mb-4" style="color:#B3A492">${desc}</p>
+                    <p class="text-sm mb-4">存活 ${daysSurvived} 天 ・ 分數：<span class="font-bold" style="color:var(--honey)">${score}</span></p>
+                    <div class="flex gap-3 justify-center flex-wrap">
+                        <button onclick="submitGameScore('diner', ${score})" class="btn-primary">上傳分數到排行榜</button>
+                        <button onclick="renderGameMenu()" class="btn-secondary">返回選單</button>
+                    </div>
+                </div>
+            `;
+        }
+
         function dashOpenRecipe(idx) {
             const recipe = (window.__dashRecommendPicks || [])[idx];
             if (!recipe) return;
@@ -1472,7 +1908,7 @@
             showDetail(recipe);
         }
 
-        const GAME_NAMES = { qte: '神廚火候控制', stock: '食材期貨大亨', dash: '虛擬廚房挑戰賽' };
+        const GAME_NAMES = { qte: '神廚火候控制', stock: '食材期貨大亨', dash: '虛擬廚房挑戰賽', diner: '深夜食堂' };
         function showGameOverScreen(gameId, score, detailText) {
             const gameName = GAME_NAMES[gameId] || gameId;
             document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
@@ -1511,6 +1947,7 @@
                     <button onclick="showLeaderboard('qte')" class="chip ${gameId === 'qte' ? 'active' : ''}">神廚火候控制</button>
                     <button onclick="showLeaderboard('stock')" class="chip ${gameId === 'stock' ? 'active' : ''}">食材期貨大亨</button>
                     <button onclick="showLeaderboard('dash')" class="chip ${gameId === 'dash' ? 'active' : ''}">廚房挑戰賽</button>
+                    <button onclick="showLeaderboard('diner')" class="chip ${gameId === 'diner' ? 'active' : ''}">深夜食堂</button>
                 </div>
                 <div id="leaderboard-list"><p class="text-sm" style="color:#B3A492">載入中…</p></div>
                 <button onclick="renderGameMenu()" class="btn-secondary w-full mt-4">返回選單</button>
