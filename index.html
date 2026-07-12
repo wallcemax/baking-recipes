@@ -604,6 +604,7 @@
             }
         }
 
+        let hasRestoredLastRecipe = false;
         function loadRecipes() {
             // 不倚賴 Firestore 端的 orderBy（避免舊資料缺少 updatedAt 欄位而被排除），
             // 改為抓回全部後在前端依「最新編輯時間」排序：updatedAt 沒有就退回 createdAt
@@ -616,6 +617,22 @@
                     return bTime - aTime;
                 });
                 filterRecipes(false);
+
+                // 頁面重新載入後（包含 PWA 從背景被系統整個殺掉重開），自動翻回使用者離開前
+                // 正在看的那篇食譜，不用每次都從首頁重新找一次
+                if (!hasRestoredLastRecipe) {
+                    hasRestoredLastRecipe = true;
+                    try {
+                        const lastId = localStorage.getItem('lastOpenRecipeId');
+                        if (lastId) {
+                            const recipe = allRecipes.find(r => r.id === lastId);
+                            const modal = document.getElementById('detail-modal');
+                            if (recipe && modal && modal.classList.contains('hidden')) {
+                                showDetail(recipe);
+                            }
+                        }
+                    } catch (e) { console.warn('還原上次瀏覽的食譜失敗', e); }
+                }
             });
         }
 
@@ -811,7 +828,12 @@
                             vibrate: [180, 100, 180, 100, 500],
                             tag: 'recipe-timer',
                             renotify: true,
+                            requireInteraction: true,
                         });
+                        // 保險：這個當下網頁的 JS 顯然還在執行（能發出通知就代表沒被系統凍結），
+                        // 直接額外呼叫一次頁面震動，如果通知本身的 vibrate 選項沒被手機正確執行，
+                        // 這裡還有一次機會
+                        if (navigator.vibrate) navigator.vibrate([180, 100, 180, 100, 500]);
                         return;
                     } catch (err) {
                         console.warn('系統通知發送失敗，改用頁面內提示', err && err.message);
@@ -1099,6 +1121,7 @@
             startCookingModePoll();
             scaleRecipe(recipe);
             pushModalHistoryState();
+            try { localStorage.setItem('lastOpenRecipeId', recipe.id); } catch (e) {}
         }
 
         // 依食材名稱關鍵字，猜測常見烘焙／烹飪食材的密度 (g/ml)，
@@ -1866,6 +1889,7 @@
             modal.classList.add('hidden');
             removeCookingMode(modal);
             if (!skipHistory) consumeModalHistoryState(fromPopState);
+            try { localStorage.removeItem('lastOpenRecipeId'); } catch (e) {}
         }
 
         function editRecipe(recipe) {
