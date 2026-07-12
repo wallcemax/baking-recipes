@@ -1223,19 +1223,26 @@
             if (state.intervalId) clearInterval(state.intervalId);
             const totalHoldingsValue = state.ingredients.reduce((sum, ing) => sum + ing.price * ing.held, 0);
             const finalAsset = Math.round(state.cash + totalHoldingsValue);
+            const startingCash = 100000;
+            const profitPct = (finalAsset - startingCash) / startingCash;
+            // 分數改用「獲利百分比 x 1000」，不要直接用資產金額，這樣才能跟其他遊戲的分數量級對齊，
+            // 不會出現一個遊戲幾百分、另一個遊戲幾百萬分這種不成比例的落差；最低 0 分（賠錢不會扣成負分）
+            const score = Math.max(0, Math.round(profitPct * 1000));
+            const detail = `最終資產：$${finalAsset.toLocaleString()}（起始資金 $100,000，獲利 ${(profitPct * 100).toFixed(1)}%）`;
             stockGameState = null;
-            showGameOverScreen('stock', finalAsset);
+            showGameOverScreen('stock', score, detail);
         }
 
         const GAME_NAMES = { qte: '神廚火候控制', stock: '食材期貨大亨' };
-        function showGameOverScreen(gameId, score) {
+        function showGameOverScreen(gameId, score, detailText) {
             const gameName = GAME_NAMES[gameId] || gameId;
             document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="text-center py-8">
                     <div class="text-5xl mb-3">🎉</div>
                     <p class="font-display text-2xl font-bold mb-2" style="color:var(--jam)">遊戲結束！</p>
-                    <p class="text-lg mb-6">${gameName} 分數：<span class="font-bold" style="color:var(--honey)">${score}</span></p>
+                    <p class="text-lg mb-1">${gameName} 分數：<span class="font-bold" style="color:var(--honey)">${score}</span></p>
+                    <p class="text-xs mb-6" style="color:#B3A492">${detailText || ''}</p>
                     <div class="flex gap-3 justify-center flex-wrap">
                         <button onclick="submitGameScore('${gameId}', ${score})" class="btn-primary">上傳分數到排行榜</button>
                         <button onclick="renderGameMenu()" class="btn-secondary">返回選單</button>
