@@ -1253,6 +1253,7 @@
                 if (el) el.value = '';
             });
             loadAdminNutritionList();
+            preloadTesseract(); // 提早背景下載 OCR 引擎，等使用者真的按下拍照辨識時就不用再等下載
         }
 
         function closeAdminNutritionModal() {
@@ -1937,6 +1938,7 @@
             document.getElementById('steps-container').innerHTML = '';
             resetImageField();
             addIngredientField(); addStepField();
+            preloadTesseract(); // 提早背景下載 OCR 引擎，等使用者真的按下拍照辨識時就不用再等下載
         }
 
         function resetImageField() {
@@ -2174,21 +2176,60 @@
             return tesseractLoadPromise;
         }
 
-        async function runOCR(file) {
-            await loadTesseract();
-            // 明確指定 worker/core 路徑版本，跟上面鎖定的 tesseract.js 版本一致，
-            // 避免版本不一致造成語言包讀取不完整、辨識結果變成亂碼
-            const worker = await Tesseract.createWorker('chi_tra', 1, {
-                workerPath: `https://cdn.jsdelivr.net/npm/tesseract.js@${TESSERACT_VERSION}/dist/worker.min.js`,
-                corePath: `https://cdn.jsdelivr.net/npm/tesseract.js-core@${TESSERACT_VERSION}`,
-                langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+        // 提早在背景預先載入引擎腳本（新增食譜/食材熱量管理視窗一打開就開始下載），
+        // 不用等使用者按下「拍照辨識」才開始抓，真正使用時可以省下這段下載時間；
+        // 失敗也沒關係，靜默忽略，實際使用時 loadTesseract() 會自動重試
+        function preloadTesseract() {
+            loadTesseract().catch(() => {});
+        }
+
+        // 整個瀏覽期間共用同一個 worker，避免每次辨識都要重新下載/初始化語言包
+        // （這是最耗時的部分，通常比實際辨識時間還久）；第一次使用還是會比較慢，
+        // 之後同一次瀏覽期間再用就會快很多
+        let sharedOcrWorkerPromise = null;
+        function getOcrWorker(onProgress) {
+            if (sharedOcrWorkerPromise) return sharedOcrWorkerPromise;
+            sharedOcrWorkerPromise = (async () => {
+                await loadTesseract();
+                return Tesseract.createWorker('chi_tra', 1, {
+                    workerPath: `https://cdn.jsdelivr.net/npm/tesseract.js@${TESSERACT_VERSION}/dist/worker.min.js`,
+                    corePath: `https://cdn.jsdelivr.net/npm/tesseract.js-core@${TESSERACT_VERSION}`,
+                    langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+                    logger: m => { if (onProgress && m.status === 'recognizing text') onProgress(m.progress); },
+                });
+            })();
+            return sharedOcrWorkerPromise;
+        }
+
+        // 把照片縮小到合理解析度再辨識：手機拍照常常是 3000~4000px 長邊，OCR 不需要
+        // 這麼高的解析度，縮小可以大幅縮短辨識時間（通常快好幾倍），也不太影響準確度
+        function downscaleImageForOCR(file, maxDim = 1600) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                const url = URL.createObjectURL(file);
+                img.onload = () => {
+                    URL.revokeObjectURL(url);
+                    let { width, height } = img;
+                    if (width <= maxDim && height <= maxDim) { resolve(file); return; }
+                    const scale = maxDim / Math.max(width, height);
+                    width = Math.round(width * scale);
+                    height = Math.round(height * scale);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width; canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    canvas.toBlob(blob => resolve(blob || file), 'image/jpeg', 0.85);
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+                img.src = url;
             });
-            try {
-                const { data } = await worker.recognize(file);
-                return data.text || '';
-            } finally {
-                await worker.terminate();
-            }
+        }
+
+        async function runOCR(file, onProgress) {
+            const scaled = await downscaleImageForOCR(file);
+            const worker = await getOcrWorker(onProgress);
+            const { data } = await worker.recognize(scaled);
+            return data.text || '';
         }
 
         // ----- 新增食譜：拍照辨識食材清單 -----
@@ -2202,9 +2243,11 @@
             if (!file) return;
             const btn = document.querySelector('[onclick="triggerIngredientOCR()"]');
             const originalText = btn ? btn.innerHTML : '';
-            if (btn) { btn.innerHTML = '辨識中…（首次使用需下載引擎，請稍候）'; btn.disabled = true; }
+            if (btn) { btn.innerHTML = '辨識中…'; btn.disabled = true; }
             try {
-                const text = await runOCR(file);
+                const text = await runOCR(file, progress => {
+                    if (btn) btn.innerHTML = `辨識中… ${Math.round(progress * 100)}%`;
+                });
                 const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
                 const unitPattern = /(公克|公斤|克|kg|g|ml|毫升|大匙|茶匙|tbsp|tsp|顆|個|片|條|根)/i;
                 const numPattern = /(\d+\.?\d*)/;
@@ -2241,9 +2284,11 @@
             if (!file) return;
             const btn = document.querySelector('[onclick="triggerAdminOCR()"]');
             const originalText = btn ? btn.innerHTML : '';
-            if (btn) { btn.innerHTML = '辨識中…（首次使用需下載引擎，請稍候）'; btn.disabled = true; }
+            if (btn) { btn.innerHTML = '辨識中…'; btn.disabled = true; }
             try {
-                const text = await runOCR(file);
+                const text = await runOCR(file, progress => {
+                    if (btn) btn.innerHTML = `辨識中… ${Math.round(progress * 100)}%`;
+                });
                 const grab = (pattern) => {
                     const m = text.match(pattern);
                     return m ? parseFloat(m[1]) : null;
