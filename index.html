@@ -946,23 +946,31 @@
         }
         function closeGameModal(fromPopState) {
             qteCleanup();
+            stockGameCleanup();
             document.getElementById('game-modal').classList.add('hidden');
             consumeModalHistoryState(fromPopState);
         }
 
         function renderGameMenu() {
             qteCleanup();
+            stockGameCleanup();
             document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
             document.getElementById('game-modal-body').innerHTML = `
-                <button onclick="startQteGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:var(--cream); border:1px solid var(--line)">
+                <button onclick="startQteGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:var(--cream); border:1px solid var(--line)">
                     <div class="text-4xl mb-2">🔥</div>
                     <p class="font-display font-bold text-lg">神廚火候控制</p>
                     <p class="text-xs mt-1" style="color:#B3A492">指針快速移動，在綠色完美區間按下「關火」，考驗你的反應力！越後面關卡越難</p>
+                </button>
+                <button onclick="startStockGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:var(--cream); border:1px solid var(--line)">
+                    <div class="text-4xl mb-2">📈</div>
+                    <p class="font-display font-bold text-lg">食材期貨大亨</p>
+                    <p class="text-xs mt-1" style="color:#B3A492">30 天內低買高賣食材賺取利潤，留意新聞快訊，判斷價格走勢！</p>
                 </button>
                 <div>
                     <h3 class="font-display font-semibold text-lg mb-3">🏆 排行榜</h3>
                     <div class="flex gap-2 mb-3">
                         <button onclick="showLeaderboard('qte')" class="chip">神廚火候控制</button>
+                        <button onclick="showLeaderboard('stock')" class="chip">食材期貨大亨</button>
                     </div>
                     <div id="leaderboard-list"><p class="text-sm" style="color:#B3A492">點上面的按鈕看排行榜</p></div>
                 </div>
@@ -1066,7 +1074,160 @@
         }
 
         // ---------- 遊戲結束畫面 + 排行榜（給之後陸續新增的遊戲共用）----------
-        const GAME_NAMES = { qte: '神廚火候控制' };
+        // ---------- 食材期貨大亨（低買高賣，含新聞事件影響價格走勢）----------
+        const STOCK_INGREDIENT_POOL = [
+            { id: 'beef', name: '🥩 牛肉', basePrice: 450 },
+            { id: 'egg', name: '🥚 雞蛋', basePrice: 80 },
+            { id: 'truffle', name: '🍄 松露', basePrice: 2200 },
+            { id: 'flour', name: '🌾 麵粉', basePrice: 35 },
+            { id: 'salmon', name: '🐟 鮭魚', basePrice: 380 },
+            { id: 'cheese', name: '🧀 起司', basePrice: 260 },
+            { id: 'coffee', name: '☕ 咖啡豆', basePrice: 550 },
+            { id: 'vegetable', name: '🥬 時蔬', basePrice: 40 },
+        ];
+        // ingredientMatch 對到特定食材；沒有指定的新聞會隨機影響某一項食材
+        const STOCK_NEWS = [
+            { text: '今年冬天極寒，雞蛋產量暴跌！', ingredientMatch: '雞蛋', direction: 1 },
+            { text: '牧場爆發傳染病，牛肉供應緊張！', ingredientMatch: '牛肉', direction: 1 },
+            { text: '義大利松露大豐收，價格可能鬆動', ingredientMatch: '松露', direction: -1 },
+            { text: '寒流來襲，時蔬產量吃緊', ingredientMatch: '時蔬', direction: 1 },
+            { text: '咖啡產地豪雨成災，期貨價格看漲', ingredientMatch: '咖啡豆', direction: 1 },
+            { text: '鮭魚養殖大豐收，供給大增', ingredientMatch: '鮭魚', direction: -1 },
+            { text: '國際運費飆漲，進口食材成本上升', ingredientMatch: null, direction: 1 },
+            { text: '小農契作計畫上線，本地食材供應增加', ingredientMatch: null, direction: -1 },
+            { text: '網紅餐廳大量採購，市場搶購潮湧現', ingredientMatch: null, direction: 1 },
+            { text: '食安風波爆發，消費者需求驟減', ingredientMatch: null, direction: -1 },
+        ];
+        let stockGameState = null;
+        const STOCK_LOT = 5;
+
+        function stockGameCleanup() {
+            if (stockGameState && stockGameState.intervalId) clearInterval(stockGameState.intervalId);
+            stockGameState = null;
+        }
+
+        function startStockGame() {
+            if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            qteCleanup();
+            stockGameCleanup();
+            const pool = [...STOCK_INGREDIENT_POOL].sort(() => Math.random() - 0.5).slice(0, 5);
+            const ingredients = pool.map(p => ({ ...p, price: p.basePrice, lastChangePct: 0, held: 0 }));
+            stockGameState = { day: 0, totalDays: 30, cash: 100000, ingredients, priceBias: {}, newsLog: [], intervalId: null, secondsLeft: 5 };
+            renderStockBoard();
+            stockGameState.intervalId = setInterval(() => {
+                const state = stockGameState;
+                if (!state) return;
+                state.secondsLeft--;
+                updateStockTimerLabel();
+                if (state.secondsLeft <= 0) {
+                    state.secondsLeft = 5;
+                    tickStockDay();
+                }
+            }, 1000);
+        }
+
+        function updateStockTimerLabel() {
+            const el = document.getElementById('stock-timer');
+            if (el && stockGameState) el.textContent = stockGameState.secondsLeft;
+        }
+
+        function triggerStockNews() {
+            const state = stockGameState;
+            const news = STOCK_NEWS[Math.floor(Math.random() * STOCK_NEWS.length)];
+            let targetIng = news.ingredientMatch ? state.ingredients.find(i => i.name.includes(news.ingredientMatch)) : null;
+            if (!targetIng) targetIng = state.ingredients[Math.floor(Math.random() * state.ingredients.length)];
+            state.priceBias[targetIng.id] = { direction: news.direction, daysLeft: 3 + Math.floor(Math.random() * 2) };
+            state.newsLog.unshift(`📰 第${state.day + 1}天：${news.text}（${targetIng.name}走勢${news.direction > 0 ? '看漲' : '看跌'}）`);
+            state.newsLog = state.newsLog.slice(0, 5);
+        }
+
+        function tickStockDay() {
+            const state = stockGameState;
+            if (!state) return;
+            state.day++;
+            Object.keys(state.priceBias).forEach(id => {
+                if (state.priceBias[id].daysLeft > 0) state.priceBias[id].daysLeft--;
+            });
+            if (Math.random() < 0.35) triggerStockNews();
+            state.ingredients.forEach(ing => {
+                const bias = state.priceBias[ing.id];
+                const biasDirection = (bias && bias.daysLeft > 0) ? bias.direction : 0;
+                let changePct = (Math.random() * 0.16 - 0.08); // 基礎波動 -8% ~ +8%
+                if (biasDirection !== 0) changePct += biasDirection * (0.03 + Math.random() * 0.05); // 新聞帶來的額外偏移
+                ing.price = Math.max(1, ing.price * (1 + changePct));
+                ing.lastChangePct = changePct;
+            });
+            if (state.day >= state.totalDays) { endStockGame(); return; }
+            renderStockBoard();
+        }
+
+        function stockTrade(ingId, action) {
+            const state = stockGameState;
+            if (!state) return;
+            const ing = state.ingredients.find(i => i.id === ingId);
+            if (!ing) return;
+            if (action === 'buy') {
+                const cost = ing.price * STOCK_LOT;
+                if (state.cash < cost) return;
+                state.cash -= cost;
+                ing.held += STOCK_LOT;
+            } else {
+                if (ing.held < STOCK_LOT) return;
+                state.cash += ing.price * STOCK_LOT;
+                ing.held -= STOCK_LOT;
+            }
+            renderStockBoard();
+        }
+
+        function renderStockBoard() {
+            const state = stockGameState;
+            if (!state) return;
+            const totalHoldingsValue = state.ingredients.reduce((sum, ing) => sum + ing.price * ing.held, 0);
+            const totalAsset = state.cash + totalHoldingsValue;
+            document.getElementById('game-modal-title').textContent = '📈 食材期貨大亨';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="flex justify-between items-center mb-1 text-sm">
+                    <p>第 ${state.day} / ${state.totalDays} 天 ・ 下次變動：<span id="stock-timer">${state.secondsLeft}</span>s</p>
+                    <p>總資產：<span class="font-bold" style="color:var(--jam)">$${Math.round(totalAsset).toLocaleString()}</span></p>
+                </div>
+                <p class="text-xs mb-3" style="color:#B3A492">現金：$${Math.round(state.cash).toLocaleString()}</p>
+                <div class="mb-4 space-y-1">${state.newsLog.length ? state.newsLog.map(n => `<p class="text-xs px-3 py-1.5 rounded-xl" style="background:var(--cream); color:var(--espresso-soft)">${n}</p>`).join('') : '<p class="text-xs" style="color:#B3A492">市場平靜，還沒有新聞</p>'}</div>
+                <div class="mb-4">
+                    ${state.ingredients.map(ing => {
+                        const changeColor = ing.lastChangePct > 0 ? '#C4453F' : ing.lastChangePct < 0 ? 'var(--sage)' : '#B3A492';
+                        const changeLabel = state.day === 0 ? '' : `${ing.lastChangePct >= 0 ? '▲' : '▼'} ${(Math.abs(ing.lastChangePct) * 100).toFixed(1)}%`;
+                        const canBuy = state.cash >= ing.price * STOCK_LOT;
+                        const canSell = ing.held >= STOCK_LOT;
+                        return `<div class="px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)">
+                            <div class="flex justify-between items-center mb-1">
+                                <p class="font-semibold">${ing.name}</p>
+                                <p class="font-bold">$${Math.round(ing.price).toLocaleString()} <span class="text-xs" style="color:${changeColor}">${changeLabel}</span></p>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <p class="text-xs" style="color:#B3A492">持有 ${ing.held}</p>
+                                <div class="flex gap-1.5">
+                                    <button onclick="stockTrade('${ing.id}','buy')" ${canBuy ? '' : 'disabled'} class="btn-amber !px-3 !py-1 text-xs" style="${canBuy ? '' : 'opacity:.4'}">買 ${STOCK_LOT}</button>
+                                    <button onclick="stockTrade('${ing.id}','sell')" ${canSell ? '' : 'disabled'} class="btn-secondary !px-3 !py-1 text-xs" style="${canSell ? '' : 'opacity:.4'}">賣 ${STOCK_LOT}</button>
+                                </div>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full">放棄遊戲</button>
+            `;
+        }
+
+        function endStockGame() {
+            const state = stockGameState;
+            if (!state) return;
+            if (state.intervalId) clearInterval(state.intervalId);
+            const totalHoldingsValue = state.ingredients.reduce((sum, ing) => sum + ing.price * ing.held, 0);
+            const finalAsset = Math.round(state.cash + totalHoldingsValue);
+            stockGameState = null;
+            showGameOverScreen('stock', finalAsset);
+        }
+
+        const GAME_NAMES = { qte: '神廚火候控制', stock: '食材期貨大亨' };
         function showGameOverScreen(gameId, score) {
             const gameName = GAME_NAMES[gameId] || gameId;
             document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
@@ -1101,7 +1262,8 @@
             document.getElementById('game-modal-title').textContent = '🏆 排行榜';
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="flex gap-2 mb-4">
-                    <button onclick="showLeaderboard('qte')" class="chip active">神廚火候控制</button>
+                    <button onclick="showLeaderboard('qte')" class="chip ${gameId === 'qte' ? 'active' : ''}">神廚火候控制</button>
+                    <button onclick="showLeaderboard('stock')" class="chip ${gameId === 'stock' ? 'active' : ''}">食材期貨大亨</button>
                 </div>
                 <div id="leaderboard-list"><p class="text-sm" style="color:#B3A492">載入中…</p></div>
                 <button onclick="renderGameMenu()" class="btn-secondary w-full mt-4">返回選單</button>
