@@ -130,6 +130,23 @@
         @keyframes celebratePop { from { transform: scale(.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .celebrate-pop { animation: celebratePop .35s cubic-bezier(.22,1,.36,1); }
 
+        /* 五種「大功告成」慶祝變化組合共用的 emoji 動畫 */
+        @keyframes celebrateRise {
+            0% { transform: translateY(0) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            100% { transform: translateY(-100vh) rotate(20deg); opacity: 0; }
+        }
+        @keyframes celebrateFall {
+            0% { transform: translateY(0) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            100% { transform: translateY(100vh) rotate(-20deg); opacity: 0; }
+        }
+        @keyframes celebrateBurst {
+            0% { transform: translate(-50%, -50%) scale(.3); opacity: 0; }
+            15% { opacity: 1; transform: translate(-50%, -50%) scale(1.15); }
+            100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(.8); opacity: 0; }
+        }
+
         /* 步驟勾選 */
         .step-checkbox i { transition: color .2s; }
         .step-row { transition: opacity .2s; }
@@ -967,21 +984,91 @@
             }
         }
 
+        // 五組「大功告成」慶祝變化組合：文字＋對應的動畫效果，每次隨機挑一組出現
+        const CELEBRATION_VARIANTS = [
+            { emoji: '🙇‍♂️', message: '大師級作品！請收下我的膝蓋 🙇‍♂️', effect: 'bow' },
+            { emoji: '🎉', message: '隔壁小孩都饞哭了！你是烘焙天才吧 🎉', effect: 'envy' },
+            { emoji: '㊕', message: '今日料理爭霸賽：你獲得了特級廚師稱號！㊕', effect: 'trophy' },
+            { emoji: '✨', message: '出爐的這一秒，全宇宙最幸福的就是你廚房！✨', effect: 'starry' },
+            { emoji: '🤤', message: '太過分了！這陣香氣直接把我的靈魂吸走！🤤', effect: 'aroma' },
+            { emoji: '🎨', message: '快拿紅線圍起來，這是美術館等級的藝術品！🎨', effect: 'gallery' },
+        ];
+
         function finishRecipe() {
             if (!currentDetailStepsTotal || checkedSteps.size < currentDetailStepsTotal) return;
+            const variant = CELEBRATION_VARIANTS[Math.floor(Math.random() * CELEBRATION_VARIANTS.length)];
             launchConfetti();
+            playCelebrationEffect(variant.effect);
             const overlay = document.createElement('div');
             overlay.className = 'fixed inset-0 flex items-center justify-center z-[9998] px-6';
             overlay.style.background = 'rgba(58,42,30,0.45)';
             overlay.innerHTML = `<div class="bg-white rounded-[2rem] px-8 sm:px-12 py-8 sm:py-10 text-center shadow-2xl celebrate-pop">
-                <div class="text-6xl mb-3">🎉</div>
-                <h2 class="font-display text-2xl sm:text-3xl font-bold mb-2" style="color:var(--jam)">恭喜美味出爐！</h2>
+                <div class="text-6xl mb-3">${variant.emoji}</div>
+                <h2 class="font-display text-xl sm:text-2xl font-bold mb-2 leading-snug" style="color:var(--jam)">${variant.message}</h2>
                 <p class="text-sm mb-6" style="color:var(--espresso-soft)">辛苦了，好好享受你的成果吧</p>
                 <button onclick="this.closest('.fixed').remove()" class="btn-primary">太棒了！</button>
             </div>`;
             document.body.appendChild(overlay);
             overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
             setTimeout(() => { if (overlay.parentElement) overlay.remove(); }, 8000);
+        }
+
+        // 純 DOM + CSS 動畫的 emoji 特效引擎，給五種「大功告成」變化共用，不依賴外部套件
+        function spawnEmojiParticles({ emojis, count = 22, duration = 2600, mode = 'rise' }) {
+            const container = document.createElement('div');
+            container.style.cssText = 'position:fixed;inset:0;z-index:9997;pointer-events:none;overflow:hidden;';
+            document.body.appendChild(container);
+            for (let i = 0; i < count; i++) {
+                const el = document.createElement('span');
+                el.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+                el.style.position = 'absolute';
+                el.style.fontSize = (20 + Math.random() * 22) + 'px';
+                el.style.left = Math.random() * 100 + 'vw';
+                el.style.willChange = 'transform, opacity';
+                const delay = Math.random() * 400;
+                const dur = duration + Math.random() * 900;
+                if (mode === 'rise') {
+                    el.style.bottom = '-40px';
+                    el.style.animation = `celebrateRise ${dur}ms ease-out ${delay}ms forwards`;
+                } else if (mode === 'fall') {
+                    el.style.top = '-40px';
+                    el.style.animation = `celebrateFall ${dur}ms ease-in ${delay}ms forwards`;
+                } else if (mode === 'burst') {
+                    el.style.top = '50%';
+                    el.style.left = '50%';
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 120 + Math.random() * 260;
+                    el.style.setProperty('--dx', Math.cos(angle) * dist + 'px');
+                    el.style.setProperty('--dy', Math.sin(angle) * dist + 'px');
+                    el.style.animation = `celebrateBurst ${dur}ms cubic-bezier(.15,.8,.35,1) ${delay}ms forwards`;
+                }
+                container.appendChild(el);
+            }
+            setTimeout(() => container.remove(), duration + 1300);
+        }
+
+        // 依「大功告成」隨機挑到的變化組合，播放對應風格的動畫
+        function playCelebrationEffect(type) {
+            switch (type) {
+                case 'bow': // 跪拜致敬：緩緩升起，像焚香致意
+                    spawnEmojiParticles({ emojis: ['🙇‍♂️', '🙏', '✨'], count: 16, duration: 2800, mode: 'rise' });
+                    break;
+                case 'envy': // 羨慕鬧哄哄：像下雨一樣熱鬧灑落
+                    spawnEmojiParticles({ emojis: ['😭', '🤤', '🎉', '👏'], count: 28, duration: 2200, mode: 'fall' });
+                    break;
+                case 'trophy': // 頒獎綻放：從中心爆發式散開
+                    spawnEmojiParticles({ emojis: ['🏆', '⭐', '🎖️'], count: 20, duration: 2400, mode: 'burst' });
+                    break;
+                case 'starry': // 星河閃爍：緩緩飄升，夢幻感
+                    spawnEmojiParticles({ emojis: ['✨', '🌟', '💫'], count: 26, duration: 3200, mode: 'rise' });
+                    break;
+                case 'aroma': // 靈魂出竅：香氣裊裊上升飄散
+                    spawnEmojiParticles({ emojis: ['🤤', '👻', '💨'], count: 20, duration: 2800, mode: 'rise' });
+                    break;
+                case 'gallery': // 美術館揭幕：畫框/畫作從中心爆發式綻放，像展覽開幕瞬間
+                    spawnEmojiParticles({ emojis: ['🖼️', '🎨', '🏛️'], count: 18, duration: 2600, mode: 'burst' });
+                    break;
+            }
         }
 
         // 純前端 canvas 彩色紙屑動畫，不依賴外部套件
