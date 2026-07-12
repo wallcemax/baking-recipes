@@ -1,4 +1,4 @@
-const CACHE_NAME = 'baking-recipe-cache-v7';
+const CACHE_NAME = 'baking-recipe-cache-v8';
 const APP_SHELL = [
   './',
   './index.html',
@@ -66,6 +66,21 @@ self.addEventListener('fetch', event => {
         })
         .catch(() => cached);
       return cached || networkFetch;
+    })
+  );
+});
+
+// 點擊系統通知（例如計時器時間到）時，把使用者帶回這個 PWA：
+// 如果已經有視窗開著就直接切過去（因為網站本身已經會記住上次在看的食譜，
+// 切回來會自動翻回原本那篇），沒有開著的視窗才另外開一個新的
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+      for (const client of clientList) {
+        if ('focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('./index.html');
     })
   );
 });
