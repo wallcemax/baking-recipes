@@ -971,6 +971,7 @@
             dashGameCleanup();
             dinerGameCleanup();
             tinyDinerCleanup();
+            rpgCleanup();
             document.getElementById('game-modal').classList.add('hidden');
             consumeModalHistoryState(fromPopState);
         }
@@ -981,6 +982,7 @@
             dashGameCleanup();
             dinerGameCleanup();
             tinyDinerCleanup();
+            rpgCleanup();
             document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
             document.getElementById('game-modal-body').innerHTML = `
                 <button onclick="playSfx('click'); startQteGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:linear-gradient(135deg, #FCF2DC, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
@@ -1003,11 +1005,17 @@
                     <p class="font-display font-bold text-lg">深夜食堂</p>
                     <p class="text-xs mt-1" style="color:#B3A492">文字生存冒險，撐過 20 天的離奇夜晚，別讓生命、名聲或資金歸零！</p>
                 </button>
-                <button onclick="playSfx('click'); startTinyDinerGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:linear-gradient(135deg, #FDE8D8, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
+                <button onclick="playSfx('click'); startTinyDinerGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:linear-gradient(135deg, #FDE8D8, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
                     <div class="text-4xl mb-2">🏮</div>
                     <p class="font-display font-bold text-lg">小餐廳經營模擬</p>
                     <p class="text-xs mt-1" style="color:#B3A492">用平台真實食譜的熱量換算售價，排菜單、抓備料量，經營 10 天看誰賺最多！</p>
                 </button>
+                ${isAdmin() ? `
+                <button onclick="playSfx('click'); startRpgGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:linear-gradient(135deg, #F4E4CE, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
+                    <div class="text-4xl mb-2">🗺️</div>
+                    <p class="font-display font-bold text-lg">異世界料理者 <span class="text-xs font-normal" style="color:#B3A492">（搶先體驗版・僅管理者可見）</span></p>
+                    <p class="text-xs mt-1" style="color:#B3A492">回合制料理 RPG，在暖廚村跟麥穗平原探索、打怪升級，更多地區陸續開放中！</p>
+                </button>` : ''}
                 <div>
                     <h3 class="font-display font-semibold text-lg mb-3">🏆 排行榜</h3>
                     <div class="flex gap-2 mb-3 flex-wrap">
@@ -2338,6 +2346,457 @@
                     </div>
                 </div>
             `;
+        }
+
+
+        // ============================================================
+        // 異世界料理者（料理 RPG，第一版：暖廚村＋麥穗平原）
+        // ============================================================
+        const RPG_TILE = 32; // 每格像素大小
+        // 地圖用字元表示：# 樹木/牆（阻擋）、. 草地（可走，在野外地圖會觸發隨機遭遇）、
+        // P 石板路（可走、不會遭遇）、H NPC/建築（可走上去會觸發對話）、E 出口（可走上去會切換地區）
+        const RPG_MAPS = {
+            village: {
+                name: '暖廚村',
+                rows: [
+                    '############',
+                    '#..........#',
+                    '#.H......H.#',
+                    '#..........#',
+                    '#....H.....#',
+                    '#..........#',
+                    '#..........#',
+                    '#..........#',
+                    '#....EE....#',
+                    '############',
+                ],
+                start: { x: 6, y: 5 },
+                npcs: {
+                    '2,2': 'shop',
+                    '9,2': 'elder',
+                    '5,4': 'innkeeper',
+                },
+                exits: { '5,8': { to: 'plains', x: 6, y: 1 }, '6,8': { to: 'plains', x: 7, y: 1 } },
+                wild: false,
+            },
+            plains: {
+                name: '麥穗平原',
+                rows: [
+                    '##############',
+                    '#............#',
+                    '#.####...##..#',
+                    '#............#',
+                    '#....####....#',
+                    '#............#',
+                    '#............#',
+                    '#............#',
+                    '#............#',
+                    '#............#',
+                    '#......EE....#',
+                    '##############',
+                ],
+                start: { x: 7, y: 1 },
+                npcs: {},
+                exits: { '6,10': { to: 'village', x: 5, y: 7 }, '7,10': { to: 'village', x: 6, y: 7 } },
+                wild: true,
+                encounterRate: 0.14,
+                monsters: ['bread_slime', 'ferment_goblin', 'weed_rabbit'],
+            },
+        };
+
+        const RPG_MONSTERS = {
+            bread_slime: { name: '麵包史萊姆', emoji: '🍞', hp: 12, atk: 3, def: 1, exp: 8, gold: 5 },
+            ferment_goblin: { name: '發酵哥布林', emoji: '👺', hp: 18, atk: 5, def: 2, exp: 14, gold: 10 },
+            weed_rabbit: { name: '雜草兔', emoji: '🐰', hp: 10, atk: 4, def: 0, exp: 6, gold: 4 },
+        };
+
+        const RPG_NPC_INFO = {
+            shop: { name: '食譜商店', icon: '🏪', lines: ['歡迎光臨！可惜這一版還沒開放購買功能，之後會陸續加進來喔。'] },
+            elder: { name: '村長', icon: '👴', lines: ['孩子，這個世界失去美味已經好久了……', '往南邊的麥穗平原去看看吧，那裡的魔物最近變得特別暴躁。', '打倒一些怪物、累積經驗，你會慢慢變強的。'] },
+            innkeeper: { name: '旅館老闆', icon: '🛏️', lines: ['要不要在這裡休息一下？（這一版先讓你免費全回復！）'], heal: true },
+        };
+
+        let rpgState = null;
+        function rpgCleanup() {
+            document.removeEventListener('keydown', rpgKeyHandler);
+            rpgState = null;
+        }
+
+        function rpgDefaultPlayer() {
+            return {
+                level: 1, exp: 0, expToNext: 20,
+                hp: 30, maxHp: 30, atk: 6, def: 2, sp: 10, maxSp: 10,
+                gold: 50,
+                weaponName: '新手鍋鏟', armorName: '破舊圍裙',
+                items: { '家常蛋花湯': 2 },
+            };
+        }
+
+        function startRpgGame() {
+            if (!isAdmin()) { alert('這個遊戲還在測試中，暫時只有管理者能玩'); return; }
+            if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup(); tinyDinerCleanup(); rpgCleanup();
+            ensureAudioContext();
+            rpgState = {
+                player: rpgDefaultPlayer(),
+                region: 'village',
+                pos: { ...RPG_MAPS.village.start },
+                mode: 'map', // map | battle | dialogue
+                battle: null,
+            };
+            playSfx('click');
+            renderRpgMap();
+        }
+
+        function rpgKeyHandler(e) {
+            if (!rpgState || rpgState.mode !== 'map') return;
+            const dirs = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0], w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] };
+            if (dirs[e.key]) { e.preventDefault(); rpgMove(dirs[e.key][0], dirs[e.key][1]); }
+        }
+
+        function renderRpgMap() {
+            const state = rpgState;
+            if (!state) return;
+            const map = RPG_MAPS[state.region];
+            const width = map.rows[0].length * RPG_TILE;
+            const height = map.rows.length * RPG_TILE;
+            document.getElementById('game-modal-title').textContent = `🗺️ ${map.name}`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="flex justify-between items-center mb-2 text-xs" style="color:#B3A492">
+                    <span>Lv.${state.player.level} ・ ❤️${state.player.hp}/${state.player.maxHp} ・ 💠${state.player.sp}/${state.player.maxSp}</span>
+                    <span>💰${state.player.gold}</span>
+                </div>
+                <canvas id="rpg-canvas" width="${width}" height="${height}" style="display:block; margin:0 auto; border-radius:1rem; border:1px solid var(--line); max-width:100%;"></canvas>
+                <p id="rpg-dialogue-box" class="text-xs text-center mt-2" style="color:#B3A492; min-height:1.2rem;"></p>
+                <div class="flex flex-col items-center gap-1 mt-3" style="max-width:150px; margin-left:auto; margin-right:auto;">
+                    <button onclick="rpgMove(0,-1)" class="btn-secondary !px-4 !py-2">⬆️</button>
+                    <div class="flex gap-1">
+                        <button onclick="rpgMove(-1,0)" class="btn-secondary !px-4 !py-2">⬅️</button>
+                        <button onclick="rpgMove(0,1)" class="btn-secondary !px-4 !py-2">⬇️</button>
+                        <button onclick="rpgMove(1,0)" class="btn-secondary !px-4 !py-2">➡️</button>
+                    </div>
+                </div>
+                <p class="text-xs text-center mt-2" style="color:#B3A492">電腦可用方向鍵/WASD 移動</p>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">離開遊戲</button>
+            `;
+            document.removeEventListener('keydown', rpgKeyHandler);
+            document.addEventListener('keydown', rpgKeyHandler);
+            rpgDraw();
+        }
+
+        function rpgDraw() {
+            const state = rpgState;
+            const map = RPG_MAPS[state.region];
+            const canvas = document.getElementById('rpg-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const T = RPG_TILE;
+            // 用網站本身的暖色調色盤畫圖磚紋理，取代原本的純色色塊
+            const GRASS_A = '#9BC49B', GRASS_B = '#8FB98E';
+            const PATH_A = '#E4D5BE', PATH_B = '#D9C4AE';
+
+            // 用「座標的簡易雜訊」決定棋盤式雙色紋理，同一張地圖每次畫出來都一樣（不會閃爍）
+            const shade = (x, y) => (x + y) % 2 === 0;
+
+            for (let y = 0; y < map.rows.length; y++) {
+                for (let x = 0; x < map.rows[y].length; x++) {
+                    const ch = map.rows[y][x];
+                    const px = x * T, py = y * T;
+
+                    if (ch === '~') {
+                        // 水：深淺藍雙色 + 波浪線
+                        ctx.fillStyle = shade(x, y) ? '#7FB3C9' : '#74A8BE';
+                        ctx.fillRect(px, py, T, T);
+                        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.moveTo(px + 3, py + T * 0.35); ctx.quadraticCurveTo(px + T / 2, py + T * 0.2, px + T - 3, py + T * 0.35);
+                        ctx.moveTo(px + 3, py + T * 0.7); ctx.quadraticCurveTo(px + T / 2, py + T * 0.55, px + T - 3, py + T * 0.7);
+                        ctx.stroke();
+                    } else if (ch === 'E') {
+                        // 出口：底色用草地，中間畫一個發光傳送門圖案
+                        ctx.fillStyle = shade(x, y) ? GRASS_A : GRASS_B;
+                        ctx.fillRect(px, py, T, T);
+                        const grad = ctx.createRadialGradient(px + T / 2, py + T / 2, 2, px + T / 2, py + T / 2, T / 2);
+                        grad.addColorStop(0, 'rgba(244,197,94,0.9)');
+                        grad.addColorStop(1, 'rgba(244,197,94,0.05)');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath(); ctx.arc(px + T / 2, py + T / 2, T / 2 - 2, 0, Math.PI * 2); ctx.fill();
+                    } else if (ch === 'P') {
+                        // 石板路：暖灰底 + 幾顆小石頭紋理
+                        ctx.fillStyle = shade(x, y) ? PATH_A : PATH_B;
+                        ctx.fillRect(px, py, T, T);
+                        ctx.fillStyle = 'rgba(107,88,71,0.15)';
+                        ctx.beginPath(); ctx.arc(px + T * 0.3, py + T * 0.35, 2, 0, Math.PI * 2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(px + T * 0.7, py + T * 0.65, 2.5, 0, Math.PI * 2); ctx.fill();
+                    } else {
+                        // 草地（含樹木/建築的底層）：雙色棋盤 + 隨機草葉小線條
+                        ctx.fillStyle = shade(x, y) ? GRASS_A : GRASS_B;
+                        ctx.fillRect(px, py, T, T);
+                        ctx.strokeStyle = 'rgba(58,42,30,0.12)';
+                        ctx.lineWidth = 1;
+                        const seed = (x * 7 + y * 13) % 5;
+                        for (let i = 0; i < 3; i++) {
+                            const bx = px + 4 + ((seed + i * 3) % (T - 8));
+                            const by = py + 6 + ((seed * 2 + i * 5) % (T - 12));
+                            ctx.beginPath(); ctx.moveTo(bx, by + 5); ctx.lineTo(bx + 1.5, by); ctx.stroke();
+                        }
+                    }
+
+                    if (ch === '#') {
+                        // 樹：陰影橢圓 + 樹幹 + 三層樹冠
+                        ctx.fillStyle = 'rgba(58,42,30,0.15)';
+                        ctx.beginPath(); ctx.ellipse(px + T / 2, py + T - 4, T * 0.3, 4, 0, 0, Math.PI * 2); ctx.fill();
+                        ctx.fillStyle = '#7A5A3A';
+                        ctx.fillRect(px + T / 2 - 2, py + T * 0.55, 4, T * 0.35);
+                        ctx.fillStyle = '#4F6F45';
+                        ctx.beginPath(); ctx.arc(px + T / 2, py + T * 0.42, T * 0.28, 0, Math.PI * 2); ctx.fill();
+                        ctx.fillStyle = '#5A7A52';
+                        ctx.beginPath(); ctx.arc(px + T / 2 - 5, py + T * 0.32, T * 0.2, 0, Math.PI * 2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(px + T / 2 + 6, py + T * 0.3, T * 0.18, 0, Math.PI * 2); ctx.fill();
+                    }
+                    if (ch === 'H') {
+                        // 建築：陰影 + 屋身 + 三角屋頂 + 小門
+                        ctx.fillStyle = 'rgba(58,42,30,0.15)';
+                        ctx.beginPath(); ctx.ellipse(px + T / 2, py + T - 3, T * 0.35, 4, 0, 0, Math.PI * 2); ctx.fill();
+                        ctx.fillStyle = '#E8DCC8';
+                        ctx.fillRect(px + T * 0.18, py + T * 0.45, T * 0.64, T * 0.45);
+                        ctx.fillStyle = '#A8324A';
+                        ctx.beginPath();
+                        ctx.moveTo(px + T * 0.1, py + T * 0.48); ctx.lineTo(px + T / 2, py + T * 0.15); ctx.lineTo(px + T * 0.9, py + T * 0.48);
+                        ctx.closePath(); ctx.fill();
+                        ctx.fillStyle = '#6B5847';
+                        ctx.fillRect(px + T * 0.44, py + T * 0.68, T * 0.14, T * 0.22);
+                    }
+
+                    // 淡淡的格線，讓每格圖磚有邊界感
+                    ctx.strokeStyle = 'rgba(58,42,30,0.06)';
+                    ctx.strokeRect(px, py, T, T);
+                }
+            }
+
+            // 角色：腳下陰影 + emoji
+            const cx = state.pos.x * T + T / 2, cy = state.pos.y * T + T / 2;
+            ctx.fillStyle = 'rgba(58,42,30,0.2)';
+            ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.32, T * 0.26, 4, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.font = `${T - 4}px sans-serif`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText('🧑‍🍳', cx, cy - 2);
+        }
+
+        function rpgMove(dx, dy) {
+            const state = rpgState;
+            if (!state || state.mode !== 'map') return;
+            const map = RPG_MAPS[state.region];
+            const nx = state.pos.x + dx, ny = state.pos.y + dy;
+            if (ny < 0 || ny >= map.rows.length || nx < 0 || nx >= map.rows[0].length) return;
+            const ch = map.rows[ny][nx];
+            if (ch === '#') return; // 樹木擋路
+            state.pos = { x: nx, y: ny };
+            playSfx('tick');
+
+            // NPC 互動
+            const npcKey = `${nx},${ny}`;
+            if (map.npcs && map.npcs[npcKey]) {
+                rpgDraw();
+                rpgTalkTo(map.npcs[npcKey]);
+                return;
+            }
+            // 地區出口
+            if (map.exits && map.exits[npcKey]) {
+                const exit = map.exits[npcKey];
+                state.region = exit.to;
+                state.pos = { x: exit.x, y: exit.y };
+                renderRpgMap();
+                return;
+            }
+            rpgDraw();
+            // 野外隨機遭遇
+            if (map.wild && ch === '.' && Math.random() < map.encounterRate) {
+                setTimeout(() => rpgStartBattle(map.monsters[Math.floor(Math.random() * map.monsters.length)]), 150);
+            }
+        }
+
+        function rpgTalkTo(npcId) {
+            const info = RPG_NPC_INFO[npcId];
+            const box = document.getElementById('rpg-dialogue-box');
+            if (!info || !box) return;
+            const line = info.lines[Math.floor(Math.random() * info.lines.length)];
+            box.textContent = `${info.icon} ${info.name}：${line}`;
+            if (info.heal) {
+                const state = rpgState;
+                state.player.hp = state.player.maxHp;
+                state.player.sp = state.player.maxSp;
+                playSfx('success');
+                setTimeout(() => { renderRpgMap(); }, 900);
+            }
+        }
+
+        // ---------- 回合制戰鬥 ----------
+        function rpgStartBattle(monsterId) {
+            const state = rpgState;
+            const template = RPG_MONSTERS[monsterId];
+            state.mode = 'battle';
+            state.battle = {
+                monster: { ...template, curHp: template.hp },
+                log: `一隻${template.name}擋住了去路！`,
+            };
+            playSfx('burnt');
+            renderRpgBattle();
+        }
+
+        function renderRpgBattle() {
+            const state = rpgState;
+            const b = state.battle;
+            const p = state.player;
+            document.getElementById('game-modal-title').textContent = '⚔️ 戰鬥中';
+            const hpPct = Math.max(0, Math.round(b.monster.curHp / b.monster.hp * 100));
+            const pHpPct = Math.max(0, Math.round(p.hp / p.maxHp * 100));
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center mb-4">
+                    <div class="text-6xl mb-1">${b.monster.emoji}</div>
+                    <p class="font-semibold text-sm">${b.monster.name}</p>
+                    <div style="height:8px; border-radius:999px; overflow:hidden; background:var(--line); max-width:200px; margin:4px auto;">
+                        <div style="height:100%; width:${hpPct}%; background:#C4453F; transition:width .3s;"></div>
+                    </div>
+                </div>
+                <p class="text-xs text-center mb-4" style="color:#B3A492; min-height:2rem;">${b.log}</p>
+                <div class="mb-3">
+                    <div class="flex justify-between text-xs mb-1"><span>你（Lv.${p.level}）</span><span>❤️${p.hp}/${p.maxHp} 💠${p.sp}/${p.maxSp}</span></div>
+                    <div style="height:8px; border-radius:999px; overflow:hidden; background:var(--line);">
+                        <div style="height:100%; width:${pHpPct}%; background:var(--sage); transition:width .3s;"></div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="rpgBattleAction('attack')" class="btn-primary">🔪 攻擊</button>
+                    <button onclick="rpgBattleAction('skill')" class="btn-amber" ${p.sp < 3 ? 'disabled style="opacity:.4"' : ''}>🔥 熱炒攻擊（3 SP）</button>
+                    <button onclick="rpgBattleAction('item')" class="btn-secondary" ${!p.items['家常蛋花湯'] ? 'disabled style="opacity:.4"' : ''}>🍲 家常蛋花湯（${p.items['家常蛋花湯'] || 0}）</button>
+                    <button onclick="rpgBattleAction('flee')" class="btn-secondary">🏃 逃跑</button>
+                </div>
+            `;
+        }
+
+        function rpgBattleAction(action) {
+            const state = rpgState;
+            const b = state.battle;
+            const p = state.player;
+            if (!b) return;
+
+            if (action === 'flee') {
+                if (Math.random() < 0.6) {
+                    b.log = '你成功逃跑了！';
+                    playSfx('click');
+                    state.mode = 'map';
+                    setTimeout(renderRpgMap, 700);
+                    renderRpgBattleLogOnly();
+                    return;
+                } else {
+                    b.log = '逃跑失敗！';
+                }
+            } else if (action === 'attack') {
+                const dmg = Math.max(1, Math.round(p.atk - b.monster.def + (Math.random() * 3 - 1)));
+                b.monster.curHp = Math.max(0, b.monster.curHp - dmg);
+                b.log = `你用${p.weaponName}攻擊，造成 ${dmg} 點傷害！`;
+                playSfx('chop');
+            } else if (action === 'skill') {
+                if (p.sp < 3) return;
+                p.sp -= 3;
+                const dmg = Math.max(1, Math.round(p.atk * 1.8 - b.monster.def + (Math.random() * 3 - 1)));
+                b.monster.curHp = Math.max(0, b.monster.curHp - dmg);
+                b.log = `你使出「熱炒攻擊」，造成 ${dmg} 點傷害！`;
+                playSfx('perfect');
+            } else if (action === 'item') {
+                if (!p.items['家常蛋花湯']) return;
+                p.items['家常蛋花湯']--;
+                const heal = 15;
+                p.hp = Math.min(p.maxHp, p.hp + heal);
+                b.log = `你吃了一碗家常蛋花湯，回復了 ${heal} 點 HP！`;
+                playSfx('success');
+            }
+
+            if (b.monster.curHp <= 0) {
+                rpgBattleWin();
+                return;
+            }
+
+            // 怪物回合
+            setTimeout(() => {
+                const dmg = Math.max(1, Math.round(b.monster.atk - p.def + (Math.random() * 3 - 1)));
+                p.hp = Math.max(0, p.hp - dmg);
+                b.log += `\n${b.monster.name}反擊，你受到 ${dmg} 點傷害！`;
+                if (p.hp <= 0) {
+                    rpgBattleLose();
+                    return;
+                }
+                renderRpgBattle();
+            }, 500);
+            renderRpgBattleLogOnly();
+        }
+
+        function renderRpgBattleLogOnly() {
+            renderRpgBattle();
+        }
+
+        function rpgBattleWin() {
+            const state = rpgState;
+            const b = state.battle;
+            const p = state.player;
+            p.gold += b.monster.gold;
+            p.exp += b.monster.exp;
+            let leveledUp = false;
+            while (p.exp >= p.expToNext) {
+                p.exp -= p.expToNext;
+                p.level++;
+                p.maxHp += 8; p.maxSp += 2; p.atk += 2; p.def += 1;
+                p.hp = p.maxHp; p.sp = p.maxSp;
+                p.expToNext = p.level * 20;
+                leveledUp = true;
+            }
+            playSfx('perfect');
+            document.getElementById('game-modal-title').textContent = '🎉 戰鬥勝利';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-8">
+                    <div class="text-6xl mb-3 celebrate-pop">🏆</div>
+                    <p class="font-display text-xl font-bold mb-2" style="color:var(--jam)">擊敗了 ${b.monster.name}！</p>
+                    <p class="text-sm mb-2">獲得 ${b.monster.exp} 經驗值、${b.monster.gold} 金幣</p>
+                    ${leveledUp ? `<p class="text-sm font-bold mb-4" style="color:var(--honey)">✨ 升級了！目前 Lv.${p.level}</p>` : ''}
+                    <button onclick="rpgBackToMap()" class="btn-primary">繼續冒險</button>
+                </div>
+            `;
+        }
+
+        function rpgBattleLose() {
+            const state = rpgState;
+            const p = state.player;
+            const lostGold = Math.min(p.gold, Math.round(p.gold * 0.3));
+            p.gold -= lostGold;
+            p.hp = Math.round(p.maxHp * 0.5);
+            playSfx('burnt');
+            document.getElementById('game-modal-title').textContent = '💫 你倒下了…';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-8">
+                    <div class="text-6xl mb-3 dash-shake">💫</div>
+                    <p class="font-display text-xl font-bold mb-2" style="color:#C4453F">你被打敗了，被村民救回暖廚村</p>
+                    <p class="text-sm mb-4" style="color:#B3A492">掉了 ${lostGold} 金幣，HP 恢復一半</p>
+                    <button onclick="rpgBackToVillage()" class="btn-primary">返回村莊</button>
+                </div>
+            `;
+        }
+
+        function rpgBackToMap() {
+            const state = rpgState;
+            state.mode = 'map';
+            state.battle = null;
+            renderRpgMap();
+        }
+
+        function rpgBackToVillage() {
+            const state = rpgState;
+            state.mode = 'map';
+            state.battle = null;
+            state.region = 'village';
+            state.pos = { ...RPG_MAPS.village.start };
+            renderRpgMap();
         }
 
         function dashOpenRecipe(idx) {
