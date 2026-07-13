@@ -138,6 +138,7 @@
 
         /* 完成慶祝彈窗 */
         @keyframes celebratePop { from { transform: scale(.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        @keyframes rpgTargetPulse { 0%, 100% { transform: scale(1); opacity: 0.85; } 50% { transform: scale(1.12); opacity: 1; } }
         .celebrate-pop { animation: celebratePop .35s cubic-bezier(.22,1,.36,1); }
 
         /* 五種「大功告成」慶祝變化組合共用的 emoji 動畫 */
@@ -2397,6 +2398,101 @@
             innkeeper: { x: 836, y: 730, w: 78, h: 96 },
         };
         let rpgTerrainImg = null, rpgCharImg = null, rpgDungeonImg = null, rpgRoleImg = null, rpgAssetsReady = false;
+        const RPG_DECOR_SRC = {
+            town_grass: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAB1JREFUOI1jbDmW+Z+BAsBEieZRA0YNGDVgMBkAADGOAtL5/cdYAAAAAElFTkSuQmCC',
+            town_path: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAA9QTFRF/smcz4JUZaVWhMZp6qVsl6jXnAAAADVJREFUCNdjMIYCBmNjZQhDSdlZSUnZSInBxUnJxcVJxYXBBQpADEcXB0cRiIgjjAGVogYDAEvNH07O8/vPAAAAAElFTkSuQmCC',
+            town_mushroom: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAA9QTFRFAAAAvWxKhMZpR59KPyYx59IpKwAAAAF0Uk5TAEDm2GYAAABOSURBVAjXVc3BDYAwDAPAPDoCE5hO0DBACd5/JkJckPDrZEeKmRlplUbOAqOrIkAtiWdrAe8/MIC65sDYFyA44EJG04uvudwP1otzyxc3W0URVJw+qQQAAAAASUVORK5CYII=',
+            town_sign: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAA9QTFRFAAAAdjs26qVsvWxKPyYxWHQ6vwAAAAF0Uk5TAEDm2GYAAABMSURBVAjXY2BAAi4uUAoEGBhYXFycVFxcHBhYnJSUjZRUwAwgADGcjYHABMQwNBQUNkEVERRGFXFxcRQBmQM02dkEYgmLM1AChQEBABzPEe8EXSXBAAAAAElFTkSuQmCC',
+            town_door_a: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAA9QTFRFvWxKi5u0djs2PyYxwMvcKfco4QAAAD9JREFUCNdjEIQCBkEXMBBkEIEwHBlcnI2BwMSFwcUYDEAMBQYGJjCDSUlJgSBDEINhDGYIQtQIIjMYgMBYEAA1EhRkBG0FBQAAAABJRU5ErkJggg==',
+            town_door_b: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAA9QTFRFvWxKi5u0wMvcPyYxdjs234IUnAAAAD5JREFUCNdjEIQCBiUwUIQxlAQZjMFASRHKMFJkMGAAAmcQwwUImAkwHEVQGEoMBs4mUAZYjaEgEgNkMpABAIUqFGoMtgNLAAAAAElFTkSuQmCC',
+            town_barrel: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAxQTFRFAAAA/b5T44YoPyYx9daumAAAAAF0Uk5TAEDm2GYAAABLSURBVAjXY2BAgP//GRiY//8/wMB/NfwDg/3UsD8MdqtW7WH4v2rVf4afoaH5EOLX6lfrGf6t/7Wf4Vf81/UQ4t/qV/sZ7Fet+gMAyFslVD31cmIAAAAASUVORK5CYII=',
+            town_chest_open: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAB5QTFRFAAAAUmB8djs2i5u06qVsWmmIvWxKJitEwMvcPyYx7W5AMgAAAAF0Uk5TAEDm2GYAAABESURBVAjXY+CcCQYTGGZCAcPMZmMgsAAyWkOBIAKZ0e5SXu5SgcJIc3FJgzDUkqCM8vI0QlJKQABiWHQAQTOQIQgGMwGEPjgNVWt6+AAAAABJRU5ErkJggg==',
+            town_chest_closed: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAABVQTFRFAAAAUmB8i5u0wMvcdzgzvWxKPyYxqhIq/QAAAAF0Uk5TAEDm2GYAAABXSURBVAjXVY7BDYAgEAT3RQF2YA1EK0AaUHmTANt/Ce6a8GBek8kle0CgqAD4A4W47VGJzeEkeL6iSY4npeu2ZLKvUshh6T7ORBhJlCpxWYQWr87R+cYHGYEnldd0uB8AAAAASUVORK5CYII=',
+            town_fence_h: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAA9QTFRFAAAAdjs2vWxK6qVsPyYx9xQEvQAAAAF0Uk5TAEDm2GYAAAAzSURBVAjXY2DAAlhcXBzADBcggDCMjREMsBiCoaSkbGyMwjA2VFJSQmWYwHQhGFArUBkA0IoPpGKUpfUAAAAASUVORK5CYII=',
+            town_fence_post: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAxQTFRFAAAAvWxK6qVsPyYxKCLOlQAAAAF0Uk5TAEDm2GYAAAAiSURBVAjXY2BAAPs/QOL/fyDxaz0K8TUeRnybj4Ow2wMhAPx7FLq9XQYAAAAAAElFTkSuQmCC',
+            farm_soil: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAlQTFRFhMZp6qVsz4JUm5Uh5QAAACNJREFUCNdj4JoatoCBa2oaiAhDEA1YWCjEtGkwAsydCZUAAOquGadt6dm8AAAAAElFTkSuQmCC',
+            farm_grass: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAxQTFRFxuWNhMZpPyYxTpdMnuOQQwAAADRJREFUCNdjWP7//38GGBEPJP6CiXqG5d9BYveRZGHEH3sg8QFM7P/LsPzX/+8gifsgoh4AcN41xaeM9FMAAAAASUVORK5CYII=',
+            farm_wheat_a: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAxQTFRFAAAAhMZpxuWNPyYxKTbbAAAAAAF0Uk5TAEDm2GYAAABCSURBVAjXY2CAA/4PQML+D5D6t9/+D8O3+f/2M/xa/20+kPVrPVAMyPpbtw8oVja3hsG2am0BA4PZHKAWvg0IMxgAsLAcNz1od3QAAAAASUVORK5CYII=',
+            farm_wheat_b: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAxQTFRFAAAA44Yo/b5TPyYxPSBMUwAAAAF0Uk5TAEDm2GYAAABLSURBVAjXY+D/wMDAYP8HSP3bb/+H4dv8f/sZfq3/Nh/I+rUeKAZk/a3bBxQrm1vP8Ldq7XoG27K5NQy8dXsLGBhs44GaeWsYEAAALbsgUjWI6YMAAAAASUVORK5CYII=',
+            farm_wheat_c: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAxQTFRFAAAAvWxK6qVsPyYxKCLOlQAAAAF0Uk5TAEDm2GYAAABLSURBVAjXRYvBDYAgEMCaOIATHYziHgS9kVgAoiP5voB4vuyj6afwES/XvJeO9XViNRZGDYVwBmXoU7E0vFIryN4UOVoG2fyTzM8LDJkcPvDTeyYAAAAASUVORK5CYII=',
+            farm_crate: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAxQTFRFAAAA/b5T44YoPyYx9daumAAAAAF0Uk5TAEDm2GYAAABBSURBVAjXY7D///8Pw38gYPgZGprP8HVqaDzDzygQKwrEAouFwli/Vq1az/Bt1bL5MNZSEGvpeiCRtZ7BbtWqPQCGpSmINVty+AAAAABJRU5ErkJggg==',
+            farm_gate: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAABVQTFRFAAAA882sxHxx36mIPyYxhMZpTpdMIJNhjQAAAAF0Uk5TAEDm2GYAAABVSURBVAjXbcq7DYAwEINhF6zACBmBnuLEAEhOz+O8/wj4kpbu12dD0rORxG9c64jU3ZiOrrOx15TS/HT3/LyHOD4RJhgiTDDsiwkGwAQDYEJBEQqKPjB6JrCEEngyAAAAAElFTkSuQmCC',
+            farm_sheep: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAABtQTFRFAAAAi5u0JitEUmB8Pk5uwMvcWmmI////PyYxfHRyEgAAAAF0Uk5TAEDm2GYAAABjSURBVAjXY2BABh0dHTC6owFMtZdXdDBwdHS0uQmmdDAAuW1uaSBGeXl5UZoGhFGWlgFklIaXl7l4NIAZ5SDtQKnw8lAwAyhSDjQZqL0cZB4DR2trR0QE0AaO5uYOC4sGhAsAK9EsSV8rAxoAAAAASUVORK5CYII=',
+            farm_cow: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAB5QTFRFAAAA/3BtJitE4ZplUmB898KCwMvci5u0////PyYxOJ26DQAAAAF0Uk5TAEDm2GYAAABnSURBVAjXY2BAApwzOWeCGTOBYAKYETkzcgKYbwmEQAUzp2V0pM1kmDmjvCStLRPI6CgvUWvTnABmpJlaQhmhkSBGe4UbyJyZ7R1A0AkS6ego7wCJTBOUnDYNaBfnjOkzZ8yYiXACAH2fMAkBIA6HAAAAAElFTkSuQmCC',
+            farm_chicken: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAB5QTFRFAAAAJitE/b5T8oRi44YoUmB8wMvcw0s1////PyYx8TFYlQAAAAF0Uk5TAEDm2GYAAABeSURBVAjXY2DABjhnzpwAZswEAohA+fSZYHpyeeVMsES5RSeU0dExEyTTOb1DAqiNc0ZHRkeTJojRFtHRDhKZ1tHalp4JYqSldqSBGDNTIzo6gAyGmTNcWjxmImwGAJzvJ0eenr9mAAAAAElFTkSuQmCC',
+            icon_weapon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAx0lEQVR4nOXSIY4CQRCF4b8JGj16ktJzhhEjmIQz4Po6ewIEZ0CSMAcAwQRZtkPQK1Zt8jAw2c0mOzRISnVafPWqUgGQ+gaAUG0BAhk1BTjsTgCobwjVVrkIgDbLmfYfhdQ3ApQLvBGSBQ7IZjkToBijzOwXMvkHCIv1J5fjF/PvBeeyJKX0zDToXJZaFcWf7jB+MIoxklLC3YfP2zuMjQBA13W4+wDUdU3bttyTPHKy98gBkJlhZgM6fQD42SS4e9YOxlK9XleT3XvIplr8iQAAAABJRU5ErkJggg==',
+            icon_weapon2: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABGUlEQVR4nJ2QsUrDUBiFv3ttESE6ObQ4pSCCSiefoINTV3Fzk44i6HOIiyB9hK5mcXAXXCI05aagDooRFGrrICj8DtVikhubeLYL/zn3O0e1Ww0B2D29AFDklxhj0MHtAwDtVgNACgQQhiG6Hw35b4jv+6hmvSoAy5UFVt0loFAd0WfXjwBMIZEMMqUBlSckq57+ScpJkkZIdmrWq8B4E4DScZnPvQ8Ajs5NyqOJK0YCEHiD2HsawYTksLdO4A24u3wFoNsZWe+TBJO1e9svPJ28A+AaJ3OP1Ab7myv0oyHR27j31c0zG7VFKk4Z2ZnBO7iP+WwVkr8oQNa25nGNA8D3TgqgZAmwhapuZyRztdlcx3/pN11Rr11fkeV+Jlt6VZsAAAAASUVORK5CYII=',
+            icon_armor: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABXUlEQVR4nMWSMWvCUBSFP6ViBRXpYmi6ZFAwiot08AfokkEXf4Pg1KGu/QUdOgn+hi5d7OLg0KkUF6ERTMEKFeLQYq1FxSFd4iMxsXTr2d459553z7sP/huBA7z119p90gJoDnOC0DtzADqXb749zoPVHObQO3OqRhp9PBWCqsjcpUZOo8C+gaVdn6FqCXqaiRQNAZCS4hjmAgBzuSXZOPaYBJ3j9DTTL6bArLX2cEHAytZiVI00UjSEFA1hLrdUihkAKsUM5nIrtKqRJluLgf1eYgJn5nopT7s7YFT+pt0dUC/l8asDOHIeUlJcFCUbx6hagtfHCfp4KjS/CAKGucAwF6iKzKy15v5qQqQfRlVkoR00eHh5F+Ru7PLnqYizg6rILgOxxmwtRqQfBji4RoBVYcPz7ZfodUVYFTa+OX/TXT/RXg8XJ+een3jz8QTgun3fAOzd7oycsBs9PT/UF4Us93l1JAAAAABJRU5ErkJggg==',
+            icon_armor2: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABUUlEQVR4nMWToW5CMRSGvwu4BeTUTd3Boia4BkWWkMyhZuoXzMyyR1gmUNvUTM1eALEgIMGQkGAIhqSGNBXDjjBHOgN3bMBF7qimX89/zunfwn9HtLMOJ/hRgQAQJvV0c9yfAnBx+3FSKAqTehj3p3RXLZxzKVBKcXn2tCt0SCREYVIP5eYcEQEgjmO89wBYa3m7WR4TCY1Gg1y5Oc+c8fqlmMlzIoKIYK0lSRIAkiTBWsuWdVctOroEPxcdRITX2YzCVklrjTGGwXpNLZ9Ha81wOATAOUflQPX3ry8KcRynhwbrNefVKve9HiPn2LLMEbz3eO9RSlHL5zG9Hg/FIkoptiwr0hGMMWitGTmHVgpjTOqMUgrsfvLzckkkIgE4aiNAO1lwZT7hj40iQq6dLDJbPMWjji4FgInc7b3Ein0EOFQ97SL9Cxuff8Um8VgyAN+S2IvSypdkFwAAAABJRU5ErkJggg==',
+            icon_potion_yellow: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA4UlEQVR4nKWSPQ6CQBCF3xqDVlYWVBRbGyuPQUMNiWew4gxUnsDSxM5Cj0FCIhSW2lDZ2QgYxkY2/AwQ9HX7dr43sz8ALzqtZwSAYimpvG6p50NiKelt27TT9cGwCumDR30JYZb90rg6xd8JXRIDOrO1nEkAsPXmFXPjPlimHkAFaJmaMo/nFADgBwn2h2eFE3XYMjUY0oHIfQDA/XbtDGk8oyEdiKkHGq2Y0zVVBKjuIvdBL1dNwGm5mADfu2I/Un38Lo3rBgcV5+dUmYArLHt+kDT2G6/QpgIOoxSXKFHsBzVeX+r6HHGKAAAAAElFTkSuQmCC',
+            icon_potion_green: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA2klEQVR4nLWSMQ4BQRSGvxUOoVVINMoVhROQuIwj6MQBHGGjYmyhJhFRCCFkoyCR0IrQPoXF2jVjFf5kknkzmfd/789YvEtaUgZgs94B0MgtACw0SoYPus0ZANvxSffmTYlQbbm1/bNYts9Gd5PEX/9XGE/nGj/ESj5NtZgDoDNa0ZsfjATBEE0zx8pDHFdEKSUPKaXEccUYaGSE/sTm6nMNJjalQhzvF6Y47hMg6K4lCGZg+jDau/BPBCBT98jUvS/Ad0UyAEgdp/4u+7XBR4JfpG1w8YaxGtwAkvFRMuzSW9MAAAAASUVORK5CYII=',
+            icon_potion_white: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA00lEQVR4nL2RMQrCQBBFX4IewcITiI1lxMLKVkgreICcwiPYaeER0ilrQOsUFikEGyEpbAJaWNuOhUk0ELNr44Nlh2Vm/t8ZixcyjwSAML4DsJ62ACw0NPJgsYsBaN6OupoSdnZbl1mneIyXEyP1KiQ7/yO3+U3VfIjjXht30AVgczizPV2NHNg16nXOykl+IKKUkhyllPiBGA20+MI+cnhkSw0jh2HfRPttU/ygMPCprnVgUz9p8y0AeJ4HwMhd6eqqG6RpalyYY+tTfmyQJMlPDZ70ck9eAxV3mQAAAABJRU5ErkJggg==',
+            icon_potion_blue: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA/ElEQVR4nI2TIU8DQRCFvyPIashpFAbZBnG/ABIEArOuCQr+AoLfgK0lWUmWTYM+QZoqMPyEC9XNumYq2l63vZ1un3wzb+a9nbuCLsR6YT4sAeiNGh5uCoAi0ctJioxRT2YH66eq6PEnNxvVFiBH9iUj7Is1DlAi3F6V3F1fAvDx/cfnb6PpOw7UTZnatsl6EeecbOCcE+tFtAHJCF/TPmHtrZ72qQbH7N7aFOtbA/H2pIP9N1DPpdWyX2IOnStYv3K6MIaFMQCsuWyEVnz/blqyer44OGSTS55e/qkGZ60gxjgEeqOGejLj7fU81u2eMRaPQ9gZMh+WyR9sCSzya8qmcjRPAAAAAElFTkSuQmCC',
+            icon_potion_red: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAwklEQVR4nKWRIQ7CQBBF3zZ7CU7QYHCUILgBDRyohuPUQbYVGAyChKrWkNQTFBbJIChNK5rMlpes2E3+n79/jIgIQF3XAIRhCGDQITbLMgDKslRq+gRxHLeXJEl8pvejNGeM7j/MgIu+xPVswmY5BeBwuZFVD68EwZCzZjoAzjn54ZyTNBdtoZLmIvZYRLyaHOciYrVQSLukeRugO137BRnqQLMFA2AB2G2/T/O9QtfHAtyra2PgrR9co7/B6fkeZfABmalRkKE2SuAAAAAASUVORK5CYII=',
+            gem_tan: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAnklEQVR4nO2SrQ7CMBSFv0sYhhdYMl8/j+VteJy9zYLDTyBI6pc0QWNAXAT769KWkVk+15NzTpP2CB+0OJ7YmwM9r7wEIHMND3sZ9Ke7cb+eAQRg0+nS1pVnzFwDkAxPC4IlU0LheUG0JBYG2AYuk7autAB2eZkMR8UOXej7s5b+dTXpSmSHHagu7xAZf9UbkjHma9ha653nU/6Z1QVvdSdAM5GbygoAAAAASUVORK5CYII=',
+            gem_green: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAsklEQVR4nO2RLQ7CQBBG327qUASLrAFTRRAokJyDC6DRPQWgSTgADlpDCEHVlGDAYAlBEHCD4acNS7sJwfHkN/O+EaOGble406QKQEDM4rp5xESXHavDGkDxQnpeEZ1cDIgBbGQA5UdH9GA/SQlJMuRniQaUqcRCfkM65bZs3b7UShUBJNcwtEvG7M+vUFi+K7GfwpFzy84szEyxOF59nitHy8bHmbY6b0ZOof9VAePRlBsLpUYzOfUQNgAAAABJRU5ErkJggg==',
+            gem_red: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABBklEQVR4nN2QMUoFMRRFzwwuQSurX2QEQbIIwWoGrF1AetdgWpdhbZHsQpuxEDIBhYD4QSuxs3g2Jj8fRh1bX5Xc3HPfJc35yYEcrvYBuH98Iq7fyLN+/+D24RWgYTOilEIpBUCbQWAJDNDEGIkxArDDzPwA1yEC0NZbF8JbTVp/91yq/wEuIdkotbgQ/i8z9we1vihARIRpmgDouo6m/O2vQdIaY/DeF8V7jzEGa+1csy14dRForLUCoLUGYBxH6vswDHNN5PTqBYBWa01KqbyklArc9/2366/PdjdpzjkJIUgIQZxz8lVdAAkh5HPxX97IxqOUKsZsVkpJ1qvAur4Asnd0LJ+or5ntUg6WmwAAAABJRU5ErkJggg==',
+            gem_cyan: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABMElEQVR4nKWTv0rDUBTGf7e0IKm4VCQ6Zq+RoqtDQcFn6OAr6FJwsdRFfAgX+wAOHQoWirh0EbXGRZEKDrUq6CINEslxSIxN1cS2H9zhHO73h8M5ajt3Iteqxu1jiy+8vN9z93wFoPyWdAyDQbxWD0gCcWQA5tptNjKZkMD04bEnEEf2a8mmUqHmjGmS+Ac5EolxyADJnbPl/phDIzkqcRRXGccoMoEM1MNAlGsXBUBN7KFUwI8TEgCpVPoW6XKV6voU+oLG0mZXIkRkX9exHIeHUgklrRUBOG1YACzms14Es/5bkuAmar0ewPcmdi96AZn5oz+zz5bLAKxpGpbjgGsXxbWL4icJnj+b/gHLR6EQ+tMxDAlmoMw6W/lJAHYbb6ib8x/uT80mALl0GvAu9BOa0H5a9t8zdAAAAABJRU5ErkJggg==',
+            gem_white: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABaElEQVR4nJ2SsUtCURTGf1eEqCENpARbkp5hBC5uNYRDS/oHtDQVzkE01BJkW2ND4dwkFPFoiqKpZkmKa02PhGqJgooWT4O+23v2gvSbzj3fOd/57uGo+Z1Rqe/3kyp+4uJk9QFAAaK1phMHC08mVompiAx8DfPR9wxAo/ZqOEAASqWST+Bo79LEYS8RTTdp1EyzEclkMj6B65F3E4cATrdmuNld+2X1PwgBDMXHe2qG9hdeHu97F4imm0yXDgGIprsXMJsOyLsI4gMLu4V4HQRNVH+8AUSklQ6LCEop8TAo5TcWVFOv11uq5WJOjq9useKDbK4vAhCZ3fA5cM+5UqngOA6FQoFUKtUSWJmbEIDJsQQAy/vnnXYBxLZtAKrVKgDudYbuHt9M89LeWeeiDPL5vGl0HOeHKBdz0l6UAPJ6se3GZrrW2ldj27Zord08kk3GJJuMCSAeQa99AcSyLLEsS1xRrbV8A9i4mQj/qFQFAAAAAElFTkSuQmCC',
+        };
+        const RPG_CROSSHAIR_SRC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAABGdBTUEAALGPC/xhBQAAADNQTFRF/////////////////////////v7+/////////////v7+////////////////AAAA////8SXH/gAAABB0Uk5Tbz+vT1+Pvx9/n9/PL+8PACwL6WsAAAHZSURBVFjD7dfbcoQgDABQlDtC4P+/tuWmgsBC24d2p3npjF2OQWIEZJvhPqP19xnolwK6BehZAIhyLcApAjNAGt4APPES0My5PuAc02NApN8ZGdPNABBp0r/EAIA93QbXq+EDp+R26AH8eGRZLl+a38HbAISnZ3CrHs4swkQUtAAI92fcjgDLQxIHPIE4XoIdAxZkKZxAuE57JX0PGu5UA6K4OgTivUQJ6GpmQyDOVheAv2S4nQMs92tx3AHkf4jtLGCxv44uALzI7Dxg/WIaOAHRfd17gD6fYwBMcwWGncivhMkA6febLhBSIPnx+fK2i5HbTgboKkAqAK8CUALGLseRAPvNeAfANaNXVM94B+C/DnIdqPWRqlwFvTpeV8soVgFRAccX24E7mypfa6r8bKo/0dbjfPgKwMsPC3RT6AGy/LTFFLZ5YLsWDl1VYWAWCBmropQDyWYBdksY3Tc+Yg4Q908ZKgqDzACkKDxUbjPpa4CWW83rddbmuRF+AnE7bXSrH0RB6RGgVTW+aCg6viCS9wAu44unu9v9KBjBWwAX8chwwKCl0fSS7rgG8N7eitQ9cctbF8PuAMvnFbW9aqpAR2cmCjPHPtoDKEy2dUAtAMFfOjsvAB8jnO4FmczRNwAAAABJRU5ErkJggg==';
+
+        // 村莊/平原場景美術素材（Kenney Tiny Town / Tiny Farm，CC0）：地板貼圖 + 純裝飾小物；
+        // 裝備圖示（Kenney Fantasy RPG Items，CC0）：武器/防具/道具/食材小圖示，取代原本的 emoji
+        const RPG_DECOR_IMG = {};
+        (function rpgLoadDecorAssets() {
+            Object.entries(RPG_DECOR_SRC).forEach(([key, src]) => {
+                const img = new Image();
+                img.src = src;
+                RPG_DECOR_IMG[key] = img;
+            });
+        })();
+
+        // 每張地圖的裝飾小物：純視覺、不擋路、不會被調查——只是讓地圖看起來更有生活感
+        const RPG_DECOR = {
+            village: [
+                { x: 8, y: 1, key: 'town_mushroom' },
+                { x: 15, y: 1, key: 'town_barrel' },
+                { x: 3, y: 6, key: 'town_sign' },
+                { x: 20, y: 6, key: 'town_fence_post' },
+                { x: 3, y: 10, key: 'town_chest_closed' },
+                { x: 20, y: 10, key: 'town_barrel' },
+                { x: 8, y: 15, key: 'town_mushroom' },
+                { x: 15, y: 15, key: 'town_chest_open' },
+            ],
+            plains: [
+                { x: 4, y: 3, key: 'farm_wheat_a' },
+                { x: 9, y: 3, key: 'farm_wheat_b' },
+                { x: 4, y: 5, key: 'farm_wheat_c' },
+                { x: 9, y: 5, key: 'farm_wheat_a' },
+                { x: 4, y: 7, key: 'farm_wheat_b' },
+                { x: 9, y: 7, key: 'farm_wheat_c' },
+                { x: 3, y: 9, key: 'farm_sheep' },
+                { x: 10, y: 9, key: 'farm_cow' },
+                { x: 5, y: 9, key: 'farm_chicken' },
+                { x: 7, y: 2, key: 'farm_gate' },
+            ],
+        };
+
+        // 武器／防具資料庫：icon 對應 RPG_DECOR_SRC 的 key，cost 是購買所需金幣（0 代表新手已經擁有，不用買）
+        const RPG_WEAPONS = {
+            '新手鍋鏟': { atk: 0, cost: 0, icon: 'icon_weapon', desc: '最基本的鍋鏟，勝在輕巧好用，是每個料理者的第一把武器。' },
+            '火焰炒鍋': { atk: 5, cost: 80, icon: 'icon_weapon2', desc: '掂起來沉甸甸的，掄起來攻擊力比新手鍋鏟更強。' },
+        };
+        const RPG_ARMORS = {
+            '破舊圍裙': { def: 0, cost: 0, icon: 'icon_armor', desc: '穿了很多年的圍裙，勉強擋一下油噴，聊勝於無。' },
+            '學徒制服': { def: 4, cost: 60, icon: 'icon_armor2', desc: '正式一點的廚師服，防禦力比破舊圍裙好上不少。' },
+        };
+        // 算「連同裝備加成」之後的實際攻擊/防禦力：只有主角有 weaponName/armorName 對得上這兩份清單，
+        // 夥伴／怪物身上沒有對應的裝備名稱，會自動回退成原本的 atk/def（不會出錯，也不會多加成）
+        function rpgEffectiveAtk(obj) {
+            const w = RPG_WEAPONS[obj.weaponName];
+            return obj.atk + (w ? w.atk : 0);
+        }
+        function rpgEffectiveDef(obj) {
+            const a = RPG_ARMORS[obj.armorName];
+            return obj.def + (a ? a.def : 0);
+        }
 
         // 特效粒子（Kenney Particle Pack，CC0）：升級/回復/施法/撞牆各用一種效果
         const RPG_PARTICLE_URLS = {
@@ -2529,7 +2625,7 @@
                 },
                 exits: { '11,17': { to: 'plains', x: 6, y: 1 }, '12,17': { to: 'plains', x: 7, y: 1 } },
                 wild: false,
-                viewport: { w: 9, h: 7 }, // 有這個欄位代表地圖比視窗大，要用鏡頭跟著角色捲動＋小地圖
+                viewport: { w: 12, h: 10 }, // 有這個欄位代表地圖比視窗大，要用鏡頭跟著角色捲動＋小地圖（放大過，讓移動時看得到更多範圍）
             },
             plains: {
                 name: '麥穗平原',
@@ -2574,6 +2670,16 @@
         const RPG_INGREDIENT_EMOJI = {
             '小麥': '🌾', '雞蛋': '🥚', '菇傘': '🍄', '史萊姆凝膠': '🟢', '哥布林辛香料': '🌶️',
         };
+        // 食材對應的小圖示（Kenney 寶石圖示，用顏色區分種類，取代原本純文字 emoji）
+        const RPG_INGREDIENT_ICON = {
+            '小麥': 'gem_tan', '雞蛋': 'gem_white', '菇傘': 'gem_green', '史萊姆凝膠': 'gem_cyan', '哥布林辛香料': 'gem_red',
+        };
+        // 產生「食材小圖示 + 名稱」的一小段 HTML，找不到對應圖示就退回原本的 emoji
+        function rpgIngredientIconHTML(name) {
+            const iconKey = RPG_INGREDIENT_ICON[name];
+            if (iconKey && RPG_DECOR_SRC[iconKey]) return `<img src="${RPG_DECOR_SRC[iconKey]}" style="width:14px;height:14px;image-rendering:pixelated;vertical-align:-2px;" />`;
+            return RPG_INGREDIENT_EMOJI[name] || '🌿';
+        }
 
         // 食譜資料庫：need 是烹調需要消耗的食材跟數量，煮出來的效果寫在下面的 RPG_ITEM_INFO
         // （烹調出來的成品，就是一般的「道具」，可以帶進戰鬥裡吃/使用）
@@ -2633,6 +2739,7 @@
                 hp: 30, maxHp: 30, atk: 6, def: 2, sp: 10, maxSp: 10, agi: 6,
                 gold: 50,
                 weaponName: '新手鍋鏟', armorName: '破舊圍裙',
+                ownedWeapons: ['新手鍋鏟'], ownedArmors: ['破舊圍裙'],
                 items: { '家常蛋花湯': 2 },
                 ingredients: {}, // 食材背包：{ 食材名稱: 數量 }
                 knownRecipes: ['家常蛋花湯'], // 已經學會、可以在烹飪背包裡製作的料理
@@ -2768,11 +2875,6 @@
             rpgHoldInterval = null;
         }
 
-        // 離開遊戲前先確認一次，避免不小心點到（按鈕本身也已經跟方向鈕拉開距離了）
-        function rpgConfirmLeave() {
-            if (confirm('確定要離開遊戲嗎？')) renderGameMenu();
-        }
-
         // ---------- 烹飪背包：把打怪/調查蒐集來的食材，換成戰鬥中能用的料理道具 ----------
         function rpgOpenCookScreen() {
             const state = rpgState;
@@ -2786,7 +2888,7 @@
             const p = rpgState.player;
             const ingredientNames = Object.keys(p.ingredients || {}).filter(k => p.ingredients[k] > 0);
             const ingredientHTML = ingredientNames.length
-                ? `<div class="flex flex-wrap gap-2 mb-5">${ingredientNames.map(n => `<span class="text-xs px-3 py-1 rounded-full" style="background:var(--cream)">${RPG_INGREDIENT_EMOJI[n] || '🌿'} ${n} × ${p.ingredients[n]}</span>`).join('')}</div>`
+                ? `<div class="flex flex-wrap gap-2 mb-5">${ingredientNames.map(n => `<span class="text-xs px-3 py-1 rounded-full" style="background:var(--cream)">${rpgIngredientIconHTML(n)} ${n} × ${p.ingredients[n]}</span>`).join('')}</div>`
                 : `<p class="text-xs mb-5" style="color:#B3A492">身上還沒有任何食材，去打怪或調查地圖上的🌿地點看看吧！</p>`;
             const recipesHTML = (p.knownRecipes || []).map(name => {
                 const recipe = RPG_RECIPES[name];
@@ -2795,18 +2897,14 @@
                 const canCook = needEntries.every(([ing, qty]) => (p.ingredients[ing] || 0) >= qty);
                 const needText = needEntries.map(([ing, qty]) => {
                     const owned = p.ingredients[ing] || 0;
-                    return `${RPG_INGREDIENT_EMOJI[ing] || '🌿'}${ing} x${qty}${owned < qty ? `<span style="color:#C4453F">（現有${owned}）</span>` : ''}`;
+                    return `${rpgIngredientIconHTML(ing)}${ing} x${qty}${owned < qty ? `<span style="color:#C4453F">（現有${owned}）</span>` : ''}`;
                 }).join('、');
                 const info = RPG_ITEM_INFO[name] || {};
-                const effectText = [
-                    info.heal ? `❤️${info.aoe ? '全體' : ''}+${info.heal}` : '',
-                    info.spRestore ? `💠+${info.spRestore}` : '',
-                    info.revive ? '可喚醒倒下夥伴' : '',
-                ].filter(Boolean).join('・');
+                const effectText = rpgItemEffectText(name);
                 return `
                     <div class="px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)">
                         <div class="flex justify-between items-center gap-2">
-                            <p class="font-medium text-sm">🍲 ${name}<span class="text-xs ml-2" style="color:#B3A492">${effectText}</span></p>
+                            <p class="font-medium text-sm">${rpgDishIconHTML(name)} ${name}<span class="text-xs ml-2" style="color:#B3A492">${effectText}</span></p>
                             <button onclick="rpgCookRecipe('${name}')" class="btn-amber !px-3 !py-1.5 text-xs shrink-0" ${canCook ? '' : 'disabled style="opacity:.4"'}>烹調</button>
                         </div>
                         <p class="text-xs mt-1" style="color:#B3A492">需要：${needText}</p>
@@ -2836,6 +2934,116 @@
             document.getElementById('game-modal-body').innerHTML = rpgCookScreenHTML(`🍳 成功煮出了一份「${name}」，已經放進道具欄！`);
         }
 
+        // ---------- 狀態畫面：非戰鬥時也能看主角/夥伴的完整數值 ----------
+        function rpgOpenStatusScreen() {
+            const state = rpgState;
+            if (!state || state.mode !== 'map') return;
+            playSfx('click');
+            document.getElementById('game-modal-title').textContent = '📊 隊伍狀態';
+            document.getElementById('game-modal-body').innerHTML = rpgStatusScreenHTML();
+        }
+
+        function rpgStatusCardHTML(obj) {
+            const atk = rpgEffectiveAtk(obj), def = rpgEffectiveDef(obj);
+            const atkBonus = atk - obj.atk, defBonus = def - obj.def;
+            return `
+                <div class="px-4 py-3 rounded-2xl mb-3" style="background:var(--cream)">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="font-display font-semibold">${obj.name}${obj.isCompanion ? '（夥伴）' : ''}</p>
+                        <span class="text-xs px-2 py-0.5 rounded-full" style="background:var(--honey); color:#fff;">Lv.${obj.level}</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs" style="color:#7A6A58">
+                        <p><img src="${RPG_DECOR_SRC.icon_potion_red}" style="width:14px;height:14px;image-rendering:pixelated;vertical-align:-2px;" /> HP　${obj.hp}/${obj.maxHp}</p>
+                        <p><img src="${RPG_DECOR_SRC.icon_potion_blue}" style="width:14px;height:14px;image-rendering:pixelated;vertical-align:-2px;" /> SP　${obj.sp}/${obj.maxSp}</p>
+                        <p>⚔️ 攻擊　${atk}${atkBonus ? `<span style="color:var(--sage)">（+${atkBonus}）</span>` : ''}</p>
+                        <p>🛡️ 防禦　${def}${defBonus ? `<span style="color:var(--sage)">（+${defBonus}）</span>` : ''}</p>
+                        <p>💨 敏捷　${obj.agi}</p>
+                        <p>✨ 經驗　${obj.exp}/${obj.expToNext}</p>
+                    </div>
+                    ${obj.weaponName ? `<p class="text-xs mt-2" style="color:#B3A492">🔪 武器：${obj.weaponName}${obj.armorName ? `　👕 防具：${obj.armorName}` : ''}</p>` : ''}
+                </div>`;
+        }
+
+        function rpgStatusScreenHTML() {
+            const state = rpgState;
+            const p = state.player;
+            const c = state.companion;
+            return `
+                <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}</p>
+                ${rpgStatusCardHTML(p)}
+                ${c ? rpgStatusCardHTML(c) : ''}
+                <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+            `;
+        }
+
+        // ---------- 裝備畫面：非戰鬥時可以切換/購買武器防具 ----------
+        function rpgOpenEquipScreen() {
+            const state = rpgState;
+            if (!state || state.mode !== 'map') return;
+            playSfx('click');
+            document.getElementById('game-modal-title').textContent = '🎽 裝備';
+            document.getElementById('game-modal-body').innerHTML = rpgEquipScreenHTML();
+        }
+
+        function rpgEquipRowHTML(slot, name, item, p) {
+            const ownedKey = slot === 'weapon' ? 'ownedWeapons' : 'ownedArmors';
+            const nameKey = slot === 'weapon' ? 'weaponName' : 'armorName';
+            const owned = (p[ownedKey] || []).includes(name);
+            const equipped = p[nameKey] === name;
+            const statText = slot === 'weapon' ? (item.atk ? `ATK+${item.atk}` : '') : (item.def ? `DEF+${item.def}` : '');
+            let action;
+            if (equipped) action = `<span class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:#fff;">已裝備</span>`;
+            else if (owned) action = `<button onclick="rpgEquip('${slot}','${name}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0">裝備</button>`;
+            else action = `<button onclick="rpgEquip('${slot}','${name}')" class="btn-secondary text-xs !px-3 !py-1.5 shrink-0" ${p.gold < item.cost ? 'disabled style="opacity:.4"' : ''}>💰${item.cost} 購買</button>`;
+            return `
+                <div class="flex items-center gap-3 px-3 py-2 rounded-2xl mb-2" style="background:var(--cream)">
+                    <img src="${RPG_DECOR_SRC[item.icon]}" style="width:32px;height:32px;image-rendering:pixelated;flex-shrink:0;" />
+                    <div class="flex-1 min-w-0">
+                        <p class="font-medium text-sm">${name}${statText ? ` <span style="color:#B3A492">${statText}</span>` : ''}</p>
+                        <p class="text-xs" style="color:#B3A492">${item.desc}</p>
+                    </div>
+                    ${action}
+                </div>`;
+        }
+
+        function rpgEquipScreenHTML(message) {
+            const p = rpgState.player;
+            const weaponRows = Object.entries(RPG_WEAPONS).map(([name, item]) => rpgEquipRowHTML('weapon', name, item, p)).join('');
+            const armorRows = Object.entries(RPG_ARMORS).map(([name, item]) => rpgEquipRowHTML('armor', name, item, p)).join('');
+            return `
+                ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
+                <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}</p>
+                <h3 class="font-display font-semibold mb-2">🔪 武器</h3>
+                ${weaponRows}
+                <h3 class="font-display font-semibold mb-2 mt-3">👕 防具</h3>
+                ${armorRows}
+                <div style="height:8px;"></div>
+                <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+            `;
+        }
+
+        function rpgEquip(slot, name) {
+            const p = rpgState.player;
+            const catalog = slot === 'weapon' ? RPG_WEAPONS : RPG_ARMORS;
+            const ownedKey = slot === 'weapon' ? 'ownedWeapons' : 'ownedArmors';
+            const nameKey = slot === 'weapon' ? 'weaponName' : 'armorName';
+            const item = catalog[name];
+            if (!item) return;
+            const owned = (p[ownedKey] || []).includes(name);
+            let message = `已裝備「${name}」！`;
+            if (!owned) {
+                if (p.gold < item.cost) return;
+                p.gold -= item.cost;
+                p[ownedKey] = [...(p[ownedKey] || []), name];
+                message = `花了 💰${item.cost} 買下並裝備了「${name}」！`;
+                playSfx('buy');
+            } else {
+                playSfx('click');
+            }
+            p[nameKey] = name;
+            document.getElementById('game-modal-body').innerHTML = rpgEquipScreenHTML(message);
+        }
+
         function renderRpgMap() {
             const state = rpgState;
             if (!state) return;
@@ -2860,9 +3068,10 @@
                 <div class="mt-4">${rpgJoystickHTML()}</div>
                 <p class="text-xs text-center mt-3" style="color:#B3A492">拖曳搖桿移動，電腦可用方向鍵/WASD</p>
                 <div style="height:20px;"></div>
-                <div class="grid grid-cols-2 gap-2">
-                    <button onclick="rpgOpenCookScreen()" class="btn-amber">🍳 烹飪背包</button>
-                    <button onclick="rpgConfirmLeave()" class="btn-secondary" style="opacity:0.75;">離開遊戲</button>
+                <div class="grid grid-cols-3 gap-2">
+                    <button onclick="rpgOpenCookScreen()" class="btn-amber text-xs !px-1">🍳 烹飪背包</button>
+                    <button onclick="rpgOpenStatusScreen()" class="btn-secondary text-xs !px-1">📊 狀態</button>
+                    <button onclick="rpgOpenEquipScreen()" class="btn-secondary text-xs !px-1">🎽 裝備</button>
                 </div>
             `;
             rpgJoystickInit();
@@ -2888,6 +3097,7 @@
             const canvas = document.getElementById('rpg-canvas');
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = false; // 像素風格素材要保持銳利，不能被瀏覽器預設的平滑縮放糊掉
             const T = RPG_TILE;
             const viewCols = map.viewport ? map.viewport.w : map.rows[0].length;
             const viewRows = map.viewport ? map.viewport.h : map.rows.length;
@@ -2907,9 +3117,19 @@
 
                     if (useReal) {
                         // 底層地形：水 / 泥土路 / 草地（樹木跟 NPC 也是站在草地上）
+                        // 村莊用 Tiny Town、平原用 Tiny Farm 的地板貼圖（比原本單純的地形圖磚更有場景感），
+                        // 素材還沒載入完成時，用原本的 RPG_TERRAIN_TILES 當退回方案
+                        const groundKey = state.region === 'plains' ? 'farm_grass' : 'town_grass';
+                        const pathKey = state.region === 'plains' ? 'farm_soil' : 'town_path';
+                        const groundImg = RPG_DECOR_IMG[groundKey], pathImg = RPG_DECOR_IMG[pathKey];
                         if (ch === '~') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.water, px, py, T);
-                        else if (ch === 'P') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.path, px, py, T);
-                        else rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.grass, px, py, T);
+                        else if (ch === 'P') {
+                            if (pathImg && pathImg.complete && pathImg.naturalWidth > 0) ctx.drawImage(pathImg, 0, 0, 16, 16, px, py, T, T);
+                            else rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.path, px, py, T);
+                        } else {
+                            if (groundImg && groundImg.complete && groundImg.naturalWidth > 0) ctx.drawImage(groundImg, 0, 0, 16, 16, px, py, T, T);
+                            else rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.grass, px, py, T);
+                        }
 
                         if (ch === 'E') {
                             // 出口：草地上疊一個發光傳送門光暈（素材裡沒有現成的傳送門圖案，用程式畫）
@@ -2922,6 +3142,11 @@
                         if (ch === '#') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.tree, px, py, T);
                         if (ch === 'H') {
                             const npcId = map.npcs[`${x},${y}`];
+                            // NPC 站的那一格先鋪一塊房子門面當背景，看起來像是站在自己的店門口／家門口
+                            if (state.region === 'village') {
+                                const doorImg = RPG_DECOR_IMG[npcId === 'elder' ? 'town_door_b' : 'town_door_a'];
+                                if (doorImg && doorImg.complete && doorImg.naturalWidth > 0) ctx.drawImage(doorImg, 0, 0, 16, 16, px, py, T, T);
+                            }
                             const spriteKey = (npcId && RPG_CHAR_TILES[npcId]) ? npcId : 'elder';
                             rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES[spriteKey], px, py, T);
                         }
@@ -2973,6 +3198,17 @@
                         ctx.fillText('🌿', px + T / 2, py + T / 2);
                     }
                 }
+            }
+
+            // 純裝飾小物（蘑菇、木箱、麥穗、小動物…）：不擋路、不能調查，只是讓地圖更有生活感
+            if (useReal) {
+                (RPG_DECOR[state.region] || []).forEach(d => {
+                    if (d.x < startX || d.x >= endX || d.y < startY || d.y >= endY) return;
+                    const img = RPG_DECOR_IMG[d.key];
+                    if (!img || !img.complete || img.naturalWidth === 0) return;
+                    const dpx = (d.x - cam.x) * T, dpy = (d.y - cam.y) * T;
+                    ctx.drawImage(img, 0, 0, 16, 16, dpx, dpy, T, T);
+                });
             }
 
             // 夥伴：畫在主角之前（如果剛好重疊，主角會蓋在上面），跟隨動畫用 companionAnimPos
@@ -3331,7 +3567,7 @@
             const isDead = curHp <= 0;
             const isTarget = isMonster && b.phase === 'command' && b.target && b.target.row === row && b.target.i === i && !isDead;
             const isActor = !isMonster && b.phase === 'command' && b.actor && b.actor.row === row && b.actor.i === i;
-            const isQueued = isPlayerObj && b.commands && b.commands[`${row}-${i}`];
+            const isQueued = isPlayerObj && b.phase === 'command' && b.commands && b.commands[`${row}-${i}`]; // 只有在「下指令」階段才要半透明，開始執行攻擊動畫後就要恢復正常，不然角色會整個回合都是半透明的
             const sheetMap = {
                 char: { img: rpgCharImg, url: RPG_CHAR_URL, tiles: RPG_CHAR_TILES, stride: RPG_STRIDE, w: 918, h: 203 },
                 dungeon: { img: rpgDungeonImg, url: RPG_DUNGEON_URL, tiles: RPG_DUNGEON_TILES, stride: RPG_DUNGEON_STRIDE, w: RPG_DUNGEON_W, h: RPG_DUNGEON_H },
@@ -3361,8 +3597,11 @@
             const clickAttr = interactive ? (isMonster ? `onclick="rpgSelectTarget('${row}', ${i})"` : `onclick="rpgSelectActor('${row}', ${i})"`) : '';
             return `
                 <div id="${domId}" ${clickAttr} class="rpg-combat-slot" style="width:${RPG_SLOT}px; cursor:${interactive ? 'pointer' : 'default'}; text-align:center; transition:opacity .5s, transform .5s, filter .12s; ${isDead ? 'opacity:0;' : (isQueued ? 'opacity:0.45;' : '')}">
-                    <div style="height:8px; line-height:8px; font-size:8px;">${isTarget ? '▼' : (isQueued ? '✓' : (isActor ? '●' : ''))}</div>
-                    <div style="border-radius:0.4rem; ${isTarget || isActor ? 'background:rgba(196,69,63,0.15); box-shadow:0 0 0 1.5px var(--jam);' : ''}">${visual}</div>
+                    <div style="height:8px; line-height:8px; font-size:8px;">${isQueued ? '✓' : (isActor ? '●' : '')}</div>
+                    <div style="position:relative; border-radius:0.4rem; ${isTarget || isActor ? 'background:rgba(196,69,63,0.15); box-shadow:0 0 0 1.5px var(--jam);' : ''}">
+                        ${visual}
+                        ${isTarget ? `<img src="${RPG_CROSSHAIR_SRC}" style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none; image-rendering:pixelated; filter:drop-shadow(0 0 2px rgba(196,69,63,0.85)); animation:rpgTargetPulse .8s ease-in-out infinite;" />` : ''}
+                    </div>
                     <div style="height:4px; border-radius:999px; overflow:hidden; background:var(--line); margin-top:2px;">
                         <div id="${domId}-hp" style="height:100%; width:${hpPct}%; background:${isPlayerObj ? 'var(--sage)' : '#C4453F'}; transition:width .3s;"></div>
                     </div>
@@ -3432,12 +3671,28 @@
         // 道具資料庫：selfOnly 只能用在自己身上；aoe 一次對全體我方生效（使用時不用再選目標）；
         // revive 可以用在已經倒下（HP 0）的隊友身上，把他救回來；spRestore 額外恢復 SP
         const RPG_ITEM_INFO = {
-            '家常蛋花湯': { heal: 15, selfOnly: false },
-            '野菇燉湯': { heal: 28, selfOnly: false },
-            '香草麵包': { heal: 18, selfOnly: false, aoe: true },
-            'Q彈史萊姆凍': { heal: 5, spRestore: 12, selfOnly: false },
-            '元氣烤串': { heal: 20, selfOnly: false, revive: true },
+            '家常蛋花湯': { heal: 15, selfOnly: false, icon: 'icon_potion_yellow' },
+            '野菇燉湯': { heal: 28, selfOnly: false, icon: 'icon_potion_green' },
+            '香草麵包': { heal: 18, selfOnly: false, aoe: true, icon: 'icon_potion_white' },
+            'Q彈史萊姆凍': { heal: 5, spRestore: 12, selfOnly: false, icon: 'icon_potion_blue' },
+            '元氣烤串': { heal: 20, selfOnly: false, revive: true, icon: 'icon_potion_red' },
         };
+        // 產生「料理小圖示」的 HTML，找不到對應圖示就退回 🍲
+        function rpgDishIconHTML(name) {
+            const iconKey = RPG_ITEM_INFO[name] && RPG_ITEM_INFO[name].icon;
+            if (iconKey && RPG_DECOR_SRC[iconKey]) return `<img src="${RPG_DECOR_SRC[iconKey]}" style="width:16px;height:16px;image-rendering:pixelated;vertical-align:-3px;" />`;
+            return '🍲';
+        }
+
+        // 把道具效果換成一句白話說明，戰鬥中的道具清單、烹飪背包都共用這個函式
+        function rpgItemEffectText(name) {
+            const info = RPG_ITEM_INFO[name] || {};
+            const parts = [];
+            if (info.heal) parts.push(`${info.aoe ? '全體隊友' : (info.selfOnly ? '自己' : '指定對象')}回復 HP+${info.heal}`);
+            if (info.spRestore) parts.push(`回復 SP+${info.spRestore}`);
+            if (info.revive) parts.push('可以喚醒已經倒下的夥伴');
+            return parts.join('、') || '效果不明';
+        }
 
         function rpgActionPanelHTML() {
             const state = rpgState;
@@ -3457,7 +3712,10 @@
             if (b.uiMode === 'item') {
                 const entries = Object.entries(p.items).filter(([, qty]) => qty > 0);
                 const rows = entries.length
-                    ? entries.map(([name, qty]) => `<button onclick="rpgOpenItemTarget('${name}')" class="btn-secondary w-full mb-2">🍲 ${name}（${qty}）</button>`).join('')
+                    ? entries.map(([name, qty]) => `
+                        <button onclick="rpgOpenItemTarget('${name}')" class="btn-secondary w-full" style="margin-bottom:2px;">${rpgDishIconHTML(name)} ${name}（${qty}）</button>
+                        <p class="text-xs" style="color:#B3A492; margin:0 0 8px 4px;">${rpgItemEffectText(name)}</p>
+                    `).join('')
                     : `<p class="text-xs text-center mb-2" style="color:#B3A492">身上沒有道具了</p>`;
                 return `${rows}<button onclick="rpgBackToMainMenu()" class="btn-secondary w-full">← 返回</button>`;
             }
@@ -3701,14 +3959,14 @@
                     const performHit = () => {
                         let dmg = 0;
                         if (cmd.action === 'attack') {
-                            dmg = Math.max(1, Math.round(actorObj.atk - targetObj.def + (Math.random() * 3 - 1)));
+                            dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) - rpgEffectiveDef(targetObj) + (Math.random() * 3 - 1)));
                             targetObj.curHp = Math.max(0, targetObj.curHp - dmg);
                             rpgLogAppend(`${actorObj.name}用${actorObj.weaponName}攻擊${targetObj.name}，造成 ${dmg} 點傷害！`);
                             playSfx('chop');
                         } else if (cmd.action === 'skill') {
                             const sk = RPG_SKILLS[cmd.extra];
                             actorObj.sp = Math.max(0, actorObj.sp - sk.sp);
-                            dmg = Math.max(1, Math.round(actorObj.atk * sk.mult - targetObj.def + (Math.random() * 3 - 1)));
+                            dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * sk.mult - rpgEffectiveDef(targetObj) + (Math.random() * 3 - 1)));
                             targetObj.curHp = Math.max(0, targetObj.curHp - dmg);
                             rpgLogAppend(`${actorObj.name}對${targetObj.name}使出「${sk.name}」，造成 ${dmg} 點傷害！`);
                             const center = rpgElementCenter(targetDomId); // 技能特效要打在怪物身上
@@ -3776,13 +4034,14 @@
                 } else {
                     // 怪物行動：隨機挑一位還活著的我方角色攻擊
                     const monsterObj = entry.obj;
+                    if (monsterObj.curHp <= 0) { runNext(); return; } // 這一輪稍早已經被打死了（例如敏捷排序在它前面的隊友剛好打死牠），不該再輪到牠出手
                     const alivePartyMembers = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
                     if (!alivePartyMembers.length) { runNext(); return; }
                     const victim = alivePartyMembers[Math.floor(Math.random() * alivePartyMembers.length)];
                     const victimDomId = `rpg-slot-party-${victim.row}-${victim.i}`;
                     const monsterDomId = `rpg-slot-monster-${entry.row}-${entry.i}`;
                     rpgLungeAttack(monsterDomId, -60, () => {
-                        const dmg = Math.max(1, Math.round(monsterObj.atk - victim.obj.def + (Math.random() * 3 - 1)));
+                        const dmg = Math.max(1, Math.round(monsterObj.atk - rpgEffectiveDef(victim.obj) + (Math.random() * 3 - 1)));
                         victim.obj.hp = Math.max(0, victim.obj.hp - dmg);
                         rpgFlashHit(victimDomId);
                         rpgFloatDamage(victimDomId, dmg, '#C4453F');
