@@ -123,6 +123,9 @@
             border-radius: 0; margin: 0;
         }
         #game-modal.rpg-fullscreen { align-items: stretch; justify-content: stretch; }
+        /* 電腦上螢幕很寬時，內容不要被拉開跑版，維持一個好閱讀的置中欄寬 */
+        #game-modal.rpg-fullscreen #game-modal-body { max-width: 480px; margin-left: auto; margin-right: auto; width: 100%; }
+        #game-modal.rpg-fullscreen #game-modal-header { max-width: 480px; margin-left: auto; margin-right: auto; }
 
         .fav-btn {
             width: 2.25rem; height: 2.25rem; border-radius: 999px;
@@ -317,7 +320,7 @@
     <!-- 遊戲場 Modal -->
     <div id="game-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
         <div class="bg-white w-full md:max-w-2xl max-h-[90vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
-            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" id="game-modal-header" style="border-color:var(--line)">
                 <h2 class="font-display text-xl sm:text-2xl font-bold" id="game-modal-title">🎮 遊戲場</h2>
                 <button onclick="closeGameModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
             </div>
@@ -2449,6 +2452,22 @@
             return true;
         }
 
+        // 把總表裡的某一格圖磚單獨裁出來，轉成小張圖片給 CSS 當可重複貼的背景用
+        // （戰鬥畫面的場景背景就是這樣鋪出草地紋理，不用另外準備素材檔）
+        let rpgTileDataUrlCache = {};
+        function rpgGetTileDataURL(tileCoord) {
+            const key = tileCoord.join(',');
+            if (rpgTileDataUrlCache[key]) return rpgTileDataUrlCache[key];
+            if (!rpgTerrainImg || !rpgTerrainImg.complete || rpgTerrainImg.naturalWidth === 0) return null;
+            const c = document.createElement('canvas');
+            c.width = RPG_SRC; c.height = RPG_SRC;
+            const cctx = c.getContext('2d');
+            cctx.drawImage(rpgTerrainImg, tileCoord[0] * RPG_STRIDE, tileCoord[1] * RPG_STRIDE, RPG_SRC, RPG_SRC, 0, 0, RPG_SRC, RPG_SRC);
+            const url = c.toDataURL();
+            rpgTileDataUrlCache[key] = url;
+            return url;
+        }
+
         // 地圖用字元表示：# 樹木/牆（阻擋）、. 草地（可走，在野外地圖會觸發隨機遭遇）、
         // P 石板路（可走、不會遭遇）、H NPC/建築（可走上去會觸發對話）、E 出口（可走上去會切換地區）
         const RPG_MAPS = {
@@ -2609,18 +2628,85 @@
             if (dirs[e.key]) { e.preventDefault(); rpgMove(dirs[e.key][0], dirs[e.key][1]); }
         }
 
-        // 按住方向鈕連續走：按下先走一步，按住超過 0.35 秒後開始每 160ms 自動走一步，
-        // 放開手指/滑鼠就停止（rpgMove 內部本來就有動畫中擋輸入的機制，重複呼叫很安全）
+        // 虛擬搖桿：按住底座往任一方向拖曳，鬆開自動彈回中心。比四個方向鈕更滑順、
+        // 手指不用精準對準小按鈕，拖曳方向改變時也會即時切換移動方向不用放開重按
         let rpgHoldTimer = null, rpgHoldInterval = null;
-        function rpgHoldAttrs(dx, dy) {
-            return `onmousedown="rpgHoldStart(${dx},${dy})" onmouseup="rpgHoldEnd()" onmouseleave="rpgHoldEnd()" ontouchstart="event.preventDefault(); rpgHoldStart(${dx},${dy})" ontouchend="rpgHoldEnd()" ontouchcancel="rpgHoldEnd()"`;
+        let rpgJoystickDir = null, rpgJoystickActive = false, rpgJoystickBound = false;
+        const RPG_JOY_MAX = 34, RPG_JOY_DEADZONE = 16;
+
+        function rpgJoystickHTML() {
+            return `
+                <div id="rpg-joystick-base" style="position:relative; width:128px; height:128px; border-radius:999px; background:radial-gradient(circle at 35% 30%, #FDF6E9, #E4D5BE); box-shadow:inset 0 3px 8px rgba(58,42,30,0.22), 0 3px 10px rgba(58,42,30,0.18); margin:0 auto; touch-action:none; user-select:none;">
+                    <div id="rpg-joystick-knob" style="position:absolute; left:50%; top:50%; width:54px; height:54px; margin:-27px; border-radius:999px; background:linear-gradient(160deg, var(--honey), var(--jam)); box-shadow:0 3px 8px rgba(58,42,30,0.35); transition:transform .15s ease-out;"></div>
+                </div>`;
         }
-        function rpgHoldStart(dx, dy) {
+
+        function rpgJoystickInit() {
+            if (rpgJoystickBound) return;
+            rpgJoystickBound = true;
+            const getPoint = e => (e.touches && e.touches[0]) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY };
+            const updateFromPoint = (x, y) => {
+                const base = document.getElementById('rpg-joystick-base');
+                const knob = document.getElementById('rpg-joystick-knob');
+                if (!base || !knob) return;
+                const rect = base.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+                const dx = x - cx, dy = y - cy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const angle = Math.atan2(dy, dx);
+                const clamped = Math.min(dist, RPG_JOY_MAX);
+                knob.style.transition = 'none';
+                knob.style.transform = `translate(${Math.cos(angle) * clamped}px, ${Math.sin(angle) * clamped}px)`;
+                if (dist < RPG_JOY_DEADZONE) { rpgSetJoystickDir(null); return; }
+                const deg = angle * 180 / Math.PI;
+                let dir;
+                if (deg > -45 && deg <= 45) dir = [1, 0];
+                else if (deg > 45 && deg <= 135) dir = [0, 1];
+                else if (deg > -135 && deg <= -45) dir = [0, -1];
+                else dir = [-1, 0];
+                rpgSetJoystickDir(dir);
+            };
+            const onStart = e => {
+                if (!e.target.closest('#rpg-joystick-base')) return;
+                e.preventDefault();
+                rpgJoystickActive = true;
+                const p = getPoint(e);
+                updateFromPoint(p.x, p.y);
+            };
+            const onMove = e => {
+                if (!rpgJoystickActive) return;
+                e.preventDefault();
+                const p = getPoint(e);
+                updateFromPoint(p.x, p.y);
+            };
+            const onEnd = () => {
+                if (!rpgJoystickActive) return;
+                rpgJoystickActive = false;
+                rpgSetJoystickDir(null);
+                const knob = document.getElementById('rpg-joystick-knob');
+                if (knob) { knob.style.transition = 'transform .15s ease-out'; knob.style.transform = 'translate(0,0)'; }
+            };
+            document.addEventListener('mousedown', onStart);
+            document.addEventListener('touchstart', onStart, { passive: false });
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('touchmove', onMove, { passive: false });
+            document.addEventListener('mouseup', onEnd);
+            document.addEventListener('touchend', onEnd);
+            document.addEventListener('touchcancel', onEnd);
+        }
+
+        function rpgSetJoystickDir(dir) {
+            const key = dir ? dir.join(',') : null;
+            const prevKey = rpgJoystickDir ? rpgJoystickDir.join(',') : null;
+            if (key === prevKey) return;
+            rpgJoystickDir = dir;
             rpgHoldEnd();
-            rpgMove(dx, dy);
-            rpgHoldTimer = setTimeout(() => {
-                rpgHoldInterval = setInterval(() => rpgMove(dx, dy), 160);
-            }, 350);
+            if (dir) {
+                rpgMove(dir[0], dir[1]);
+                rpgHoldTimer = setTimeout(() => {
+                    rpgHoldInterval = setInterval(() => rpgMove(dir[0], dir[1]), 160);
+                }, 200);
+            }
         }
         function rpgHoldEnd() {
             clearTimeout(rpgHoldTimer);
@@ -2654,18 +2740,12 @@
                     ${map.viewport ? `<canvas id="rpg-minimap" width="70" height="${Math.round(70 * map.rows.length / map.rows[0].length)}" style="position:absolute; top:6px; right:6px; border-radius:0.5rem; border:2px solid rgba(255,255,255,0.85); box-shadow:0 2px 6px rgba(0,0,0,0.35); background:rgba(0,0,0,0.2);"></canvas>` : ''}
                 </div>
                 <p id="rpg-dialogue-box" class="text-xs text-center mt-2" style="color:#B3A492; min-height:1.2rem;"></p>
-                <div class="flex flex-col items-center gap-2 mt-4" style="max-width:220px; margin-left:auto; margin-right:auto;">
-                    <button ${rpgHoldAttrs(0, -1)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">⬆️</button>
-                    <div class="flex gap-2">
-                        <button ${rpgHoldAttrs(-1, 0)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">⬅️</button>
-                        <button ${rpgHoldAttrs(0, 1)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">⬇️</button>
-                        <button ${rpgHoldAttrs(1, 0)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">➡️</button>
-                    </div>
-                </div>
-                <p class="text-xs text-center mt-3" style="color:#B3A492">按住方向鈕可以連續走，電腦可用方向鍵/WASD 移動</p>
+                <div class="mt-4">${rpgJoystickHTML()}</div>
+                <p class="text-xs text-center mt-3" style="color:#B3A492">拖曳搖桿移動，電腦可用方向鍵/WASD</p>
                 <div style="height:28px;"></div>
                 <button onclick="rpgConfirmLeave()" class="btn-secondary w-full" style="opacity:0.75;">離開遊戲</button>
             `;
+            rpgJoystickInit();
             document.removeEventListener('keydown', rpgKeyHandler);
             document.addEventListener('keydown', rpgKeyHandler);
             rpgDraw();
@@ -2955,7 +3035,7 @@
                 state.player.hp = state.player.maxHp;
                 state.player.sp = state.player.maxSp;
                 const sp = rpgPlayerScreenPos();
-                if (sp) rpgBurstParticle('light', { x: sp.x, y: sp.y, count: 4, size: 60, filter: 'sepia(1) hue-rotate(60deg) saturate(3)', duration: 0.9 });
+                if (sp) rpgBurstParticle('light', { x: sp.x, y: sp.y, count: 4, size: 34, filter: 'sepia(1) hue-rotate(60deg) saturate(3)', duration: 0.9, dist: 8, distVar: 12 });
                 playSfx('success');
                 setTimeout(() => { renderRpgMap(); }, 1400);
             } else {
@@ -3112,11 +3192,19 @@
             const monsterHTML = `<div style="display:flex; gap:5px;">${rpgFormationColumnHTML('monster', b.monsterFormation, 'front')}${rpgFormationColumnHTML('monster', b.monsterFormation, 'back')}</div>`;
             const partyHTML = `<div style="display:flex; gap:5px;">${rpgFormationColumnHTML('party', b.partyFormation, 'back')}${rpgFormationColumnHTML('party', b.partyFormation, 'front')}</div>`;
 
+            // 戰鬥場景背景：依照目前地區鋪出對應的地形紋理（目前只有草地區域，之後地區用素材就會自動換場景）
+            const grassTile = rpgGetTileDataURL(RPG_TERRAIN_TILES.grass);
+            const sceneBg = grassTile
+                ? `background-image:url('${grassTile}'), linear-gradient(180deg, rgba(255,255,255,0.15), rgba(58,42,30,0.06)); background-repeat:repeat, no-repeat; background-size:26px 26px, 100% 100%; image-rendering:pixelated;`
+                : `background:linear-gradient(180deg, #DCEEDB, #C8E2C4);`;
+
             document.getElementById('game-modal-body').innerHTML = `
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; min-height:170px;">
+                <div style="position:relative; display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; min-height:170px; border-radius:1rem; padding:10px; overflow:hidden; ${sceneBg}">
+                    <div style="position:absolute; left:-6px; top:-10px; font-size:2rem; opacity:0.85; filter:drop-shadow(0 2px 2px rgba(0,0,0,0.15));">🌲</div>
+                    <div style="position:absolute; right:-8px; top:-6px; font-size:1.6rem; opacity:0.75; filter:drop-shadow(0 2px 2px rgba(0,0,0,0.15));">🌳</div>
                     ${partyHTML}
                     <div style="text-align:center; padding-top:24px;">
-                        <p class="text-xs" style="color:#B3A492;">VS</p>
+                        <p class="text-xs font-semibold" style="color:#4F6F45; text-shadow:0 1px 1px rgba(255,255,255,0.6);">VS</p>
                     </div>
                     ${monsterHTML}
                 </div>
@@ -3413,7 +3501,7 @@
                             targetObj.curHp = Math.max(0, targetObj.curHp - dmg);
                             rpgLogAppend(`${actorObj.name}對${targetObj.name}使出「${sk.name}」，造成 ${dmg} 點傷害！`);
                             const center = rpgElementCenter(targetDomId); // 技能特效要打在怪物身上
-                            rpgBurstParticle(sk.particle, Object.assign({ count: 1, size: 90, duration: 0.5, scale: 1.3, dist: 0, distVar: 0, filter: sk.filter }, center ? { x: center.x, y: center.y } : {}));
+                            rpgBurstParticle(sk.particle, Object.assign({ count: 1, size: 40, duration: 0.45, scale: 1.15, dist: 0, distVar: 0, filter: sk.filter }, center ? { x: center.x, y: center.y } : {}));
                             playSfx('perfect');
                         } else if (cmd.action === 'item') {
                             let recipient = cmd.itemTarget ? b.partyFormation[cmd.itemTarget.row][cmd.itemTarget.i] : null;
@@ -3426,7 +3514,7 @@
                                 ? `${actorObj.name}吃了${cmd.extra}，回復了 ${heal} 點 HP！`
                                 : `${actorObj.name}把${cmd.extra}給了${recipient.name}，回復了 ${heal} 點 HP！`);
                             const center = rpgElementCenter(recipientDomId); // 回復特效要打在被回復的人身上
-                            rpgBurstParticle('light', Object.assign({ size: 55, count: 3, duration: 0.7, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' }, center ? { x: center.x, y: center.y } : {}));
+                            rpgBurstParticle('light', Object.assign({ size: 22, count: 3, duration: 0.6, dist: 4, distVar: 6, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' }, center ? { x: center.x, y: center.y } : {}));
                             playSfx('success');
                         }
                         updateBattleUI();
@@ -3521,7 +3609,7 @@
             leveledEntries.forEach((entry, idx) => {
                 setTimeout(() => {
                     const center = rpgElementCenter(`rpg-slot-party-${entry.row}-${entry.i}`);
-                    rpgBurstParticle('star', Object.assign({ count: 8, size: 50, duration: 0.8, dist: 10, distVar: 60, filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' }, center ? { x: center.x, y: center.y } : {}));
+                    rpgBurstParticle('star', Object.assign({ count: 5, size: 20, duration: 0.7, dist: 3, distVar: 14, filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' }, center ? { x: center.x, y: center.y } : {}));
                 }, 100 + idx * 350);
             });
             // 讀完戰鬥記錄後自動回到地圖，不用再手動點繼續
