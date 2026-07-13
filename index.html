@@ -2384,7 +2384,19 @@
         const RPG_DUNGEON_TILES = {
             slime: [0, 9], mushroom: [3, 10],
         };
-        let rpgTerrainImg = null, rpgCharImg = null, rpgDungeonImg = null, rpgAssetsReady = false;
+        // 新的人物素材總表（真人形象，含正面/側面兩種視角，側面朝左，朝右用鏡射處理）
+        const RPG_ROLE_URL = 'https://res.cloudinary.com/bumzwp9g/image/upload/v1783939014/RPG_Role_1_nfkc2l.png';
+        const RPG_ROLE_SPRITES = {
+            male: { front: { x: 209, y: 948, w: 78, h: 126 }, side: { x: 209, y: 1082, w: 78, h: 118 } }, // 金髮主廚
+            female: { front: { x: 1046, y: 948, w: 78, h: 126 }, side: { x: 1046, y: 1082, w: 78, h: 118 } }, // 右下咖啡色頭髮女主廚
+            companion: { front: { x: 834, y: 14, w: 76, h: 98 }, side: { x: 834, y: 112, w: 76, h: 95 } }, // 黑髮角色（暗影盜賊）
+        };
+        const RPG_ROLE_NPC = {
+            shop: { x: 0, y: 730, w: 78, h: 96 },
+            elder: { x: 418, y: 730, w: 78, h: 96 },
+            innkeeper: { x: 836, y: 730, w: 78, h: 96 },
+        };
+        let rpgTerrainImg = null, rpgCharImg = null, rpgDungeonImg = null, rpgRoleImg = null, rpgAssetsReady = false;
 
         // 特效粒子（Kenney Particle Pack，CC0）：升級/回復/施法/撞牆各用一種效果
         const RPG_PARTICLE_URLS = {
@@ -2427,7 +2439,7 @@
             return new Promise(resolve => {
                 if (rpgAssetsReady) { resolve(); return; }
                 let loaded = 0;
-                const done = () => { loaded++; if (loaded >= 3) { rpgAssetsReady = true; resolve(); } };
+                const done = () => { loaded++; if (loaded >= 4) { rpgAssetsReady = true; resolve(); } };
                 rpgTerrainImg = new Image();
                 rpgTerrainImg.onload = done;
                 rpgTerrainImg.onerror = done; // 就算載入失敗也不要卡住，改用備援畫法
@@ -2440,7 +2452,29 @@
                 rpgDungeonImg.onload = done;
                 rpgDungeonImg.onerror = done;
                 rpgDungeonImg.src = RPG_DUNGEON_URL;
+                rpgRoleImg = new Image();
+                rpgRoleImg.onload = done;
+                rpgRoleImg.onerror = done;
+                rpgRoleImg.src = RPG_ROLE_URL;
             });
+        }
+        // 畫出「矩形裁切」型的素材（新的人物素材表尺寸不規則，不是固定圖磚網格，用矩形座標直接裁切）
+        // flip=true 時會水平鏡射（側面朝左的圖用來合成朝右）
+        function rpgDrawRoleSprite(ctx, img, rect, dx, dy, size, flip) {
+            if (!img || !img.complete || img.naturalWidth === 0 || !rect) return false;
+            const scale = size / rect.h;
+            const drawW = rect.w * scale;
+            ctx.imageSmoothingEnabled = false;
+            ctx.save();
+            if (flip) {
+                ctx.translate(dx + drawW, dy);
+                ctx.scale(-1, 1);
+                ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, 0, 0, drawW, size);
+            } else {
+                ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, dx, dy, drawW, size);
+            }
+            ctx.restore();
+            return true;
         }
         // 把素材總表裡的某個圖磚，畫到畫面上指定位置（放大成 RPG_TILE 顯示，維持像素銳利不模糊）
         function rpgDrawSprite(ctx, img, tileCoord, dx, dy, size, stride) {
@@ -2452,26 +2486,9 @@
             return true;
         }
 
-        // 把總表裡的某一格圖磚單獨裁出來，轉成小張圖片給 CSS 當可重複貼的背景用
-        // （戰鬥畫面的場景背景就是這樣鋪出草地紋理，不用另外準備素材檔）
-        let rpgTileDataUrlCache = {};
-        function rpgGetTileDataURL(tileCoord) {
-            const key = tileCoord.join(',');
-            if (rpgTileDataUrlCache[key]) return rpgTileDataUrlCache[key];
-            if (!rpgTerrainImg || !rpgTerrainImg.complete || rpgTerrainImg.naturalWidth === 0) return null;
-            try {
-                const c = document.createElement('canvas');
-                c.width = RPG_SRC; c.height = RPG_SRC;
-                const cctx = c.getContext('2d');
-                cctx.drawImage(rpgTerrainImg, tileCoord[0] * RPG_STRIDE, tileCoord[1] * RPG_STRIDE, RPG_SRC, RPG_SRC, 0, 0, RPG_SRC, RPG_SRC);
-                const url = c.toDataURL();
-                rpgTileDataUrlCache[key] = url;
-                return url;
-            } catch (e) {
-                // 萬一瀏覽器基於跨網域圖片安全限制擋下 toDataURL()，不要讓整個戰鬥畫面壞掉，改用備援漸層背景就好
-                rpgTileDataUrlCache[key] = null;
-                return null;
-            }
+        // 直接請 Cloudinary 用網址參數幫忙裁圖，不用瀏覽器 canvas 處理，完全不會有跨網域畫布限制的問題
+        function rpgCloudinaryCropUrl(baseUrl, x, y, w, h) {
+            return baseUrl.replace('/upload/', `/upload/c_crop,x_${x},y_${y},w_${w},h_${h}/`);
         }
 
         // 地圖用字元表示：# 樹木/牆（阻擋）、. 草地（可走，在野外地圖會觸發隨機遭遇）、
@@ -2588,9 +2605,9 @@
             knife_dance: { name: '極速刀工', sp: 5, mult: 2.4, particle: 'star', filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' },
         };
 
-        function rpgDefaultPlayer() {
+        function rpgDefaultPlayer(gender) {
             return {
-                name: '你', level: 1, exp: 0, expToNext: 20,
+                name: '你', gender: gender || 'male', level: 1, exp: 0, expToNext: 20,
                 hp: 30, maxHp: 30, atk: 6, def: 2, sp: 10, maxSp: 10, agi: 6,
                 gold: 50,
                 weaponName: '新手鍋鏟', armorName: '破舊圍裙',
@@ -2614,20 +2631,34 @@
             if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
             qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup(); tinyDinerCleanup(); rpgCleanup();
             ensureAudioContext();
+            document.getElementById('game-modal').classList.add('rpg-fullscreen');
+            document.getElementById('game-modal-title').textContent = '🗺️ 異世界料理者';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-10">
+                    <div class="text-5xl mb-4">🧑‍🍳</div>
+                    <p class="font-display text-lg font-bold mb-6">選擇你的角色</p>
+                    <div class="flex gap-4 justify-center">
+                        <button onclick="rpgStartWithGender('male')" class="btn-primary" style="min-width:120px;">👨 男生</button>
+                        <button onclick="rpgStartWithGender('female')" class="btn-secondary" style="min-width:120px;">👩 女生</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function rpgStartWithGender(gender) {
+            playSfx('click');
             rpgState = {
-                player: rpgDefaultPlayer(),
+                player: rpgDefaultPlayer(gender),
                 companion: rpgDefaultCompanion(),
                 region: 'village',
                 pos: { ...RPG_MAPS.village.start },
                 companionPos: { ...RPG_MAPS.village.start }, // 夥伴一開始跟主角站在同一格，主角一移動夥伴就會跟著往前補位
+                facing: 'down', companionFacing: 'down',
                 mode: 'map', // map | battle | dialogue
                 battle: null,
                 locked: false, // 轉場/對話/遭遇判定進行中時鎖住移動，避免同時觸發第二次事件
             };
-            playSfx('click');
             rpgStartWatchdog();
-            document.getElementById('game-modal').classList.add('rpg-fullscreen');
-            document.getElementById('game-modal-title').textContent = '🗺️ 異世界料理者';
             document.getElementById('game-modal-body').innerHTML = `<p class="text-center text-sm py-10" style="color:#B3A492">載入美術素材中…</p>`;
             await rpgLoadAssets();
             if (!rpgState) return; // 使用者載入途中已經離開遊戲
@@ -2815,8 +2846,9 @@
                         if (ch === '#') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.tree, px, py, T);
                         if (ch === 'H') {
                             const npcId = map.npcs[`${x},${y}`];
-                            const spriteKey = (npcId && RPG_CHAR_TILES[npcId]) ? npcId : 'elder';
-                            rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES[spriteKey], px, py, T);
+                            const rect = RPG_ROLE_NPC[npcId] || RPG_ROLE_NPC.elder;
+                            const drewNpc = rpgDrawRoleSprite(ctx, rpgRoleImg, rect, px, py, T, false);
+                            if (!drewNpc) rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.elder, px, py, T);
                         }
                     } else {
                         // ---- 備援畫法（素材載入失敗時才會用到）----
@@ -2868,13 +2900,20 @@
                 }
             }
 
+            // 依照面向挑選正面或側面（側面朝左；面向右時把側面圖左右鏡射）；上/下暫時都用正面（素材沒有畫背面）
+            function rpgDrawDirectional(spriteSet, facing, dx, dy, size) {
+                if (facing === 'left') return rpgDrawRoleSprite(ctx, rpgRoleImg, spriteSet.side, dx, dy, size, false);
+                if (facing === 'right') return rpgDrawRoleSprite(ctx, rpgRoleImg, spriteSet.side, dx, dy, size, true);
+                return rpgDrawRoleSprite(ctx, rpgRoleImg, spriteSet.front, dx, dy, size, false);
+            }
+
             // 夥伴：畫在主角之前（如果剛好重疊，主角會蓋在上面），跟隨動畫用 companionAnimPos
             if (state.companion && state.companionPos) {
                 const cRenderPos = state.companionAnimPos || state.companionPos;
                 const ccx = (cRenderPos.x - cam.x) * T + T / 2, ccy = (cRenderPos.y - cam.y) * T + T / 2;
                 ctx.fillStyle = 'rgba(58,42,30,0.2)';
                 ctx.beginPath(); ctx.ellipse(ccx, ccy + T * 0.32, T * 0.26, 4, 0, 0, Math.PI * 2); ctx.fill();
-                const drewC = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.companion, (cRenderPos.x - cam.x) * T, (cRenderPos.y - cam.y) * T, T);
+                const drewC = rpgDrawDirectional(RPG_ROLE_SPRITES.companion, state.companionFacing || 'down', (cRenderPos.x - cam.x) * T, (cRenderPos.y - cam.y) * T, T);
                 if (!drewC) {
                     ctx.font = `${T - 4}px sans-serif`;
                     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -2887,7 +2926,8 @@
             const cx = (renderPos.x - cam.x) * T + T / 2, cy = (renderPos.y - cam.y) * T + T / 2;
             ctx.fillStyle = 'rgba(58,42,30,0.2)';
             ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.32, T * 0.26, 4, 0, 0, Math.PI * 2); ctx.fill();
-            const drew = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.player, (renderPos.x - cam.x) * T, (renderPos.y - cam.y) * T, T);
+            const playerSpriteSet = state.player.gender === 'female' ? RPG_ROLE_SPRITES.female : RPG_ROLE_SPRITES.male;
+            const drew = rpgDrawDirectional(playerSpriteSet, state.facing || 'down', (renderPos.x - cam.x) * T, (renderPos.y - cam.y) * T, T);
             if (!drew) {
                 ctx.font = `${T - 4}px sans-serif`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -2933,6 +2973,10 @@
             const to = { x: nx, y: ny };
             const companionFrom = { x: state.companionPos.x, y: state.companionPos.y };
             const companionTo = { x: from.x, y: from.y }; // 夥伴的目的地是主角剛剛離開的那一格，形成跟隨隊形
+            // 依照移動方向更新面向（水平優先於垂直，跟大多數 2D RPG 的直覺一致）
+            state.facing = dx > 0 ? 'right' : dx < 0 ? 'left' : (dy > 0 ? 'down' : 'up');
+            const cdx = companionTo.x - companionFrom.x, cdy = companionTo.y - companionFrom.y;
+            if (cdx !== 0 || cdy !== 0) state.companionFacing = cdx > 0 ? 'right' : cdx < 0 ? 'left' : (cdy > 0 ? 'down' : 'up');
             state.animating = true;
             const duration = 140;
             const t0 = performance.now();
@@ -3215,11 +3259,12 @@
             };
             let visual;
             if (isPlayerObj) {
-                const useReal = rpgAssetsReady && rpgCharImg && rpgCharImg.naturalWidth > 0;
-                const spriteKey = obj.isCompanion ? 'companion' : 'player';
-                const [col, r2] = RPG_CHAR_TILES[spriteKey];
+                const useReal = rpgAssetsReady && rpgRoleImg && rpgRoleImg.naturalWidth > 0;
+                const spriteSet = obj.isCompanion ? RPG_ROLE_SPRITES.companion : (obj.gender === 'female' ? RPG_ROLE_SPRITES.female : RPG_ROLE_SPRITES.male);
+                const rect = spriteSet.front;
+                const scale = RPG_SLOT / rect.h;
                 visual = useReal
-                    ? `<div style="width:${RPG_SLOT}px; height:${RPG_SLOT}px; background-image:url('${RPG_CHAR_URL}'); background-position:-${col * RPG_STRIDE * (RPG_SLOT / 16)}px -${r2 * RPG_STRIDE * (RPG_SLOT / 16)}px; background-size:${918 * (RPG_SLOT / 16)}px ${203 * (RPG_SLOT / 16)}px; image-rendering:pixelated;"></div>`
+                    ? `<div style="width:${Math.round(rect.w * scale)}px; height:${RPG_SLOT}px; margin:0 auto; background-image:url('${RPG_ROLE_URL}'); background-position:-${rect.x * scale}px -${rect.y * scale}px; background-size:${1254 * scale}px ${1254 * scale}px; image-rendering:pixelated;"></div>`
                     : `<div class="text-xl">${obj.isCompanion ? '🧑‍🌾' : '🧑‍🍳'}</div>`;
             } else {
                 const sheetInfo = obj.sheet ? sheetMap[obj.sheet] : null;
@@ -3269,20 +3314,18 @@
             const monsterHTML = `<div style="display:flex; gap:5px;">${rpgFormationColumnHTML('monster', b.monsterFormation, 'front')}${rpgFormationColumnHTML('monster', b.monsterFormation, 'back')}</div>`;
             const partyHTML = `<div style="display:flex; gap:5px;">${rpgFormationColumnHTML('party', b.partyFormation, 'back')}${rpgFormationColumnHTML('party', b.partyFormation, 'front')}</div>`;
 
-            // 戰鬥場景背景：依照目前地區鋪出對應的地形紋理（目前只有草地區域，之後地區用素材就會自動換場景）
-            const grassTile = rpgGetTileDataURL(RPG_TERRAIN_TILES.grass);
-            const sceneBg = grassTile
-                ? `background-image:url('${grassTile}'), linear-gradient(180deg, rgba(255,255,255,0.15), rgba(58,42,30,0.06)); background-repeat:repeat, no-repeat; background-size:26px 26px, 100% 100%; image-rendering:pixelated;`
-                : `background:linear-gradient(180deg, #DCEEDB, #C8E2C4);`;
+            // 戰鬥場景背景：直接請 Cloudinary 幫忙裁好草地圖磚再回傳，不用瀏覽器 canvas 處理，
+            // 完全避開跨網域畫布限制的問題
+            const [gcol, grow] = RPG_TERRAIN_TILES.grass;
+            const grassTile = rpgCloudinaryCropUrl(RPG_TERRAIN_URL, gcol * RPG_STRIDE, grow * RPG_STRIDE, RPG_SRC, RPG_SRC);
+            const sceneBg = `background-image:url('${grassTile}'), linear-gradient(180deg, rgba(255,255,255,0.15), rgba(58,42,30,0.06)); background-repeat:repeat, no-repeat; background-size:26px 26px, 100% 100%; image-rendering:pixelated;`;
 
             document.getElementById('game-modal-body').innerHTML = `
                 <div style="position:relative; display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; min-height:170px; border-radius:1rem; padding:10px; overflow:hidden; ${sceneBg}">
                     <div style="position:absolute; left:-6px; top:-10px; font-size:2rem; opacity:0.85; filter:drop-shadow(0 2px 2px rgba(0,0,0,0.15));">🌲</div>
                     <div style="position:absolute; right:-8px; top:-6px; font-size:1.6rem; opacity:0.75; filter:drop-shadow(0 2px 2px rgba(0,0,0,0.15));">🌳</div>
                     ${partyHTML}
-                    <div style="text-align:center; padding-top:24px;">
-                        <p class="text-xs font-semibold" style="color:#4F6F45; text-shadow:0 1px 1px rgba(255,255,255,0.6);">VS</p>
-                    </div>
+                    <div style="width:24px;"></div>
                     ${monsterHTML}
                 </div>
                 <div id="rpg-battle-log" class="mb-3 px-3 py-2 rounded-xl text-xs" style="background:var(--cream); color:#6B5847; height:92px; overflow-y:auto; line-height:1.6;"></div>
