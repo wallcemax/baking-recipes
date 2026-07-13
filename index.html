@@ -2530,6 +2530,7 @@
                 pos: { ...RPG_MAPS.village.start },
                 mode: 'map', // map | battle | dialogue
                 battle: null,
+                locked: false, // 轉場/對話/遭遇判定進行中時鎖住移動，避免同時觸發第二次事件
             };
             playSfx('click');
             document.getElementById('game-modal-title').textContent = '🗺️ 異世界料理者';
@@ -2548,6 +2549,7 @@
         function renderRpgMap() {
             const state = rpgState;
             if (!state) return;
+            state.locked = false; // 每次回到地圖畫面，代表上一個事件（戰鬥/對話/轉場）已經結束，重新解鎖移動
             const map = RPG_MAPS[state.region];
             const width = map.rows[0].length * RPG_TILE;
             const height = map.rows.length * RPG_TILE;
@@ -2671,7 +2673,7 @@
 
         function rpgMove(dx, dy) {
             const state = rpgState;
-            if (!state || state.mode !== 'map' || state.animating) return; // 動畫進行中先擋住輸入，避免動作疊在一起
+            if (!state || state.mode !== 'map' || state.animating || state.locked) return; // 動畫/事件進行中先擋住輸入，避免動作疊在一起
             const map = RPG_MAPS[state.region];
             const nx = state.pos.x + dx, ny = state.pos.y + dy;
             if (ny < 0 || ny >= map.rows.length || nx < 0 || nx >= map.rows[0].length) { rpgBumpAnimation(dx, dy); return; }
@@ -2695,10 +2697,11 @@
                     state.pos = to;
                     playSfx('tick');
                     const npcKey = `${nx},${ny}`;
-                    if (map.npcs && map.npcs[npcKey]) { rpgDraw(); rpgTalkTo(map.npcs[npcKey]); return; }
-                    if (map.exits && map.exits[npcKey]) { rpgTransitionToExit(map.exits[npcKey]); return; }
+                    if (map.npcs && map.npcs[npcKey]) { state.locked = true; rpgDraw(); rpgTalkTo(map.npcs[npcKey]); return; }
+                    if (map.exits && map.exits[npcKey]) { state.locked = true; rpgTransitionToExit(map.exits[npcKey]); return; }
                     rpgDraw();
                     if (map.wild && ch === '.' && Math.random() < map.encounterRate) {
+                        state.locked = true; // 骰到遭遇的當下立刻鎖住，避免閃爍轉場那段時間還能移動、疊出第二場戰鬥
                         setTimeout(() => rpgStartBattle(map.monsters[Math.floor(Math.random() * map.monsters.length)]), 150);
                     }
                 }
@@ -2794,6 +2797,9 @@
                 if (sp) rpgBurstParticle('light', { x: sp.x, y: sp.y, count: 4, size: 60, filter: 'sepia(1) hue-rotate(60deg) saturate(3)', duration: 0.9 });
                 playSfx('success');
                 setTimeout(() => { renderRpgMap(); }, 1400);
+            } else {
+                // 非治療型 NPC 不會再重新整個渲染地圖畫面，打字機跑完後要自己解鎖，不然會卡住動不了
+                setTimeout(() => { if (rpgState) rpgState.locked = false; }, fullText.length * 28 + 150);
             }
         }
 
