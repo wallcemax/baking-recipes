@@ -2541,7 +2541,8 @@
         }
 
         function rpgKeyHandler(e) {
-            if (!rpgState || rpgState.mode !== 'map') return;
+            if (!rpgState || rpgState.mode !== 'map' || rpgState.locked || rpgState.animating) return;
+            if (e.repeat) return; // 忽略作業系統長按自動重複觸發的 keydown，只吃真正的按鍵動作
             const dirs = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0], w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] };
             if (dirs[e.key]) { e.preventDefault(); rpgMove(dirs[e.key][0], dirs[e.key][1]); }
         }
@@ -2806,6 +2807,7 @@
         // ---------- 回合制戰鬥 ----------
         function rpgStartBattle(monsterId) {
             const state = rpgState;
+            if (!state || state.mode === 'battle' || state.battle) return; // 防止萬一被重複呼叫，疊出第二場戰鬥
             const template = RPG_MONSTERS[monsterId];
             playSfx('burnt');
             if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
