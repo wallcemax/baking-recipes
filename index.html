@@ -2446,25 +2446,34 @@
             village: {
                 name: '暖廚村',
                 rows: [
-                    '############',
-                    '#..........#',
-                    '#.H......H.#',
-                    '#..........#',
-                    '#....H.....#',
-                    '#..........#',
-                    '#..........#',
-                    '#..........#',
-                    '#....EE....#',
-                    '############',
+                    '########################',
+                    '#......................#',
+                    '#..........PP..........#',
+                    '#..##.H....PP....H..##.#',
+                    '#..#.......PP.......#..#',
+                    '#..........PP..........#',
+                    '#..........PP..........#',
+                    '#..........PP..........#',
+                    '#.PPPPPPPPPPPPPPPPPPPP.#',
+                    '#.PPPPPPPPPPPPPPPPPPPP.#',
+                    '#..........PP..........#',
+                    '#..........PP..........#',
+                    '#..........PH..........#',
+                    '#..#.......PP.......#..#',
+                    '#...#......PP........#.#',
+                    '#..........PP..........#',
+                    '#......................#',
+                    '###########EE###########',
                 ],
-                start: { x: 6, y: 5 },
+                start: { x: 12, y: 10 },
                 npcs: {
-                    '2,2': 'shop',
-                    '9,2': 'elder',
-                    '5,4': 'innkeeper',
+                    '6,3': 'shop',
+                    '17,3': 'elder',
+                    '12,12': 'innkeeper',
                 },
-                exits: { '5,8': { to: 'plains', x: 6, y: 1 }, '6,8': { to: 'plains', x: 7, y: 1 } },
+                exits: { '11,17': { to: 'plains', x: 6, y: 1 }, '12,17': { to: 'plains', x: 7, y: 1 } },
                 wild: false,
+                viewport: { w: 9, h: 7 }, // 有這個欄位代表地圖比視窗大，要用鏡頭跟著角色捲動＋小地圖
             },
             plains: {
                 name: '麥穗平原',
@@ -2484,7 +2493,7 @@
                 ],
                 start: { x: 7, y: 1 },
                 npcs: {},
-                exits: { '6,10': { to: 'village', x: 5, y: 7 }, '7,10': { to: 'village', x: 6, y: 7 } },
+                exits: { '6,10': { to: 'village', x: 11, y: 16 }, '7,10': { to: 'village', x: 12, y: 16 } },
                 wild: true,
                 encounterRate: 0.14,
                 monsters: ['bread_slime', 'ferment_goblin', 'forest_mushroom'],
@@ -2551,15 +2560,20 @@
             if (!state) return;
             state.locked = false; // 每次回到地圖畫面，代表上一個事件（戰鬥/對話/轉場）已經結束，重新解鎖移動
             const map = RPG_MAPS[state.region];
-            const width = map.rows[0].length * RPG_TILE;
-            const height = map.rows.length * RPG_TILE;
+            const viewCols = map.viewport ? map.viewport.w : map.rows[0].length;
+            const viewRows = map.viewport ? map.viewport.h : map.rows.length;
+            const width = viewCols * RPG_TILE;
+            const height = viewRows * RPG_TILE;
             document.getElementById('game-modal-title').textContent = `🗺️ ${map.name}`;
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="flex justify-between items-center mb-2 text-xs" style="color:#B3A492">
                     <span>Lv.${state.player.level} ・ ❤️${state.player.hp}/${state.player.maxHp} ・ 💠${state.player.sp}/${state.player.maxSp}</span>
                     <span>💰${state.player.gold}</span>
                 </div>
-                <canvas id="rpg-canvas" width="${width}" height="${height}" style="display:block; margin:0 auto; border-radius:1rem; border:1px solid var(--line); max-width:100%;"></canvas>
+                <div style="position:relative; max-width:100%; width:${width}px; margin:0 auto;">
+                    <canvas id="rpg-canvas" width="${width}" height="${height}" style="display:block; border-radius:1rem; border:1px solid var(--line); max-width:100%;"></canvas>
+                    ${map.viewport ? `<canvas id="rpg-minimap" width="70" height="${Math.round(70 * map.rows.length / map.rows[0].length)}" style="position:absolute; top:6px; right:6px; border-radius:0.5rem; border:2px solid rgba(255,255,255,0.85); box-shadow:0 2px 6px rgba(0,0,0,0.35); background:rgba(0,0,0,0.2);"></canvas>` : ''}
+                </div>
                 <p id="rpg-dialogue-box" class="text-xs text-center mt-2" style="color:#B3A492; min-height:1.2rem;"></p>
                 <div class="flex flex-col items-center gap-1 mt-3" style="max-width:150px; margin-left:auto; margin-right:auto;">
                     <button onclick="rpgMove(0,-1)" class="btn-secondary !px-4 !py-2">⬆️</button>
@@ -2577,6 +2591,16 @@
             rpgDraw();
         }
 
+        // 算出鏡頭要對齊的左上角圖磚座標：以角色為中心，但不能讓鏡頭看到地圖邊界外的空白
+        function rpgGetCamera(map, viewCols, viewRows, focusPos) {
+            const mapW = map.rows[0].length, mapH = map.rows.length;
+            let camX = Math.round(focusPos.x - viewCols / 2);
+            let camY = Math.round(focusPos.y - viewRows / 2);
+            camX = Math.max(0, Math.min(camX, mapW - viewCols));
+            camY = Math.max(0, Math.min(camY, mapH - viewRows));
+            return { x: camX, y: camY };
+        }
+
         function rpgDraw() {
             const state = rpgState;
             const map = RPG_MAPS[state.region];
@@ -2584,16 +2608,21 @@
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
             const T = RPG_TILE;
+            const viewCols = map.viewport ? map.viewport.w : map.rows[0].length;
+            const viewRows = map.viewport ? map.viewport.h : map.rows.length;
+            const cam = map.viewport ? rpgGetCamera(map, viewCols, viewRows, state.animPos || state.pos) : { x: 0, y: 0 };
             const useReal = rpgAssetsReady && rpgTerrainImg && rpgTerrainImg.naturalWidth > 0;
             // 用網站本身的暖色調色盤畫圖磚紋理，素材載入失敗時的備援畫法
             const GRASS_A = '#9BC49B', GRASS_B = '#8FB98E';
             const PATH_A = '#E4D5BE', PATH_B = '#D9C4AE';
             const shade = (x, y) => (x + y) % 2 === 0;
 
-            for (let y = 0; y < map.rows.length; y++) {
-                for (let x = 0; x < map.rows[y].length; x++) {
+            const startX = cam.x, endX = Math.min(map.rows[0].length, cam.x + viewCols);
+            const startY = cam.y, endY = Math.min(map.rows.length, cam.y + viewRows);
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
                     const ch = map.rows[y][x];
-                    const px = x * T, py = y * T;
+                    const px = (x - cam.x) * T, py = (y - cam.y) * T;
 
                     if (useReal) {
                         // 底層地形：水 / 泥土路 / 草地（樹木跟 NPC 也是站在草地上）
@@ -2660,15 +2689,39 @@
 
             // 角色：腳下陰影 + 真實角色素材（載入失敗才退回 emoji）；動畫進行中用 animPos 畫出滑動中間格
             const renderPos = state.animPos || state.pos;
-            const cx = renderPos.x * T + T / 2, cy = renderPos.y * T + T / 2;
+            const cx = (renderPos.x - cam.x) * T + T / 2, cy = (renderPos.y - cam.y) * T + T / 2;
             ctx.fillStyle = 'rgba(58,42,30,0.2)';
             ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.32, T * 0.26, 4, 0, 0, Math.PI * 2); ctx.fill();
-            const drew = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.player, renderPos.x * T, renderPos.y * T, T);
+            const drew = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.player, (renderPos.x - cam.x) * T, (renderPos.y - cam.y) * T, T);
             if (!drew) {
                 ctx.font = `${T - 4}px sans-serif`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                 ctx.fillText('🧑‍🍳', cx, cy - 2);
             }
+            if (map.viewport) rpgDrawMinimap(map, renderPos);
+        }
+
+        // 小地圖：把整張地圖縮小畫在角落，用顏色區分地形，玩家位置用一個亮點標示
+        function rpgDrawMinimap(map, playerPos) {
+            const mm = document.getElementById('rpg-minimap');
+            if (!mm) return;
+            const mctx = mm.getContext('2d');
+            const mapW = map.rows[0].length, mapH = map.rows.length;
+            const tw = mm.width / mapW, th = mm.height / mapH;
+            const MM_COLORS = { '#': '#4F6F45', '~': '#5FA0B8', 'P': '#C9A876', 'E': '#F4C55E' };
+            mctx.clearRect(0, 0, mm.width, mm.height);
+            for (let y = 0; y < mapH; y++) {
+                for (let x = 0; x < mapW; x++) {
+                    const ch = map.rows[y][x];
+                    mctx.fillStyle = MM_COLORS[ch] || '#8FB98E';
+                    mctx.fillRect(x * tw, y * th, Math.ceil(tw), Math.ceil(th));
+                }
+            }
+            // 玩家位置：白色描邊的亮點
+            mctx.fillStyle = '#fff';
+            mctx.beginPath(); mctx.arc(playerPos.x * tw + tw / 2, playerPos.y * th + th / 2, 2.6, 0, Math.PI * 2); mctx.fill();
+            mctx.fillStyle = '#E85D5D';
+            mctx.beginPath(); mctx.arc(playerPos.x * tw + tw / 2, playerPos.y * th + th / 2, 1.6, 0, Math.PI * 2); mctx.fill();
         }
 
         function rpgMove(dx, dy) {
@@ -2702,7 +2755,11 @@
                     rpgDraw();
                     if (map.wild && ch === '.' && Math.random() < map.encounterRate) {
                         state.locked = true; // 骰到遭遇的當下立刻鎖住，避免閃爍轉場那段時間還能移動、疊出第二場戰鬥
-                        setTimeout(() => rpgStartBattle(map.monsters[Math.floor(Math.random() * map.monsters.length)]), 150);
+                        // 遭遇時可能不只一隻怪：60% 單隻、30% 兩隻、10% 三隻
+                        const roll = Math.random();
+                        const count = roll < 0.6 ? 1 : (roll < 0.9 ? 2 : 3);
+                        const ids = Array.from({ length: count }, () => map.monsters[Math.floor(Math.random() * map.monsters.length)]);
+                        setTimeout(() => rpgStartBattle(ids), 150);
                     }
                 }
             }
@@ -2804,14 +2861,13 @@
         }
 
         // ---------- 回合制戰鬥 ----------
-        function rpgStartBattle(monsterId) {
+        function rpgStartBattle(monsterIds) {
             const state = rpgState;
             if (!state || state.mode === 'battle' || state.battle) return; // 防止萬一被重複呼叫，疊出第二場戰鬥
-            const template = RPG_MONSTERS[monsterId];
+            const ids = Array.isArray(monsterIds) ? monsterIds : [monsterIds];
             playSfx('burnt');
             if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
             // 戰鬥開始前的白閃轉場，經典 RPG 遇敵演出感
-            const canvas = document.getElementById('rpg-canvas');
             const flash = document.createElement('div');
             flash.style.cssText = 'position:fixed; inset:0; background:#fff; opacity:0; z-index:9999; pointer-events:none; transition:opacity .08s;';
             document.body.appendChild(flash);
@@ -2825,8 +2881,9 @@
                     state.mode = 'battle';
                     state.battleBusy = false; // 上一場戰鬥打贏時沒有機會重設這個旗標，這裡強制重設，避免下一場戰鬥按鈕一開始就被鎖住
                     state.battle = {
-                        monster: { ...template, curHp: template.hp },
-                        log: `一隻${template.name}擋住了去路！`,
+                        monsters: ids.map(id => ({ ...RPG_MONSTERS[id], curHp: RPG_MONSTERS[id].hp })),
+                        target: 0,
+                        log: ids.length > 1 ? `${ids.length} 隻怪物一起擋住了去路！` : `一隻${RPG_MONSTERS[ids[0]].name}擋住了去路！`,
                     };
                     renderRpgBattle();
                 }
@@ -2839,47 +2896,62 @@
             const b = state.battle;
             const p = state.player;
             document.getElementById('game-modal-title').textContent = '⚔️ 戰鬥中';
-            const hpPct = Math.max(0, Math.round(b.monster.curHp / b.monster.hp * 100));
-            const pHpPct = Math.max(0, Math.round(p.hp / p.maxHp * 100));
             const sheetMap = {
                 char: { img: rpgCharImg, url: RPG_CHAR_URL, tiles: RPG_CHAR_TILES, stride: RPG_STRIDE, w: 918, h: 203 },
                 dungeon: { img: rpgDungeonImg, url: RPG_DUNGEON_URL, tiles: RPG_DUNGEON_TILES, stride: RPG_DUNGEON_STRIDE, w: RPG_DUNGEON_W, h: RPG_DUNGEON_H },
             };
-            const sheetInfo = b.monster.sheet ? sheetMap[b.monster.sheet] : null;
-            const useRealMonster = rpgAssetsReady && sheetInfo && sheetInfo.img && sheetInfo.img.naturalWidth > 0 && b.monster.spriteKey;
-            const mZoom = 5;
-            const monsterVisual = useRealMonster
-                ? (() => {
-                    const [col, row] = sheetInfo.tiles[b.monster.spriteKey];
-                    return `<div style="width:${16 * mZoom}px; height:${16 * mZoom}px; margin:0 auto; background-image:url('${sheetInfo.url}'); background-position:-${col * sheetInfo.stride * mZoom}px -${row * sheetInfo.stride * mZoom}px; background-size:${sheetInfo.w * mZoom}px ${sheetInfo.h * mZoom}px; image-rendering:pixelated;"></div>`;
-                })()
-                : `<div class="text-6xl">${b.monster.emoji}</div>`;
+            const mZoom = b.monsters.length > 1 ? 3.5 : 5;
+            const monstersHtml = b.monsters.map((m, i) => {
+                const sheetInfo = m.sheet ? sheetMap[m.sheet] : null;
+                const useRealMonster = rpgAssetsReady && sheetInfo && sheetInfo.img && sheetInfo.img.naturalWidth > 0 && m.spriteKey;
+                const visual = useRealMonster
+                    ? (() => {
+                        const [col, row] = sheetInfo.tiles[m.spriteKey];
+                        return `<div style="width:${16 * mZoom}px; height:${16 * mZoom}px; margin:0 auto; background-image:url('${sheetInfo.url}'); background-position:-${col * sheetInfo.stride * mZoom}px -${row * sheetInfo.stride * mZoom}px; background-size:${sheetInfo.w * mZoom}px ${sheetInfo.h * mZoom}px; image-rendering:pixelated;"></div>`;
+                    })()
+                    : `<div class="${b.monsters.length > 1 ? 'text-4xl' : 'text-6xl'}">${m.emoji}</div>`;
+                const isDead = m.curHp <= 0;
+                const isTarget = i === b.target && !isDead;
+                const hpPct = Math.max(0, Math.round(m.curHp / m.hp * 100));
+                return `
+                    <div class="rpg-monster-slot" data-idx="${i}" onclick="rpgSelectTarget(${i})" style="position:relative; text-align:center; cursor:${isDead ? 'default' : 'pointer'}; padding:4px 6px; border-radius:0.75rem; transition:opacity .5s, transform .5s, filter .12s; ${isTarget ? 'background:rgba(196,69,63,0.12);' : ''} ${isDead ? 'opacity:0;' : ''}">
+                        ${isTarget ? `<div style="font-size:0.9rem; margin-bottom:-2px;">▼</div>` : `<div style="height:1rem;"></div>`}
+                        <div id="rpg-battle-monster-wrap-${i}">${visual}</div>
+                        <p class="font-semibold" style="font-size:0.7rem; margin-top:2px;">${m.name}</p>
+                        <div style="height:6px; border-radius:999px; overflow:hidden; background:var(--line); width:${16 * mZoom}px; margin:2px auto 0;">
+                            <div id="rpg-monster-hp-fill-${i}" style="height:100%; width:${hpPct}%; background:#C4453F; transition:width .3s;"></div>
+                        </div>
+                    </div>`;
+            }).join('');
+
             const useRealPlayer = rpgAssetsReady && rpgCharImg && rpgCharImg.naturalWidth > 0;
             const [pcol, prow] = RPG_CHAR_TILES.player;
             const pZoom = 4;
             const playerVisual = useRealPlayer
                 ? `background-image:url('${RPG_CHAR_URL}'); background-position:-${pcol * RPG_STRIDE * pZoom}px -${prow * RPG_STRIDE * pZoom}px; background-size:${918 * pZoom}px ${203 * pZoom}px; image-rendering:pixelated;`
                 : '';
+            const pHpPct = Math.max(0, Math.round(p.hp / p.maxHp * 100));
+            const pSpPct = Math.max(0, Math.round(p.sp / p.maxSp * 100));
             document.getElementById('game-modal-body').innerHTML = `
                 <div style="position:relative; height:150px; margin-bottom:10px;">
+                    <div style="position:absolute; left:12%; bottom:${16 * pZoom + 8}px; width:84px; text-align:center;">
+                        <div style="height:6px; border-radius:999px; overflow:hidden; background:var(--line); margin-bottom:2px;">
+                            <div id="rpg-player-hp-fill" style="height:100%; width:${pHpPct}%; background:var(--sage); transition:width .3s;"></div>
+                        </div>
+                        <div style="height:5px; border-radius:999px; overflow:hidden; background:var(--line);">
+                            <div id="rpg-player-sp-fill" style="height:100%; width:${pSpPct}%; background:#7B9FD1; transition:width .3s;"></div>
+                        </div>
+                        <p id="rpg-player-stat-text" class="text-center" style="font-size:0.62rem; color:#B3A492; margin-top:2px;">❤️${p.hp}/${p.maxHp} 💠${p.sp}/${p.maxSp}</p>
+                    </div>
                     <div id="rpg-battle-player" style="position:absolute; left:12%; bottom:4px; width:${16 * pZoom}px; height:${16 * pZoom}px; ${playerVisual} transition: transform .15s ease-out, opacity .5s, filter .12s;">
                         ${!useRealPlayer ? `<div class="text-4xl">🧑‍🍳</div>` : ''}
                     </div>
-                    <div id="rpg-battle-monster-wrap" style="position:absolute; right:8%; top:0; text-align:center; transition: transform .15s ease-out, opacity .5s, filter .12s;">
-                        <div id="rpg-battle-monster">${monsterVisual}</div>
-                        <p class="font-semibold text-sm mt-1">${b.monster.name}</p>
-                        <div style="height:8px; border-radius:999px; overflow:hidden; background:var(--line); max-width:150px; margin:4px auto;">
-                            <div id="rpg-monster-hp-fill" style="height:100%; width:${hpPct}%; background:#C4453F; transition:width .3s;"></div>
-                        </div>
+                    <div style="position:absolute; right:4%; top:0; display:flex; gap:6px; align-items:flex-end;">
+                        ${monstersHtml}
                     </div>
                 </div>
                 <p id="rpg-battle-log" class="text-xs text-center mb-4" style="color:#B3A492; min-height:2rem; white-space:pre-line;">${b.log}</p>
-                <div class="mb-3">
-                    <div class="flex justify-between text-xs mb-1"><span>你（Lv.${p.level}）</span><span id="rpg-player-stat-text">❤️${p.hp}/${p.maxHp} 💠${p.sp}/${p.maxSp}</span></div>
-                    <div style="height:8px; border-radius:999px; overflow:hidden; background:var(--line);">
-                        <div id="rpg-player-hp-fill" style="height:100%; width:${pHpPct}%; background:var(--sage); transition:width .3s;"></div>
-                    </div>
-                </div>
+                ${b.monsters.length > 1 ? `<p class="text-xs text-center mb-2" style="color:#B3A492">點選怪物切換攻擊目標（目前鎖定：${b.monsters[b.target] ? b.monsters[b.target].name : ''}）</p>` : ''}
                 <div class="grid grid-cols-2 gap-2">
                     <button onclick="rpgBattleAction('attack')" class="btn-primary">🔪 攻擊</button>
                     <button onclick="rpgBattleAction('skill')" class="btn-amber" ${p.sp < 3 ? 'disabled style="opacity:.4"' : ''}>🔥 熱炒攻擊（3 SP）</button>
@@ -2889,16 +2961,30 @@
             `;
         }
 
+        // 點選某隻怪物切換攻擊目標
+        function rpgSelectTarget(idx) {
+            const state = rpgState;
+            const b = state.battle;
+            if (!b || state.battleBusy || !b.monsters[idx] || b.monsters[idx].curHp <= 0) return;
+            b.target = idx;
+            playSfx('click');
+            renderRpgBattle();
+        }
+
         // 只更新血條數字/寬度跟台詞文字，不整個重畫戰鬥畫面 —— 這樣才不會把正在播放的
         // 特效/浮動傷害數字/受擊閃光這些疊加在畫面上的動畫元素也一起清掉
         function updateBattleUI(logText) {
             const state = rpgState;
             const b = state.battle, p = state.player;
             if (!b) return;
-            const mBar = document.getElementById('rpg-monster-hp-fill');
-            if (mBar) mBar.style.width = Math.max(0, Math.round(b.monster.curHp / b.monster.hp * 100)) + '%';
+            b.monsters.forEach((m, i) => {
+                const mBar = document.getElementById(`rpg-monster-hp-fill-${i}`);
+                if (mBar) mBar.style.width = Math.max(0, Math.round(m.curHp / m.hp * 100)) + '%';
+            });
             const pBar = document.getElementById('rpg-player-hp-fill');
             if (pBar) pBar.style.width = Math.max(0, Math.round(p.hp / p.maxHp * 100)) + '%';
+            const pSpBar = document.getElementById('rpg-player-sp-fill');
+            if (pSpBar) pSpBar.style.width = Math.max(0, Math.round(p.sp / p.maxSp * 100)) + '%';
             const pStat = document.getElementById('rpg-player-stat-text');
             if (pStat) pStat.textContent = `❤️${p.hp}/${p.maxHp} 💠${p.sp}/${p.maxSp}`;
             const log = document.getElementById('rpg-battle-log');
@@ -2965,21 +3051,24 @@
             if (action === 'item' && !p.items['家常蛋花湯']) return;
             if (action === 'skill' && p.sp < 3) return;
 
+            const target = b.monsters[b.target];
+            if ((action === 'attack' || action === 'skill') && (!target || target.curHp <= 0)) return;
+
             state.battleBusy = true;
             document.querySelectorAll('#game-modal-body button[onclick^="rpgBattleAction"]').forEach(btn => btn.disabled = true);
 
             const performHit = () => {
                 let dmg = 0;
                 if (action === 'attack') {
-                    dmg = Math.max(1, Math.round(p.atk - b.monster.def + (Math.random() * 3 - 1)));
-                    b.monster.curHp = Math.max(0, b.monster.curHp - dmg);
-                    updateBattleUI(`你用${p.weaponName}攻擊，造成 ${dmg} 點傷害！`);
+                    dmg = Math.max(1, Math.round(p.atk - target.def + (Math.random() * 3 - 1)));
+                    target.curHp = Math.max(0, target.curHp - dmg);
+                    updateBattleUI(`你用${p.weaponName}攻擊${target.name}，造成 ${dmg} 點傷害！`);
                     playSfx('chop');
                 } else if (action === 'skill') {
                     p.sp -= 3;
-                    dmg = Math.max(1, Math.round(p.atk * 1.8 - b.monster.def + (Math.random() * 3 - 1)));
-                    b.monster.curHp = Math.max(0, b.monster.curHp - dmg);
-                    updateBattleUI(`你使出「熱炒攻擊」，造成 ${dmg} 點傷害！`);
+                    dmg = Math.max(1, Math.round(p.atk * 1.8 - target.def + (Math.random() * 3 - 1)));
+                    target.curHp = Math.max(0, target.curHp - dmg);
+                    updateBattleUI(`你對${target.name}使出「熱炒攻擊」，造成 ${dmg} 點傷害！`);
                     rpgBurstParticle('magic', { count: 1, size: 90, duration: 0.5, scale: 1.3, dist: 0, distVar: 0, filter: 'sepia(1) hue-rotate(280deg) saturate(4)' });
                     playSfx('perfect');
                 } else if (action === 'item') {
@@ -2991,54 +3080,73 @@
                     playSfx('success');
                 }
                 if (dmg > 0) {
-                    rpgFlashHit('rpg-battle-monster-wrap');
-                    rpgFloatDamage('rpg-battle-monster-wrap', dmg, '#C4453F');
+                    rpgFlashHit(`rpg-battle-monster-wrap-${b.target}`);
+                    rpgFloatDamage(`rpg-battle-monster-wrap-${b.target}`, dmg, '#C4453F');
                     if (navigator.vibrate) navigator.vibrate([40]);
                 }
 
-                if (b.monster.curHp <= 0) {
-                    const wrap = document.getElementById('rpg-battle-monster-wrap');
-                    if (wrap) { wrap.style.transition = 'opacity .5s, transform .5s'; wrap.style.opacity = '0'; wrap.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; }
+                if (dmg > 0 && target.curHp <= 0) {
+                    const slot = document.querySelector(`.rpg-monster-slot[data-idx="${b.target}"]`);
+                    if (slot) { slot.style.opacity = '0'; slot.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; }
+                    // 死掉的怪物身上的目標箭頭要移除，並自動把目標切到下一隻還活著的怪物
+                    const nextAlive = b.monsters.findIndex(m => m.curHp > 0);
+                    if (nextAlive !== -1) { b.target = nextAlive; setTimeout(() => renderRpgBattle(), 520); }
+                }
+
+                if (b.monsters.every(m => m.curHp <= 0)) {
                     setTimeout(() => rpgBattleWin(), 550);
                     return;
                 }
-                setTimeout(() => rpgMonsterTurn(), 450);
+                setTimeout(() => rpgMonsterTurn(), 600);
             };
 
             if (action === 'attack' || action === 'skill') rpgLungeAttack(performHit);
             else performHit();
         }
 
-        // 怪物回合：對玩家造成傷害、閃白、浮出數字，玩家死亡時播放倒下動畫
+        // 怪物回合：場上還活著的怪物依序輪流攻擊玩家，玩家死亡時播放倒下動畫並中斷後續攻擊
         function rpgMonsterTurn() {
             const state = rpgState;
             const b = state.battle, p = state.player;
             if (!b) return;
-            const dmg = Math.max(1, Math.round(b.monster.atk - p.def + (Math.random() * 3 - 1)));
-            p.hp = Math.max(0, p.hp - dmg);
-            rpgFlashHit('rpg-battle-player');
-            rpgFloatDamage('rpg-battle-player', dmg, '#C4453F');
-            if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-            const log = document.getElementById('rpg-battle-log');
-            updateBattleUI((log ? log.textContent + '\n' : '') + `${b.monster.name}反擊，你受到 ${dmg} 點傷害！`);
+            const attackers = b.monsters.filter(m => m.curHp > 0);
+            let i = 0;
+            const nextAttack = () => {
+                if (i >= attackers.length) {
+                    state.battleBusy = false;
+                    document.querySelectorAll('#game-modal-body button[onclick^="rpgBattleAction"]').forEach(btn => btn.disabled = false);
+                    updateBattleUI(null);
+                    return;
+                }
+                const monster = attackers[i];
+                i++;
+                const dmg = Math.max(1, Math.round(monster.atk - p.def + (Math.random() * 3 - 1)));
+                p.hp = Math.max(0, p.hp - dmg);
+                rpgFlashHit('rpg-battle-player');
+                rpgFloatDamage('rpg-battle-player', dmg, '#C4453F');
+                if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                const log = document.getElementById('rpg-battle-log');
+                updateBattleUI((log ? log.textContent + '\n' : '') + `${monster.name}反擊，你受到 ${dmg} 點傷害！`);
 
-            if (p.hp <= 0) {
-                const playerEl = document.getElementById('rpg-battle-player');
-                if (playerEl) { playerEl.style.transition = 'opacity .5s, transform .5s'; playerEl.style.opacity = '0'; playerEl.style.transform = 'translateY(24px) rotate(85deg)'; }
-                setTimeout(() => rpgBattleLose(), 550);
-                return;
-            }
-            state.battleBusy = false;
-            document.querySelectorAll('#game-modal-body button[onclick^="rpgBattleAction"]').forEach(btn => btn.disabled = false);
-            updateBattleUI(null);
+                if (p.hp <= 0) {
+                    const playerEl = document.getElementById('rpg-battle-player');
+                    if (playerEl) { playerEl.style.transition = 'opacity .5s, transform .5s'; playerEl.style.opacity = '0'; playerEl.style.transform = 'translateY(24px) rotate(85deg)'; }
+                    setTimeout(() => rpgBattleLose(), 550);
+                    return;
+                }
+                setTimeout(nextAttack, 450);
+            };
+            nextAttack();
         }
 
         function rpgBattleWin() {
             const state = rpgState;
             const b = state.battle;
             const p = state.player;
-            p.gold += b.monster.gold;
-            p.exp += b.monster.exp;
+            const totalGold = b.monsters.reduce((s, m) => s + m.gold, 0);
+            const totalExp = b.monsters.reduce((s, m) => s + m.exp, 0);
+            p.gold += totalGold;
+            p.exp += totalExp;
             let leveledUp = false;
             while (p.exp >= p.expToNext) {
                 p.exp -= p.expToNext;
@@ -3049,12 +3157,13 @@
                 leveledUp = true;
             }
             playSfx('perfect');
+            const names = b.monsters.map(m => m.name).join('、');
             document.getElementById('game-modal-title').textContent = '🎉 戰鬥勝利';
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="text-center py-8">
                     <div class="text-6xl mb-3 celebrate-pop">🏆</div>
-                    <p class="font-display text-xl font-bold mb-2" style="color:var(--jam)">擊敗了 ${b.monster.name}！</p>
-                    <p class="text-sm mb-2">獲得 ${b.monster.exp} 經驗值、${b.monster.gold} 金幣</p>
+                    <p class="font-display text-xl font-bold mb-2" style="color:var(--jam)">擊敗了 ${names}！</p>
+                    <p class="text-sm mb-2">獲得 ${totalExp} 經驗值、${totalGold} 金幣</p>
                     ${leveledUp ? `<p class="text-sm font-bold mb-4" style="color:var(--honey)">✨ 升級了！目前 Lv.${p.level}</p>` : ''}
                     <button onclick="rpgBackToMap()" class="btn-primary">繼續冒險</button>
                 </div>
