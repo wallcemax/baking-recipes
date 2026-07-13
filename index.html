@@ -2429,14 +2429,17 @@
                 let loaded = 0;
                 const done = () => { loaded++; if (loaded >= 3) { rpgAssetsReady = true; resolve(); } };
                 rpgTerrainImg = new Image();
+                rpgTerrainImg.crossOrigin = 'anonymous'; // 這張圖之後要被裁切轉成 canvas 圖片，沒有這個瀏覽器會擋下 toDataURL()
                 rpgTerrainImg.onload = done;
                 rpgTerrainImg.onerror = done; // 就算載入失敗也不要卡住，改用備援畫法
                 rpgTerrainImg.src = RPG_TERRAIN_URL;
                 rpgCharImg = new Image();
+                rpgCharImg.crossOrigin = 'anonymous';
                 rpgCharImg.onload = done;
                 rpgCharImg.onerror = done;
                 rpgCharImg.src = RPG_CHAR_URL;
                 rpgDungeonImg = new Image();
+                rpgDungeonImg.crossOrigin = 'anonymous';
                 rpgDungeonImg.onload = done;
                 rpgDungeonImg.onerror = done;
                 rpgDungeonImg.src = RPG_DUNGEON_URL;
@@ -2459,13 +2462,19 @@
             const key = tileCoord.join(',');
             if (rpgTileDataUrlCache[key]) return rpgTileDataUrlCache[key];
             if (!rpgTerrainImg || !rpgTerrainImg.complete || rpgTerrainImg.naturalWidth === 0) return null;
-            const c = document.createElement('canvas');
-            c.width = RPG_SRC; c.height = RPG_SRC;
-            const cctx = c.getContext('2d');
-            cctx.drawImage(rpgTerrainImg, tileCoord[0] * RPG_STRIDE, tileCoord[1] * RPG_STRIDE, RPG_SRC, RPG_SRC, 0, 0, RPG_SRC, RPG_SRC);
-            const url = c.toDataURL();
-            rpgTileDataUrlCache[key] = url;
-            return url;
+            try {
+                const c = document.createElement('canvas');
+                c.width = RPG_SRC; c.height = RPG_SRC;
+                const cctx = c.getContext('2d');
+                cctx.drawImage(rpgTerrainImg, tileCoord[0] * RPG_STRIDE, tileCoord[1] * RPG_STRIDE, RPG_SRC, RPG_SRC, 0, 0, RPG_SRC, RPG_SRC);
+                const url = c.toDataURL();
+                rpgTileDataUrlCache[key] = url;
+                return url;
+            } catch (e) {
+                // 萬一瀏覽器基於跨網域圖片安全限制擋下 toDataURL()，不要讓整個戰鬥畫面壞掉，改用備援漸層背景就好
+                rpgTileDataUrlCache[key] = null;
+                return null;
+            }
         }
 
         // 地圖用字元表示：# 樹木/牆（阻擋）、. 草地（可走，在野外地圖會觸發隨機遭遇）、
@@ -2499,6 +2508,11 @@
                     '17,3': 'elder',
                     '12,12': 'innkeeper',
                 },
+                pois: {
+                    '3,1': { item: '家常蛋花湯' },
+                    '20,1': { item: null },
+                    '3,16': { item: null },
+                },
                 exits: { '11,17': { to: 'plains', x: 6, y: 1 }, '12,17': { to: 'plains', x: 7, y: 1 } },
                 wild: false,
                 viewport: { w: 9, h: 7 }, // 有這個欄位代表地圖比視窗大，要用鏡頭跟著角色捲動＋小地圖
@@ -2521,6 +2535,7 @@
                 ],
                 start: { x: 7, y: 1 },
                 npcs: {},
+                pois: {},
                 exits: { '6,10': { to: 'village', x: 11, y: 16 }, '7,10': { to: 'village', x: 12, y: 16 } },
                 wild: true,
                 encounterRate: 0.14,
@@ -2740,6 +2755,7 @@
                     ${map.viewport ? `<canvas id="rpg-minimap" width="70" height="${Math.round(70 * map.rows.length / map.rows[0].length)}" style="position:absolute; top:6px; right:6px; border-radius:0.5rem; border:2px solid rgba(255,255,255,0.85); box-shadow:0 2px 6px rgba(0,0,0,0.35); background:rgba(0,0,0,0.2);"></canvas>` : ''}
                 </div>
                 <p id="rpg-dialogue-box" class="text-xs text-center mt-2" style="color:#B3A492; min-height:1.2rem;"></p>
+                <div id="rpg-status-bar" class="mt-2"></div>
                 <div class="mt-4">${rpgJoystickHTML()}</div>
                 <p class="text-xs text-center mt-3" style="color:#B3A492">拖曳搖桿移動，電腦可用方向鍵/WASD</p>
                 <div style="height:28px;"></div>
@@ -2749,6 +2765,7 @@
             document.removeEventListener('keydown', rpgKeyHandler);
             document.addEventListener('keydown', rpgKeyHandler);
             rpgDraw();
+            rpgUpdateStatusBar();
         }
 
         // 算出鏡頭要對齊的左上角圖磚座標：以角色為中心，但不能讓鏡頭看到地圖邊界外的空白
@@ -2844,6 +2861,13 @@
                         ctx.strokeStyle = 'rgba(58,42,30,0.06)';
                         ctx.strokeRect(px, py, T, T);
                     }
+
+                    // 還沒調查過的地點：疊一個小草叢圖示提示這裡可以搜索
+                    if (map.pois && map.pois[`${x},${y}`] && !map.pois[`${x},${y}`].found) {
+                        ctx.font = `${T * 0.55}px sans-serif`;
+                        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                        ctx.fillText('🌿', px + T / 2, py + T / 2);
+                    }
                 }
             }
 
@@ -2905,7 +2929,8 @@
             const nx = state.pos.x + dx, ny = state.pos.y + dy;
             if (ny < 0 || ny >= map.rows.length || nx < 0 || nx >= map.rows[0].length) { rpgBumpAnimation(dx, dy); return; }
             const ch = map.rows[ny][nx];
-            if (ch === '#') { rpgBumpAnimation(dx, dy); playSfx('fail'); return; } // 樹木擋路，撞牆震動回饋
+            // 樹木、NPC 都擋路——NPC 要走到旁邊、用互動按鈕交談，不是直接走上去
+            if (ch === '#' || (map.npcs && map.npcs[`${nx},${ny}`])) { rpgBumpAnimation(dx, dy); playSfx('fail'); return; }
 
             const from = { x: state.pos.x, y: state.pos.y };
             const to = { x: nx, y: ny };
@@ -2929,9 +2954,9 @@
                     state.companionPos = companionTo;
                     playSfx('tick');
                     const npcKey = `${nx},${ny}`;
-                    if (map.npcs && map.npcs[npcKey]) { state.locked = true; rpgDraw(); rpgTalkTo(map.npcs[npcKey]); return; }
                     if (map.exits && map.exits[npcKey]) { state.locked = true; rpgTransitionToExit(map.exits[npcKey]); return; }
                     rpgDraw();
+                    rpgUpdateStatusBar();
                     if (map.wild && ch === '.' && Math.random() < map.encounterRate) {
                         state.locked = true; // 骰到遭遇的當下立刻鎖住，避免閃爍轉場那段時間還能移動、疊出第二場戰鬥
                         // 遭遇時可能不只一隻怪：60% 單隻、30% 兩隻、10% 三隻
@@ -2943,6 +2968,60 @@
                 }
             }
             requestAnimationFrame(step);
+        }
+
+        // 檢查主角目前所在格跟上下左右，有沒有可以互動的 NPC 或調查點，回傳最先找到的一個
+        function rpgCheckNearby() {
+            const state = rpgState;
+            if (!state) return null;
+            const map = RPG_MAPS[state.region];
+            const px = state.pos.x, py = state.pos.y;
+            const dirs = [[0, 0], [0, -1], [0, 1], [-1, 0], [1, 0]];
+            for (const [dx, dy] of dirs) {
+                const key = `${px + dx},${py + dy}`;
+                if (map.npcs && map.npcs[key]) return { type: 'npc', key, npcId: map.npcs[key] };
+            }
+            for (const [dx, dy] of dirs) {
+                const key = `${px + dx},${py + dy}`;
+                if (map.pois && map.pois[key] && !map.pois[key].found) return { type: 'investigate', key };
+            }
+            return null;
+        }
+
+        // 更新狀態欄：附近有 NPC 就顯示交談按鈕，有還沒調查過的地點就顯示調查按鈕
+        function rpgUpdateStatusBar() {
+            const bar = document.getElementById('rpg-status-bar');
+            if (!bar) return;
+            const nearby = rpgCheckNearby();
+            if (!nearby) { bar.innerHTML = ''; return; }
+            if (nearby.type === 'npc') {
+                const info = RPG_NPC_INFO[nearby.npcId];
+                bar.innerHTML = `<button onclick="rpgTalkTo('${nearby.npcId}')" class="btn-primary w-full">🗣️ 跟${info ? info.name : '對方'}交談</button>`;
+            } else if (nearby.type === 'investigate') {
+                bar.innerHTML = `<button onclick="rpgInvestigate('${nearby.key}')" class="btn-amber w-full">🔍 調查這裡</button>`;
+            }
+        }
+
+        // 調查地點：有機率找到道具，也有可能是空的（假的調查點），調查過的地點不會再觸發
+        function rpgInvestigate(key) {
+            const state = rpgState;
+            if (!state || state.locked || state.animating) return;
+            const map = RPG_MAPS[state.region];
+            const poi = map.pois && map.pois[key];
+            if (!poi || poi.found) return;
+            poi.found = true;
+            playSfx('click');
+            const box = document.getElementById('rpg-dialogue-box');
+            if (poi.item) {
+                state.player.items[poi.item] = (state.player.items[poi.item] || 0) + 1;
+                if (box) box.textContent = `🔍 找到了一份「${poi.item}」，已經放進道具欄！`;
+                playSfx('success');
+                const sp = rpgPlayerScreenPos();
+                if (sp) rpgBurstParticle('star', { x: sp.x, y: sp.y, count: 4, size: 22, duration: 0.6, dist: 4, distVar: 8, filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' });
+            } else {
+                if (box) box.textContent = '🔍 仔細找過了，這裡什麼都沒有…';
+            }
+            rpgUpdateStatusBar();
         }
 
         // 撞牆時角色朝那個方向小幅彈一下再彈回來，給撞到東西的回饋感
@@ -3016,9 +3095,11 @@
         }
 
         function rpgTalkTo(npcId) {
+            const state = rpgState;
             const info = RPG_NPC_INFO[npcId];
             const box = document.getElementById('rpg-dialogue-box');
-            if (!info || !box) return;
+            if (!info || !box || !state || state.locked) return;
+            state.locked = true; // 現在對話是按按鈕觸發（不是走過去自動觸發），這裡自己鎖住移動
             const line = info.lines[Math.floor(Math.random() * info.lines.length)];
             const fullText = `${info.icon} ${info.name}：${line}`;
             // 打字機效果：文字一個字一個字跳出來，經典 RPG 對話演出感
@@ -3031,7 +3112,6 @@
                 if (i >= fullText.length) clearInterval(typer);
             }, 28);
             if (info.heal) {
-                const state = rpgState;
                 state.player.hp = state.player.maxHp;
                 state.player.sp = state.player.maxSp;
                 const sp = rpgPlayerScreenPos();
