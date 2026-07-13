@@ -2629,6 +2629,11 @@
             rpgHoldInterval = null;
         }
 
+        // 離開遊戲前先確認一次，避免不小心點到（按鈕本身也已經跟方向鈕拉開距離了）
+        function rpgConfirmLeave() {
+            if (confirm('確定要離開遊戲嗎？')) renderGameMenu();
+        }
+
         function renderRpgMap() {
             const state = rpgState;
             if (!state) return;
@@ -2649,16 +2654,17 @@
                     ${map.viewport ? `<canvas id="rpg-minimap" width="70" height="${Math.round(70 * map.rows.length / map.rows[0].length)}" style="position:absolute; top:6px; right:6px; border-radius:0.5rem; border:2px solid rgba(255,255,255,0.85); box-shadow:0 2px 6px rgba(0,0,0,0.35); background:rgba(0,0,0,0.2);"></canvas>` : ''}
                 </div>
                 <p id="rpg-dialogue-box" class="text-xs text-center mt-2" style="color:#B3A492; min-height:1.2rem;"></p>
-                <div class="flex flex-col items-center gap-1 mt-3" style="max-width:150px; margin-left:auto; margin-right:auto;">
-                    <button ${rpgHoldAttrs(0, -1)} class="btn-secondary !px-4 !py-2">⬆️</button>
-                    <div class="flex gap-1">
-                        <button ${rpgHoldAttrs(-1, 0)} class="btn-secondary !px-4 !py-2">⬅️</button>
-                        <button ${rpgHoldAttrs(0, 1)} class="btn-secondary !px-4 !py-2">⬇️</button>
-                        <button ${rpgHoldAttrs(1, 0)} class="btn-secondary !px-4 !py-2">➡️</button>
+                <div class="flex flex-col items-center gap-2 mt-4" style="max-width:220px; margin-left:auto; margin-right:auto;">
+                    <button ${rpgHoldAttrs(0, -1)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">⬆️</button>
+                    <div class="flex gap-2">
+                        <button ${rpgHoldAttrs(-1, 0)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">⬅️</button>
+                        <button ${rpgHoldAttrs(0, 1)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">⬇️</button>
+                        <button ${rpgHoldAttrs(1, 0)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">➡️</button>
                     </div>
                 </div>
-                <p class="text-xs text-center mt-2" style="color:#B3A492">按住方向鈕可以連續走，電腦可用方向鍵/WASD 移動</p>
-                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">離開遊戲</button>
+                <p class="text-xs text-center mt-3" style="color:#B3A492">按住方向鈕可以連續走，電腦可用方向鍵/WASD 移動</p>
+                <div style="height:28px;"></div>
+                <button onclick="rpgConfirmLeave()" class="btn-secondary w-full" style="opacity:0.75;">離開遊戲</button>
             `;
             document.removeEventListener('keydown', rpgKeyHandler);
             document.addEventListener('keydown', rpgKeyHandler);
@@ -3137,6 +3143,11 @@
         }
 
         // 只重畫下方的操作區（主選單 / 技能清單 / 道具清單），不動陣型跟血條，避免打斷正在播放的動畫
+        // 道具資料庫：selfOnly 標記之後可以拿來做「只能用在自己身上」的道具（目前這個道具沒有限制）
+        const RPG_ITEM_INFO = {
+            '家常蛋花湯': { heal: 15, selfOnly: false },
+        };
+
         function rpgActionPanelHTML() {
             const state = rpgState;
             const b = state.battle, p = state.player;
@@ -3155,9 +3166,15 @@
             if (b.uiMode === 'item') {
                 const entries = Object.entries(p.items).filter(([, qty]) => qty > 0);
                 const rows = entries.length
-                    ? entries.map(([name, qty]) => `<button onclick="rpgBattleAction('item', '${name}')" class="btn-secondary w-full mb-2">🍲 ${name}（${qty}）</button>`).join('')
+                    ? entries.map(([name, qty]) => `<button onclick="rpgOpenItemTarget('${name}')" class="btn-secondary w-full mb-2">🍲 ${name}（${qty}）</button>`).join('')
                     : `<p class="text-xs text-center mb-2" style="color:#B3A492">身上沒有道具了</p>`;
                 return `${rows}<button onclick="rpgBackToMainMenu()" class="btn-secondary w-full">← 返回</button>`;
+            }
+            if (b.uiMode === 'itemTarget') {
+                const info = RPG_ITEM_INFO[b.pendingItem] || {};
+                const candidates = info.selfOnly ? [{ row: b.actor.row, i: b.actor.i, obj: actor }] : rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
+                const rows = candidates.map(e => `<button onclick="rpgBattleAction('item', '${b.pendingItem}', { row: '${e.row}', i: ${e.i} })" class="btn-secondary w-full mb-2">${e.obj.name === actor.name && e.row === b.actor.row && e.i === b.actor.i ? '🙋' : '🤝'} 給${e.obj.name}使用（❤️${e.obj.hp}/${e.obj.maxHp}）</button>`).join('');
+                return `<p class="text-xs text-center mb-2" style="color:#B3A492">要把「${b.pendingItem}」給誰用？</p>${rows}<button onclick="rpgBackToMenuFrom('item')" class="btn-secondary w-full">← 返回</button>`;
             }
             const totalAlive = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0).length;
             const queuedCount = Object.keys(b.commands).length;
@@ -3180,8 +3197,20 @@
             playSfx('click');
             rpgRefreshActionPanel();
         }
+        function rpgOpenItemTarget(name) {
+            if (rpgState.battle.phase !== 'command') return;
+            rpgState.battle.pendingItem = name;
+            rpgState.battle.uiMode = 'itemTarget';
+            playSfx('click');
+            rpgRefreshActionPanel();
+        }
         function rpgBackToMainMenu() {
             rpgState.battle.uiMode = 'main';
+            playSfx('click');
+            rpgRefreshActionPanel();
+        }
+        function rpgBackToMenuFrom(mode) {
+            rpgState.battle.uiMode = mode;
             playSfx('click');
             rpgRefreshActionPanel();
         }
@@ -3273,7 +3302,7 @@
             }, 140);
         }
 
-        function rpgBattleAction(action, extra) {
+        function rpgBattleAction(action, extra, itemTarget) {
             const state = rpgState;
             const b = state.battle;
             const p = state.player;
@@ -3302,12 +3331,13 @@
                 if (!skill || actor.sp < skill.sp) return;
             }
             if (action === 'item' && !(p.items[extra] > 0)) return;
+            if (action === 'item' && !itemTarget) return;
 
             const targetObj = b.target ? b.monsterFormation[b.target.row][b.target.i] : null;
             if ((action === 'attack' || action === 'skill') && (!targetObj || targetObj.curHp <= 0)) return;
 
             // 先下指令，不立刻執行——要等全部我方角色都下完指令，才依照敏捷排序統一執行
-            b.commands[`${b.actor.row}-${b.actor.i}`] = { action, extra, target: b.target ? { ...b.target } : null };
+            b.commands[`${b.actor.row}-${b.actor.i}`] = { action, extra, target: b.target ? { ...b.target } : null, itemTarget: itemTarget || null };
             playSfx('click');
 
             const hasNext = rpgAdvanceToNextCommander();
@@ -3386,11 +3416,16 @@
                             rpgBurstParticle(sk.particle, Object.assign({ count: 1, size: 90, duration: 0.5, scale: 1.3, dist: 0, distVar: 0, filter: sk.filter }, center ? { x: center.x, y: center.y } : {}));
                             playSfx('perfect');
                         } else if (cmd.action === 'item') {
+                            let recipient = cmd.itemTarget ? b.partyFormation[cmd.itemTarget.row][cmd.itemTarget.i] : null;
+                            if (!recipient || recipient.hp <= 0) recipient = actorObj; // 原本要給的人已經不在了，改給自己用
+                            const recipientDomId = cmd.itemTarget ? `rpg-slot-party-${cmd.itemTarget.row}-${cmd.itemTarget.i}` : actorDomId;
                             p.items[cmd.extra]--;
-                            const heal = 15;
-                            actorObj.hp = Math.min(actorObj.maxHp, actorObj.hp + heal);
-                            rpgLogAppend(`${actorObj.name}吃了${cmd.extra}，回復了 ${heal} 點 HP！`);
-                            const center = rpgElementCenter(actorDomId); // 回復特效要打在被回復的人身上
+                            const heal = RPG_ITEM_INFO[cmd.extra] ? RPG_ITEM_INFO[cmd.extra].heal : 15;
+                            recipient.hp = Math.min(recipient.maxHp, recipient.hp + heal);
+                            rpgLogAppend(recipient === actorObj
+                                ? `${actorObj.name}吃了${cmd.extra}，回復了 ${heal} 點 HP！`
+                                : `${actorObj.name}把${cmd.extra}給了${recipient.name}，回復了 ${heal} 點 HP！`);
+                            const center = rpgElementCenter(recipientDomId); // 回復特效要打在被回復的人身上
                             rpgBurstParticle('light', Object.assign({ size: 55, count: 3, duration: 0.7, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' }, center ? { x: center.x, y: center.y } : {}));
                             playSfx('success');
                         }
@@ -3456,7 +3491,7 @@
             const b = state.battle;
             const p = state.player;
             const monsters = rpgFormationEntries(b.monsterFormation).map(e => e.obj);
-            const survivors = rpgFormationEntries(b.partyFormation).map(e => e.obj).filter(m => m.hp > 0);
+            const survivorEntries = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
             const totalGold = monsters.reduce((s, m) => s + m.gold, 0);
             const totalExp = monsters.reduce((s, m) => s + m.exp, 0);
             p.gold += totalGold;
@@ -3464,10 +3499,11 @@
             const names = monsters.map(m => m.name).join('、');
             rpgLogAppend(`戰鬥勝利！擊敗了 ${names}！`);
             rpgLogAppend(`獲得了 ${totalGold} 金幣`);
-            let anyLevelUp = false;
-            survivors.forEach(member => {
+            const leveledEntries = [];
+            survivorEntries.forEach(({ row, i, obj: member }) => {
                 member.exp += totalExp;
                 rpgLogAppend(`${member.name}獲得了 ${totalExp} 經驗值`);
+                let leveledThisMember = false;
                 while (member.exp >= member.expToNext) {
                     member.exp -= member.expToNext;
                     member.level++;
@@ -3475,13 +3511,19 @@
                     member.hp = member.maxHp; member.sp = member.maxSp;
                     member.expToNext = member.level * 20;
                     rpgLogAppend(`✨ ${member.name}升級了！目前 Lv.${member.level}`);
-                    anyLevelUp = true;
+                    leveledThisMember = true;
                 }
+                if (leveledThisMember) leveledEntries.push({ row, i });
             });
             document.querySelectorAll('#rpg-battle-actions button').forEach(btn => btn.disabled = true);
-            if (anyLevelUp) {
-                setTimeout(() => rpgBurstParticle('star', { count: 8, size: 50, duration: 0.8, dist: 10, distVar: 60, filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' }), 100);
-            }
+            updateBattleUI(); // 升級後血條/魔力條要跟著更新成滿血滿魔
+            // 誰升級，特效就打在誰身上，不是打在畫面正中央
+            leveledEntries.forEach((entry, idx) => {
+                setTimeout(() => {
+                    const center = rpgElementCenter(`rpg-slot-party-${entry.row}-${entry.i}`);
+                    rpgBurstParticle('star', Object.assign({ count: 8, size: 50, duration: 0.8, dist: 10, distVar: 60, filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' }, center ? { x: center.x, y: center.y } : {}));
+                }, 100 + idx * 350);
+            });
             // 讀完戰鬥記錄後自動回到地圖，不用再手動點繼續
             setTimeout(() => rpgBackToMap(), 2600);
         }
