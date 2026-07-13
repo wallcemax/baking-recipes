@@ -4393,7 +4393,7 @@
             } catch (e) {}
         }
 
-        const COOKING_HIDE_IDS = ['detail-header-row', 'detail-image', 'detail-top-controls', 'detail-video-section', 'detail-action-row'];
+        const COOKING_HIDE_IDS = ['detail-header-row', 'detail-image', 'detail-top-controls', 'detail-action-row'];
 
         function applyCookingMode(modal) {
             if (modal.classList.contains('landscape-cooking-mode')) return; // 已經套用過了，避免每次輪詢都重複執行
@@ -4418,11 +4418,22 @@
                 content.querySelectorAll('h2, h3, p, span, label, .step-text').forEach(el => el.classList.add('cook-mode-text-lg'));
             }
             // 極簡料理模式只留左右兩欄（食材／作法），照片、標題列、換算/熱量區塊、
-            // 教學影片、底下編輯/刪除/複製當範本，全部隱藏，方便專心左右滑動看內容
+            // 底下編輯/刪除/複製當範本，全部隱藏，方便專心左右滑動看內容；
+            // 教學影片改成「搬」進作法欄位最上方，這樣還是能邊看影片邊跟著做
             COOKING_HIDE_IDS.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.style.setProperty('display', 'none', 'important');
             });
+            const videoSection = document.getElementById('detail-video-section');
+            const stepsBlockForVideo = document.getElementById('cook-steps-block');
+            if (videoSection && stepsBlockForVideo && !document.getElementById('video-section-placeholder')) {
+                const placeholder = document.createElement('div');
+                placeholder.id = 'video-section-placeholder';
+                placeholder.style.display = 'none';
+                videoSection.parentNode.insertBefore(placeholder, videoSection);
+                stepsBlockForVideo.insertBefore(videoSection, stepsBlockForVideo.firstChild);
+                videoSection.style.setProperty('margin-bottom', '1.25rem', 'important');
+            }
 
             const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
             if (splitWrap) {
@@ -4486,6 +4497,13 @@
                 const el = document.getElementById(id);
                 if (el) el.style.removeProperty('display');
             });
+            const videoPlaceholder = document.getElementById('video-section-placeholder');
+            const videoSectionBack = document.getElementById('detail-video-section');
+            if (videoPlaceholder && videoSectionBack) {
+                videoPlaceholder.parentNode.insertBefore(videoSectionBack, videoPlaceholder);
+                videoPlaceholder.remove();
+                videoSectionBack.style.removeProperty('margin-bottom');
+            }
             const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
             if (splitWrap) {
                 ['display', 'grid-template-columns', 'gap', 'align-items', 'height', 'padding', 'margin', 'box-sizing'].forEach(p => splitWrap.style.removeProperty(p));
