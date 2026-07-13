@@ -2526,6 +2526,7 @@
         function rpgCleanup() {
             document.removeEventListener('keydown', rpgKeyHandler);
             if (rpgWatchdogTimer) { clearInterval(rpgWatchdogTimer); rpgWatchdogTimer = null; }
+            if (typeof rpgHoldEnd === 'function') rpgHoldEnd();
             rpgState = null;
         }
         // 監控卡住的移動狀態：不管是什麼原因造成的卡死，超過約 2 秒沒有解除就強制解鎖，
@@ -2608,6 +2609,26 @@
             if (dirs[e.key]) { e.preventDefault(); rpgMove(dirs[e.key][0], dirs[e.key][1]); }
         }
 
+        // 按住方向鈕連續走：按下先走一步，按住超過 0.35 秒後開始每 160ms 自動走一步，
+        // 放開手指/滑鼠就停止（rpgMove 內部本來就有動畫中擋輸入的機制，重複呼叫很安全）
+        let rpgHoldTimer = null, rpgHoldInterval = null;
+        function rpgHoldAttrs(dx, dy) {
+            return `onmousedown="rpgHoldStart(${dx},${dy})" onmouseup="rpgHoldEnd()" onmouseleave="rpgHoldEnd()" ontouchstart="event.preventDefault(); rpgHoldStart(${dx},${dy})" ontouchend="rpgHoldEnd()" ontouchcancel="rpgHoldEnd()"`;
+        }
+        function rpgHoldStart(dx, dy) {
+            rpgHoldEnd();
+            rpgMove(dx, dy);
+            rpgHoldTimer = setTimeout(() => {
+                rpgHoldInterval = setInterval(() => rpgMove(dx, dy), 160);
+            }, 350);
+        }
+        function rpgHoldEnd() {
+            clearTimeout(rpgHoldTimer);
+            clearInterval(rpgHoldInterval);
+            rpgHoldTimer = null;
+            rpgHoldInterval = null;
+        }
+
         function renderRpgMap() {
             const state = rpgState;
             if (!state) return;
@@ -2629,14 +2650,14 @@
                 </div>
                 <p id="rpg-dialogue-box" class="text-xs text-center mt-2" style="color:#B3A492; min-height:1.2rem;"></p>
                 <div class="flex flex-col items-center gap-1 mt-3" style="max-width:150px; margin-left:auto; margin-right:auto;">
-                    <button onclick="rpgMove(0,-1)" class="btn-secondary !px-4 !py-2">⬆️</button>
+                    <button ${rpgHoldAttrs(0, -1)} class="btn-secondary !px-4 !py-2">⬆️</button>
                     <div class="flex gap-1">
-                        <button onclick="rpgMove(-1,0)" class="btn-secondary !px-4 !py-2">⬅️</button>
-                        <button onclick="rpgMove(0,1)" class="btn-secondary !px-4 !py-2">⬇️</button>
-                        <button onclick="rpgMove(1,0)" class="btn-secondary !px-4 !py-2">➡️</button>
+                        <button ${rpgHoldAttrs(-1, 0)} class="btn-secondary !px-4 !py-2">⬅️</button>
+                        <button ${rpgHoldAttrs(0, 1)} class="btn-secondary !px-4 !py-2">⬇️</button>
+                        <button ${rpgHoldAttrs(1, 0)} class="btn-secondary !px-4 !py-2">➡️</button>
                     </div>
                 </div>
-                <p class="text-xs text-center mt-2" style="color:#B3A492">電腦可用方向鍵/WASD 移動</p>
+                <p class="text-xs text-center mt-2" style="color:#B3A492">按住方向鈕可以連續走，電腦可用方向鍵/WASD 移動</p>
                 <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">離開遊戲</button>
             `;
             document.removeEventListener('keydown', rpgKeyHandler);
@@ -2984,6 +3005,7 @@
                         target: null, // { row, i } 選中的攻擊目標
                         actor: { row: 'front', i: 1 }, // 選中要行動的我方角色，預設主角
                         uiMode: 'main', // main | skill | item
+                        actedThisRound: {}, // 這一輪已經行動過的我方角色（key 是 "row-i"），所有活著的角色都行動完才輪到怪物
                         logLines: [ids.length > 1 ? `${ids.length} 隻怪物一起擋住了去路！` : `一隻${RPG_MONSTERS[ids[0]].name}擋住了去路！`],
                     };
                     // 預設鎖定第一個找得到的怪物當目標
@@ -3010,6 +3032,7 @@
             const isDead = curHp <= 0;
             const isTarget = isMonster && b.target && b.target.row === row && b.target.i === i && !isDead;
             const isActor = !isMonster && b.actor && b.actor.row === row && b.actor.i === i;
+            const hasActed = isPlayerObj && b.actedThisRound && b.actedThisRound[`${row}-${i}`];
             const sheetMap = {
                 char: { img: rpgCharImg, url: RPG_CHAR_URL, tiles: RPG_CHAR_TILES, stride: RPG_STRIDE, w: 918, h: 203 },
                 dungeon: { img: rpgDungeonImg, url: RPG_DUNGEON_URL, tiles: RPG_DUNGEON_TILES, stride: RPG_DUNGEON_STRIDE, w: RPG_DUNGEON_W, h: RPG_DUNGEON_H },
@@ -3037,8 +3060,8 @@
             const spPct = isPlayerObj ? Math.max(0, Math.round(obj.sp / obj.maxSp * 100)) : null;
             const clickAttr = isMonster ? `onclick="rpgSelectTarget('${row}', ${i})"` : `onclick="rpgSelectActor('${row}', ${i})"`;
             return `
-                <div id="${domId}" ${clickAttr} class="rpg-combat-slot" style="width:${RPG_SLOT}px; cursor:pointer; text-align:center; transition:opacity .5s, transform .5s, filter .12s; ${isDead ? 'opacity:0;' : ''}">
-                    <div style="height:8px; line-height:8px; font-size:8px;">${isTarget ? '▼' : (isActor ? '●' : '')}</div>
+                <div id="${domId}" ${clickAttr} class="rpg-combat-slot" style="width:${RPG_SLOT}px; cursor:pointer; text-align:center; transition:opacity .5s, transform .5s, filter .12s; ${isDead ? 'opacity:0;' : (hasActed ? 'opacity:0.45;' : '')}">
+                    <div style="height:8px; line-height:8px; font-size:8px;">${isTarget ? '▼' : (hasActed ? '✓' : (isActor ? '●' : ''))}</div>
                     <div style="border-radius:0.4rem; ${isTarget || isActor ? 'background:rgba(196,69,63,0.15); box-shadow:0 0 0 1.5px var(--jam);' : ''}">${visual}</div>
                     <div style="height:4px; border-radius:999px; overflow:hidden; background:var(--line); margin-top:2px;">
                         <div id="${domId}-hp" style="height:100%; width:${hpPct}%; background:${isPlayerObj ? 'var(--sage)' : '#C4453F'}; transition:width .3s;"></div>
@@ -3159,7 +3182,7 @@
             const state = rpgState;
             const b = state.battle;
             const obj = b.partyFormation[row][i];
-            if (!b || state.battleBusy || !obj || obj.hp <= 0) return;
+            if (!b || state.battleBusy || !obj || obj.hp <= 0 || b.actedThisRound[`${row}-${i}`]) return;
             b.actor = { row, i };
             b.uiMode = 'main';
             playSfx('click');
@@ -3226,17 +3249,18 @@
             const b = state.battle;
             const p = state.player;
             const actor = rpgGetActorObj();
-            if (!b || state.battleBusy || !actor) return;
+            if (!b || state.battleBusy || !actor || b.actedThisRound[`${b.actor.row}-${b.actor.i}`]) return;
 
             if (action === 'flee') {
                 if (Math.random() < 0.6) {
-                    rpgLogAppend('你成功逃跑了！');
+                    rpgLogAppend('你們成功逃跑了！');
                     playSfx('click');
                     state.mode = 'map';
                     setTimeout(renderRpgMap, 500);
                 } else {
                     rpgLogAppend('逃跑失敗！');
                     state.battleBusy = true;
+                    b.actedThisRound = {};
                     setTimeout(() => rpgMonsterTurn(), 500);
                 }
                 return;
@@ -3289,19 +3313,35 @@
                     if (navigator.vibrate) navigator.vibrate([40]);
                 }
 
-                if (dmg > 0 && targetObj.curHp <= 0) {
+                const monsterDied = dmg > 0 && targetObj.curHp <= 0;
+                if (monsterDied) {
                     const slot = document.getElementById(targetDomId);
                     if (slot) { slot.style.opacity = '0'; slot.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; }
                     const remaining = rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0);
                     b.target = remaining.length ? { row: remaining[0].row, i: remaining[0].i } : null;
-                    setTimeout(() => renderRpgBattle(), 520);
                 }
 
                 if (rpgFormationEntries(b.monsterFormation).every(e => e.obj.curHp <= 0)) {
-                    setTimeout(() => rpgBattleWin(), 550);
+                    setTimeout(() => rpgBattleWin(), monsterDied ? 550 : 0);
                     return;
                 }
-                setTimeout(() => rpgMonsterTurn(), 600);
+
+                // 標記這位角色這一輪已經行動過，檢查還有沒有其他活著、還沒行動的我方角色——
+                // 回合制應該是「全部我方角色都行動完」才輪到怪物，不是隨便一個人出手就馬上換怪物
+                b.actedThisRound[`${b.actor.row}-${b.actor.i}`] = true;
+                const nextActor = rpgFormationEntries(b.partyFormation).find(e => e.obj.hp > 0 && !b.actedThisRound[`${e.row}-${e.i}`]);
+                const renderDelay = monsterDied ? 520 : 0;
+                if (nextActor) {
+                    b.actor = { row: nextActor.row, i: nextActor.i };
+                    setTimeout(() => {
+                        rpgLogAppend(`輪到 ${nextActor.obj.name} 行動`);
+                        state.battleBusy = false;
+                        renderRpgBattle();
+                    }, renderDelay);
+                    return;
+                }
+                b.actedThisRound = {}; // 這一輪全員行動完畢，重設給下一輪用
+                setTimeout(() => rpgMonsterTurn(), renderDelay + 100);
             };
 
             if (action === 'attack' || action === 'skill') rpgLungeAttack(actorDomId, 60, performHit);
