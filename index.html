@@ -2607,11 +2607,12 @@
                 }
             }
 
-            // 角色：腳下陰影 + 真實角色素材（載入失敗才退回 emoji）
-            const cx = state.pos.x * T + T / 2, cy = state.pos.y * T + T / 2;
+            // 角色：腳下陰影 + 真實角色素材（載入失敗才退回 emoji）；動畫進行中用 animPos 畫出滑動中間格
+            const renderPos = state.animPos || state.pos;
+            const cx = renderPos.x * T + T / 2, cy = renderPos.y * T + T / 2;
             ctx.fillStyle = 'rgba(58,42,30,0.2)';
             ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.32, T * 0.26, 4, 0, 0, Math.PI * 2); ctx.fill();
-            const drew = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.player, state.pos.x * T, state.pos.y * T, T);
+            const drew = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.player, renderPos.x * T, renderPos.y * T, T);
             if (!drew) {
                 ctx.font = `${T - 4}px sans-serif`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -2621,35 +2622,86 @@
 
         function rpgMove(dx, dy) {
             const state = rpgState;
-            if (!state || state.mode !== 'map') return;
+            if (!state || state.mode !== 'map' || state.animating) return; // 動畫進行中先擋住輸入，避免動作疊在一起
             const map = RPG_MAPS[state.region];
             const nx = state.pos.x + dx, ny = state.pos.y + dy;
-            if (ny < 0 || ny >= map.rows.length || nx < 0 || nx >= map.rows[0].length) return;
+            if (ny < 0 || ny >= map.rows.length || nx < 0 || nx >= map.rows[0].length) { rpgBumpAnimation(dx, dy); return; }
             const ch = map.rows[ny][nx];
-            if (ch === '#') return; // 樹木擋路
-            state.pos = { x: nx, y: ny };
-            playSfx('tick');
+            if (ch === '#') { rpgBumpAnimation(dx, dy); playSfx('fail'); return; } // 樹木擋路，撞牆震動回饋
 
-            // NPC 互動
-            const npcKey = `${nx},${ny}`;
-            if (map.npcs && map.npcs[npcKey]) {
+            const from = { x: state.pos.x, y: state.pos.y };
+            const to = { x: nx, y: ny };
+            state.animating = true;
+            const duration = 140;
+            const t0 = performance.now();
+            function step(now) {
+                const t = Math.min(1, (now - t0) / duration);
+                state.animPos = { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
                 rpgDraw();
-                rpgTalkTo(map.npcs[npcKey]);
-                return;
+                if (t < 1) {
+                    requestAnimationFrame(step);
+                } else {
+                    state.animPos = null;
+                    state.animating = false;
+                    state.pos = to;
+                    playSfx('tick');
+                    const npcKey = `${nx},${ny}`;
+                    if (map.npcs && map.npcs[npcKey]) { rpgDraw(); rpgTalkTo(map.npcs[npcKey]); return; }
+                    if (map.exits && map.exits[npcKey]) { rpgTransitionToExit(map.exits[npcKey]); return; }
+                    rpgDraw();
+                    if (map.wild && ch === '.' && Math.random() < map.encounterRate) {
+                        setTimeout(() => rpgStartBattle(map.monsters[Math.floor(Math.random() * map.monsters.length)]), 150);
+                    }
+                }
             }
-            // 地區出口
-            if (map.exits && map.exits[npcKey]) {
-                const exit = map.exits[npcKey];
+            requestAnimationFrame(step);
+        }
+
+        // 撞牆時角色朝那個方向小幅彈一下再彈回來，給撞到東西的回饋感
+        function rpgBumpAnimation(dx, dy) {
+            const state = rpgState;
+            if (!state || state.animating) return;
+            state.animating = true;
+            const start = performance.now();
+            const bumpDist = 0.28;
+            function step(now) {
+                const t = (now - start) / 220;
+                if (t >= 1) { state.animPos = null; state.animating = false; rpgDraw(); return; }
+                const wobble = Math.sin(t * Math.PI) * bumpDist;
+                state.animPos = { x: state.pos.x + dx * wobble, y: state.pos.y + dy * wobble };
+                rpgDraw();
+                requestAnimationFrame(step);
+            }
+            requestAnimationFrame(step);
+        }
+
+        // 切換地區時淡出再淡入，像經典 RPG 換場景那種黑幕轉場
+        function rpgTransitionToExit(exit) {
+            const state = rpgState;
+            const canvas = document.getElementById('rpg-canvas');
+            if (!canvas) { state.region = exit.to; state.pos = { x: exit.x, y: exit.y }; renderRpgMap(); return; }
+            let overlay = document.getElementById('rpg-fade-overlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'rpg-fade-overlay';
+                overlay.style.cssText = 'position:absolute; inset:0; background:#000; opacity:0; transition:opacity .22s; pointer-events:none; border-radius:1rem;';
+                canvas.parentElement.style.position = 'relative';
+                canvas.parentElement.appendChild(overlay);
+            }
+            playSfx('click');
+            requestAnimationFrame(() => { overlay.style.opacity = '1'; });
+            setTimeout(() => {
                 state.region = exit.to;
                 state.pos = { x: exit.x, y: exit.y };
                 renderRpgMap();
-                return;
-            }
-            rpgDraw();
-            // 野外隨機遭遇
-            if (map.wild && ch === '.' && Math.random() < map.encounterRate) {
-                setTimeout(() => rpgStartBattle(map.monsters[Math.floor(Math.random() * map.monsters.length)]), 150);
-            }
+                setTimeout(() => {
+                    const newOverlay = document.getElementById('rpg-fade-overlay');
+                    if (newOverlay) {
+                        newOverlay.style.opacity = '1';
+                        requestAnimationFrame(() => { newOverlay.style.opacity = '0'; });
+                    }
+                }, 30);
+            }, 230);
         }
 
         function rpgTalkTo(npcId) {
@@ -2657,13 +2709,22 @@
             const box = document.getElementById('rpg-dialogue-box');
             if (!info || !box) return;
             const line = info.lines[Math.floor(Math.random() * info.lines.length)];
-            box.textContent = `${info.icon} ${info.name}：${line}`;
+            const fullText = `${info.icon} ${info.name}：${line}`;
+            // 打字機效果：文字一個字一個字跳出來，經典 RPG 對話演出感
+            box.textContent = '';
+            let i = 0;
+            playSfx('click');
+            const typer = setInterval(() => {
+                i++;
+                box.textContent = fullText.slice(0, i);
+                if (i >= fullText.length) clearInterval(typer);
+            }, 28);
             if (info.heal) {
                 const state = rpgState;
                 state.player.hp = state.player.maxHp;
                 state.player.sp = state.player.maxSp;
                 playSfx('success');
-                setTimeout(() => { renderRpgMap(); }, 900);
+                setTimeout(() => { renderRpgMap(); }, 1400);
             }
         }
 
@@ -2671,13 +2732,29 @@
         function rpgStartBattle(monsterId) {
             const state = rpgState;
             const template = RPG_MONSTERS[monsterId];
-            state.mode = 'battle';
-            state.battle = {
-                monster: { ...template, curHp: template.hp },
-                log: `一隻${template.name}擋住了去路！`,
-            };
             playSfx('burnt');
-            renderRpgBattle();
+            if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+            // 戰鬥開始前的白閃轉場，經典 RPG 遇敵演出感
+            const canvas = document.getElementById('rpg-canvas');
+            const flash = document.createElement('div');
+            flash.style.cssText = 'position:fixed; inset:0; background:#fff; opacity:0; z-index:9999; pointer-events:none; transition:opacity .08s;';
+            document.body.appendChild(flash);
+            let flashes = 0;
+            const doFlash = () => {
+                flash.style.opacity = flash.style.opacity === '1' ? '0' : '1';
+                flashes++;
+                if (flashes < 4) setTimeout(doFlash, 90);
+                else {
+                    flash.remove();
+                    state.mode = 'battle';
+                    state.battle = {
+                        monster: { ...template, curHp: template.hp },
+                        log: `一隻${template.name}擋住了去路！`,
+                    };
+                    renderRpgBattle();
+                }
+            };
+            doFlash();
         }
 
         function renderRpgBattle() {
