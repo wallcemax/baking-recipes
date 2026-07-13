@@ -2352,7 +2352,45 @@
         // ============================================================
         // 異世界料理者（料理 RPG，第一版：暖廚村＋麥穗平原）
         // ============================================================
-        const RPG_TILE = 32; // 每格像素大小
+        const RPG_TILE = 32; // 每格像素大小（畫面上實際顯示大小，素材原始是 16x16）
+        const RPG_SRC = 16; // 素材來源圖磚大小
+        const RPG_STRIDE = 17; // 素材圖磚間距（16px 圖磚 + 1px 邊界）
+
+        // 真實像素美術素材（Kenney CC0 授權，使用者上傳到自己的 Cloudinary）
+        const RPG_TERRAIN_URL = 'https://res.cloudinary.com/bumzwp9g/image/upload/v1783905267/roguelikeSheet_transparent_qyo6yh.png';
+        const RPG_CHAR_URL = 'https://res.cloudinary.com/bumzwp9g/image/upload/v1783905324/roguelikeChar_transparent_qjzz99.png';
+        // 圖磚座標（欄, 列），對照素材總表裡實際找到的乾淨圖案
+        const RPG_TERRAIN_TILES = {
+            grass: [5, 0], water: [0, 0], path: [5, 2], tree: [23, 9], door: [52, 0],
+        };
+        const RPG_CHAR_TILES = {
+            player: [0, 5], elder: [1, 6], shop: [0, 7], innkeeper: [1, 7], goblin: [0, 3],
+        };
+        let rpgTerrainImg = null, rpgCharImg = null, rpgAssetsReady = false;
+        function rpgLoadAssets() {
+            return new Promise(resolve => {
+                if (rpgAssetsReady) { resolve(); return; }
+                let loaded = 0;
+                const done = () => { loaded++; if (loaded >= 2) { rpgAssetsReady = true; resolve(); } };
+                rpgTerrainImg = new Image();
+                rpgTerrainImg.onload = done;
+                rpgTerrainImg.onerror = done; // 就算載入失敗也不要卡住，改用備援畫法
+                rpgTerrainImg.src = RPG_TERRAIN_URL;
+                rpgCharImg = new Image();
+                rpgCharImg.onload = done;
+                rpgCharImg.onerror = done;
+                rpgCharImg.src = RPG_CHAR_URL;
+            });
+        }
+        // 把素材總表裡的某個圖磚，畫到畫面上指定位置（放大成 RPG_TILE 顯示，維持像素銳利不模糊）
+        function rpgDrawSprite(ctx, img, tileCoord, dx, dy, size) {
+            if (!img || !img.complete || img.naturalWidth === 0) return false;
+            const [col, row] = tileCoord;
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(img, col * RPG_STRIDE, row * RPG_STRIDE, RPG_SRC, RPG_SRC, dx, dy, size, size);
+            return true;
+        }
+
         // 地圖用字元表示：# 樹木/牆（阻擋）、. 草地（可走，在野外地圖會觸發隨機遭遇）、
         // P 石板路（可走、不會遭遇）、H NPC/建築（可走上去會觸發對話）、E 出口（可走上去會切換地區）
         const RPG_MAPS = {
@@ -2406,7 +2444,7 @@
 
         const RPG_MONSTERS = {
             bread_slime: { name: '麵包史萊姆', emoji: '🍞', hp: 12, atk: 3, def: 1, exp: 8, gold: 5 },
-            ferment_goblin: { name: '發酵哥布林', emoji: '👺', hp: 18, atk: 5, def: 2, exp: 14, gold: 10 },
+            ferment_goblin: { name: '發酵哥布林', emoji: '👺', spriteKey: 'goblin', hp: 18, atk: 5, def: 2, exp: 14, gold: 10 },
             weed_rabbit: { name: '雜草兔', emoji: '🐰', hp: 10, atk: 4, def: 0, exp: 6, gold: 4 },
         };
 
@@ -2432,7 +2470,7 @@
             };
         }
 
-        function startRpgGame() {
+        async function startRpgGame() {
             if (!isAdmin()) { alert('這個遊戲還在測試中，暫時只有管理者能玩'); return; }
             if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
             qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup(); tinyDinerCleanup(); rpgCleanup();
@@ -2445,6 +2483,10 @@
                 battle: null,
             };
             playSfx('click');
+            document.getElementById('game-modal-title').textContent = '🗺️ 異世界料理者';
+            document.getElementById('game-modal-body').innerHTML = `<p class="text-center text-sm py-10" style="color:#B3A492">載入美術素材中…</p>`;
+            await rpgLoadAssets();
+            if (!rpgState) return; // 使用者載入途中已經離開遊戲
             renderRpgMap();
         }
 
@@ -2491,11 +2533,10 @@
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
             const T = RPG_TILE;
-            // 用網站本身的暖色調色盤畫圖磚紋理，取代原本的純色色塊
+            const useReal = rpgAssetsReady && rpgTerrainImg && rpgTerrainImg.naturalWidth > 0;
+            // 用網站本身的暖色調色盤畫圖磚紋理，素材載入失敗時的備援畫法
             const GRASS_A = '#9BC49B', GRASS_B = '#8FB98E';
             const PATH_A = '#E4D5BE', PATH_B = '#D9C4AE';
-
-            // 用「座標的簡易雜訊」決定棋盤式雙色紋理，同一張地圖每次畫出來都一樣（不會閃爍）
             const shade = (x, y) => (x + y) % 2 === 0;
 
             for (let y = 0; y < map.rows.length; y++) {
@@ -2503,85 +2544,79 @@
                     const ch = map.rows[y][x];
                     const px = x * T, py = y * T;
 
-                    if (ch === '~') {
-                        // 水：深淺藍雙色 + 波浪線
-                        ctx.fillStyle = shade(x, y) ? '#7FB3C9' : '#74A8BE';
-                        ctx.fillRect(px, py, T, T);
-                        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-                        ctx.lineWidth = 1.5;
-                        ctx.beginPath();
-                        ctx.moveTo(px + 3, py + T * 0.35); ctx.quadraticCurveTo(px + T / 2, py + T * 0.2, px + T - 3, py + T * 0.35);
-                        ctx.moveTo(px + 3, py + T * 0.7); ctx.quadraticCurveTo(px + T / 2, py + T * 0.55, px + T - 3, py + T * 0.7);
-                        ctx.stroke();
-                    } else if (ch === 'E') {
-                        // 出口：底色用草地，中間畫一個發光傳送門圖案
-                        ctx.fillStyle = shade(x, y) ? GRASS_A : GRASS_B;
-                        ctx.fillRect(px, py, T, T);
-                        const grad = ctx.createRadialGradient(px + T / 2, py + T / 2, 2, px + T / 2, py + T / 2, T / 2);
-                        grad.addColorStop(0, 'rgba(244,197,94,0.9)');
-                        grad.addColorStop(1, 'rgba(244,197,94,0.05)');
-                        ctx.fillStyle = grad;
-                        ctx.beginPath(); ctx.arc(px + T / 2, py + T / 2, T / 2 - 2, 0, Math.PI * 2); ctx.fill();
-                    } else if (ch === 'P') {
-                        // 石板路：暖灰底 + 幾顆小石頭紋理
-                        ctx.fillStyle = shade(x, y) ? PATH_A : PATH_B;
-                        ctx.fillRect(px, py, T, T);
-                        ctx.fillStyle = 'rgba(107,88,71,0.15)';
-                        ctx.beginPath(); ctx.arc(px + T * 0.3, py + T * 0.35, 2, 0, Math.PI * 2); ctx.fill();
-                        ctx.beginPath(); ctx.arc(px + T * 0.7, py + T * 0.65, 2.5, 0, Math.PI * 2); ctx.fill();
-                    } else {
-                        // 草地（含樹木/建築的底層）：雙色棋盤 + 隨機草葉小線條
-                        ctx.fillStyle = shade(x, y) ? GRASS_A : GRASS_B;
-                        ctx.fillRect(px, py, T, T);
-                        ctx.strokeStyle = 'rgba(58,42,30,0.12)';
-                        ctx.lineWidth = 1;
-                        const seed = (x * 7 + y * 13) % 5;
-                        for (let i = 0; i < 3; i++) {
-                            const bx = px + 4 + ((seed + i * 3) % (T - 8));
-                            const by = py + 6 + ((seed * 2 + i * 5) % (T - 12));
-                            ctx.beginPath(); ctx.moveTo(bx, by + 5); ctx.lineTo(bx + 1.5, by); ctx.stroke();
+                    if (useReal) {
+                        // 底層地形：水 / 泥土路 / 草地（樹木跟 NPC 也是站在草地上）
+                        if (ch === '~') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.water, px, py, T);
+                        else if (ch === 'P') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.path, px, py, T);
+                        else rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.grass, px, py, T);
+
+                        if (ch === 'E') {
+                            // 出口：草地上疊一個發光傳送門光暈（素材裡沒有現成的傳送門圖案，用程式畫）
+                            const grad = ctx.createRadialGradient(px + T / 2, py + T / 2, 2, px + T / 2, py + T / 2, T / 2);
+                            grad.addColorStop(0, 'rgba(244,197,94,0.9)');
+                            grad.addColorStop(1, 'rgba(244,197,94,0.05)');
+                            ctx.fillStyle = grad;
+                            ctx.beginPath(); ctx.arc(px + T / 2, py + T / 2, T / 2 - 2, 0, Math.PI * 2); ctx.fill();
                         }
+                        if (ch === '#') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.tree, px, py, T);
+                        if (ch === 'H') {
+                            const npcId = map.npcs[`${x},${y}`];
+                            const spriteKey = (npcId && RPG_CHAR_TILES[npcId]) ? npcId : 'elder';
+                            rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES[spriteKey], px, py, T);
+                        }
+                    } else {
+                        // ---- 備援畫法（素材載入失敗時才會用到）----
+                        if (ch === '~') {
+                            ctx.fillStyle = shade(x, y) ? '#7FB3C9' : '#74A8BE';
+                            ctx.fillRect(px, py, T, T);
+                            ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1.5;
+                            ctx.beginPath();
+                            ctx.moveTo(px + 3, py + T * 0.35); ctx.quadraticCurveTo(px + T / 2, py + T * 0.2, px + T - 3, py + T * 0.35);
+                            ctx.stroke();
+                        } else if (ch === 'E') {
+                            ctx.fillStyle = shade(x, y) ? GRASS_A : GRASS_B;
+                            ctx.fillRect(px, py, T, T);
+                            const grad = ctx.createRadialGradient(px + T / 2, py + T / 2, 2, px + T / 2, py + T / 2, T / 2);
+                            grad.addColorStop(0, 'rgba(244,197,94,0.9)'); grad.addColorStop(1, 'rgba(244,197,94,0.05)');
+                            ctx.fillStyle = grad;
+                            ctx.beginPath(); ctx.arc(px + T / 2, py + T / 2, T / 2 - 2, 0, Math.PI * 2); ctx.fill();
+                        } else if (ch === 'P') {
+                            ctx.fillStyle = shade(x, y) ? PATH_A : PATH_B;
+                            ctx.fillRect(px, py, T, T);
+                        } else {
+                            ctx.fillStyle = shade(x, y) ? GRASS_A : GRASS_B;
+                            ctx.fillRect(px, py, T, T);
+                        }
+                        if (ch === '#') {
+                            ctx.fillStyle = 'rgba(58,42,30,0.15)';
+                            ctx.beginPath(); ctx.ellipse(px + T / 2, py + T - 4, T * 0.3, 4, 0, 0, Math.PI * 2); ctx.fill();
+                            ctx.fillStyle = '#7A5A3A'; ctx.fillRect(px + T / 2 - 2, py + T * 0.55, 4, T * 0.35);
+                            ctx.fillStyle = '#4F6F45';
+                            ctx.beginPath(); ctx.arc(px + T / 2, py + T * 0.42, T * 0.28, 0, Math.PI * 2); ctx.fill();
+                        }
+                        if (ch === 'H') {
+                            ctx.fillStyle = '#E8DCC8'; ctx.fillRect(px + T * 0.18, py + T * 0.45, T * 0.64, T * 0.45);
+                            ctx.fillStyle = '#A8324A';
+                            ctx.beginPath();
+                            ctx.moveTo(px + T * 0.1, py + T * 0.48); ctx.lineTo(px + T / 2, py + T * 0.15); ctx.lineTo(px + T * 0.9, py + T * 0.48);
+                            ctx.closePath(); ctx.fill();
+                        }
+                        ctx.strokeStyle = 'rgba(58,42,30,0.06)';
+                        ctx.strokeRect(px, py, T, T);
                     }
-
-                    if (ch === '#') {
-                        // 樹：陰影橢圓 + 樹幹 + 三層樹冠
-                        ctx.fillStyle = 'rgba(58,42,30,0.15)';
-                        ctx.beginPath(); ctx.ellipse(px + T / 2, py + T - 4, T * 0.3, 4, 0, 0, Math.PI * 2); ctx.fill();
-                        ctx.fillStyle = '#7A5A3A';
-                        ctx.fillRect(px + T / 2 - 2, py + T * 0.55, 4, T * 0.35);
-                        ctx.fillStyle = '#4F6F45';
-                        ctx.beginPath(); ctx.arc(px + T / 2, py + T * 0.42, T * 0.28, 0, Math.PI * 2); ctx.fill();
-                        ctx.fillStyle = '#5A7A52';
-                        ctx.beginPath(); ctx.arc(px + T / 2 - 5, py + T * 0.32, T * 0.2, 0, Math.PI * 2); ctx.fill();
-                        ctx.beginPath(); ctx.arc(px + T / 2 + 6, py + T * 0.3, T * 0.18, 0, Math.PI * 2); ctx.fill();
-                    }
-                    if (ch === 'H') {
-                        // 建築：陰影 + 屋身 + 三角屋頂 + 小門
-                        ctx.fillStyle = 'rgba(58,42,30,0.15)';
-                        ctx.beginPath(); ctx.ellipse(px + T / 2, py + T - 3, T * 0.35, 4, 0, 0, Math.PI * 2); ctx.fill();
-                        ctx.fillStyle = '#E8DCC8';
-                        ctx.fillRect(px + T * 0.18, py + T * 0.45, T * 0.64, T * 0.45);
-                        ctx.fillStyle = '#A8324A';
-                        ctx.beginPath();
-                        ctx.moveTo(px + T * 0.1, py + T * 0.48); ctx.lineTo(px + T / 2, py + T * 0.15); ctx.lineTo(px + T * 0.9, py + T * 0.48);
-                        ctx.closePath(); ctx.fill();
-                        ctx.fillStyle = '#6B5847';
-                        ctx.fillRect(px + T * 0.44, py + T * 0.68, T * 0.14, T * 0.22);
-                    }
-
-                    // 淡淡的格線，讓每格圖磚有邊界感
-                    ctx.strokeStyle = 'rgba(58,42,30,0.06)';
-                    ctx.strokeRect(px, py, T, T);
                 }
             }
 
-            // 角色：腳下陰影 + emoji
+            // 角色：腳下陰影 + 真實角色素材（載入失敗才退回 emoji）
             const cx = state.pos.x * T + T / 2, cy = state.pos.y * T + T / 2;
             ctx.fillStyle = 'rgba(58,42,30,0.2)';
             ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.32, T * 0.26, 4, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.font = `${T - 4}px sans-serif`;
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText('🧑‍🍳', cx, cy - 2);
+            const drew = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.player, state.pos.x * T, state.pos.y * T, T);
+            if (!drew) {
+                ctx.font = `${T - 4}px sans-serif`;
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText('🧑‍🍳', cx, cy - 2);
+            }
         }
 
         function rpgMove(dx, dy) {
@@ -2652,10 +2687,18 @@
             document.getElementById('game-modal-title').textContent = '⚔️ 戰鬥中';
             const hpPct = Math.max(0, Math.round(b.monster.curHp / b.monster.hp * 100));
             const pHpPct = Math.max(0, Math.round(p.hp / p.maxHp * 100));
+            const useReal = rpgAssetsReady && rpgCharImg && rpgCharImg.naturalWidth > 0 && b.monster.spriteKey;
+            const monsterVisual = useReal
+                ? (() => {
+                    const [col, row] = RPG_CHAR_TILES[b.monster.spriteKey];
+                    const zoom = 5; // 16px 素材放大 5 倍展示在戰鬥畫面
+                    return `<div style="width:${16 * zoom}px; height:${16 * zoom}px; margin:0 auto; background-image:url('${RPG_CHAR_URL}'); background-position:-${col * RPG_STRIDE * zoom}px -${row * RPG_STRIDE * zoom}px; background-size:${918 * zoom}px ${203 * zoom}px; image-rendering:pixelated;"></div>`;
+                })()
+                : `<div class="text-6xl mb-1">${b.monster.emoji}</div>`;
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="text-center mb-4">
-                    <div class="text-6xl mb-1">${b.monster.emoji}</div>
-                    <p class="font-semibold text-sm">${b.monster.name}</p>
+                    ${monsterVisual}
+                    <p class="font-semibold text-sm mt-1">${b.monster.name}</p>
                     <div style="height:8px; border-radius:999px; overflow:hidden; background:var(--line); max-width:200px; margin:4px auto;">
                         <div style="height:100%; width:${hpPct}%; background:#C4453F; transition:width .3s;"></div>
                     </div>
