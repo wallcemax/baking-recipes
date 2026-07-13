@@ -1026,7 +1026,7 @@
                 <button onclick="playSfx('click'); startRpgGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:linear-gradient(135deg, #F4E4CE, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
                     <div class="text-4xl mb-2">🗺️</div>
                     <p class="font-display font-bold text-lg">異世界料理者 <span class="text-xs font-normal" style="color:#B3A492">（搶先體驗版・僅管理者可見）</span></p>
-                    <p class="text-xs mt-1" style="color:#B3A492">回合制料理 RPG，在暖廚村跟麥穗平原探索、打怪升級，更多地區陸續開放中！</p>
+                    <p class="text-xs mt-1" style="color:#B3A492">回合制料理 RPG，在暖廚村跟麥穗平原探索、打怪升級、蒐集食材學食譜，煮出來的料理還能帶進戰鬥裡用，更多地區陸續開放中！</p>
                 </button>` : ''}
                 <div>
                     <h3 class="font-display font-semibold text-lg mb-3">🏆 排行榜</h3>
@@ -2524,8 +2524,8 @@
                 },
                 pois: {
                     '3,1': { item: '家常蛋花湯' },
-                    '20,1': { item: null },
-                    '3,16': { item: null },
+                    '20,1': { ingredient: '雞蛋', qty: 2 },
+                    '3,16': { recipe: 'Q彈史萊姆凍' },
                 },
                 exits: { '11,17': { to: 'plains', x: 6, y: 1 }, '12,17': { to: 'plains', x: 7, y: 1 } },
                 wild: false,
@@ -2549,7 +2549,13 @@
                 ],
                 start: { x: 7, y: 1 },
                 npcs: {},
-                pois: {},
+                pois: {
+                    '2,1': { recipe: '野菇燉湯' },
+                    '12,1': { ingredient: '菇傘', qty: 2 },
+                    '2,8': { ingredient: '哥布林辛香料', qty: 2 },
+                    '12,8': { recipe: '香草麵包' },
+                    '7,6': { ingredient: '小麥', qty: 3 },
+                },
                 exits: { '6,10': { to: 'village', x: 11, y: 16 }, '7,10': { to: 'village', x: 12, y: 16 } },
                 wild: true,
                 encounterRate: 0.14,
@@ -2558,9 +2564,25 @@
         };
 
         const RPG_MONSTERS = {
-            bread_slime: { name: '麵包史萊姆', emoji: '🍞', spriteKey: 'slime', sheet: 'dungeon', hp: 12, atk: 3, def: 1, agi: 3, exp: 8, gold: 5 },
-            ferment_goblin: { name: '發酵哥布林', emoji: '👺', spriteKey: 'goblin', sheet: 'char', hp: 18, atk: 5, def: 2, agi: 5, exp: 14, gold: 10 },
-            forest_mushroom: { name: '野菇怪', emoji: '🍄', spriteKey: 'mushroom', sheet: 'dungeon', hp: 10, atk: 4, def: 0, agi: 9, exp: 6, gold: 4 },
+            // drops：擊敗後每一項各自獨立骰一次機率，可能同時掉好幾種、也可能什麼都沒掉
+            bread_slime: { name: '麵包史萊姆', emoji: '🍞', spriteKey: 'slime', sheet: 'dungeon', hp: 12, atk: 3, def: 1, agi: 3, exp: 8, gold: 5, drops: [{ name: '史萊姆凝膠', rate: 0.5 }, { name: '小麥', rate: 0.35 }] },
+            ferment_goblin: { name: '發酵哥布林', emoji: '👺', spriteKey: 'goblin', sheet: 'char', hp: 18, atk: 5, def: 2, agi: 5, exp: 14, gold: 10, drops: [{ name: '哥布林辛香料', rate: 0.4 }, { name: '小麥', rate: 0.25 }] },
+            forest_mushroom: { name: '野菇怪', emoji: '🍄', spriteKey: 'mushroom', sheet: 'dungeon', hp: 10, atk: 4, def: 0, agi: 9, exp: 6, gold: 4, drops: [{ name: '菇傘', rate: 0.6 }] },
+        };
+
+        // 食材資料庫：目前只用來顯示圖示跟名稱，沒有額外數值——單純是烹飪的原料
+        const RPG_INGREDIENT_EMOJI = {
+            '小麥': '🌾', '雞蛋': '🥚', '菇傘': '🍄', '史萊姆凝膠': '🟢', '哥布林辛香料': '🌶️',
+        };
+
+        // 食譜資料庫：need 是烹調需要消耗的食材跟數量，煮出來的效果寫在下面的 RPG_ITEM_INFO
+        // （烹調出來的成品，就是一般的「道具」，可以帶進戰鬥裡吃/使用）
+        const RPG_RECIPES = {
+            '家常蛋花湯': { need: { '雞蛋': 1, '小麥': 1 } },
+            '野菇燉湯': { need: { '菇傘': 2 } },
+            '香草麵包': { need: { '小麥': 2, '雞蛋': 1 } },
+            'Q彈史萊姆凍': { need: { '史萊姆凝膠': 2, '小麥': 1 } },
+            '元氣烤串': { need: { '哥布林辛香料': 1, '雞蛋': 1, '小麥': 1 } },
         };
 
         const RPG_NPC_INFO = {
@@ -2612,6 +2634,8 @@
                 gold: 50,
                 weaponName: '新手鍋鏟', armorName: '破舊圍裙',
                 items: { '家常蛋花湯': 2 },
+                ingredients: {}, // 食材背包：{ 食材名稱: 數量 }
+                knownRecipes: ['家常蛋花湯'], // 已經學會、可以在烹飪背包裡製作的料理
                 skills: ['stir_fry', 'knife_dance'],
             };
         }
@@ -2631,34 +2655,20 @@
             if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
             qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup(); tinyDinerCleanup(); rpgCleanup();
             ensureAudioContext();
-            document.getElementById('game-modal').classList.add('rpg-fullscreen');
-            document.getElementById('game-modal-title').textContent = '🗺️ 異世界料理者';
-            document.getElementById('game-modal-body').innerHTML = `
-                <div class="text-center py-10">
-                    <div class="text-5xl mb-4">🧑‍🍳</div>
-                    <p class="font-display text-lg font-bold mb-6">選擇你的角色</p>
-                    <div class="flex gap-4 justify-center">
-                        <button onclick="rpgStartWithGender('male')" class="btn-primary" style="min-width:120px;">👨 男生</button>
-                        <button onclick="rpgStartWithGender('female')" class="btn-secondary" style="min-width:120px;">👩 女生</button>
-                    </div>
-                </div>
-            `;
-        }
-
-        async function rpgStartWithGender(gender) {
-            playSfx('click');
             rpgState = {
-                player: rpgDefaultPlayer(gender),
+                player: rpgDefaultPlayer(),
                 companion: rpgDefaultCompanion(),
                 region: 'village',
                 pos: { ...RPG_MAPS.village.start },
                 companionPos: { ...RPG_MAPS.village.start }, // 夥伴一開始跟主角站在同一格，主角一移動夥伴就會跟著往前補位
-                facing: 'down', companionFacing: 'down',
                 mode: 'map', // map | battle | dialogue
                 battle: null,
                 locked: false, // 轉場/對話/遭遇判定進行中時鎖住移動，避免同時觸發第二次事件
             };
+            playSfx('click');
             rpgStartWatchdog();
+            document.getElementById('game-modal').classList.add('rpg-fullscreen');
+            document.getElementById('game-modal-title').textContent = '🗺️ 異世界料理者';
             document.getElementById('game-modal-body').innerHTML = `<p class="text-center text-sm py-10" style="color:#B3A492">載入美術素材中…</p>`;
             await rpgLoadAssets();
             if (!rpgState) return; // 使用者載入途中已經離開遊戲
@@ -2763,6 +2773,69 @@
             if (confirm('確定要離開遊戲嗎？')) renderGameMenu();
         }
 
+        // ---------- 烹飪背包：把打怪/調查蒐集來的食材，換成戰鬥中能用的料理道具 ----------
+        function rpgOpenCookScreen() {
+            const state = rpgState;
+            if (!state || state.mode !== 'map') return;
+            playSfx('click');
+            document.getElementById('game-modal-title').textContent = '🍳 烹飪背包';
+            document.getElementById('game-modal-body').innerHTML = rpgCookScreenHTML();
+        }
+
+        function rpgCookScreenHTML(message) {
+            const p = rpgState.player;
+            const ingredientNames = Object.keys(p.ingredients || {}).filter(k => p.ingredients[k] > 0);
+            const ingredientHTML = ingredientNames.length
+                ? `<div class="flex flex-wrap gap-2 mb-5">${ingredientNames.map(n => `<span class="text-xs px-3 py-1 rounded-full" style="background:var(--cream)">${RPG_INGREDIENT_EMOJI[n] || '🌿'} ${n} × ${p.ingredients[n]}</span>`).join('')}</div>`
+                : `<p class="text-xs mb-5" style="color:#B3A492">身上還沒有任何食材，去打怪或調查地圖上的🌿地點看看吧！</p>`;
+            const recipesHTML = (p.knownRecipes || []).map(name => {
+                const recipe = RPG_RECIPES[name];
+                if (!recipe) return '';
+                const needEntries = Object.entries(recipe.need);
+                const canCook = needEntries.every(([ing, qty]) => (p.ingredients[ing] || 0) >= qty);
+                const needText = needEntries.map(([ing, qty]) => {
+                    const owned = p.ingredients[ing] || 0;
+                    return `${RPG_INGREDIENT_EMOJI[ing] || '🌿'}${ing} x${qty}${owned < qty ? `<span style="color:#C4453F">（現有${owned}）</span>` : ''}`;
+                }).join('、');
+                const info = RPG_ITEM_INFO[name] || {};
+                const effectText = [
+                    info.heal ? `❤️${info.aoe ? '全體' : ''}+${info.heal}` : '',
+                    info.spRestore ? `💠+${info.spRestore}` : '',
+                    info.revive ? '可喚醒倒下夥伴' : '',
+                ].filter(Boolean).join('・');
+                return `
+                    <div class="px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)">
+                        <div class="flex justify-between items-center gap-2">
+                            <p class="font-medium text-sm">🍲 ${name}<span class="text-xs ml-2" style="color:#B3A492">${effectText}</span></p>
+                            <button onclick="rpgCookRecipe('${name}')" class="btn-amber !px-3 !py-1.5 text-xs shrink-0" ${canCook ? '' : 'disabled style="opacity:.4"'}>烹調</button>
+                        </div>
+                        <p class="text-xs mt-1" style="color:#B3A492">需要：${needText}</p>
+                    </div>`;
+            }).join('');
+            return `
+                ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
+                <h3 class="font-display font-semibold mb-2">🎒 食材背包</h3>
+                ${ingredientHTML}
+                <h3 class="font-display font-semibold mb-2">📖 已學會的料理</h3>
+                ${recipesHTML || '<p class="text-xs" style="color:#B3A492">還沒學會任何料理，去地圖上探索看看吧！</p>'}
+                <div style="height:12px;"></div>
+                <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+            `;
+        }
+
+        function rpgCookRecipe(name) {
+            const state = rpgState;
+            const p = state.player;
+            const recipe = RPG_RECIPES[name];
+            if (!recipe) return;
+            const canCook = Object.entries(recipe.need).every(([ing, qty]) => (p.ingredients[ing] || 0) >= qty);
+            if (!canCook) return;
+            Object.entries(recipe.need).forEach(([ing, qty]) => { p.ingredients[ing] -= qty; });
+            p.items[name] = (p.items[name] || 0) + 1;
+            playSfx('success');
+            document.getElementById('game-modal-body').innerHTML = rpgCookScreenHTML(`🍳 成功煮出了一份「${name}」，已經放進道具欄！`);
+        }
+
         function renderRpgMap() {
             const state = rpgState;
             if (!state) return;
@@ -2786,8 +2859,11 @@
                 <div id="rpg-status-bar" class="mt-2"></div>
                 <div class="mt-4">${rpgJoystickHTML()}</div>
                 <p class="text-xs text-center mt-3" style="color:#B3A492">拖曳搖桿移動，電腦可用方向鍵/WASD</p>
-                <div style="height:28px;"></div>
-                <button onclick="rpgConfirmLeave()" class="btn-secondary w-full" style="opacity:0.75;">離開遊戲</button>
+                <div style="height:20px;"></div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="rpgOpenCookScreen()" class="btn-amber">🍳 烹飪背包</button>
+                    <button onclick="rpgConfirmLeave()" class="btn-secondary" style="opacity:0.75;">離開遊戲</button>
+                </div>
             `;
             rpgJoystickInit();
             document.removeEventListener('keydown', rpgKeyHandler);
@@ -2846,9 +2922,8 @@
                         if (ch === '#') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.tree, px, py, T);
                         if (ch === 'H') {
                             const npcId = map.npcs[`${x},${y}`];
-                            const rect = RPG_ROLE_NPC[npcId] || RPG_ROLE_NPC.elder;
-                            const drewNpc = rpgDrawRoleSprite(ctx, rpgRoleImg, rect, px, py, T, false);
-                            if (!drewNpc) rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.elder, px, py, T);
+                            const spriteKey = (npcId && RPG_CHAR_TILES[npcId]) ? npcId : 'elder';
+                            rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES[spriteKey], px, py, T);
                         }
                     } else {
                         // ---- 備援畫法（素材載入失敗時才會用到）----
@@ -2900,20 +2975,13 @@
                 }
             }
 
-            // 依照面向挑選正面或側面（側面朝左；面向右時把側面圖左右鏡射）；上/下暫時都用正面（素材沒有畫背面）
-            function rpgDrawDirectional(spriteSet, facing, dx, dy, size) {
-                if (facing === 'left') return rpgDrawRoleSprite(ctx, rpgRoleImg, spriteSet.side, dx, dy, size, false);
-                if (facing === 'right') return rpgDrawRoleSprite(ctx, rpgRoleImg, spriteSet.side, dx, dy, size, true);
-                return rpgDrawRoleSprite(ctx, rpgRoleImg, spriteSet.front, dx, dy, size, false);
-            }
-
             // 夥伴：畫在主角之前（如果剛好重疊，主角會蓋在上面），跟隨動畫用 companionAnimPos
             if (state.companion && state.companionPos) {
                 const cRenderPos = state.companionAnimPos || state.companionPos;
                 const ccx = (cRenderPos.x - cam.x) * T + T / 2, ccy = (cRenderPos.y - cam.y) * T + T / 2;
                 ctx.fillStyle = 'rgba(58,42,30,0.2)';
                 ctx.beginPath(); ctx.ellipse(ccx, ccy + T * 0.32, T * 0.26, 4, 0, 0, Math.PI * 2); ctx.fill();
-                const drewC = rpgDrawDirectional(RPG_ROLE_SPRITES.companion, state.companionFacing || 'down', (cRenderPos.x - cam.x) * T, (cRenderPos.y - cam.y) * T, T);
+                const drewC = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.companion, (cRenderPos.x - cam.x) * T, (cRenderPos.y - cam.y) * T, T);
                 if (!drewC) {
                     ctx.font = `${T - 4}px sans-serif`;
                     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -2926,8 +2994,7 @@
             const cx = (renderPos.x - cam.x) * T + T / 2, cy = (renderPos.y - cam.y) * T + T / 2;
             ctx.fillStyle = 'rgba(58,42,30,0.2)';
             ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.32, T * 0.26, 4, 0, 0, Math.PI * 2); ctx.fill();
-            const playerSpriteSet = state.player.gender === 'female' ? RPG_ROLE_SPRITES.female : RPG_ROLE_SPRITES.male;
-            const drew = rpgDrawDirectional(playerSpriteSet, state.facing || 'down', (renderPos.x - cam.x) * T, (renderPos.y - cam.y) * T, T);
+            const drew = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.player, (renderPos.x - cam.x) * T, (renderPos.y - cam.y) * T, T);
             if (!drew) {
                 ctx.font = `${T - 4}px sans-serif`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -3043,7 +3110,7 @@
             }
         }
 
-        // 調查地點：有機率找到道具，也有可能是空的（假的調查點），調查過的地點不會再觸發
+        // 調查地點：有機率找到道具/食材/新食譜，也有可能是空的（假的調查點），調查過的地點不會再觸發
         function rpgInvestigate(key) {
             const state = rpgState;
             if (!state || state.locked || state.animating) return;
@@ -3053,12 +3120,24 @@
             poi.found = true;
             playSfx('click');
             const box = document.getElementById('rpg-dialogue-box');
+            const sp = rpgPlayerScreenPos();
             if (poi.item) {
                 state.player.items[poi.item] = (state.player.items[poi.item] || 0) + 1;
                 if (box) box.textContent = `🔍 找到了一份「${poi.item}」，已經放進道具欄！`;
                 playSfx('success');
-                const sp = rpgPlayerScreenPos();
                 if (sp) rpgBurstParticle('star', { x: sp.x, y: sp.y, count: 4, size: 22, duration: 0.6, dist: 4, distVar: 8, filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' });
+            } else if (poi.ingredient) {
+                const qty = poi.qty || 1;
+                state.player.ingredients[poi.ingredient] = (state.player.ingredients[poi.ingredient] || 0) + qty;
+                const emoji = RPG_INGREDIENT_EMOJI[poi.ingredient] || '🌿';
+                if (box) box.textContent = `🔍 採集到 ${emoji}「${poi.ingredient}」× ${qty}！`;
+                playSfx('success');
+                if (sp) rpgBurstParticle('star', { x: sp.x, y: sp.y, count: 4, size: 22, duration: 0.6, dist: 4, distVar: 8, filter: 'sepia(1) hue-rotate(90deg) saturate(3) brightness(1.2)' });
+            } else if (poi.recipe) {
+                if (!state.player.knownRecipes.includes(poi.recipe)) state.player.knownRecipes.push(poi.recipe);
+                if (box) box.textContent = `📖 學會了新料理食譜：「${poi.recipe}」！打開🍳烹飪背包就能製作了。`;
+                playSfx('success');
+                if (sp) rpgBurstParticle('magic', { x: sp.x, y: sp.y, count: 5, size: 26, duration: 0.7, dist: 5, distVar: 10, filter: 'sepia(1) hue-rotate(200deg) saturate(4)' });
             } else {
                 if (box) box.textContent = '🔍 仔細找過了，這裡什麼都沒有…';
             }
@@ -3259,12 +3338,11 @@
             };
             let visual;
             if (isPlayerObj) {
-                const useReal = rpgAssetsReady && rpgRoleImg && rpgRoleImg.naturalWidth > 0;
-                const spriteSet = obj.isCompanion ? RPG_ROLE_SPRITES.companion : (obj.gender === 'female' ? RPG_ROLE_SPRITES.female : RPG_ROLE_SPRITES.male);
-                const rect = spriteSet.front;
-                const scale = RPG_SLOT / rect.h;
+                const useReal = rpgAssetsReady && rpgCharImg && rpgCharImg.naturalWidth > 0;
+                const spriteKey = obj.isCompanion ? 'companion' : 'player';
+                const [col, r2] = RPG_CHAR_TILES[spriteKey];
                 visual = useReal
-                    ? `<div style="width:${Math.round(rect.w * scale)}px; height:${RPG_SLOT}px; margin:0 auto; background-image:url('${RPG_ROLE_URL}'); background-position:-${rect.x * scale}px -${rect.y * scale}px; background-size:${1254 * scale}px ${1254 * scale}px; image-rendering:pixelated;"></div>`
+                    ? `<div style="width:${RPG_SLOT}px; height:${RPG_SLOT}px; background-image:url('${RPG_CHAR_URL}'); background-position:-${col * RPG_STRIDE * (RPG_SLOT / 16)}px -${r2 * RPG_STRIDE * (RPG_SLOT / 16)}px; background-size:${918 * (RPG_SLOT / 16)}px ${203 * (RPG_SLOT / 16)}px; image-rendering:pixelated;"></div>`
                     : `<div class="text-xl">${obj.isCompanion ? '🧑‍🌾' : '🧑‍🍳'}</div>`;
             } else {
                 const sheetInfo = obj.sheet ? sheetMap[obj.sheet] : null;
@@ -3351,9 +3429,14 @@
         }
 
         // 只重畫下方的操作區（主選單 / 技能清單 / 道具清單），不動陣型跟血條，避免打斷正在播放的動畫
-        // 道具資料庫：selfOnly 標記之後可以拿來做「只能用在自己身上」的道具（目前這個道具沒有限制）
+        // 道具資料庫：selfOnly 只能用在自己身上；aoe 一次對全體我方生效（使用時不用再選目標）；
+        // revive 可以用在已經倒下（HP 0）的隊友身上，把他救回來；spRestore 額外恢復 SP
         const RPG_ITEM_INFO = {
             '家常蛋花湯': { heal: 15, selfOnly: false },
+            '野菇燉湯': { heal: 28, selfOnly: false },
+            '香草麵包': { heal: 18, selfOnly: false, aoe: true },
+            'Q彈史萊姆凍': { heal: 5, spRestore: 12, selfOnly: false },
+            '元氣烤串': { heal: 20, selfOnly: false, revive: true },
         };
 
         function rpgActionPanelHTML() {
@@ -3380,8 +3463,14 @@
             }
             if (b.uiMode === 'itemTarget') {
                 const info = RPG_ITEM_INFO[b.pendingItem] || {};
-                const candidates = info.selfOnly ? [{ row: b.actor.row, i: b.actor.i, obj: actor }] : rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
-                const rows = candidates.map(e => `<button onclick="rpgBattleAction('item', '${b.pendingItem}', { row: '${e.row}', i: ${e.i} })" class="btn-secondary w-full mb-2">${e.obj.name === actor.name && e.row === b.actor.row && e.i === b.actor.i ? '🙋' : '🤝'} 給${e.obj.name}使用（❤️${e.obj.hp}/${e.obj.maxHp}）</button>`).join('');
+                const pool = info.revive ? rpgFormationEntries(b.partyFormation) : rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
+                const candidates = info.selfOnly ? [{ row: b.actor.row, i: b.actor.i, obj: actor }] : pool;
+                const rows = candidates.map(e => {
+                    const fainted = e.obj.hp <= 0;
+                    const isSelf = e.obj.name === actor.name && e.row === b.actor.row && e.i === b.actor.i;
+                    const label = fainted ? `💫 喚醒${e.obj.name}（已倒下）` : `${isSelf ? '🙋' : '🤝'} 給${e.obj.name}使用（❤️${e.obj.hp}/${e.obj.maxHp}）`;
+                    return `<button onclick="rpgBattleAction('item', '${b.pendingItem}', { row: '${e.row}', i: ${e.i} })" class="btn-secondary w-full mb-2">${label}</button>`;
+                }).join('');
                 return `<p class="text-xs text-center mb-2" style="color:#B3A492">要把「${b.pendingItem}」給誰用？</p>${rows}<button onclick="rpgBackToMenuFrom('item')" class="btn-secondary w-full">← 返回</button>`;
             }
             const totalAlive = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0).length;
@@ -3407,6 +3496,8 @@
         }
         function rpgOpenItemTarget(name) {
             if (rpgState.battle.phase !== 'command') return;
+            const info = RPG_ITEM_INFO[name] || {};
+            if (info.aoe) { rpgBattleAction('item', name, { aoe: true }); return; } // 全體效果道具不用選對象，直接使用
             rpgState.battle.pendingItem = name;
             rpgState.battle.uiMode = 'itemTarget';
             playSfx('click');
@@ -3624,17 +3715,39 @@
                             rpgBurstParticle(sk.particle, Object.assign({ count: 1, size: 40, duration: 0.45, scale: 1.15, dist: 0, distVar: 0, filter: sk.filter }, center ? { x: center.x, y: center.y } : {}));
                             playSfx('perfect');
                         } else if (cmd.action === 'item') {
-                            let recipient = cmd.itemTarget ? b.partyFormation[cmd.itemTarget.row][cmd.itemTarget.i] : null;
-                            if (!recipient || recipient.hp <= 0) recipient = actorObj; // 原本要給的人已經不在了，改給自己用
-                            const recipientDomId = cmd.itemTarget ? `rpg-slot-party-${cmd.itemTarget.row}-${cmd.itemTarget.i}` : actorDomId;
+                            const info = RPG_ITEM_INFO[cmd.extra] || {};
                             p.items[cmd.extra]--;
-                            const heal = RPG_ITEM_INFO[cmd.extra] ? RPG_ITEM_INFO[cmd.extra].heal : 15;
-                            recipient.hp = Math.min(recipient.maxHp, recipient.hp + heal);
-                            rpgLogAppend(recipient === actorObj
-                                ? `${actorObj.name}吃了${cmd.extra}，回復了 ${heal} 點 HP！`
-                                : `${actorObj.name}把${cmd.extra}給了${recipient.name}，回復了 ${heal} 點 HP！`);
-                            const center = rpgElementCenter(recipientDomId); // 回復特效要打在被回復的人身上
-                            rpgBurstParticle('light', Object.assign({ size: 22, count: 3, duration: 0.6, dist: 4, distVar: 6, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' }, center ? { x: center.x, y: center.y } : {}));
+                            if (cmd.itemTarget && cmd.itemTarget.aoe) {
+                                // 全體效果：對每一位還活著（或者這道料理可以喚醒）的隊友套用效果
+                                const targets = rpgFormationEntries(b.partyFormation).filter(e => info.revive || e.obj.hp > 0);
+                                targets.forEach(({ row, i, obj }) => {
+                                    if (info.heal) obj.hp = Math.min(obj.maxHp, obj.hp + info.heal);
+                                    if (info.spRestore) obj.sp = Math.min(obj.maxSp, obj.sp + info.spRestore);
+                                    const domId = `rpg-slot-party-${row}-${i}`;
+                                    const center = rpgElementCenter(domId);
+                                    if (center) rpgBurstParticle('light', { x: center.x, y: center.y, size: 20, count: 2, duration: 0.5, dist: 3, distVar: 5, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' });
+                                });
+                                rpgLogAppend(`${actorObj.name}煮了${cmd.extra}跟大家分享，全體${info.heal ? `回復 ${info.heal} 點 HP` : ''}${info.spRestore ? `、恢復 ${info.spRestore} 點 SP` : ''}！`);
+                            } else {
+                                let recipient = cmd.itemTarget ? b.partyFormation[cmd.itemTarget.row][cmd.itemTarget.i] : null;
+                                if (!recipient) recipient = actorObj;
+                                const wasFainted = recipient.hp <= 0;
+                                if (wasFainted && !info.revive) recipient = actorObj; // 保險：不能復活的道具不該套用在已倒下的人身上
+                                const recipientDomId = cmd.itemTarget ? `rpg-slot-party-${cmd.itemTarget.row}-${cmd.itemTarget.i}` : actorDomId;
+                                const healAmt = info.heal != null ? info.heal : 15;
+                                recipient.hp = Math.min(recipient.maxHp, recipient.hp + healAmt);
+                                if (info.spRestore) recipient.sp = Math.min(recipient.maxSp, recipient.sp + info.spRestore);
+                                rpgLogAppend(wasFainted
+                                    ? `${actorObj.name}餵${recipient.name}吃下${cmd.extra}，${recipient.name}奇蹟似地重新站起來了！`
+                                    : (recipient === actorObj ? `${actorObj.name}吃了${cmd.extra}，回復了 ${healAmt} 點 HP！` : `${actorObj.name}把${cmd.extra}給了${recipient.name}，回復了 ${healAmt} 點 HP！`));
+                                const center = rpgElementCenter(recipientDomId);
+                                rpgBurstParticle('light', Object.assign({ size: 22, count: 3, duration: 0.6, dist: 4, distVar: 6, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' }, center ? { x: center.x, y: center.y } : {}));
+                                // 剛剛救回了倒下的隊友：畫面上原本淡出的格子要恢復顯示
+                                if (wasFainted && recipient.hp > 0) {
+                                    const slotEl = document.getElementById(recipientDomId);
+                                    if (slotEl) { slotEl.style.opacity = ''; slotEl.style.transform = ''; }
+                                }
+                            }
                             playSfx('success');
                         }
                         updateBattleUI();
@@ -3707,6 +3820,21 @@
             const names = monsters.map(m => m.name).join('、');
             rpgLogAppend(`戰鬥勝利！擊敗了 ${names}！`);
             rpgLogAppend(`獲得了 ${totalGold} 金幣`);
+            // 食材掉落：每隻怪物的每一項掉落各自獨立骰機率
+            const droppedNames = [];
+            monsters.forEach(m => {
+                (m.drops || []).forEach(d => {
+                    if (Math.random() < d.rate) {
+                        p.ingredients[d.name] = (p.ingredients[d.name] || 0) + 1;
+                        droppedNames.push(d.name);
+                    }
+                });
+            });
+            if (droppedNames.length) {
+                const counts = droppedNames.reduce((acc, n) => { acc[n] = (acc[n] || 0) + 1; return acc; }, {});
+                const text = Object.entries(counts).map(([n, c]) => `${RPG_INGREDIENT_EMOJI[n] || '🌿'}${n}×${c}`).join('、');
+                rpgLogAppend(`撿到食材：${text}`);
+            }
             const leveledEntries = [];
             survivorEntries.forEach(({ row, i, obj: member }) => {
                 member.exp += totalExp;
