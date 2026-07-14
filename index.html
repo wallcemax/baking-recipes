@@ -2421,11 +2421,18 @@
         // 夥伴／怪物身上沒有對應的裝備名稱，會自動回退成原本的 atk/def
         function rpgEffectiveAtk(obj) {
             const w = RPG_WEAPONS[obj.weaponName];
-            return obj.atk + (w ? w.atk : 0);
+            const buff = obj.buffs && obj.buffs.atkBuffFlat ? obj.buffs.atkBuffFlat.value : 0;
+            return obj.atk + (w ? w.atk : 0) + buff;
         }
         function rpgEffectiveDef(obj) {
             const a = RPG_ARMORS[obj.armorName];
-            return obj.def + (a ? a.def : 0);
+            const buff = obj.buffs && obj.buffs.defBuffAmount ? obj.buffs.defBuffAmount.value : 0;
+            return obj.def + (a ? a.def : 0) + buff;
+        }
+        // 敏捷有暫時性 buff 的話，排行動順序要算進去
+        function rpgEffectiveAgi(obj) {
+            const pct = obj.buffs && obj.buffs.agiBuffPct ? obj.buffs.agiBuffPct.value : 0;
+            return obj.agi * (1 + pct);
         }
 
         // 特效粒子（Kenney Particle Pack，CC0）：升級/回復/施法/撞牆各用一種效果
@@ -2838,49 +2845,59 @@
         // pattern 決定攻擊範圍圖案；heal 系列技能是主角專用，target 只會是隊友
         // minLevel 對應「每 5 級學一個新技能」的進度表，見 RPG_SKILL_PROGRESSION
         const RPG_SKILLS = {
-            // ---- 夥伴起始技能（Lv1 各自帶一個，單體攻擊）----
-            stir_fry: { name: '熱炒攻擊', sp: 3, mult: 1.8, pattern: 'single', particle: 'magic', filter: 'sepia(1) hue-rotate(280deg) saturate(4)' },
-            knife_dance: { name: '極速刀工', sp: 4, mult: 1.9, pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' },
-            grill_sear: { name: '炙燒三味', sp: 4, mult: 1.9, pattern: 'single', particle: 'magic', filter: 'sepia(1) hue-rotate(0deg) saturate(4)' },
-            spice_toss: { name: '辛香亂舞', sp: 4, mult: 2.0, pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(80deg) saturate(4)' },
-            // ---- 夥伴共通技能（每 5 級解鎖一個，越後面越強、範圍越廣、SP 也越貴）----
-            // ---- 4 位夥伴各自獨立的技能路線（不再共用同一套，越後面學到的越強、範圍也不一樣）----
-            // 阿柯：先學到「弱全體」，最後練成「強全體」
-            ako_all_weak: { name: '全體熱炒', sp: 8, mult: 1.6, pattern: 'all', particle: 'magic', filter: 'sepia(1) hue-rotate(280deg) saturate(4)' },
-            ako_row_pierce: { name: '熱炒貫穿', sp: 8, mult: 2.4, pattern: 'row_pierce', particle: 'magic', filter: 'sepia(1) hue-rotate(300deg) saturate(4)' },
-            ako_cross: { name: '烈焰十字炒', sp: 14, mult: 2.9, pattern: 'column_adjacent_pierce', particle: 'magic', filter: 'sepia(1) hue-rotate(260deg) saturate(5)' },
-            ako_ultimate_all: { name: '終極炒鍋爆擊', sp: 20, mult: 3.8, pattern: 'all', particle: 'magic', filter: 'sepia(1) hue-rotate(280deg) saturate(5) brightness(1.3)' },
-            // 小穗：主打貫穿/範圍路線，最後才學全體
-            suisui_column: { name: '雙刀連擊', sp: 7, mult: 2.2, pattern: 'column_adjacent', particle: 'star', filter: 'sepia(1) hue-rotate(320deg) saturate(4)' },
-            suisui_row_pierce: { name: '糖霜貫穿', sp: 9, mult: 2.5, pattern: 'row_pierce', particle: 'star', filter: 'sepia(1) hue-rotate(340deg) saturate(4)' },
-            suisui_cross: { name: '精準十字斬', sp: 14, mult: 3.1, pattern: 'column_adjacent_pierce', particle: 'star', filter: 'sepia(1) hue-rotate(10deg) saturate(5)' },
-            suisui_ultimate_all: { name: '華麗全席斬', sp: 19, mult: 3.7, pattern: 'all', particle: 'star', filter: 'sepia(1) hue-rotate(320deg) saturate(5) brightness(1.3)' },
-            // 老周：坦克型，範圍技早點練起來，貫穿留到後面
-            laozhou_column: { name: '鐵叉橫掃', sp: 7, mult: 2.1, pattern: 'column_adjacent', particle: 'magic', filter: 'sepia(1) hue-rotate(0deg) saturate(4)' },
-            laozhou_cross: { name: '炙燒十字', sp: 12, mult: 2.7, pattern: 'column_adjacent_pierce', particle: 'magic', filter: 'sepia(1) hue-rotate(15deg) saturate(4)' },
-            laozhou_row_pierce: { name: '大地鐵壁貫穿', sp: 13, mult: 3.0, pattern: 'row_pierce', particle: 'magic', filter: 'sepia(1) hue-rotate(30deg) saturate(5)' },
-            laozhou_ultimate_all: { name: '豪華燒烤全開', sp: 21, mult: 3.9, pattern: 'all', particle: 'magic', filter: 'sepia(1) hue-rotate(0deg) saturate(5) brightness(1.3)' },
-            // 阿藍：跟阿柯一樣走「早期弱全體」路線，但走辛香/敏捷風格
-            alan_all_weak: { name: '辛香全體撒', sp: 9, mult: 1.5, pattern: 'all', particle: 'star', filter: 'sepia(1) hue-rotate(80deg) saturate(4)' },
-            alan_row_pierce: { name: '麻辣貫穿', sp: 9, mult: 2.4, pattern: 'row_pierce', particle: 'star', filter: 'sepia(1) hue-rotate(100deg) saturate(4)' },
-            alan_cross: { name: '十字辛香爆', sp: 13, mult: 2.95, pattern: 'column_adjacent_pierce', particle: 'star', filter: 'sepia(1) hue-rotate(60deg) saturate(5)' },
-            alan_ultimate_all: { name: '究極辛香風暴', sp: 20, mult: 3.75, pattern: 'all', particle: 'star', filter: 'sepia(1) hue-rotate(80deg) saturate(5) brightness(1.3)' },
-            // ---- 主角技能（每 5 級解鎖一個，全部是恢復系）----
-            basic_heal: { name: '簡易急救術', sp: 4, healPct: 0.35, pattern: 'ally_single' },
-            warm_group_broth: { name: '暖心大鍋湯', sp: 8, healPct: 0.28, pattern: 'ally_all' },
-            revive_whisper: { name: '甦醒禱詞', sp: 12, healPct: 0.45, revive: true, pattern: 'ally_single' },
-            banquet_blessing: { name: '盛宴祝福', sp: 16, healPct: 0.5, pattern: 'ally_all' },
-            legendary_feast_prayer: { name: '傳說盛宴禱詞', sp: 22, healPct: 0.7, revive: true, pattern: 'ally_all' },
+            // ================= 主角（恢復系）=================
+            basic_heal: { name: '簡易急救術', sp: 4, healPct: 0.2, pattern: 'ally_single' },
+            simple_party: { name: '簡單派對', sp: 8, healPct: 0.2, pattern: 'ally_column_adjacent' },
+            warm_soup_cure: { name: '暖心濃湯', sp: 10, cureStatusType: 'poison', pattern: 'ally_single' },
+            bbq_feast: { name: '燒烤晚宴', sp: 20, healPct: 0.3, revive: true, pattern: 'ally_single' },
+            mountain_delicacy: { name: '山珍海味', sp: 20, cureStatusType: 'multi', cureTypes: ['paralysis', 'weaken'], pattern: 'ally_single' },
+            banquet_blessing: { name: '盛宴祝福', sp: 30, healPct: 0.5, pattern: 'ally_column_adjacent_pierce' },
+            legendary_feast_prayer: { name: '傳說盛宴禱詞', sp: 45, healPct: 0.7, revive: true, pattern: 'ally_all' },
+
+            // ================= 阿柯（火炒系，防禦BUFF/範圍/灼傷/攻擊BUFF）=================
+            ako_def_buff: { name: '甩鍋熱炒', sp: 5, defBuffAmount: 5, buffTurns: 3, pattern: 'ally_single' },
+            ako_cross: { name: '烈焰十字炒', sp: 10, mult: 1.0, pattern: 'column_adjacent_pierce', particle: 'magic', filter: 'sepia(1) hue-rotate(280deg) saturate(4)' },
+            ako_column: { name: '炒鍋爆擊', sp: 15, mult: 1.3, pattern: 'column_adjacent', particle: 'magic', filter: 'sepia(1) hue-rotate(300deg) saturate(4)' },
+            ako_burn: { name: '烈焰炙燒', sp: 20, mult: 2.0, pattern: 'single', burnChance: 1, burnTurns: 3, particle: 'magic', filter: 'sepia(1) hue-rotate(0deg) saturate(5) brightness(1.2)' },
+            ako_atk_buff: { name: '大火悶燒', sp: 25, atkBuffMult: 2, buffTurns: 1, pattern: 'ally_single' },
+            ako_ultimate: { name: '終極爆炒一番', sp: 30, mult: 2.5, pattern: 'column_adjacent', particle: 'magic', filter: 'sepia(1) hue-rotate(280deg) saturate(5) brightness(1.3)' },
+
+            // ================= 小穗（貫穿/爆擊/敏捷/即死系）=================
+            suisui_material: { name: '材料0元購', sp: 5, extraDropChance: 0.5, pattern: 'self' },
+            suisui_double: { name: '雙刀連擊', sp: 8, mult: 0.9, hits: 2, pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(320deg) saturate(4)' },
+            suisui_crit_bleed: { name: '致命甜心', sp: 12, mult: 0.8, critChance: 0.5, critMult: 2, burnChance: 1, burnTurns: 3, pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(340deg) saturate(4)' },
+            suisui_agi_buff: { name: '風之術', sp: 15, agiBuffPct: 0.1, buffTurns: 3, pattern: 'ally_all' },
+            suisui_crit_weaken: { name: '抹刀的秘密', sp: 22, mult: 1.3, critChance: 0.5, critMult: 2, inflictChance: 0.1, inflictType: 'weaken', pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(10deg) saturate(5)' },
+            suisui_paralyze_all: { name: '廚房的身影', sp: 25, mult: 0, allIndividualChance: 0.2, allIndividualType: 'paralysis', pattern: 'all', particle: 'star', filter: 'sepia(1) hue-rotate(200deg) saturate(4)' },
+            suisui_execute: { name: '最後的裝飾', sp: 35, mult: 3.5, instaKillThreshold: 0.2, instaKillChance: 0.01, pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(320deg) saturate(5) brightness(1.3)' },
+
+            // ================= 老周（坦克/範圍系）=================
+            laozhou_all_weak: { name: '老者的遷怒', sp: 5, mult: 0.2, pattern: 'all', particle: 'magic', filter: 'sepia(1) hue-rotate(270deg) saturate(4)' },
+            laozhou_single: { name: '怒雷狂擊', sp: 8, mult: 1.3, pattern: 'single', particle: 'magic', filter: 'sepia(1) hue-rotate(250deg) saturate(4)' },
+            laozhou_column: { name: '烈焰牆', sp: 15, mult: 1.3, pattern: 'column_adjacent', particle: 'magic', filter: 'sepia(1) hue-rotate(0deg) saturate(4)' },
+            laozhou_row_pierce: { name: '大地鐵壁貫穿', sp: 18, mult: 2.0, pattern: 'row_pierce', particle: 'magic', filter: 'sepia(1) hue-rotate(30deg) saturate(5)' },
+            laozhou_cross: { name: '水之狂擊', sp: 23, mult: 1.75, pattern: 'column_adjacent_pierce', particle: 'magic', filter: 'sepia(1) hue-rotate(200deg) saturate(5)' },
+            laozhou_column2: { name: '龍捲風', sp: 30, mult: 2.5, pattern: 'column_adjacent', particle: 'magic', filter: 'sepia(1) hue-rotate(150deg) saturate(5)' },
+            laozhou_ultimate_all: { name: '光之劍', sp: 40, mult: 2.3, pattern: 'all', particle: 'magic', filter: 'sepia(1) hue-rotate(45deg) saturate(5) brightness(1.3)' },
+
+            // ================= 阿藍（辛香/敏捷/異常狀態系）=================
+            alan_single: { name: '斷筋碎骨', sp: 5, mult: 1.3, pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(80deg) saturate(4)' },
+            alan_atk_buff_all: { name: '辛香料研磨', sp: 8, atkBuffFlat: 1, buffTurns: 3, pattern: 'ally_all' },
+            alan_single2: { name: '研磨棒投擲', sp: 10, mult: 1.5, pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(100deg) saturate(4)' },
+            alan_all_weak: { name: '爆香', sp: 16, mult: 0.3, pattern: 'all', particle: 'star', filter: 'sepia(1) hue-rotate(60deg) saturate(4)' },
+            alan_cure_all: { name: '蔥薑蒜也是菜', sp: 30, cureStatusType: 'all', pattern: 'ally_all' },
+            alan_crush: { name: '粉碎', sp: 25, mult: 3.0, pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(30deg) saturate(5)' },
+            alan_ultimate_all: { name: '究極辛香風暴', sp: 60, mult: 0, allIndividualChance: 0.2, allIndividualType: 'random', pattern: 'all', particle: 'star', filter: 'sepia(1) hue-rotate(80deg) saturate(5) brightness(1.3)' },
         };
         // 每 5 級解鎖一個新技能：主角固定學恢復系列；4 位夥伴則各自有獨立的技能路線，不會學到一樣的技能
         const RPG_SKILL_PROGRESSION = {
-            player: { 5: 'warm_group_broth', 10: 'revive_whisper', 15: 'banquet_blessing', 20: 'legendary_feast_prayer' },
+            player: { 5: 'simple_party', 10: 'warm_soup_cure', 15: 'bbq_feast', 20: 'mountain_delicacy', 25: 'banquet_blessing', 30: 'legendary_feast_prayer' },
         };
         const RPG_SKILL_PROGRESSION_BY_COMPANION = {
-            '阿柯': { 5: 'ako_all_weak', 10: 'ako_row_pierce', 15: 'ako_cross', 20: 'ako_ultimate_all' },
-            '小穗': { 5: 'suisui_column', 10: 'suisui_row_pierce', 15: 'suisui_cross', 20: 'suisui_ultimate_all' },
-            '老周': { 5: 'laozhou_column', 10: 'laozhou_cross', 15: 'laozhou_row_pierce', 20: 'laozhou_ultimate_all' },
-            '阿藍': { 5: 'alan_all_weak', 10: 'alan_row_pierce', 15: 'alan_cross', 20: 'alan_ultimate_all' },
+            '阿柯': { 5: 'ako_def_buff', 10: 'ako_cross', 15: 'ako_column', 20: 'ako_burn', 25: 'ako_atk_buff', 30: 'ako_ultimate' },
+            '小穗': { 5: 'suisui_double', 10: 'suisui_crit_bleed', 15: 'suisui_agi_buff', 20: 'suisui_crit_weaken', 25: 'suisui_paralyze_all', 30: 'suisui_execute' },
+            '老周': { 5: 'laozhou_single', 10: 'laozhou_column', 15: 'laozhou_row_pierce', 20: 'laozhou_cross', 25: 'laozhou_column2', 30: 'laozhou_ultimate_all' },
+            '阿藍': { 5: 'alan_atk_buff_all', 10: 'alan_single2', 15: 'alan_all_weak', 20: 'alan_cure_all', 25: 'alan_crush', 30: 'alan_ultimate_all' },
         };
         // 角色升到新等級時檢查有沒有新技能可以學，回傳學到的技能名稱（沒有就回傳 null）
         function rpgCheckSkillUnlock(member) {
@@ -2894,15 +2911,16 @@
         }
 
         // 依照技能的範圍圖案，算出這次真正會打到哪些怪物（只算還活著的）
-        function rpgResolveSkillTargets(pattern, targetRow, targetIdx, monsterFormation) {
+        function rpgResolveSkillTargets(pattern, targetRow, targetIdx, formation, isAlly) {
+            const aliveOf = (obj) => isAlly ? obj.hp > 0 : obj.curHp > 0;
             const get = (row, i) => {
-                if (!monsterFormation[row] || i < 0 || i > 3) return null;
-                const obj = monsterFormation[row][i];
-                return (obj && obj.curHp > 0) ? { row, i, obj } : null;
+                if (!formation[row] || i < 0 || i > 3) return null;
+                const obj = formation[row][i];
+                return (obj && aliveOf(obj)) ? { row, i, obj } : null;
             };
             const otherRow = targetRow === 'front' ? 'back' : 'front';
             let coords;
-            if (pattern === 'all') return rpgFormationEntries(monsterFormation).filter(e => e.obj.curHp > 0);
+            if (pattern === 'all') return rpgFormationEntries(formation).filter(e => aliveOf(e.obj));
             else if (pattern === 'row_pierce') coords = [[targetRow, targetIdx], [otherRow, targetIdx]];
             else if (pattern === 'column_adjacent') coords = [[targetRow, targetIdx - 1], [targetRow, targetIdx], [targetRow, targetIdx + 1]];
             else if (pattern === 'column_adjacent_pierce') coords = [[targetRow, targetIdx - 1], [targetRow, targetIdx], [targetRow, targetIdx + 1], [otherRow, targetIdx]];
@@ -2917,19 +2935,43 @@
                 column_adjacent: '波及上下（連帶打到相鄰的怪）',
                 column_adjacent_pierce: '波及上下＋後方（十字範圍）',
                 all: '全體攻擊',
+                self: '對自己使用，不用選目標',
                 ally_single: '指定一位夥伴',
                 ally_all: '全體夥伴',
+                ally_column_adjacent: '指定隊友＋上下相鄰的人',
+                ally_column_adjacent_pierce: '指定隊友＋上下＋前後（十字範圍）',
             }[pattern] || '單體攻擊';
         }
+        // 把技能的各種效果（傷害倍率、治療、buff、異常狀態…）組合成一句白話說明
+        function rpgSkillPowerText(sk) {
+            const parts = [];
+            if (sk.mult) parts.push(`威力 ATK×${sk.mult}${sk.hits > 1 ? `（連續${sk.hits}次）` : ''}`);
+            if (sk.healPct) parts.push(`回復 HP ${Math.round(sk.healPct * 100)}%${sk.revive ? '（可喚醒倒下夥伴）' : ''}`);
+            if (sk.cureStatusType === 'all') parts.push('解除全部異常狀態');
+            else if (sk.cureStatusType === 'multi' && sk.cureTypes) parts.push(`解除${sk.cureTypes.map(t => RPG_STATUS_INFO[t].name).join('／')}`);
+            else if (sk.cureStatusType) parts.push(`解除${RPG_STATUS_INFO[sk.cureStatusType].name}`);
+            if (sk.defBuffAmount != null) parts.push(`防禦+${sk.defBuffAmount}（持續${sk.buffTurns}回合）`);
+            if (sk.atkBuffMult != null) parts.push(`下次攻擊力×${sk.atkBuffMult}`);
+            if (sk.atkBuffFlat != null) parts.push(`全體攻擊+${sk.atkBuffFlat}（持續${sk.buffTurns}回合）`);
+            if (sk.agiBuffPct != null) parts.push(`全體敏捷+${Math.round(sk.agiBuffPct * 100)}%（持續${sk.buffTurns}回合）`);
+            if (sk.critChance) parts.push(`${Math.round(sk.critChance * 100)}%機率爆擊×${sk.critMult}`);
+            if (sk.burnChance) parts.push(`附加灼傷（每回合扣1%HP，持續${sk.burnTurns}回合）`);
+            if (sk.inflictChance) parts.push(`${Math.round(sk.inflictChance * 100)}%機率使目標${RPG_STATUS_INFO[sk.inflictType].name}`);
+            if (sk.instaKillChance) parts.push(`目標HP≤${Math.round(sk.instaKillThreshold * 100)}%時有${Math.round(sk.instaKillChance * 100)}%機率即死（含魔王）`);
+            if (sk.allIndividualChance) parts.push(`每隻怪物各自有${Math.round(sk.allIndividualChance * 100)}%機率陷入${sk.allIndividualType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[sk.allIndividualType].name}`);
+            if (sk.extraDropChance) parts.push(`${Math.round(sk.extraDropChance * 100)}%機率額外獲得食材`);
+            return parts.join('、') || '效果不明';
+        }
         function rpgSkillRangeGridHTML(pattern) {
-            if (pattern === 'ally_single' || pattern === 'ally_all') return '';
+            if (pattern === 'ally_single' || pattern === 'ally_all' || pattern === 'self') return '';
+            const shape = pattern.replace('ally_', ''); // ally_column_adjacent(_pierce) 用跟怪物一樣的形狀圖示，只是套在我方陣型上
             // 4 列（陣型的上下位置）x 2 欄（前排／後排），跟實際戰鬥畫面「直排」的方向一致，不再是橫的
             let cells = [[false, false], [false, false], [false, false], [false, false]]; // [上下位置][0=前排,1=後排]
-            if (pattern === 'single') cells[1][0] = true;
-            else if (pattern === 'row_pierce') { cells[1][0] = true; cells[1][1] = true; }
-            else if (pattern === 'column_adjacent') { cells[0][0] = true; cells[1][0] = true; cells[2][0] = true; }
-            else if (pattern === 'column_adjacent_pierce') { cells[0][0] = true; cells[1][0] = true; cells[2][0] = true; cells[1][1] = true; }
-            else if (pattern === 'all') cells = cells.map(r => r.map(() => true));
+            if (shape === 'single') cells[1][0] = true;
+            else if (shape === 'row_pierce') { cells[1][0] = true; cells[1][1] = true; }
+            else if (shape === 'column_adjacent') { cells[0][0] = true; cells[1][0] = true; cells[2][0] = true; }
+            else if (shape === 'column_adjacent_pierce') { cells[0][0] = true; cells[1][0] = true; cells[2][0] = true; cells[1][1] = true; }
+            else if (shape === 'all') cells = cells.map(r => r.map(() => true));
             const rowsHtml = cells.map(r => `<div style="display:flex; gap:2px;">${r.map(on => `<div style="width:9px;height:9px;border-radius:2px;background:${on ? '#C4453F' : '#E8DCC8'};"></div>`).join('')}</div>`).join('');
             return `<div style="display:inline-flex; flex-direction:column; gap:2px; vertical-align:middle; margin-left:6px;">${rowsHtml}</div>`;
         }
@@ -2951,10 +2993,10 @@
         // 4 位可以招募的夥伴，地圖上會排成一列跟在主角後面走，戰鬥時也會一起上場
         function rpgDefaultCompanions() {
             return [
-                { name: '阿柯', level: 1, exp: 0, expToNext: 20, hp: 24, maxHp: 24, atk: 5, def: 1, sp: 8, maxSp: 8, agi: 7, weaponName: '烘焙刮刀', skills: ['stir_fry'], isCompanion: true, spriteKey: 'hero_ako', spriteSheet: 'dungeon', weaponSprite: 'weapon_axe' },
-                { name: '小穗', level: 1, exp: 0, expToNext: 20, hp: 20, maxHp: 20, atk: 4, def: 1, sp: 12, maxSp: 12, agi: 6, weaponName: '甜點抹刀', skills: ['knife_dance'], isCompanion: true, spriteKey: 'hero_suisui', spriteSheet: 'dungeon', weaponSprite: 'weapon_dagger' },
-                { name: '老周', level: 1, exp: 0, expToNext: 20, hp: 32, maxHp: 32, atk: 6, def: 4, sp: 6, maxSp: 6, agi: 3, weaponName: '燒烤鐵叉', skills: ['grill_sear'], isCompanion: true, spriteKey: 'hero_laozhou', spriteSheet: 'dungeon', weaponSprite: 'weapon_wand', weaponHue: 270 },
-                { name: '阿藍', level: 1, exp: 0, expToNext: 20, hp: 22, maxHp: 22, atk: 5, def: 2, sp: 9, maxSp: 9, agi: 9, weaponName: '辛香研磨棒', skills: ['spice_toss'], isCompanion: true, spriteKey: 'hero_alan', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer' },
+                { name: '阿柯', level: 1, exp: 0, expToNext: 20, hp: 24, maxHp: 24, atk: 5, def: 1, sp: 8, maxSp: 8, agi: 7, weaponName: '烘焙刮鏟', skills: [], isCompanion: true, spriteKey: 'hero_ako', spriteSheet: 'dungeon', weaponSprite: 'weapon_axe' },
+                { name: '小穗', level: 1, exp: 0, expToNext: 20, hp: 20, maxHp: 20, atk: 4, def: 1, sp: 12, maxSp: 12, agi: 6, weaponName: '甜點抹刀', skills: ['suisui_material'], isCompanion: true, spriteKey: 'hero_suisui', spriteSheet: 'dungeon', weaponSprite: 'weapon_dagger' },
+                { name: '老周', level: 1, exp: 0, expToNext: 20, hp: 32, maxHp: 32, atk: 6, def: 4, sp: 6, maxSp: 6, agi: 3, weaponName: '燒烤鐵叉', skills: ['laozhou_all_weak'], isCompanion: true, spriteKey: 'hero_laozhou', spriteSheet: 'dungeon', weaponSprite: 'weapon_wand', weaponHue: 270 },
+                { name: '阿藍', level: 1, exp: 0, expToNext: 20, hp: 22, maxHp: 22, atk: 5, def: 2, sp: 9, maxSp: 9, agi: 9, weaponName: '辛香研磨棒', skills: ['alan_single'], isCompanion: true, spriteKey: 'hero_alan', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer' },
             ];
         }
 
@@ -2969,6 +3011,7 @@
                 region: state.region,
                 pos: state.pos,
                 trail: state.trail,
+                battleFormation: state.battleFormation || rpgDefaultBattleFormation(),
                 villagePoisFound: Object.fromEntries(Object.entries(RPG_MAPS.village.pois || {}).map(([k, v]) => [k, !!v.found])),
                 plainsPoisFound: Object.fromEntries(Object.entries(RPG_MAPS.plains.pois || {}).map(([k, v]) => [k, !!v.found])),
                 savedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -3011,6 +3054,7 @@
                     region: saved.region || 'village',
                     pos: startPos,
                     trail: saved.trail || [1, 2, 3, 4].map(() => ({ ...startPos })),
+                    battleFormation: saved.battleFormation || rpgDefaultBattleFormation(),
                     mode: 'map', battle: null, locked: false,
                 };
                 // 復原寶箱調查過的狀態，不會每次重登入寶箱又都變回沒開過
@@ -3023,6 +3067,7 @@
                     region: 'village',
                     pos: { ...RPG_MAPS.village.start },
                     trail: [1, 2, 3, 4].map(() => ({ ...RPG_MAPS.village.start })), // 4 位夥伴各自的跟隨位置，一開始都跟主角疊在同一格
+                    battleFormation: rpgDefaultBattleFormation(),
                     mode: 'map', // map | battle | dialogue
                     battle: null,
                     locked: false, // 轉場/對話/遭遇判定進行中時鎖住移動，避免同時觸發第二次事件
@@ -3260,7 +3305,8 @@
                     <button onclick="rpgOpenCookScreen()" class="btn-amber text-xs">🍳 烹飪背包</button>
                     <button onclick="rpgOpenStatusScreen()" class="btn-secondary text-xs">📊 狀態</button>
                     <button onclick="rpgOpenEquipScreen()" class="btn-secondary text-xs">🎽 裝備</button>
-                    <button onclick="rpgSaveGame()" class="btn-secondary text-xs">💾 存檔</button>
+                    <button onclick="rpgOpenFormationScreen()" class="btn-secondary text-xs">🪑 站位</button>
+                    <button onclick="rpgSaveGame()" class="btn-secondary text-xs" style="grid-column: span 2;">💾 存檔</button>
                 </div>
             `;
             document.removeEventListener('keydown', rpgKeyHandler);
@@ -3765,6 +3811,64 @@
         // ---------- 回合制戰鬥 ----------
         // 8 格陣型：前排/後排各 4 格，由上到下排列（怪物之後最多可以佔滿全部 8 格）
         function rpgEmptyFormation() { return { front: [null, null, null, null], back: [null, null, null, null] }; }
+        // 8 個站位跟 (row,i) 座標的對照表；預設站位跟以前一樣（主角前排2號位、夥伴依序排開），但現在可以自訂
+        const RPG_FORMATION_SLOT_MAP = {
+            front0: ['front', 0], front1: ['front', 1], front2: ['front', 2], front3: ['front', 3],
+            back0: ['back', 0], back1: ['back', 1], back2: ['back', 2], back3: ['back', 3],
+        };
+        function rpgDefaultBattleFormation() {
+            return { front0: 0, front1: 'player', front2: 1, front3: 2, back0: 3, back1: null, back2: null, back3: null };
+        }
+        let rpgFormationSelectedSlot = null;
+        function rpgOpenFormationScreen() {
+            const state = rpgState;
+            if (!state || state.mode !== 'map') return;
+            if (!state.battleFormation) state.battleFormation = rpgDefaultBattleFormation();
+            rpgFormationSelectedSlot = null;
+            playSfx('click');
+            document.getElementById('game-modal-title').textContent = '🪑 隊伍站位';
+            document.getElementById('game-modal-body').innerHTML = rpgFormationScreenHTML();
+        }
+        function rpgFormationScreenHTML(message) {
+            const state = rpgState;
+            const getChar = (occ) => occ === 'player' ? state.player : (occ != null ? state.companions[occ] : null);
+            const renderSlot = (key) => {
+                const occ = state.battleFormation[key];
+                const ch = getChar(occ);
+                const selected = rpgFormationSelectedSlot === key;
+                return `<button onclick="rpgFormationClickSlot('${key}')" class="${selected ? 'btn-amber' : 'btn-secondary'}" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px; width:100%; margin-bottom:6px;">
+                    ${ch ? rpgCharThumbHTML(ch, 32) : '<div style="width:32px;height:32px;"></div>'}
+                    <span class="text-xs">${ch ? ch.name : '（空）'}</span>
+                </button>`;
+            };
+            const frontCol = ['front0', 'front1', 'front2', 'front3'].map(renderSlot).join('');
+            const backCol = ['back0', 'back1', 'back2', 'back3'].map(renderSlot).join('');
+            return `
+                ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
+                <p class="text-xs text-center mb-3" style="color:#B3A492">前排在左、後排在右；點兩個格子可以互換站位（倒下的夥伴不會出現在戰鬥中，但站位設定還在，救回來會回到原位）</p>
+                <div style="display:flex; gap:16px; justify-content:center;">
+                    <div style="width:110px;"><p class="text-xs text-center mb-1" style="color:#B3A492">前排</p>${frontCol}</div>
+                    <div style="width:110px;"><p class="text-xs text-center mb-1" style="color:#B3A492">後排</p>${backCol}</div>
+                </div>
+                <div style="height:8px;"></div>
+                <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+            `;
+        }
+        function rpgFormationClickSlot(key) {
+            const state = rpgState;
+            if (!rpgFormationSelectedSlot) {
+                rpgFormationSelectedSlot = key;
+            } else if (rpgFormationSelectedSlot === key) {
+                rpgFormationSelectedSlot = null;
+            } else {
+                const tmp = state.battleFormation[rpgFormationSelectedSlot];
+                state.battleFormation[rpgFormationSelectedSlot] = state.battleFormation[key];
+                state.battleFormation[key] = tmp;
+                rpgFormationSelectedSlot = null;
+            }
+            playSfx('click');
+            document.getElementById('game-modal-body').innerHTML = rpgFormationScreenHTML(rpgFormationSelectedSlot ? '再點一個格子跟它互換' : '');
+        }
 
         // 把怪物隨機塞進 8 個格子裡（不重複）
         function rpgPlaceMonstersRandom(monsterObjs) {
@@ -3815,21 +3919,28 @@
                     flash.remove();
                     state.mode = 'battle';
                     state.battleBusy = false;
+                    if (!state.battleFormation) state.battleFormation = rpgDefaultBattleFormation();
                     const partyFormation = rpgEmptyFormation();
-                    partyFormation.front[1] = state.player; // 主角固定站前排 2 號位
-                    // 所有還活著的夥伴依序填進剩下的格子（前排剩 2 格、後排 4 格，最多可以同時上場 3+4=7 位夥伴，足夠現在的 4 位）
                     const aliveCompanions = (state.companions || []).filter(c => c.hp > 0);
-                    const partySlots = [{ row: 'front', i: 0 }, { row: 'front', i: 2 }, { row: 'front', i: 3 }, { row: 'back', i: 0 }, { row: 'back', i: 1 }, { row: 'back', i: 2 }, { row: 'back', i: 3 }];
-                    aliveCompanions.forEach((c, idx) => { const s = partySlots[idx]; if (s) partyFormation[s.row][s.i] = c; });
+                    // 依照玩家自訂的站位表把人放進陣型（死亡的人這場戰鬥不會出現，但站位設定還是保留著，復活後會回到原位）
+                    Object.entries(state.battleFormation).forEach(([slotKey, occ]) => {
+                        if (occ == null) return;
+                        const character = occ === 'player' ? state.player : state.companions[occ];
+                        if (!character || character.hp <= 0) return;
+                        const [row, i] = RPG_FORMATION_SLOT_MAP[slotKey];
+                        partyFormation[row][i] = character;
+                    });
                     // 異常狀態每場戰鬥開始都重新歸零，不會沿用到下一場；怪物也補上 curSp（能不能用技能靠這個）
-                    [state.player, ...aliveCompanions].forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0 }; });
-                    monsterObjs.forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0 }; m.curSp = m.sp || 0; });
+                    [state.player, ...aliveCompanions].forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0 }; m.buffs = {}; });
+                    monsterObjs.forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0 }; m.curSp = m.sp || 0; });
                     const bossObj = monsterObjs.find(m => m.isBoss);
+                    // 第一個下指令的人不再預設是主角，改成陣型裡第一個找得到、還活著的人
+                    const firstAlly = rpgFormationEntries(partyFormation)[0];
                     state.battle = {
                         monsterFormation: isBossFight ? rpgPlaceMonstersOrdered(monsterObjs) : rpgPlaceMonstersRandom(monsterObjs),
                         partyFormation,
                         target: null, // { row, i } 選中的攻擊目標
-                        actor: { row: 'front', i: 1 }, // 目前正在下指令的我方角色
+                        actor: firstAlly ? { row: firstAlly.row, i: firstAlly.i } : { row: 'front', i: 0 }, // 目前正在下指令的我方角色
                         uiMode: 'main', // main | skill | item
                         phase: 'command', // command：全員下指令中／execute：依敏捷排序輪流執行
                         commands: {}, // 這一輪每個角色已經下好的指令（key 是 "row-i"）
@@ -4012,22 +4123,22 @@
         }
         // 食譜資料庫：need 是烹調需要消耗的食材跟數量
         const RPG_RECIPES = {
-            '家常蛋花湯': { need: { '雞蛋': 1, '小麥': 1 }, cost: 20 },
-            '野菇燉湯': { need: { '菇傘': 2 }, cost: 30 },
-            '香草麵包': { need: { '小麥': 2, '雞蛋': 1 }, cost: 35 },
-            'Q彈史萊姆凍': { need: { '史萊姆凝膠': 2, '小麥': 1 }, cost: 35 },
-            '元氣烤串': { need: { '哥布林辛香料': 1, '雞蛋': 1, '小麥': 1 }, cost: 45 },
-            // 新增的 10 道食譜，用到 2 種新食材（蜂蜜、起司），其中 2 道是專門解除異常狀態的
+            '家常蛋花湯': { need: { '雞蛋': 1, '小麥': 1 }, cost: 35 },
+            '野菇燉湯': { need: { '菇傘': 2 }, cost: 50 },
+            '香草麵包': { need: { '小麥': 2, '雞蛋': 1 }, cost: 90 },
+            'Q彈史萊姆凍': { need: { '史萊姆凝膠': 2, '小麥': 1 }, cost: 45 },
+            '元氣烤串': { need: { '哥布林辛香料': 1, '雞蛋': 1, '小麥': 1 }, cost: 145 },
+            // 新增的 10 道食譜，用到 2 種新食材（蜂蜜、起司），其中 2 道是專門解除單一異常狀態的
             '蜂蜜烤餅': { need: { '小麥': 1, '蜂蜜': 1 }, cost: 25 },
-            '蜂蜜舒芙蕾': { need: { '雞蛋': 2, '蜂蜜': 1 }, cost: 35 },
+            '蜂蜜舒芙蕾': { need: { '雞蛋': 2, '蜂蜜': 1 }, cost: 40 },
             '起司烤菇': { need: { '菇傘': 1, '起司': 1 }, cost: 30 },
-            '濃湯起司球': { need: { '起司': 2 }, cost: 35 },
-            '解毒蔬菜湯': { need: { '菇傘': 1, '小麥': 1 }, cost: 40 },
-            '淨化蜂蜜水': { need: { '蜂蜜': 2 }, cost: 45 },
-            '哥布林辣醬麵': { need: { '哥布林辛香料': 1, '小麥': 2 }, cost: 40 },
-            '史萊姆Q餅': { need: { '史萊姆凝膠': 1, '起司': 1 }, cost: 35 },
-            '全麥雞蛋捲': { need: { '小麥': 2, '雞蛋': 2 }, cost: 45 },
-            '綜合野菜烤串': { need: { '菇傘': 1, '哥布林辛香料': 1 }, cost: 50 },
+            '濃湯起司球': { need: { '起司': 2 }, cost: 40 },
+            '解毒蔬菜湯': { need: { '菇傘': 1, '小麥': 1 }, cost: 95 },
+            '淨化蜂蜜水': { need: { '蜂蜜': 2 }, cost: 100 },
+            '哥布林辣醬麵': { need: { '哥布林辛香料': 1, '小麥': 2 }, cost: 35 },
+            '史萊姆Q餅': { need: { '史萊姆凝膠': 1, '起司': 1 }, cost: 30 },
+            '全麥雞蛋捲': { need: { '小麥': 2, '雞蛋': 2 }, cost: 75 },
+            '綜合野菜烤串': { need: { '菇傘': 1, '哥布林辛香料': 1 }, cost: 125 },
             // 限定食譜：不會從一般調查點拿到，只能來食譜商店花大錢買，或是打贏強敵/魔王小機率直接掉落已學會
             '傳說主廚全餐': { need: { '哥布林辛香料': 2, '史萊姆凝膠': 2, '菇傘': 2 }, cost: 50000, restricted: true },
             '黃金蜜汁烤串': { need: { '雞蛋': 2, '小麥': 2, '哥布林辛香料': 1 }, cost: 20000, restricted: true },
@@ -4044,13 +4155,13 @@
             '蜂蜜舒芙蕾': { healPct: 0.2, spRestorePct: 0.15, selfOnly: false, emoji: '🍰' },
             '起司烤菇': { healPct: 0.2, selfOnly: false, emoji: '🧀' },
             '濃湯起司球': { healPct: 0.15, spRestorePct: 0.2, selfOnly: false, emoji: '🥣' },
-            '解毒蔬菜湯': { healPct: 0.1, cureStatus: true, selfOnly: false, emoji: '🥗' },
-            '淨化蜂蜜水': { healPct: 0.15, cureStatus: true, selfOnly: false, emoji: '🍯' },
+            '解毒蔬菜湯': { healPct: 0.1, cureStatusType: 'poison', selfOnly: false, emoji: '🥗' },
+            '淨化蜂蜜水': { healPct: 0.15, cureStatusType: 'weaken', selfOnly: false, emoji: '🍯' },
             '哥布林辣醬麵': { healPct: 0.22, selfOnly: false, emoji: '🍜' },
             '史萊姆Q餅': { healPct: 0.12, spRestorePct: 0.18, selfOnly: false, emoji: '🍡' },
             '全麥雞蛋捲': { healPct: 0.16, selfOnly: false, aoe: true, emoji: '🥐' },
             '綜合野菜烤串': { healPct: 0.18, selfOnly: false, revive: true, emoji: '🍢' },
-            '傳說主廚全餐': { healPct: 0.6, spRestorePct: 0.6, selfOnly: false, aoe: true, revive: true, cureStatus: true, emoji: '🍱' },
+            '傳說主廚全餐': { healPct: 0.6, spRestorePct: 0.6, selfOnly: false, aoe: true, revive: true, cureStatusType: 'all', emoji: '🍱' },
             '黃金蜜汁烤串': { healPct: 0.5, spRestorePct: 0.4, selfOnly: false, revive: true, emoji: '🍡' },
         };
 
@@ -4061,7 +4172,8 @@
             if (info.healPct) parts.push(`${info.aoe ? '全體隊友' : (info.selfOnly ? '自己' : '指定對象')}回復 HP ${Math.round(info.healPct * 100)}%（依角色上限計算）`);
             if (info.spRestorePct) parts.push(`回復 SP ${Math.round(info.spRestorePct * 100)}%`);
             if (info.revive) parts.push('可以喚醒已經倒下的夥伴');
-            if (info.cureStatus) parts.push('解除中毒／麻痺／衰弱等異常狀態');
+            if (info.cureStatusType === 'all') parts.push('解除中毒／麻痺／衰弱／灼傷等全部異常狀態');
+            else if (info.cureStatusType) parts.push(`解除${RPG_STATUS_INFO[info.cureStatusType].name}`);
             return parts.join('、') || '效果不明';
         }
 
@@ -4212,12 +4324,14 @@
                 const rows = actor.skills.map(id => {
                     const sk = RPG_SKILLS[id];
                     const disabled = actor.sp < sk.sp;
-                    const powerText = sk.healPct ? `威力：回復 HP ${Math.round(sk.healPct * 100)}%${sk.revive ? '（可喚醒倒下夥伴）' : ''}` : `威力：ATK×${sk.mult}`;
-                    const onclick = sk.healPct
-                        ? (sk.pattern === 'ally_all' ? `rpgBattleAction('skill', '${id}', { aoe: true })` : `rpgOpenSkillAllyTarget('${id}')`)
-                        : `rpgBattleAction('skill', '${id}')`;
+                    const powerText = rpgSkillPowerText(sk);
+                    const isAllyAll = sk.pattern === 'ally_all';
+                    const needsAllyTarget = sk.pattern && sk.pattern.startsWith('ally_') && !isAllyAll;
+                    const onclick = isAllyAll
+                        ? `rpgBattleAction('skill', '${id}', { aoe: true })`
+                        : (needsAllyTarget ? `rpgOpenSkillAllyTarget('${id}')` : `rpgBattleAction('skill', '${id}')`);
                     return `
-                        <button onclick="${onclick}" class="btn-amber w-full" style="margin-bottom:2px;" ${disabled ? 'disabled style="opacity:.4"' : ''}>
+                        <button onclick="${onclick}" class="${disabled ? 'btn-secondary' : 'btn-amber'} w-full" style="margin-bottom:2px;" ${disabled ? 'disabled style="opacity:.4"' : ''}>
                             <span style="display:flex; align-items:center; justify-content:center;">🔥 ${sk.name}（${sk.sp} SP）${rpgSkillRangeGridHTML(sk.pattern)}</span>
                         </button>
                         <p class="text-xs" style="color:#B3A492; margin:0 0 8px 4px;">目前 SP：${actor.sp}/${actor.maxSp}・${rpgSkillPatternText(sk.pattern)}・${powerText}</p>
@@ -4428,13 +4542,15 @@
             if (action === 'skill') {
                 skill = RPG_SKILLS[extra];
                 if (!skill || actor.sp < skill.sp) return;
-                if (skill.heal && skill.pattern === 'ally_single' && !itemTarget) return; // 指定隊友的恢復技能一定要先選對象
+                const needsAllyTarget = skill.pattern && skill.pattern.startsWith('ally_') && skill.pattern !== 'ally_all';
+                if (needsAllyTarget && !itemTarget) return; // 指定隊友（含範圍）的技能一定要先選對象
             }
             if (action === 'item' && !(p.items[extra] > 0)) return;
             if (action === 'item' && !itemTarget) return;
 
             const targetObj = b.target ? b.monsterFormation[b.target.row][b.target.i] : null;
-            const skillNeedsMonsterTarget = action === 'skill' && !(skill && skill.heal);
+            const isMonsterTargetSkill = action === 'skill' && skill && !skill.pattern.startsWith('ally_') && skill.pattern !== 'self';
+            const skillNeedsMonsterTarget = isMonsterTargetSkill && skill.pattern !== 'all';
             if ((action === 'attack' || skillNeedsMonsterTarget) && (!targetObj || targetObj.curHp <= 0)) return;
 
             // 先下指令，不立刻執行——要等全部我方角色都下完指令，才依照敏捷排序統一執行
@@ -4455,14 +4571,21 @@
         // 執行這一輪：把我方已下指令的角色跟所有還活著的怪物，依敏捷（agi）由高到低排成一串，
         // 逐一輪流執行——敏捷高的怪物有可能插在我方角色中間、甚至搶在所有我方角色行動前先出手
         // 異常狀態：poison 每回合開始扣 5% 上限 HP／weaken 每回合開始扣 5% 上限 SP／paralysis 這次跟下一次輪到行動時都會被跳過
-        const RPG_STATUS_INFO = { poison: { name: '中毒', emoji: '☠️' }, paralysis: { name: '麻痺', emoji: '⚡' }, weaken: { name: '衰弱', emoji: '💫' } };
+        const RPG_STATUS_INFO = { poison: { name: '中毒', emoji: '☠️' }, paralysis: { name: '麻痺', emoji: '⚡' }, weaken: { name: '衰弱', emoji: '💫' }, burn: { name: '灼傷', emoji: '🔥' } };
         function rpgInflictStatus(obj, type, turns) {
-            if (!obj.statuses) obj.statuses = { poison: 0, paralysis: 0, weaken: 0 };
+            if (!obj.statuses) obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0 };
             obj.statuses[type] = Math.max(obj.statuses[type] || 0, turns);
         }
-        // 每一輪開始（下指令變成執行的那一刻）幫全場上了中毒/衰弱的角色扣血/扣SP，麻痺不在這裡扣，是在真的輪到行動時才判斷要不要跳過
+        // 幫角色加一個 buff（防禦力/攻擊力/敏捷提升），跟異常狀態分開存放，一樣有回合數，時間到會自動消失
+        function rpgApplyBuff(obj, type, value, turns) {
+            if (!obj.buffs) obj.buffs = {};
+            obj.buffs[type] = { value, turns };
+        }
+        // 每一輪開始（下指令變成執行的那一刻）幫全場上了中毒/灼傷/衰弱的角色扣血/扣SP，麻痺不在這裡扣，是在真的輪到行動時才判斷要不要跳過；
+        // buff 的回合數也是在這裡一起倒數
         function rpgApplyStatusTicks(b) {
             rpgFormationEntries(b.partyFormation).forEach(({ row, i, obj }) => {
+                rpgTickBuffs(obj);
                 if (!obj.statuses || obj.hp <= 0) return;
                 const domId = `rpg-slot-party-${row}-${i}`;
                 if (obj.statuses.poison > 0) {
@@ -4471,6 +4594,13 @@
                     rpgLogAppend(`☠️ ${obj.name}中毒發作，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#7A3FA0');
                     obj.statuses.poison--;
+                }
+                if (obj.statuses.burn > 0) {
+                    const dmg = Math.max(1, Math.round(obj.maxHp * 0.01));
+                    obj.hp = Math.max(0, obj.hp - dmg);
+                    rpgLogAppend(`🔥 ${obj.name}灼傷發作，扣了 ${dmg} 點 HP！`);
+                    rpgFloatDamage(domId, dmg, '#C4453F');
+                    obj.statuses.burn--;
                 }
                 if (obj.statuses.weaken > 0) {
                     const dmg = Math.max(1, Math.round(obj.maxSp * 0.05));
@@ -4489,6 +4619,13 @@
                     rpgFloatDamage(domId, dmg, '#7A3FA0');
                     obj.statuses.poison--;
                 }
+                if (obj.statuses.burn > 0) {
+                    const dmg = Math.max(1, Math.round(obj.hp * 0.01));
+                    obj.curHp = Math.max(0, obj.curHp - dmg);
+                    rpgLogAppend(`🔥 ${obj.name}灼傷發作，扣了 ${dmg} 點 HP！`);
+                    rpgFloatDamage(domId, dmg, '#C4453F');
+                    obj.statuses.burn--;
+                }
                 if (obj.statuses.weaken > 0 && obj.curSp !== undefined) {
                     const dmg = Math.max(1, Math.round((obj.sp || 10) * 0.05));
                     obj.curSp = Math.max(0, obj.curSp - dmg);
@@ -4497,6 +4634,15 @@
                 }
             });
         }
+        function rpgTickBuffs(obj) {
+            if (!obj.buffs) return;
+            Object.keys(obj.buffs).forEach(key => {
+                if (typeof obj.buffs[key].turns !== 'number') return; // 沒有回合數的（例如「下一次攻擊」型）是用掉才消失，不會被這裡的倒數影響
+                obj.buffs[key].turns--;
+                if (obj.buffs[key].turns <= 0) delete obj.buffs[key];
+            });
+        }
+
 
         // 依照這隻怪物的「攻擊喜好」挑我方目標：血少優先／血多優先／完全隨機／偏好特定站位（沒人在那格就改隨機）
         function rpgChooseMonsterTarget(monsterObj, aliveMembers) {
@@ -4522,11 +4668,11 @@
             if (!monstersOnly) {
                 rpgFormationEntries(b.partyFormation).forEach(({ row, i, obj }) => {
                     const cmd = b.commands[`${row}-${i}`];
-                    if (cmd && obj.hp > 0) entries.push({ side: 'party', row, i, obj, agi: obj.agi, cmd });
+                    if (cmd && obj.hp > 0) entries.push({ side: 'party', row, i, obj, agi: rpgEffectiveAgi(obj), cmd });
                 });
             }
             rpgFormationEntries(b.monsterFormation).forEach(({ row, i, obj }) => {
-                if (obj.curHp > 0) entries.push({ side: 'monster', row, i, obj, agi: obj.agi });
+                if (obj.curHp > 0) entries.push({ side: 'monster', row, i, obj, agi: rpgEffectiveAgi(obj) });
             });
             entries.sort((x, y) => (y.agi + Math.random() * 0.1) - (x.agi + Math.random() * 0.1));
             rpgApplyStatusTicks(b); // 中毒/衰弱在每輪開始時統一結算一次
@@ -4578,49 +4724,85 @@
                         } else if (cmd.action === 'skill') {
                             const sk = RPG_SKILLS[cmd.extra];
                             actorObj.sp = Math.max(0, actorObj.sp - sk.sp);
-                            if (sk.healPct) {
-                                multiHandled = true;
-                                if (cmd.itemTarget && cmd.itemTarget.aoe) {
-                                    const targets = rpgFormationEntries(b.partyFormation).filter(e => sk.revive || e.obj.hp > 0);
-                                    targets.forEach(({ row, i, obj }) => {
-                                        const amt = Math.round(obj.maxHp * sk.healPct);
-                                        obj.hp = Math.min(obj.maxHp, obj.hp + amt);
-                                        const domId = `rpg-slot-party-${row}-${i}`;
-                                        const center = rpgElementCenter(domId);
-                                        if (center) rpgBurstParticle('light', { x: center.x, y: center.y, size: 40, count: 2, duration: 0.5, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' });
-                                        if (obj.hp > 0) { const slotEl = document.getElementById(domId); if (slotEl) { slotEl.style.opacity = ''; slotEl.style.transform = ''; } }
-                                    });
-                                    rpgLogAppend(`${actorObj.name}使出「${sk.name}」，全體回復了 HP ${Math.round(sk.healPct * 100)}%！`);
+                            multiHandled = true;
+                            if (sk.pattern === 'self') {
+                                // 自身技能：不用選目標，純粹是機率型的自身效果
+                                if (sk.extraDropChance && Math.random() < sk.extraDropChance) {
+                                    const pool = rpgIngredientDropPool({ level: p.level }, p.level);
+                                    const ing = pool[Math.floor(Math.random() * pool.length)];
+                                    p.ingredients[ing] = (p.ingredients[ing] || 0) + 1;
+                                    rpgLogAppend(`${actorObj.name}使出「${sk.name}」，意外多拿到了 1 份「${ing}」！`);
                                 } else {
-                                    let recipient = cmd.itemTarget ? b.partyFormation[cmd.itemTarget.row][cmd.itemTarget.i] : actorObj;
-                                    const wasFainted = recipient.hp <= 0;
-                                    if (wasFainted && !sk.revive) recipient = actorObj;
-                                    const recipientDomId = cmd.itemTarget ? `rpg-slot-party-${cmd.itemTarget.row}-${cmd.itemTarget.i}` : actorDomId;
-                                    const amt = Math.round(recipient.maxHp * sk.healPct);
-                                    recipient.hp = Math.min(recipient.maxHp, recipient.hp + amt);
-                                    rpgLogAppend(wasFainted
-                                        ? `${actorObj.name}使出「${sk.name}」，喚醒了${recipient.name}！`
-                                        : `${actorObj.name}對${recipient.name}使出「${sk.name}」，回復了 HP ${Math.round(sk.healPct * 100)}%！`);
-                                    const center = rpgElementCenter(recipientDomId);
-                                    rpgBurstParticle('light', Object.assign({ size: 55, count: 3, duration: 0.7, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' }, center ? { x: center.x, y: center.y } : {}));
-                                    if (wasFainted && recipient.hp > 0) {
-                                        const slotEl = document.getElementById(recipientDomId);
-                                        if (slotEl) { slotEl.style.opacity = ''; slotEl.style.transform = ''; }
-                                    }
+                                    rpgLogAppend(`${actorObj.name}使出「${sk.name}」，這次沒有額外收穫。`);
                                 }
+                                playSfx('click');
+                            } else if (sk.healPct != null || sk.cureStatusType || sk.defBuffAmount != null || sk.atkBuffMult != null || sk.atkBuffFlat != null || sk.agiBuffPct != null) {
+                                // 我方技能：恢復／解除異常／增益，範圍可能是單體、上下相鄰、十字、或全體
+                                let targets;
+                                if (cmd.itemTarget && cmd.itemTarget.aoe) {
+                                    targets = rpgFormationEntries(b.partyFormation).filter(e => sk.revive || e.obj.hp > 0);
+                                } else if (cmd.itemTarget) {
+                                    targets = rpgResolveSkillTargets(sk.pattern.replace('ally_', ''), cmd.itemTarget.row, cmd.itemTarget.i, b.partyFormation, true);
+                                    if (!sk.revive) targets = targets.filter(e => e.obj.hp > 0);
+                                } else {
+                                    targets = [{ row: b.actor.row, i: b.actor.i, obj: actorObj }];
+                                }
+                                targets.forEach(({ row, i, obj }) => {
+                                    const domId = `rpg-slot-party-${row}-${i}`;
+                                    const wasFainted = obj.hp <= 0;
+                                    if (wasFainted && !sk.revive) return;
+                                    if (sk.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * sk.healPct));
+                                    if (sk.cureStatusType && obj.statuses) {
+                                        if (sk.cureStatusType === 'all') { obj.statuses.poison = 0; obj.statuses.paralysis = 0; obj.statuses.weaken = 0; obj.statuses.burn = 0; }
+                                        else if (sk.cureStatusType === 'multi' && sk.cureTypes) sk.cureTypes.forEach(t => { obj.statuses[t] = 0; });
+                                        else obj.statuses[sk.cureStatusType] = 0;
+                                    }
+                                    if (sk.defBuffAmount != null) rpgApplyBuff(obj, 'defBuffAmount', sk.defBuffAmount, sk.buffTurns || 3);
+                                    if (sk.atkBuffMult != null) obj.buffs = Object.assign(obj.buffs || {}, { atkBuffMult: { value: sk.atkBuffMult } }); // 用掉下一次攻擊才消失，不用回合數
+                                    if (sk.atkBuffFlat != null) rpgApplyBuff(obj, 'atkBuffFlat', sk.atkBuffFlat, sk.buffTurns || 3);
+                                    if (sk.agiBuffPct != null) rpgApplyBuff(obj, 'agiBuffPct', sk.agiBuffPct, sk.buffTurns || 3);
+                                    const center = rpgElementCenter(domId);
+                                    if (center) rpgBurstParticle('light', { x: center.x, y: center.y, size: 40, count: 2, duration: 0.5, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' });
+                                    if (wasFainted && obj.hp > 0) { const slotEl = document.getElementById(domId); if (slotEl) { slotEl.style.opacity = ''; slotEl.style.transform = ''; } }
+                                });
+                                rpgLogAppend(`${actorObj.name}對${targets.length > 1 ? '隊友們' : (targets[0] ? targets[0].obj.name : '隊友')}使出「${sk.name}」！`);
                                 playSfx('success');
                             } else {
                                 // 攻擊類技能：依照範圍圖案打到一個或多個怪物
-                                multiHandled = true;
-                                const targets = rpgResolveSkillTargets(sk.pattern || 'single', cmd.target.row, cmd.target.i, b.monsterFormation);
+                                const targets = sk.pattern === 'all'
+                                    ? rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0)
+                                    : rpgResolveSkillTargets(sk.pattern || 'single', cmd.target.row, cmd.target.i, b.monsterFormation, false);
                                 let totalDmg = 0;
+                                const logBits = [];
                                 targets.forEach(({ row, i, obj: tObj }) => {
-                                    const d = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * sk.mult - rpgEffectiveDef(tObj) + (Math.random() * 3 - 1)));
-                                    tObj.curHp = Math.max(0, tObj.curHp - d);
-                                    totalDmg += d;
                                     const tDomId = `rpg-slot-monster-${row}-${i}`;
-                                    rpgFlashHit(tDomId);
-                                    rpgFloatDamage(tDomId, d, '#C4453F');
+                                    // 「個別判定」型的全體技（例如廚房的身影、究極辛香風暴）：每隻怪各自骰機率上異常狀態，不計算傷害
+                                    if (sk.allIndividualChance) {
+                                        if (Math.random() < sk.allIndividualChance) {
+                                            const type = sk.allIndividualType === 'random' ? ['poison', 'paralysis', 'weaken'][Math.floor(Math.random() * 3)] : sk.allIndividualType;
+                                            rpgInflictStatus(tObj, type, 3);
+                                            logBits.push(`${tObj.name}陷入${RPG_STATUS_INFO[type].name}`);
+                                        }
+                                        return;
+                                    }
+                                    let dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * (sk.mult || 0) - rpgEffectiveDef(tObj) + (Math.random() * 3 - 1)));
+                                    if (actorObj.buffs && actorObj.buffs.atkBuffMult) { dmg = Math.round(dmg * actorObj.buffs.atkBuffMult.value); delete actorObj.buffs.atkBuffMult; }
+                                    let isCrit = false;
+                                    if (sk.critChance && Math.random() < sk.critChance) { dmg = Math.round(dmg * sk.critMult); isCrit = true; }
+                                    let isInstaKill = false;
+                                    if (sk.instaKillChance && tObj.hp > 0 && (tObj.curHp / tObj.hp) <= sk.instaKillThreshold && Math.random() < sk.instaKillChance) isInstaKill = true;
+                                    const hitsCount = sk.hits || 1;
+                                    for (let h = 0; h < hitsCount && tObj.curHp > 0; h++) {
+                                        const hitDmg = isInstaKill ? tObj.curHp : dmg;
+                                        tObj.curHp = Math.max(0, tObj.curHp - hitDmg);
+                                        totalDmg += hitDmg;
+                                        rpgFlashHit(tDomId);
+                                        rpgFloatDamage(tDomId, hitDmg, isCrit ? '#F4C55E' : '#C4453F');
+                                    }
+                                    if (sk.burnChance && Math.random() < sk.burnChance) { rpgInflictStatus(tObj, 'burn', sk.burnTurns || 3); logBits.push(`${tObj.name}被燒傷了`); }
+                                    if (sk.inflictChance && Math.random() < sk.inflictChance) { rpgInflictStatus(tObj, sk.inflictType, 3); logBits.push(`${tObj.name}陷入${RPG_STATUS_INFO[sk.inflictType].name}`); }
+                                    if (isCrit) logBits.push(`爆擊了${tObj.name}`);
+                                    if (isInstaKill) logBits.push(`${tObj.name}被瞬間擊倒`);
                                     if (tObj.curHp <= 0) {
                                         const slot = document.getElementById(tDomId);
                                         if (slot) { slot.style.opacity = '0'; slot.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; }
@@ -4628,10 +4810,10 @@
                                 });
                                 if (navigator.vibrate) navigator.vibrate([40]);
                                 const hitNames = targets.length > 1 ? `${targets.length} 隻怪物` : (targets[0] ? targets[0].obj.name : '目標');
-                                rpgLogAppend(`${actorObj.name}對${hitNames}使出「${sk.name}」，總共造成 ${totalDmg} 點傷害！`);
+                                rpgLogAppend(`${actorObj.name}對${hitNames}使出「${sk.name}」${totalDmg ? `，總共造成 ${totalDmg} 點傷害` : ''}${logBits.length ? '，' + logBits.join('、') : ''}！`);
                                 const firstDomId = targets[0] ? `rpg-slot-monster-${targets[0].row}-${targets[0].i}` : targetDomId;
                                 const center = rpgElementCenter(firstDomId);
-                                rpgBurstParticle(sk.particle, Object.assign({ count: 1, size: 90, duration: 0.5, scale: 1.3, dist: 0, distVar: 0, filter: sk.filter }, center ? { x: center.x, y: center.y } : {}));
+                                if (sk.particle) rpgBurstParticle(sk.particle, Object.assign({ count: 1, size: 90, duration: 0.5, scale: 1.3, dist: 0, distVar: 0, filter: sk.filter }, center ? { x: center.x, y: center.y } : {}));
                                 playSfx('perfect');
                                 const remaining = rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0);
                                 b.target = remaining.length ? { row: remaining[0].row, i: remaining[0].i } : null;
@@ -4645,12 +4827,15 @@
                                 targets.forEach(({ row, i, obj }) => {
                                     if (info.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * info.healPct));
                                     if (info.spRestorePct) obj.sp = Math.min(obj.maxSp, obj.sp + Math.round(obj.maxSp * info.spRestorePct));
-                                    if (info.cureStatus && obj.statuses) { obj.statuses.poison = 0; obj.statuses.paralysis = 0; obj.statuses.weaken = 0; }
+                                    if (info.cureStatusType && obj.statuses) {
+                                        if (info.cureStatusType === 'all') { obj.statuses.poison = 0; obj.statuses.paralysis = 0; obj.statuses.weaken = 0; obj.statuses.burn = 0; }
+                                        else obj.statuses[info.cureStatusType] = 0;
+                                    }
                                     const domId = `rpg-slot-party-${row}-${i}`;
                                     const center = rpgElementCenter(domId);
                                     if (center) rpgBurstParticle('light', { x: center.x, y: center.y, size: 40, count: 2, duration: 0.5, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' });
                                 });
-                                rpgLogAppend(`${actorObj.name}煮了${cmd.extra}跟大家分享，全體${info.healPct ? `回復 HP ${Math.round(info.healPct * 100)}%` : ''}${info.spRestorePct ? `、恢復 SP ${Math.round(info.spRestorePct * 100)}%` : ''}${info.cureStatus ? '、解除了異常狀態' : ''}！`);
+                                rpgLogAppend(`${actorObj.name}煮了${cmd.extra}跟大家分享，全體${info.healPct ? `回復 HP ${Math.round(info.healPct * 100)}%` : ''}${info.spRestorePct ? `、恢復 SP ${Math.round(info.spRestorePct * 100)}%` : ''}${info.cureStatusType ? '、解除了異常狀態' : ''}！`);
                             } else {
                                 let recipient = cmd.itemTarget ? b.partyFormation[cmd.itemTarget.row][cmd.itemTarget.i] : null;
                                 if (!recipient) recipient = actorObj;
@@ -4660,10 +4845,13 @@
                                 const healAmt = Math.round(recipient.maxHp * (info.healPct != null ? info.healPct : 0.3));
                                 recipient.hp = Math.min(recipient.maxHp, recipient.hp + healAmt);
                                 if (info.spRestorePct) recipient.sp = Math.min(recipient.maxSp, recipient.sp + Math.round(recipient.maxSp * info.spRestorePct));
-                                if (info.cureStatus && recipient.statuses) { recipient.statuses.poison = 0; recipient.statuses.paralysis = 0; recipient.statuses.weaken = 0; }
+                                if (info.cureStatusType && recipient.statuses) {
+                                    if (info.cureStatusType === 'all') { recipient.statuses.poison = 0; recipient.statuses.paralysis = 0; recipient.statuses.weaken = 0; recipient.statuses.burn = 0; }
+                                    else recipient.statuses[info.cureStatusType] = 0;
+                                }
                                 rpgLogAppend(wasFainted
                                     ? `${actorObj.name}餵${recipient.name}吃下${cmd.extra}，${recipient.name}奇蹟似地重新站起來了！`
-                                    : (recipient === actorObj ? `${actorObj.name}吃了${cmd.extra}，回復了 HP ${Math.round((info.healPct != null ? info.healPct : 0.3) * 100)}%${info.cureStatus ? '，異常狀態也解除了' : ''}！` : `${actorObj.name}把${cmd.extra}給了${recipient.name}，回復了 HP ${Math.round((info.healPct != null ? info.healPct : 0.3) * 100)}%${info.cureStatus ? '，異常狀態也解除了' : ''}！`));
+                                    : (recipient === actorObj ? `${actorObj.name}吃了${cmd.extra}，回復了 HP ${Math.round((info.healPct != null ? info.healPct : 0.3) * 100)}%${info.cureStatusType ? '，異常狀態也解除了' : ''}！` : `${actorObj.name}把${cmd.extra}給了${recipient.name}，回復了 HP ${Math.round((info.healPct != null ? info.healPct : 0.3) * 100)}%${info.cureStatusType ? '，異常狀態也解除了' : ''}！`));
                                 const center = rpgElementCenter(recipientDomId);
                                 rpgBurstParticle('light', Object.assign({ size: 55, count: 3, duration: 0.7, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' }, center ? { x: center.x, y: center.y } : {}));
                                 if (wasFainted && recipient.hp > 0) {
