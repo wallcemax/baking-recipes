@@ -2547,6 +2547,10 @@
                     '6,3': 'shop',
                     '17,3': 'elder',
                     '12,12': 'innkeeper',
+                    '4,6': 'ako',
+                    '19,6': 'suisui',
+                    '4,10': 'laozhou',
+                    '19,10': 'alan',
                 },
                 pois: {
                     '3,1': { item: '家常蛋花湯' },
@@ -2884,7 +2888,7 @@
             suisui_execute: { name: '最後的裝飾', sp: 35, mult: 3.5, instaKillThreshold: 0.2, instaKillChance: 0.01, pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(320deg) saturate(5) brightness(1.3)' },
 
             // ================= 老周（坦克/範圍系）=================
-            laozhou_all_weak: { name: '老者的遷怒', sp: 5, mult: 0.5, pattern: 'all', particle: 'magic', filter: 'sepia(1) hue-rotate(270deg) saturate(4)' },
+            laozhou_all_weak: { name: '老者的遷怒', sp: 5, mult: 0.7, pattern: 'all', particle: 'magic', filter: 'sepia(1) hue-rotate(270deg) saturate(4)' },
             laozhou_single: { name: '怒雷狂擊', sp: 8, mult: 1.5, pattern: 'single', particle: 'magic', filter: 'sepia(1) hue-rotate(250deg) saturate(4)' },
             laozhou_column: { name: '烈焰牆', sp: 15, mult: 1.4, pattern: 'column_adjacent', particle: 'magic', filter: 'sepia(1) hue-rotate(0deg) saturate(4)' },
             laozhou_row_pierce: { name: '大地鐵壁貫穿', sp: 18, mult: 2, defDebuffPct: -0.1, debuffTurns: 2, pattern: 'row_pierce', particle: 'magic', filter: 'sepia(1) hue-rotate(30deg) saturate(5)' },
@@ -2993,7 +2997,7 @@
             return {
                 name: '你', level: 1, exp: 0, expToNext: 20,
                 hp: 30, maxHp: 30, atk: 6, def: 2, sp: 10, maxSp: 10, agi: 6,
-                gold: 50,
+                gold: 50, score: 0, // score：積分系統用的累計分數，跟金幣是分開的
                 weaponName: '新手鍋鏟', armorName: '破舊圍裙',
                 ownedWeapons: ['新手鍋鏟'], ownedArmors: ['破舊圍裙'],
                 items: { '家常蛋花湯': 2 },
@@ -3003,19 +3007,49 @@
                 spriteKey: 'hero_player', spriteSheet: 'dungeon',
             };
         }
-        // 4 位可以招募的夥伴，地圖上會排成一列跟在主角後面走，戰鬥時也會一起上場
-        function rpgDefaultCompanions() {
-            return [
-                { name: '阿柯', level: 1, exp: 0, expToNext: 20, hp: 24, maxHp: 24, atk: 5, def: 1, sp: 8, maxSp: 8, agi: 7, weaponName: '烘焙刮鏟', skills: [], isCompanion: true, spriteKey: 'hero_ako', spriteSheet: 'dungeon', weaponSprite: 'weapon_axe' },
-                { name: '小穗', level: 1, exp: 0, expToNext: 20, hp: 20, maxHp: 20, atk: 4, def: 1, sp: 12, maxSp: 12, agi: 6, weaponName: '甜點抹刀', skills: ['suisui_material'], isCompanion: true, spriteKey: 'hero_suisui', spriteSheet: 'dungeon', weaponSprite: 'weapon_dagger' },
-                { name: '老周', level: 1, exp: 0, expToNext: 20, hp: 32, maxHp: 32, atk: 6, def: 4, sp: 6, maxSp: 6, agi: 3, weaponName: '燒烤鐵叉', skills: ['laozhou_all_weak'], isCompanion: true, spriteKey: 'hero_laozhou', spriteSheet: 'dungeon', weaponSprite: 'weapon_wand', weaponHue: 270 },
-                { name: '阿藍', level: 1, exp: 0, expToNext: 20, hp: 22, maxHp: 22, atk: 5, def: 2, sp: 9, maxSp: 9, agi: 9, weaponName: '辛香研磨棒', skills: ['alan_single'], isCompanion: true, spriteKey: 'hero_alan', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer' },
-            ];
+        // 積分系統：各種行為會累加分數，玩家可以隨時把目前分數上傳到排行榜（只有比之前紀錄高才會覆蓋）
+        function rpgAddScore(amount, reason) {
+            const state = rpgState;
+            if (!state || !state.player) return;
+            state.player.score = (state.player.score || 0) + amount;
         }
-
+        // 4 位可以招募的夥伴，地圖上會排成一列跟在主角後面走，戰鬥時也會一起上場
+        // 夥伴的基礎資料表（用 id 對應，招募的時候才會照這份資料生出角色物件塞進 state.companions）
+        const RPG_COMPANION_TEMPLATES = {
+            ako: { id: 'ako', name: '阿柯', level: 1, exp: 0, expToNext: 20, hp: 24, maxHp: 24, atk: 5, def: 1, sp: 8, maxSp: 8, agi: 7, weaponName: '烘焙刮鏟', skills: [], isCompanion: true, spriteKey: 'hero_ako', spriteSheet: 'dungeon', weaponSprite: 'weapon_axe' },
+            suisui: { id: 'suisui', name: '小穗', level: 1, exp: 0, expToNext: 20, hp: 20, maxHp: 20, atk: 4, def: 1, sp: 12, maxSp: 12, agi: 6, weaponName: '甜點抹刀', skills: ['suisui_material'], isCompanion: true, spriteKey: 'hero_suisui', spriteSheet: 'dungeon', weaponSprite: 'weapon_dagger' },
+            laozhou: { id: 'laozhou', name: '老周', level: 1, exp: 0, expToNext: 20, hp: 32, maxHp: 32, atk: 6, def: 4, sp: 6, maxSp: 6, agi: 3, weaponName: '燒烤鐵叉', skills: ['laozhou_all_weak'], isCompanion: true, spriteKey: 'hero_laozhou', spriteSheet: 'dungeon', weaponSprite: 'weapon_wand', weaponHue: 270 },
+            alan: { id: 'alan', name: '阿藍', level: 1, exp: 0, expToNext: 20, hp: 22, maxHp: 22, atk: 5, def: 2, sp: 9, maxSp: 9, agi: 9, weaponName: '辛香研磨棒', skills: ['alan_single'], isCompanion: true, spriteKey: 'hero_alan', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer' },
+        };
+        // 招募條件跟劇情台詞：require 是 null 代表直接加入；否則要交出對應的道具/食材才會加入
+        const RPG_COMPANION_RECRUIT_INFO = {
+            ako: {
+                require: null,
+                lines: ['咦？你是新來的料理者吧！我是阿柯，之前跟著村長學過幾年做菜。', '聽說你要去平原探索，正好我也想活動筋骨，讓我加入你的隊伍吧！'],
+                joinLine: '阿柯加入了隊伍！',
+            },
+            suisui: {
+                require: { type: 'item', name: '家常蛋花湯' },
+                lines: ['喔？你也是這個村子的料理者嗎？我是小穗，專門做甜點跟精緻料理的。', '不過我肚子有點餓耶……如果你身上有「家常蛋花湯」，能不能給我一碗？吃飽了我就跟你走！'],
+                joinLine: '太好了，謝謝你！吃飽喝足，我加入你的隊伍！',
+                failLine: '沒有嗎……那等你有了再來找我吧，我會在這裡等你的。',
+            },
+            laozhou: {
+                require: { type: 'ingredient', name: '雞蛋' },
+                lines: ['你好啊，年輕人。我是老周，燒烤三十年的老手了。', '不過我最近手邊食材不夠，如果你能給我一顆新鮮的雞蛋，我就陪你走一趟平原，怎麼樣？'],
+                joinLine: '好，一言為定！老周加入你的隊伍了！',
+                failLine: '沒有雞蛋啊……那你先去張羅一顆吧，我在這裡不會跑的。',
+            },
+            alan: {
+                require: { type: 'ingredient', name: '小麥' },
+                lines: ['嘿，你就是最近在村子裡到處跑的那個料理者吧？我是阿藍，研究辛香調味的。', '我想試做一款新配方，缺一份小麥當基底。你要是能給我一份小麥，我就加入你的隊伍！'],
+                joinLine: '太好了，那我們就是隊友了！',
+                failLine: '小麥啊……你先去找找看吧，我在這裡等你。',
+            },
+        };
         // ---------- 存檔／讀檔：存到 Firestore，換裝置、換瀏覽器都能繼續 ----------
-        async function rpgSaveGame() {
-            if (!currentUser) { alert('請先登入才能存檔'); return; }
+        async function rpgSaveGame(silent) {
+            if (!currentUser) { if (!silent) alert('請先登入才能存檔'); return; }
             const state = rpgState;
             if (!state) return;
             const saveData = {
@@ -3031,11 +3065,13 @@
             };
             try {
                 await db.collection('rpgSaves').doc(currentUser.uid).set(saveData);
-                playSfx('success');
-                const box = document.getElementById('rpg-dialogue-box');
-                if (box) box.textContent = '💾 已經存檔！下次打開遊戲可以繼續這次的進度。';
+                if (!silent) {
+                    playSfx('success');
+                    const box = document.getElementById('rpg-dialogue-box');
+                    if (box) box.textContent = '💾 已經存檔！下次打開遊戲可以繼續這次的進度。';
+                }
             } catch (err) {
-                alert('存檔失敗：' + (err && err.message));
+                if (!silent) alert('存檔失敗：' + (err && err.message));
             }
         }
         async function rpgLoadSavedGame() {
@@ -3063,7 +3099,7 @@
                 const startPos = saved.pos || { ...RPG_MAPS.village.start };
                 rpgState = {
                     player: saved.player,
-                    companions: saved.companions || rpgDefaultCompanions(),
+                    companions: saved.companions || [],
                     region: saved.region || 'village',
                     pos: startPos,
                     trail: saved.trail || [1, 2, 3, 4].map(() => ({ ...startPos })),
@@ -3073,10 +3109,12 @@
                 // 復原寶箱調查過的狀態，不會每次重登入寶箱又都變回沒開過
                 if (saved.villagePoisFound) Object.entries(saved.villagePoisFound).forEach(([k, v]) => { if (RPG_MAPS.village.pois[k]) RPG_MAPS.village.pois[k].found = v; });
                 if (saved.plainsPoisFound) Object.entries(saved.plainsPoisFound).forEach(([k, v]) => { if (RPG_MAPS.plains.pois[k]) RPG_MAPS.plains.pois[k].found = v; });
+                // 已經招募過的夥伴，村莊裡對應的 NPC 要拿掉，不然重新整理網頁又會冒出來
+                (saved.companions || []).forEach(c => { if (c.id) rpgRemoveNpcFromMap(RPG_MAPS.village, c.id); });
             } else {
                 rpgState = {
                     player: rpgDefaultPlayer(),
-                    companions: rpgDefaultCompanions(),
+                    companions: [], // 一開始沒有任何夥伴，要去村莊裡找他們一一對話才會加入
                     region: 'village',
                     pos: { ...RPG_MAPS.village.start },
                     trail: [1, 2, 3, 4].map(() => ({ ...RPG_MAPS.village.start })), // 4 位夥伴各自的跟隨位置，一開始都跟主角疊在同一格
@@ -3091,6 +3129,20 @@
             await rpgLoadAssets();
             if (!rpgState) return; // 使用者載入途中已經離開遊戲
             renderRpgMap();
+            if (!useSaved) {
+                // 新遊戲第一次進來，主角先自言自語一下，比較有進入感
+                const box = document.getElementById('rpg-dialogue-box');
+                if (box) {
+                    const fullText = '你：這裡是哪裡？到處看看好了。';
+                    box.textContent = '';
+                    let i = 0;
+                    const typer = setInterval(() => {
+                        i++;
+                        box.textContent = fullText.slice(0, i);
+                        if (i >= fullText.length) clearInterval(typer);
+                    }, 28);
+                }
+            }
         }
 
         function rpgKeyHandler(e) {
@@ -3199,16 +3251,35 @@
                 </div>`;
         }
 
-        function rpgStatusScreenHTML() {
+        function rpgStatusScreenHTML(message) {
             const state = rpgState;
             const p = state.player;
             const companions = state.companions || [];
             return `
-                <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}</p>
+                ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
+                <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}　・　🏆 目前積分：${p.score || 0}</p>
+                <button onclick="rpgUploadScore()" class="btn-amber w-full mb-3">🏆 上傳分數到排行榜</button>
                 ${rpgStatusCardHTML(p)}
                 ${companions.map((c, idx) => rpgStatusCardHTML(c, idx, companions.length)).join('')}
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
             `;
+        }
+        // 把目前積分上傳到排行榜（存在 rpgScores/{uid}，Firestore 規則會擋掉「比之前紀錄低」的上傳，不用前端自己判斷）
+        async function rpgUploadScore() {
+            if (!currentUser) { alert('請先登入才能上傳分數'); return; }
+            const state = rpgState;
+            if (!state) return;
+            try {
+                await db.collection('rpgScores').doc(currentUser.uid).set({
+                    userId: currentUser.uid, userName: currentUser.displayName || '匿名',
+                    score: state.player.score || 0, level: state.player.level,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+                playSfx('success');
+                document.getElementById('game-modal-body').innerHTML = rpgStatusScreenHTML('🏆 分數已經上傳到排行榜！');
+            } catch (err) {
+                document.getElementById('game-modal-body').innerHTML = rpgStatusScreenHTML('目前分數沒有比排行榜上的紀錄高，所以沒有更新。');
+            }
         }
         // 調整隊伍站位：交換兩位夥伴在陣列中的順序（跟隨隊形、戰鬥站位都是照這個順序決定的）
         function rpgReorderCompanion(idx, dir) {
@@ -3282,6 +3353,7 @@
                 p.gold -= item.cost;
                 p[ownedKey] = [...(p[ownedKey] || []), name];
                 message = `花了 💰${item.cost} 買下並裝備了「${name}」！`;
+                rpgAddScore(Math.round(item.cost / 10), '購買裝備');
                 playSfx('buy');
             } else {
                 playSfx('click');
@@ -3319,7 +3391,6 @@
                     <button onclick="rpgOpenStatusScreen()" class="btn-secondary text-xs">📊 狀態</button>
                     <button onclick="rpgOpenEquipScreen()" class="btn-secondary text-xs">🎽 裝備</button>
                     <button onclick="rpgOpenFormationScreen()" class="btn-secondary text-xs">🪑 隊形</button>
-                    <button onclick="rpgSaveGame()" class="btn-secondary text-xs" style="grid-column: span 2;">💾 存檔</button>
                 </div>
             `;
             document.removeEventListener('keydown', rpgKeyHandler);
@@ -3416,8 +3487,13 @@
                         if (ch === '#') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.tree, px, py, T);
                         if (ch === 'H') {
                             const npcId = map.npcs[`${x},${y}`];
-                            const spriteKey = (npcId && RPG_CHAR_TILES[npcId]) ? npcId : 'elder';
-                            rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES[spriteKey], px, py, T);
+                            const companionSpriteKey = { ako: 'hero_ako', suisui: 'hero_suisui', laozhou: 'hero_laozhou', alan: 'hero_alan' }[npcId];
+                            if (companionSpriteKey) {
+                                rpgDrawSprite(ctx, rpgDungeonImg, RPG_DUNGEON_TILES[companionSpriteKey], px, py, T, RPG_DUNGEON_STRIDE);
+                            } else {
+                                const spriteKey = (npcId && RPG_CHAR_TILES[npcId]) ? npcId : 'elder';
+                                rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES[spriteKey], px, py, T);
+                            }
                         }
                     } else {
                         // ---- 備援畫法（素材載入失敗時才會用到）----
@@ -3614,7 +3690,7 @@
                 const key = `${nx},${ny}`;
                 if (!npcButton && map.npcs && map.npcs[key]) {
                     const npcId = map.npcs[key];
-                    const info = RPG_NPC_INFO[npcId];
+                    const info = RPG_NPC_INFO[npcId] || RPG_COMPANION_TEMPLATES[npcId];
                     npcButton = `<button onclick="rpgTalkTo('${npcId}')" class="btn-primary text-sm">🗣️ 跟${info ? info.name : '對方'}交談</button>`;
                 }
                 if (!poiButton && map.pois && map.pois[key] && !map.pois[key].found) {
@@ -3654,6 +3730,7 @@
                     if (box) box.textContent = `📖「${poi.recipe}」你已經學過了，寶箱裡改放了 💰${fallbackGold} 金幣！`;
                 } else {
                     state.player.knownRecipes.push(poi.recipe);
+                    rpgAddScore(50, '獲得新食譜');
                     if (box) box.textContent = `📖 學會了新料理食譜：「${poi.recipe}」！打開🍳烹飪背包就能製作了。`;
                 }
                 playSfx('success');
@@ -3743,7 +3820,76 @@
             }, 230);
         }
 
+        // 從地圖上找到某個 npcId 站的格子並移除（招募成功後那個人就離開原本站的地方，加入隊伍了）
+        function rpgRemoveNpcFromMap(map, npcId) {
+            for (const key in map.npcs) {
+                if (map.npcs[key] === npcId) { delete map.npcs[key]; break; }
+            }
+        }
+        // 夥伴招募：先照劇情台詞一句一句用打字機效果播出來，播完才判斷有沒有滿足加入條件
+        function rpgTalkToCompanion(npcId) {
+            const info = RPG_COMPANION_RECRUIT_INFO[npcId];
+            const template = RPG_COMPANION_TEMPLATES[npcId];
+            const box = document.getElementById('rpg-dialogue-box');
+            if (!info || !template || !box) return;
+            playSfx('click');
+            let lineIdx = 0;
+            const playNextLine = () => {
+                if (lineIdx >= info.lines.length) { rpgResolveCompanionJoin(npcId); return; }
+                const fullText = `${template.name}：${info.lines[lineIdx]}`;
+                box.textContent = '';
+                let i = 0;
+                const typer = setInterval(() => {
+                    i++;
+                    box.textContent = fullText.slice(0, i);
+                    if (i >= fullText.length) {
+                        clearInterval(typer);
+                        lineIdx++;
+                        setTimeout(playNextLine, 900);
+                    }
+                }, 28);
+            };
+            playNextLine();
+        }
+        function rpgResolveCompanionJoin(npcId) {
+            const state = rpgState;
+            const info = RPG_COMPANION_RECRUIT_INFO[npcId];
+            const template = RPG_COMPANION_TEMPLATES[npcId];
+            const box = document.getElementById('rpg-dialogue-box');
+            let canJoin = true;
+            if (info.require) {
+                if (info.require.type === 'item') canJoin = (state.player.items[info.require.name] || 0) > 0;
+                else if (info.require.type === 'ingredient') canJoin = (state.player.ingredients[info.require.name] || 0) > 0;
+            }
+            let fullText;
+            if (canJoin) {
+                if (info.require) {
+                    if (info.require.type === 'item') state.player.items[info.require.name]--;
+                    else if (info.require.type === 'ingredient') state.player.ingredients[info.require.name]--;
+                }
+                state.companions.push({ ...template });
+                rpgRemoveNpcFromMap(RPG_MAPS.village, npcId);
+                rpgAddScore(250, `招募了${template.name}`);
+                fullText = `${template.name}：${info.joinLine}`;
+                playSfx('success');
+                const sp = rpgPlayerScreenPos();
+                if (sp) rpgBurstParticle('star', { x: sp.x, y: sp.y, count: 5, size: 50, duration: 0.8 });
+            } else {
+                fullText = `${template.name}：${info.failLine}`;
+                playSfx('fail');
+            }
+            box.textContent = '';
+            let i = 0;
+            const typer = setInterval(() => {
+                i++;
+                box.textContent = fullText.slice(0, i);
+                if (i >= fullText.length) clearInterval(typer);
+            }, 28);
+            setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgDraw(); rpgCheckNearby(); } }, fullText.length * 28 + 200);
+        }
+
         function rpgTalkTo(npcId) {
+            if (RPG_COMPANION_RECRUIT_INFO[npcId]) { rpgTalkToCompanion(npcId); return; }
             const info = RPG_NPC_INFO[npcId];
             const box = document.getElementById('rpg-dialogue-box');
             if (!info || !box) return;
@@ -3766,6 +3912,7 @@
                 const sp = rpgPlayerScreenPos();
                 if (sp) rpgBurstParticle('light', { x: sp.x, y: sp.y, count: 4, size: 60, filter: 'sepia(1) hue-rotate(60deg) saturate(3)', duration: 0.9 });
                 playSfx('success');
+                rpgSaveGame(true); // 旅館回復完自動存檔一次
                 setTimeout(() => { renderRpgMap(); }, 1400);
             } else if (info.shop) {
                 setTimeout(() => { if (rpgState) rpgOpenRecipeShop(); }, fullText.length * 28 + 250);
@@ -3817,6 +3964,7 @@
             if (p.gold < cost) return;
             p.gold -= cost;
             p.knownRecipes.push(name);
+            rpgAddScore(50, '獲得新食譜');
             playSfx('buy');
             document.getElementById('game-modal-body').innerHTML = rpgRecipeShopHTML(`📖 學會了「${name}」！`);
         }
@@ -3860,8 +4008,8 @@
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
                 <p class="text-xs text-center mb-3" style="color:#B3A492">前排在左、後排在右；點兩個格子可以互換隊形（倒下的夥伴不會出現在戰鬥中，但隊形設定還在，救回來會回到原位）</p>
                 <div style="display:flex; gap:16px; justify-content:center;">
-                    <div style="width:110px;"><p class="text-xs text-center mb-1" style="color:#B3A492">前排</p>${frontCol}</div>
                     <div style="width:110px;"><p class="text-xs text-center mb-1" style="color:#B3A492">後排</p>${backCol}</div>
+                    <div style="width:110px;"><p class="text-xs text-center mb-1" style="color:#B3A492">前排</p>${frontCol}</div>
                 </div>
                 <div style="height:8px;"></div>
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
@@ -5009,6 +5157,10 @@
             const names = monsters.map(m => m.name).join('、');
             rpgLogAppend(`戰鬥勝利！擊敗了 ${names}！`);
             rpgLogAppend(`獲得了 ${totalGold} 金幣`);
+            if (monsters.some(m => m.isBoss)) {
+                rpgAddScore(10000, '擊敗魔王');
+                rpgLogAppend('👑 擊敗魔王，積分大量增加！');
+            }
             // 食材掉落：每隻怪物各自獨立骰一次機率，掉的食材種類依牠的強度分級而定
             const droppedNames = [];
             monsters.forEach(m => {
@@ -5033,6 +5185,7 @@
                 if (restrictedPool.length) {
                     const wonRecipe = restrictedPool[Math.floor(Math.random() * restrictedPool.length)];
                     p.knownRecipes.push(wonRecipe);
+                    rpgAddScore(50, '獲得新食譜');
                     rpgLogAppend(`✨ 這場硬仗讓你頓悟了限定食譜「${wonRecipe}」的做法！`);
                 }
             }
@@ -5048,6 +5201,7 @@
                     member.hp = member.maxHp; member.sp = member.maxSp;
                     member.expToNext = member.level * 20;
                     rpgLogAppend(`✨ ${member.name}升級了！目前 Lv.${member.level}`);
+                    if (!member.isCompanion) rpgAddScore(100, '主角升級'); // 積分系統只算主角自己升級，夥伴升級不算
                     const learnedSkillName = rpgCheckSkillUnlock(member);
                     if (learnedSkillName) rpgLogAppend(`📖 ${member.name}學會了新技能「${learnedSkillName}」！`);
                     leveledThisMember = true;
@@ -5098,6 +5252,7 @@
             state.pos = { ...RPG_MAPS.village.start };
             state.trail = [1, 2, 3, 4].map(() => ({ ...RPG_MAPS.village.start }));
             renderRpgMap();
+            rpgSaveGame(true); // 戰敗回村自動存檔一次
         }
 
         function dashOpenRecipe(idx) {
