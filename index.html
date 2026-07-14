@@ -2384,8 +2384,8 @@
             archer: [4, 9], spider: [0, 10], ghost: [1, 10], dwarf: [2, 10], golem: [4, 10],
             // 主角/夥伴的人物造型，跟武器圖示，都是使用者新提供的 tilemap_packed 素材
             hero_player: [2, 8], hero_ako: [3, 7], hero_suisui: [3, 8], hero_laozhou: [0, 7], hero_alan: [1, 8],
-            weapon_sword: [7, 8], weapon_axe: [10, 9], weapon_dagger: [9, 8], weapon_hammer: [9, 9], weapon_wand: [11, 10],
-            chest_closed: [5, 7], chest_open: [8, 7],
+            weapon_sword: [7, 8], weapon_axe: [10, 9], weapon_dagger: [11, 10], weapon_hammer: [9, 9], weapon_wand: [9, 10],
+            chest_closed: [5, 7], chest_open: [7, 7],
         };
         let rpgTerrainImg = null, rpgCharImg = null, rpgDungeonImg = null, rpgMonsterImg = null, rpgAssetsReady = false;
         // 額外一份怪物/生物總表（使用者提供的素材，直接內嵌成 base64，不用另外連網下載），
@@ -2532,8 +2532,10 @@
                 pois: {
                     '3,1': { item: '家常蛋花湯' },
                     '20,1': { ingredient: '雞蛋', qty: 2 },
-                    '3,16': { recipe: 'Q彈史萊姆凍' },
+                    '3,16': { ingredient: '蜂蜜', qty: 2 },
                     '20,16': { gold: 20 },
+                    '8,1': { ingredient: '起司', qty: 1 },
+                    '15,16': { recipe: '蜂蜜烤餅' },
                 },
                 exits: { '11,17': { to: 'plains', x: 6, y: 1 }, '12,17': { to: 'plains', x: 7, y: 1 } },
                 wild: false,
@@ -2558,11 +2560,13 @@
                 start: { x: 7, y: 1 },
                 npcs: {},
                 pois: {
-                    '2,1': { recipe: '野菇燉湯' },
+                    '2,1': { ingredient: '蜂蜜', qty: 2 },
                     '12,1': { ingredient: '菇傘', qty: 2 },
                     '2,8': { ingredient: '哥布林辛香料', qty: 2 },
-                    '12,8': { recipe: '香草麵包' },
+                    '12,8': { recipe: '起司烤菇' },
                     '7,6': { ingredient: '小麥', qty: 3 },
+                    '4,3': { ingredient: '起司', qty: 2 },
+                    '9,3': { gold: 25 },
                 },
                 exits: { '5,10': { to: 'village', x: 11, y: 16 }, '6,10': { to: 'village', x: 12, y: 16 } },
                 wild: true,
@@ -2750,11 +2754,16 @@
         // 剩下最頂端這 1% 是「極端遭遇」，裡面又只有一小部分機率是真的撞上最終魔王，其餘是硬仗等級的一般怪
         function rpgRollEncounterTier() {
             const roll = Math.random() * 101; // 用 101 當總權重去對應 85/10/3/2/1 的比例，最後 1 份留給「極端遭遇」
-            if (roll < 85) return { offset: () => Math.floor(Math.random() * 3) - 1, extreme: false }; // 全場：跟主角差不多，微調 -1~+1
+            if (roll < 85) return { offset: () => Math.floor(Math.random() * 7) - 3, extreme: false }; // 全場：跟主角差不多，微調 -3~+3
             if (roll < 95) return { offset: () => Math.floor(Math.random() * 9) - 4, extreme: false }; // ±4 級
             if (roll < 98) return { offset: () => 5 + Math.floor(Math.random() * 5), extreme: false }; // +5~9 級
             if (roll < 100) return { offset: () => 10 + Math.floor(Math.random() * 6), extreme: false }; // +10~15 級
             return { offset: () => 20 + Math.floor(Math.random() * 11), extreme: true }; // +20 級以上／可能是最終魔王
+        }
+        // 怪物的攻擊喜好：有的專打血量少的、有的專打血量多的、有的完全隨機，有的則偏好特定站位（那個站位沒人才會改隨機）
+        const RPG_MONSTER_AI_TYPES = ['low_hp', 'high_hp', 'random', 'random', 'slot_front1', 'slot_front3', 'slot_back1', 'slot_back3'];
+        function rpgRandomMonsterAI() {
+            return RPG_MONSTER_AI_TYPES[Math.floor(Math.random() * RPG_MONSTER_AI_TYPES.length)];
         }
         function rpgRollEncounter(playerLevel) {
             const tierRoll = rpgRollEncounterTier();
@@ -2767,11 +2776,11 @@
                 const monsters = [];
                 for (let slotIdx = 0; slotIdx < 8; slotIdx++) {
                     if (slotIdx === 5) { // back row index 1 = 後排 2 號位（front 4 格 + back 4 格排列時，第 6 個位置）
-                        monsters.push({ id: 'dark_cuisine_king', ...species, ...stats, curHp: stats.hp, isBoss: true });
+                        monsters.push({ id: 'dark_cuisine_king', ...species, ...stats, curHp: stats.hp, isBoss: true, aiType: 'low_hp' });
                     } else {
                         const escortId = RPG_MONSTER_POOL[Math.floor(Math.random() * RPG_MONSTER_POOL.length)];
                         const escortSpecies = RPG_MONSTER_SPECIES[escortId];
-                        monsters.push({ id: escortId, ...escortSpecies, ...escortStats, curHp: escortStats.hp });
+                        monsters.push({ id: escortId, ...escortSpecies, ...escortStats, curHp: escortStats.hp, aiType: rpgRandomMonsterAI() });
                     }
                 }
                 return { monsters, isBossFight: true };
@@ -2784,7 +2793,7 @@
             const monsters = Array.from({ length: count }, () => {
                 const id = RPG_MONSTER_POOL[Math.floor(Math.random() * RPG_MONSTER_POOL.length)];
                 const species = RPG_MONSTER_SPECIES[id];
-                return { id, ...species, ...stats, curHp: stats.hp };
+                return { id, ...species, ...stats, curHp: stats.hp, aiType: rpgRandomMonsterAI() };
             });
             return { monsters, isBossFight: false };
         }
@@ -3102,9 +3111,10 @@
             document.getElementById('game-modal-body').innerHTML = rpgStatusScreenHTML();
         }
 
-        function rpgStatusCardHTML(obj) {
+        function rpgStatusCardHTML(obj, idx, total) {
             const atk = rpgEffectiveAtk(obj), def = rpgEffectiveDef(obj);
             const atkBonus = atk - obj.atk, defBonus = def - obj.def;
+            const isCompanion = obj.isCompanion && idx != null;
             return `
                 <div class="px-4 py-3 rounded-2xl mb-3" style="background:var(--cream)">
                     <div class="flex items-center justify-between mb-2">
@@ -3120,6 +3130,14 @@
                         <p>✨ 經驗　${obj.exp}/${obj.expToNext}</p>
                     </div>
                     ${obj.weaponName ? `<p class="text-xs mt-2" style="color:#B3A492">🔪 武器：${obj.weaponName}${obj.armorName ? `　👕 防具：${obj.armorName}` : ''}</p>` : ''}
+                    ${isCompanion ? `
+                        <div class="flex items-center justify-between mt-2 pt-2" style="border-top:1px solid var(--line);">
+                            <p class="text-xs" style="color:#B3A492">隊伍站位：跟隨在第 ${idx + 2} 位</p>
+                            <div class="flex gap-1">
+                                <button onclick="rpgReorderCompanion(${idx}, -1)" class="btn-secondary !px-2 !py-1 text-xs" ${idx === 0 ? 'disabled style="opacity:.3"' : ''}>↑ 往前</button>
+                                <button onclick="rpgReorderCompanion(${idx}, 1)" class="btn-secondary !px-2 !py-1 text-xs" ${idx === total - 1 ? 'disabled style="opacity:.3"' : ''}>↓ 往後</button>
+                            </div>
+                        </div>` : ''}
                 </div>`;
         }
 
@@ -3130,9 +3148,21 @@
             return `
                 <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}</p>
                 ${rpgStatusCardHTML(p)}
-                ${companions.map(c => rpgStatusCardHTML(c)).join('')}
+                ${companions.map((c, idx) => rpgStatusCardHTML(c, idx, companions.length)).join('')}
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
             `;
+        }
+        // 調整隊伍站位：交換兩位夥伴在陣列中的順序（跟隨隊形、戰鬥站位都是照這個順序決定的）
+        function rpgReorderCompanion(idx, dir) {
+            const state = rpgState;
+            const companions = state.companions;
+            const newIdx = idx + dir;
+            if (newIdx < 0 || newIdx >= companions.length) return;
+            const tmp = companions[idx];
+            companions[idx] = companions[newIdx];
+            companions[newIdx] = tmp;
+            playSfx('click');
+            document.getElementById('game-modal-body').innerHTML = rpgStatusScreenHTML();
         }
 
         // ---------- 裝備畫面：非戰鬥時可以切換/購買武器防具 ----------
@@ -3971,14 +4001,14 @@
             const info = RPG_ITEM_INFO[name];
             return (info && info.emoji) || '🍲';
         }
-        const RPG_INGREDIENT_EMOJI = { '小麥': '🌾', '雞蛋': '🥚', '菇傘': '🍄', '史萊姆凝膠': '🟢', '哥布林辛香料': '🌶️' };
+        const RPG_INGREDIENT_EMOJI = { '小麥': '🌾', '雞蛋': '🥚', '菇傘': '🍄', '史萊姆凝膠': '🟢', '哥布林辛香料': '🌶️', '蜂蜜': '🍯', '起司': '🧀' };
         // 依照「這隻怪物的等級比主角高多少」決定掉落食材的稀有度（差距越大掉的食材越少見）
         function rpgIngredientDropPool(monster, playerLevel) {
             const diff = (monster.level || playerLevel) - playerLevel;
-            if (diff >= 15) return ['哥布林辛香料', '史萊姆凝膠', '菇傘'];
-            if (diff >= 5) return ['史萊姆凝膠', '哥布林辛香料'];
-            if (diff >= 2) return ['菇傘', '雞蛋'];
-            return ['小麥', '雞蛋'];
+            if (diff >= 15) return ['哥布林辛香料', '史萊姆凝膠', '菇傘', '起司'];
+            if (diff >= 5) return ['史萊姆凝膠', '哥布林辛香料', '起司'];
+            if (diff >= 2) return ['菇傘', '雞蛋', '蜂蜜'];
+            return ['小麥', '雞蛋', '蜂蜜'];
         }
         // 食譜資料庫：need 是烹調需要消耗的食材跟數量
         const RPG_RECIPES = {
@@ -3987,6 +4017,17 @@
             '香草麵包': { need: { '小麥': 2, '雞蛋': 1 }, cost: 35 },
             'Q彈史萊姆凍': { need: { '史萊姆凝膠': 2, '小麥': 1 }, cost: 35 },
             '元氣烤串': { need: { '哥布林辛香料': 1, '雞蛋': 1, '小麥': 1 }, cost: 45 },
+            // 新增的 10 道食譜，用到 2 種新食材（蜂蜜、起司），其中 2 道是專門解除異常狀態的
+            '蜂蜜烤餅': { need: { '小麥': 1, '蜂蜜': 1 }, cost: 25 },
+            '蜂蜜舒芙蕾': { need: { '雞蛋': 2, '蜂蜜': 1 }, cost: 35 },
+            '起司烤菇': { need: { '菇傘': 1, '起司': 1 }, cost: 30 },
+            '濃湯起司球': { need: { '起司': 2 }, cost: 35 },
+            '解毒蔬菜湯': { need: { '菇傘': 1, '小麥': 1 }, cost: 40 },
+            '淨化蜂蜜水': { need: { '蜂蜜': 2 }, cost: 45 },
+            '哥布林辣醬麵': { need: { '哥布林辛香料': 1, '小麥': 2 }, cost: 40 },
+            '史萊姆Q餅': { need: { '史萊姆凝膠': 1, '起司': 1 }, cost: 35 },
+            '全麥雞蛋捲': { need: { '小麥': 2, '雞蛋': 2 }, cost: 45 },
+            '綜合野菜烤串': { need: { '菇傘': 1, '哥布林辛香料': 1 }, cost: 50 },
             // 限定食譜：不會從一般調查點拿到，只能來食譜商店花大錢買，或是打贏強敵/魔王小機率直接掉落已學會
             '傳說主廚全餐': { need: { '哥布林辛香料': 2, '史萊姆凝膠': 2, '菇傘': 2 }, cost: 50000, restricted: true },
             '黃金蜜汁烤串': { need: { '雞蛋': 2, '小麥': 2, '哥布林辛香料': 1 }, cost: 20000, restricted: true },
@@ -3994,13 +4035,23 @@
 
         // 道具資料庫：selfOnly 只能用在自己身上；aoe 一次對全體我方生效；revive 可以用在已經倒下的隊友身上；spRestore 額外恢復 SP
         const RPG_ITEM_INFO = {
-            '家常蛋花湯': { healPct: 0.3, selfOnly: false, icon: 'icon_potion_yellow', emoji: '🍲' },
-            '野菇燉湯': { healPct: 0.5, selfOnly: false, icon: 'icon_potion_green', emoji: '🍄' },
-            '香草麵包': { healPct: 0.35, selfOnly: false, aoe: true, icon: 'icon_potion_white', emoji: '🍞' },
-            'Q彈史萊姆凍': { healPct: 0.15, spRestorePct: 0.5, selfOnly: false, icon: 'icon_potion_blue', emoji: '🍮' },
-            '元氣烤串': { healPct: 0.4, selfOnly: false, revive: true, icon: 'icon_potion_red', emoji: '🍢' },
-            '傳說主廚全餐': { healPct: 1, spRestorePct: 1, selfOnly: false, aoe: true, revive: true, emoji: '🍱' },
-            '黃金蜜汁烤串': { healPct: 0.8, spRestorePct: 0.6, selfOnly: false, revive: true, emoji: '🍡' },
+            '家常蛋花湯': { healPct: 0.22, selfOnly: false, icon: 'icon_potion_yellow', emoji: '🍲' },
+            '野菇燉湯': { healPct: 0.35, selfOnly: false, icon: 'icon_potion_green', emoji: '🍄' },
+            '香草麵包': { healPct: 0.25, selfOnly: false, aoe: true, icon: 'icon_potion_white', emoji: '🍞' },
+            'Q彈史萊姆凍': { healPct: 0.12, spRestorePct: 0.35, selfOnly: false, icon: 'icon_potion_blue', emoji: '🍮' },
+            '元氣烤串': { healPct: 0.3, selfOnly: false, revive: true, icon: 'icon_potion_red', emoji: '🍢' },
+            '蜂蜜烤餅': { healPct: 0.18, selfOnly: false, emoji: '🥯' },
+            '蜂蜜舒芙蕾': { healPct: 0.2, spRestorePct: 0.15, selfOnly: false, emoji: '🍰' },
+            '起司烤菇': { healPct: 0.2, selfOnly: false, emoji: '🧀' },
+            '濃湯起司球': { healPct: 0.15, spRestorePct: 0.2, selfOnly: false, emoji: '🥣' },
+            '解毒蔬菜湯': { healPct: 0.1, cureStatus: true, selfOnly: false, emoji: '🥗' },
+            '淨化蜂蜜水': { healPct: 0.15, cureStatus: true, selfOnly: false, emoji: '🍯' },
+            '哥布林辣醬麵': { healPct: 0.22, selfOnly: false, emoji: '🍜' },
+            '史萊姆Q餅': { healPct: 0.12, spRestorePct: 0.18, selfOnly: false, emoji: '🍡' },
+            '全麥雞蛋捲': { healPct: 0.16, selfOnly: false, aoe: true, emoji: '🥐' },
+            '綜合野菜烤串': { healPct: 0.18, selfOnly: false, revive: true, emoji: '🍢' },
+            '傳說主廚全餐': { healPct: 0.6, spRestorePct: 0.6, selfOnly: false, aoe: true, revive: true, cureStatus: true, emoji: '🍱' },
+            '黃金蜜汁烤串': { healPct: 0.5, spRestorePct: 0.4, selfOnly: false, revive: true, emoji: '🍡' },
         };
 
         // 把道具效果換成一句白話說明，戰鬥中的道具清單、烹飪背包都會用到
@@ -4010,6 +4061,7 @@
             if (info.healPct) parts.push(`${info.aoe ? '全體隊友' : (info.selfOnly ? '自己' : '指定對象')}回復 HP ${Math.round(info.healPct * 100)}%（依角色上限計算）`);
             if (info.spRestorePct) parts.push(`回復 SP ${Math.round(info.spRestorePct * 100)}%`);
             if (info.revive) parts.push('可以喚醒已經倒下的夥伴');
+            if (info.cureStatus) parts.push('解除中毒／麻痺／衰弱等異常狀態');
             return parts.join('、') || '效果不明';
         }
 
@@ -4042,6 +4094,18 @@
             document.getElementById('game-modal-title').textContent = '🍲 使用道具';
             document.getElementById('game-modal-body').innerHTML = rpgMapItemTargetHTML(name);
         }
+        // 小頭像：用在道具/技能選對象的清單裡，讓人一看就知道要對誰用，不用再靠 emoji 猜
+        function rpgCharThumbHTML(obj, size) {
+            size = size || 28;
+            const useReal = rpgAssetsReady && rpgDungeonImg && rpgDungeonImg.naturalWidth > 0;
+            const spriteKey = obj.spriteKey || (obj.isCompanion ? 'hero_ako' : 'hero_player');
+            const tile = RPG_DUNGEON_TILES[spriteKey] || RPG_DUNGEON_TILES.hero_player;
+            if (!useReal) return `<span style="font-size:${size - 4}px; line-height:1;">${obj.isCompanion ? '🧑\u200d🌾' : '🧑\u200d🍳'}</span>`;
+            const [col, row] = tile;
+            const z = size / 16;
+            return `<div style="width:${size}px; height:${size}px; border-radius:999px; overflow:hidden; background-color:var(--cream); flex-shrink:0; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${col * RPG_DUNGEON_STRIDE * z}px -${row * RPG_DUNGEON_STRIDE * z}px; background-size:${RPG_DUNGEON_W * z}px ${RPG_DUNGEON_H * z}px; image-rendering:pixelated;"></div>`;
+        }
+
         function rpgMapItemTargetHTML(name, message) {
             const state = rpgState;
             const p = state.player;
@@ -4050,8 +4114,8 @@
             const pool = info.revive ? candidates : candidates.filter(c => c.obj.hp > 0);
             const rows = pool.map(c => {
                 const fainted = c.obj.hp <= 0;
-                const label = fainted ? `💫 喚醒${c.label}（已倒下）` : `🤝 對${c.label}使用（❤️${c.obj.hp}/${c.obj.maxHp}）`;
-                return `<button onclick="rpgUseItemOutOfBattle('${name}','${c.kind}',${c.idx})" class="btn-secondary w-full mb-2">${label}</button>`;
+                const label = fainted ? `喚醒${c.label}（已倒下）` : `對${c.label}使用（❤️${c.obj.hp}/${c.obj.maxHp}）`;
+                return `<button onclick="rpgUseItemOutOfBattle('${name}','${c.kind}',${c.idx})" class="btn-secondary w-full mb-2" style="display:flex; align-items:center; gap:8px; text-align:left;">${rpgCharThumbHTML(c.obj)}<span>${label}</span></button>`;
             }).join('');
             return `
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
@@ -4178,8 +4242,8 @@
                 const rows = candidates.map(e => {
                     const fainted = e.obj.hp <= 0;
                     const isSelf = e.obj.name === actor.name && e.row === b.actor.row && e.i === b.actor.i;
-                    const label = fainted ? `💫 喚醒${e.obj.name}（已倒下）` : `${isSelf ? '🙋' : '🤝'} 給${e.obj.name}使用（❤️${e.obj.hp}/${e.obj.maxHp}）`;
-                    return `<button onclick="rpgBattleAction('item', '${b.pendingItem}', { row: '${e.row}', i: ${e.i} })" class="btn-secondary w-full mb-2">${label}</button>`;
+                    const label = fainted ? `喚醒${e.obj.name}（已倒下）` : `${isSelf ? '給自己' : `給${e.obj.name}`}使用（❤️${e.obj.hp}/${e.obj.maxHp}）`;
+                    return `<button onclick="rpgBattleAction('item', '${b.pendingItem}', { row: '${e.row}', i: ${e.i} })" class="btn-secondary w-full mb-2" style="display:flex; align-items:center; gap:8px; text-align:left;">${rpgCharThumbHTML(e.obj)}<span>${label}</span></button>`;
                 }).join('');
                 return `<p class="text-xs text-center mb-2" style="color:#B3A492">要把「${b.pendingItem}」給誰用？</p>${rows}<button onclick="rpgBackToMenuFrom('item')" class="btn-secondary w-full">← 返回</button>`;
             }
@@ -4189,8 +4253,8 @@
                 const rows = pool.map(e => {
                     const fainted = e.obj.hp <= 0;
                     const isSelf = e.obj.name === actor.name && e.row === b.actor.row && e.i === b.actor.i;
-                    const label = fainted ? `💫 喚醒${e.obj.name}（已倒下）` : `${isSelf ? '🙋' : '🤝'} 對${e.obj.name}使用（❤️${e.obj.hp}/${e.obj.maxHp}）`;
-                    return `<button onclick="rpgBattleAction('skill', '${b.pendingSkill}', { row: '${e.row}', i: ${e.i} })" class="btn-secondary w-full mb-2">${label}</button>`;
+                    const label = fainted ? `喚醒${e.obj.name}（已倒下）` : `${isSelf ? '對自己' : `對${e.obj.name}`}使用（❤️${e.obj.hp}/${e.obj.maxHp}）`;
+                    return `<button onclick="rpgBattleAction('skill', '${b.pendingSkill}', { row: '${e.row}', i: ${e.i} })" class="btn-secondary w-full mb-2" style="display:flex; align-items:center; gap:8px; text-align:left;">${rpgCharThumbHTML(e.obj)}<span>${label}</span></button>`;
                 }).join('');
                 return `<p class="text-xs text-center mb-2" style="color:#B3A492">要對誰使出「${sk.name}」？</p>${rows}<button onclick="rpgBackToMenuFrom('skill')" class="btn-secondary w-full">← 返回</button>`;
             }
@@ -4338,7 +4402,13 @@
             if (!b || b.phase !== 'command' || !actor || b.commands[`${b.actor.row}-${b.actor.i}`]) return;
 
             if (action === 'flee') {
-                if (Math.random() < 0.6) {
+                // 逃跑機率依照對手強度調整：怪物比你強越多，逃跑越難成功；比你弱就很容易跑掉；魔王戰特別難逃
+                const monsterEntries = rpgFormationEntries(b.monsterFormation);
+                const isBossFight = monsterEntries.some(e => e.obj.isBoss);
+                const avgMonsterLevel = monsterEntries.reduce((s, e) => s + (e.obj.level || p.level), 0) / Math.max(1, monsterEntries.length);
+                const levelDiff = avgMonsterLevel - p.level;
+                const fleeChance = isBossFight ? 0.1 : Math.max(0.1, Math.min(0.9, 0.7 - levelDiff * 0.025));
+                if (Math.random() < fleeChance) {
                     rpgLogAppend('你們成功逃跑了！');
                     playSfx('click');
                     state.mode = 'map';
@@ -4426,6 +4496,20 @@
                     obj.statuses.weaken--;
                 }
             });
+        }
+
+        // 依照這隻怪物的「攻擊喜好」挑我方目標：血少優先／血多優先／完全隨機／偏好特定站位（沒人在那格就改隨機）
+        function rpgChooseMonsterTarget(monsterObj, aliveMembers) {
+            const type = monsterObj.aiType || 'random';
+            if (type === 'low_hp') return aliveMembers.reduce((a, b) => (b.obj.hp < a.obj.hp ? b : a));
+            if (type === 'high_hp') return aliveMembers.reduce((a, b) => (b.obj.hp > a.obj.hp ? b : a));
+            if (type.startsWith('slot_')) {
+                const wantRow = type.includes('front') ? 'front' : 'back';
+                const wantIdx = type.endsWith('1') ? 0 : 2; // slot_front1/slot_back1 → 位置1（index0）；slot_front3/slot_back3 → 位置3（index2）
+                const target = aliveMembers.find(e => e.row === wantRow && e.i === wantIdx);
+                if (target) return target;
+            }
+            return aliveMembers[Math.floor(Math.random() * aliveMembers.length)];
         }
 
         function rpgExecuteRound(monstersOnly) {
@@ -4561,11 +4645,12 @@
                                 targets.forEach(({ row, i, obj }) => {
                                     if (info.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * info.healPct));
                                     if (info.spRestorePct) obj.sp = Math.min(obj.maxSp, obj.sp + Math.round(obj.maxSp * info.spRestorePct));
+                                    if (info.cureStatus && obj.statuses) { obj.statuses.poison = 0; obj.statuses.paralysis = 0; obj.statuses.weaken = 0; }
                                     const domId = `rpg-slot-party-${row}-${i}`;
                                     const center = rpgElementCenter(domId);
                                     if (center) rpgBurstParticle('light', { x: center.x, y: center.y, size: 40, count: 2, duration: 0.5, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' });
                                 });
-                                rpgLogAppend(`${actorObj.name}煮了${cmd.extra}跟大家分享，全體${info.healPct ? `回復 HP ${Math.round(info.healPct * 100)}%` : ''}${info.spRestorePct ? `、恢復 SP ${Math.round(info.spRestorePct * 100)}%` : ''}！`);
+                                rpgLogAppend(`${actorObj.name}煮了${cmd.extra}跟大家分享，全體${info.healPct ? `回復 HP ${Math.round(info.healPct * 100)}%` : ''}${info.spRestorePct ? `、恢復 SP ${Math.round(info.spRestorePct * 100)}%` : ''}${info.cureStatus ? '、解除了異常狀態' : ''}！`);
                             } else {
                                 let recipient = cmd.itemTarget ? b.partyFormation[cmd.itemTarget.row][cmd.itemTarget.i] : null;
                                 if (!recipient) recipient = actorObj;
@@ -4575,9 +4660,10 @@
                                 const healAmt = Math.round(recipient.maxHp * (info.healPct != null ? info.healPct : 0.3));
                                 recipient.hp = Math.min(recipient.maxHp, recipient.hp + healAmt);
                                 if (info.spRestorePct) recipient.sp = Math.min(recipient.maxSp, recipient.sp + Math.round(recipient.maxSp * info.spRestorePct));
+                                if (info.cureStatus && recipient.statuses) { recipient.statuses.poison = 0; recipient.statuses.paralysis = 0; recipient.statuses.weaken = 0; }
                                 rpgLogAppend(wasFainted
                                     ? `${actorObj.name}餵${recipient.name}吃下${cmd.extra}，${recipient.name}奇蹟似地重新站起來了！`
-                                    : (recipient === actorObj ? `${actorObj.name}吃了${cmd.extra}，回復了 HP ${Math.round((info.healPct != null ? info.healPct : 0.3) * 100)}%！` : `${actorObj.name}把${cmd.extra}給了${recipient.name}，回復了 HP ${Math.round((info.healPct != null ? info.healPct : 0.3) * 100)}%！`));
+                                    : (recipient === actorObj ? `${actorObj.name}吃了${cmd.extra}，回復了 HP ${Math.round((info.healPct != null ? info.healPct : 0.3) * 100)}%${info.cureStatus ? '，異常狀態也解除了' : ''}！` : `${actorObj.name}把${cmd.extra}給了${recipient.name}，回復了 HP ${Math.round((info.healPct != null ? info.healPct : 0.3) * 100)}%${info.cureStatus ? '，異常狀態也解除了' : ''}！`));
                                 const center = rpgElementCenter(recipientDomId);
                                 rpgBurstParticle('light', Object.assign({ size: 55, count: 3, duration: 0.7, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' }, center ? { x: center.x, y: center.y } : {}));
                                 if (wasFainted && recipient.hp > 0) {
@@ -4630,7 +4716,7 @@
                     }
                     const alivePartyMembers = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
                     if (!alivePartyMembers.length) { runNext(); return; }
-                    const victim = alivePartyMembers[Math.floor(Math.random() * alivePartyMembers.length)];
+                    const victim = rpgChooseMonsterTarget(monsterObj, alivePartyMembers);
                     const victimDomId = `rpg-slot-party-${victim.row}-${victim.i}`;
                     const monsterDomId = `rpg-slot-monster-${entry.row}-${entry.i}`;
                     // Lv20 以上的怪物開始會用技能（傷害更高、扣自己的 SP）或直接對我方施放異常狀態，不再只會普通攻擊
