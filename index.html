@@ -2376,7 +2376,8 @@
             grass: [5, 0], water: [0, 0], path: [5, 2], tree: [23, 9], door: [52, 0],
         };
         const RPG_CHAR_TILES = {
-            player: [0, 5], elder: [1, 6], shop: [0, 7], innkeeper: [1, 7], goblin: [0, 3], companion: [1, 8],
+            player: [0, 5], elder: [1, 6], shop: [0, 7], innkeeper: [1, 7], goblin: [0, 3],
+            companion: [1, 8], companion2: [0, 9], companion3: [1, 9], companion4: [0, 10],
         };
         const RPG_DUNGEON_TILES = {
             slime: [0, 9], mushroom: [3, 10],
@@ -2508,6 +2509,12 @@
                     '17,3': 'elder',
                     '12,12': 'innkeeper',
                 },
+                pois: {
+                    '3,1': { item: '家常蛋花湯' },
+                    '20,1': { ingredient: '雞蛋', qty: 2 },
+                    '3,16': { recipe: 'Q彈史萊姆凍' },
+                    '20,16': { gold: 20 },
+                },
                 exits: { '11,17': { to: 'plains', x: 6, y: 1 }, '12,17': { to: 'plains', x: 7, y: 1 } },
                 wild: false,
                 viewport: { w: 12, h: 10 }, // 有這個欄位代表地圖比視窗大，要用鏡頭跟著角色捲動＋小地圖（放大過，讓移動時看得到更多範圍）
@@ -2530,18 +2537,111 @@
                 ],
                 start: { x: 7, y: 1 },
                 npcs: {},
+                pois: {
+                    '2,1': { recipe: '野菇燉湯' },
+                    '12,1': { ingredient: '菇傘', qty: 2 },
+                    '2,8': { ingredient: '哥布林辛香料', qty: 2 },
+                    '12,8': { recipe: '香草麵包' },
+                    '7,6': { ingredient: '小麥', qty: 3 },
+                },
                 exits: { '6,10': { to: 'village', x: 11, y: 16 }, '7,10': { to: 'village', x: 12, y: 16 } },
                 wild: true,
                 encounterRate: 0.14,
-                monsters: ['bread_slime', 'ferment_goblin', 'forest_mushroom'],
             },
         };
 
-        const RPG_MONSTERS = {
-            bread_slime: { name: '麵包史萊姆', emoji: '🍞', spriteKey: 'slime', sheet: 'dungeon', hp: 12, atk: 3, def: 1, agi: 3, exp: 8, gold: 5 },
-            ferment_goblin: { name: '發酵哥布林', emoji: '👺', spriteKey: 'goblin', sheet: 'char', hp: 18, atk: 5, def: 2, agi: 5, exp: 14, gold: 10 },
-            forest_mushroom: { name: '野菇怪', emoji: '🍄', spriteKey: 'mushroom', sheet: 'dungeon', hp: 10, atk: 4, def: 0, agi: 9, exp: 6, gold: 4 },
+        // 怪物種類資料庫：外觀/歸屬分級寫在這裡，實際數值由「出現時的等級」用公式即時算出（見 rpgMonsterStatsAtLevel），
+        // 這樣同一隻「麵包史萊姆」在角色 Lv.3 時遇到跟 Lv.20 時遇到，強度會自動跟著等級調整
+        // tier： even（跟角色差不多等級，80%）／plus5（+5級，10%）／plus10（+10級，5%）／plus20（+20級，4%）／boss（最終魔王，1%）
+        const RPG_MONSTER_SPECIES = {
+            // ---- 同等級（新手也會遇到的一般怪）----
+            bread_slime: { name: '麵包史萊姆', emoji: '🍞', spriteKey: 'slime', sheet: 'dungeon', tier: 'even', hue: 0 },
+            ferment_goblin: { name: '發酵哥布林', emoji: '👺', spriteKey: 'goblin', sheet: 'char', tier: 'even', hue: 0 },
+            forest_mushroom: { name: '野菇怪', emoji: '🍄', spriteKey: 'mushroom', sheet: 'dungeon', tier: 'even', hue: 0 },
+            wild_hare: { name: '雜草兔', emoji: '🐇', spriteKey: 'slime', sheet: 'dungeon', tier: 'even', hue: 70 },
+            sauce_slime: { name: '醬汁史萊姆', emoji: '🟤', spriteKey: 'slime', sheet: 'dungeon', tier: 'even', hue: 220 },
+            burnt_toast_ghost: { name: '焦土司幽靈', emoji: '👻', spriteKey: 'mushroom', sheet: 'dungeon', tier: 'even', hue: 200 },
+            flour_dust_sprite: { name: '麵粉精靈', emoji: '💨', spriteKey: 'mushroom', sheet: 'dungeon', tier: 'even', hue: 40 },
+            rolling_pin_wisp: { name: '擀麵杖幽魂', emoji: '👻', spriteKey: 'goblin', sheet: 'char', tier: 'even', hue: 160 },
+            // ---- 高 5 級（略強，中低階區偶爾遇到）----
+            iron_goblin: { name: '鐵甲哥布林', emoji: '⚔️', spriteKey: 'goblin', sheet: 'char', tier: 'plus5', hue: 260 },
+            razor_mushroom: { name: '利刃菇', emoji: '🍄', spriteKey: 'mushroom', sheet: 'dungeon', tier: 'plus5', hue: 320 },
+            sour_slime: { name: '酸敗史萊姆', emoji: '🟢', spriteKey: 'slime', sheet: 'dungeon', tier: 'plus5', hue: 100 },
+            thorn_hare: { name: '荊棘兔', emoji: '🐰', spriteKey: 'slime', sheet: 'dungeon', tier: 'plus5', hue: 130 },
+            copper_pot_crab: { name: '銅鍋蟹', emoji: '🦀', spriteKey: 'goblin', sheet: 'char', tier: 'plus5', hue: 30 },
+            // ---- 高 10 級（明顯難纏，遇到要小心）----
+            obsidian_crab: { name: '黑曜蟹', emoji: '🦀', spriteKey: 'goblin', sheet: 'char', tier: 'plus10', hue: 0 },
+            venom_toadstool: { name: '劇毒毒菇', emoji: '🍄', spriteKey: 'mushroom', sheet: 'dungeon', tier: 'plus10', hue: 280 },
+            battle_goblin_chief: { name: '哥布林戰士長', emoji: '🗡️', spriteKey: 'goblin', sheet: 'char', tier: 'plus10', hue: 190 },
+            frost_slime: { name: '寒霜史萊姆', emoji: '🧊', spriteKey: 'slime', sheet: 'dungeon', tier: 'plus10', hue: 190 },
+            // ---- 高 20 級（稀有強敵，遇到算你運氣不好）----
+            ancient_mushroom_king: { name: '遠古菇王', emoji: '🍄', spriteKey: 'mushroom', sheet: 'dungeon', tier: 'plus20', hue: 45 },
+            steel_golem: { name: '鋼鐵魔像', emoji: '🤖', spriteKey: 'goblin', sheet: 'char', tier: 'plus20', hue: 210 },
+            plague_slime_lord: { name: '瘟疫史萊姆王', emoji: '🟣', spriteKey: 'slime', sheet: 'dungeon', tier: 'plus20', hue: 280 },
+            // ---- 最終魔王（極稀有，遇到必定是 8 隻的大陣仗、魔王站後排 2 號位）----
+            dark_cuisine_king: { name: '黑暗料理王', emoji: '👑', spriteKey: 'goblin', sheet: 'char', tier: 'boss', hue: 300 },
         };
+        const RPG_MONSTER_TIER_POOL = {
+            even: Object.keys(RPG_MONSTER_SPECIES).filter(k => RPG_MONSTER_SPECIES[k].tier === 'even'),
+            plus5: Object.keys(RPG_MONSTER_SPECIES).filter(k => RPG_MONSTER_SPECIES[k].tier === 'plus5'),
+            plus10: Object.keys(RPG_MONSTER_SPECIES).filter(k => RPG_MONSTER_SPECIES[k].tier === 'plus10'),
+            plus20: Object.keys(RPG_MONSTER_SPECIES).filter(k => RPG_MONSTER_SPECIES[k].tier === 'plus20'),
+            boss: Object.keys(RPG_MONSTER_SPECIES).filter(k => RPG_MONSTER_SPECIES[k].tier === 'boss'),
+        };
+        // 依照「這次要出現的等級」算出怪物數值（魔王額外再乘一次加成，血更厚、打起來更有王者架式）
+        function rpgMonsterStatsAtLevel(level, isBoss) {
+            const lvl = Math.max(1, level);
+            const bossMult = isBoss ? 1 : 1;
+            const hp = Math.round((10 + lvl * 4.5) * (isBoss ? 3.2 : 1));
+            const atk = Math.round((2 + lvl * 1.4) * (isBoss ? 1.6 : 1));
+            const def = Math.round(lvl * 0.6 * (isBoss ? 1.5 : 1));
+            const agi = Math.round(3 + lvl * 0.7);
+            const exp = Math.round(lvl * 5 * (isBoss ? 5 : 1));
+            const gold = Math.round(lvl * 3 * (isBoss ? 6 : 1));
+            return { hp, atk, def, agi, exp, gold };
+        }
+        // 抽一場遭遇：先骰分級（80/10/5/4/1），魔王必定單獨算一場 8 隻的陣仗；其餘分級再骰 1~8 隻的數量
+        function rpgRollEncounter(playerLevel) {
+            const roll = Math.random() * 100;
+            let tier;
+            if (roll < 80) tier = 'even';
+            else if (roll < 90) tier = 'plus5';
+            else if (roll < 95) tier = 'plus10';
+            else if (roll < 99) tier = 'plus20';
+            else tier = 'boss';
+            const tierLevelOffset = { even: 0, plus5: 5, plus10: 10, plus20: 20, boss: 0 }[tier];
+            const monsterLevel = playerLevel + tierLevelOffset;
+            if (tier === 'boss') {
+                const bossId = RPG_MONSTER_TIER_POOL.boss[Math.floor(Math.random() * RPG_MONSTER_TIER_POOL.boss.length)];
+                const stats = rpgMonsterStatsAtLevel(monsterLevel, true);
+                const species = RPG_MONSTER_SPECIES[bossId];
+                // 魔王遇到必定是 8 隻小怪陪同、魔王本人站在「後排 2 號位」（index 1）
+                const escortPool = RPG_MONSTER_TIER_POOL.plus10.length ? RPG_MONSTER_TIER_POOL.plus10 : RPG_MONSTER_TIER_POOL.even;
+                const escortStats = rpgMonsterStatsAtLevel(playerLevel + 10, false);
+                const monsters = [];
+                for (let slotIdx = 0; slotIdx < 8; slotIdx++) {
+                    if (slotIdx === 5) { // back row index 1 = 後排 2 號位（front 4 格 + back 4 格排列時，第 6 個位置）
+                        monsters.push({ id: bossId, ...species, ...stats, curHp: stats.hp, isBoss: true });
+                    } else {
+                        const escortId = escortPool[Math.floor(Math.random() * escortPool.length)];
+                        const escortSpecies = RPG_MONSTER_SPECIES[escortId];
+                        monsters.push({ id: escortId, ...escortSpecies, ...escortStats, curHp: escortStats.hp });
+                    }
+                }
+                return { monsters, isBossFight: true };
+            }
+            const pool = RPG_MONSTER_TIER_POOL[tier].length ? RPG_MONSTER_TIER_POOL[tier] : RPG_MONSTER_TIER_POOL.even;
+            const stats = rpgMonsterStatsAtLevel(monsterLevel, false);
+            // 一般遭遇：1~8 隻怪物，隻數越多機率越低
+            const countRoll = Math.random();
+            const count = countRoll < 0.35 ? 1 : countRoll < 0.6 ? 2 : countRoll < 0.78 ? 3 : countRoll < 0.9 ? 4 : countRoll < 0.96 ? 5 : countRoll < 0.99 ? 6 : countRoll < 0.997 ? 7 : 8;
+            const monsters = Array.from({ length: count }, () => {
+                const id = pool[Math.floor(Math.random() * pool.length)];
+                const species = RPG_MONSTER_SPECIES[id];
+                return { id, ...species, ...stats, curHp: stats.hp };
+            });
+            return { monsters, isBossFight: false };
+        }
 
         const RPG_NPC_INFO = {
             shop: { name: '食譜商店', icon: '🏪', lines: ['歡迎光臨！可惜這一版還沒開放購買功能，之後會陸續加進來喔。'] },
@@ -2583,6 +2683,9 @@
         const RPG_SKILLS = {
             stir_fry: { name: '熱炒攻擊', sp: 3, mult: 1.8, particle: 'magic', filter: 'sepia(1) hue-rotate(280deg) saturate(4)' },
             knife_dance: { name: '極速刀工', sp: 5, mult: 2.4, particle: 'star', filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' },
+            sweet_glaze: { name: '糖霜連擊', sp: 3, mult: 1.7, particle: 'light', filter: 'sepia(1) hue-rotate(320deg) saturate(4) brightness(1.2)' },
+            grill_sear: { name: '炙燒三味', sp: 4, mult: 2.0, particle: 'magic', filter: 'sepia(1) hue-rotate(0deg) saturate(4)' },
+            spice_toss: { name: '辛香亂舞', sp: 4, mult: 2.1, particle: 'star', filter: 'sepia(1) hue-rotate(80deg) saturate(4)' },
         };
 
         function rpgDefaultPlayer() {
@@ -2593,18 +2696,19 @@
                 weaponName: '新手鍋鏟', armorName: '破舊圍裙',
                 ownedWeapons: ['新手鍋鏟'], ownedArmors: ['破舊圍裙'],
                 items: { '家常蛋花湯': 2 },
+                ingredients: {}, // 食材背包：{ 食材名稱: 數量 }
+                knownRecipes: ['家常蛋花湯'], // 已經學會、可以在烹飪背包裡製作的料理
                 skills: ['stir_fry', 'knife_dance'],
             };
         }
-        // 測試用的第二位夥伴：地圖上會跟在主角後面走，戰鬥時也會一起上場
-        function rpgDefaultCompanion() {
-            return {
-                name: '阿柯', level: 1, exp: 0, expToNext: 20,
-                hp: 24, maxHp: 24, atk: 5, def: 1, sp: 8, maxSp: 8, agi: 7,
-                weaponName: '烘焙刮刀',
-                skills: ['stir_fry'],
-                isCompanion: true,
-            };
+        // 4 位可以招募的夥伴，地圖上會排成一列跟在主角後面走，戰鬥時也會一起上場
+        function rpgDefaultCompanions() {
+            return [
+                { name: '阿柯', level: 1, exp: 0, expToNext: 20, hp: 24, maxHp: 24, atk: 5, def: 1, sp: 8, maxSp: 8, agi: 7, weaponName: '烘焙刮刀', skills: ['stir_fry'], isCompanion: true, spriteKey: 'companion' },
+                { name: '小穗', level: 1, exp: 0, expToNext: 20, hp: 20, maxHp: 20, atk: 4, def: 1, sp: 12, maxSp: 12, agi: 6, weaponName: '甜點抹刀', skills: ['sweet_glaze'], isCompanion: true, spriteKey: 'companion2' },
+                { name: '老周', level: 1, exp: 0, expToNext: 20, hp: 32, maxHp: 32, atk: 6, def: 4, sp: 6, maxSp: 6, agi: 3, weaponName: '燒烤鐵叉', skills: ['grill_sear'], isCompanion: true, spriteKey: 'companion3' },
+                { name: '阿藍', level: 1, exp: 0, expToNext: 20, hp: 22, maxHp: 22, atk: 5, def: 2, sp: 9, maxSp: 9, agi: 9, weaponName: '辛香研磨棒', skills: ['spice_toss'], isCompanion: true, spriteKey: 'companion4' },
+            ];
         }
 
         async function startRpgGame() {
@@ -2614,10 +2718,10 @@
             ensureAudioContext();
             rpgState = {
                 player: rpgDefaultPlayer(),
-                companion: rpgDefaultCompanion(),
+                companions: rpgDefaultCompanions(),
                 region: 'village',
                 pos: { ...RPG_MAPS.village.start },
-                companionPos: { ...RPG_MAPS.village.start }, // 夥伴一開始跟主角站在同一格，主角一移動夥伴就會跟著往前補位
+                trail: [1, 2, 3, 4].map(() => ({ ...RPG_MAPS.village.start })), // 4 位夥伴各自的跟隨位置，一開始都跟主角疊在同一格
                 mode: 'map', // map | battle | dialogue
                 battle: null,
                 locked: false, // 轉場/對話/遭遇判定進行中時鎖住移動，避免同時觸發第二次事件
@@ -2638,24 +2742,59 @@
             if (dirs[e.key]) { e.preventDefault(); rpgMove(dirs[e.key][0], dirs[e.key][1]); }
         }
 
-        // 按住方向鈕連續走：按下先走一步，按住超過 0.35 秒後開始每 160ms 自動走一步，
-        // 放開手指/滑鼠就停止（rpgMove 內部本來就有動畫中擋輸入的機制，重複呼叫很安全）
-        let rpgHoldTimer = null, rpgHoldInterval = null;
-        function rpgHoldAttrs(dx, dy) {
-            return `onmousedown="rpgHoldStart(${dx},${dy})" onmouseup="rpgHoldEnd()" onmouseleave="rpgHoldEnd()" ontouchstart="event.preventDefault(); rpgHoldStart(${dx},${dy})" ontouchend="rpgHoldEnd()" ontouchcancel="rpgHoldEnd()"`;
+        // 虛擬搖桿：拖曳圓形握把來移動，放開自動回到中心；判斷上下左右用握把偏移角度分成四個扇區
+        const RPG_JOY_MAX = 34, RPG_JOY_DEADZONE = 16;
+        let rpgJoyDir = null, rpgJoyInterval = null;
+        function rpgJoystickHTML() {
+            return `
+                <div id="rpg-joystick-base" style="position:relative; width:104px; height:104px; border-radius:999px; background:radial-gradient(circle, var(--cream), #EADFC8); border:1px solid var(--line); margin:0 auto; touch-action:none;">
+                    <div id="rpg-joystick-knob" style="position:absolute; left:50%; top:50%; width:44px; height:44px; margin:-22px 0 0 -22px; border-radius:999px; background:linear-gradient(135deg, var(--honey), var(--jam)); box-shadow:0 2px 8px rgba(0,0,0,0.25); transition:transform .05s;"></div>
+                </div>`;
         }
-        function rpgHoldStart(dx, dy) {
-            rpgHoldEnd();
-            rpgMove(dx, dy);
-            rpgHoldTimer = setTimeout(() => {
-                rpgHoldInterval = setInterval(() => rpgMove(dx, dy), 160);
-            }, 350);
+        function rpgJoystickInit() {
+            const base = document.getElementById('rpg-joystick-base');
+            const knob = document.getElementById('rpg-joystick-knob');
+            if (!base || !knob) return;
+            let dragging = false;
+            const onMove = (clientX, clientY) => {
+                const rect = base.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+                const dx = clientX - cx, dy = clientY - cy;
+                const dist = Math.hypot(dx, dy);
+                const angle = Math.atan2(dy, dx);
+                const clamped = Math.min(dist, RPG_JOY_MAX);
+                knob.style.transform = `translate(${Math.cos(angle) * clamped}px, ${Math.sin(angle) * clamped}px)`;
+                if (dist < RPG_JOY_DEADZONE) { rpgSetJoystickDir(null); return; }
+                const deg = angle * 180 / Math.PI;
+                let dir;
+                if (deg >= -45 && deg < 45) dir = [1, 0];
+                else if (deg >= 45 && deg < 135) dir = [0, 1];
+                else if (deg >= -135 && deg < -45) dir = [0, -1];
+                else dir = [-1, 0];
+                rpgSetJoystickDir(dir);
+            };
+            const reset = () => { dragging = false; knob.style.transform = 'translate(0,0)'; rpgSetJoystickDir(null); };
+            base.onpointerdown = e => { dragging = true; base.setPointerCapture(e.pointerId); onMove(e.clientX, e.clientY); };
+            base.onpointermove = e => { if (dragging) onMove(e.clientX, e.clientY); };
+            base.onpointerup = reset;
+            base.onpointercancel = reset;
         }
-        function rpgHoldEnd() {
-            clearTimeout(rpgHoldTimer);
-            clearInterval(rpgHoldInterval);
-            rpgHoldTimer = null;
-            rpgHoldInterval = null;
+        function rpgSetJoystickDir(dir) {
+            const key = dir ? dir.join(',') : null;
+            const prevKey = rpgJoyDir ? rpgJoyDir.join(',') : null;
+            if (key === prevKey) return; // 方向沒變就不用重設計時器，避免抖動時一直重開間隔
+            rpgJoyDir = dir;
+            clearInterval(rpgJoyInterval);
+            rpgJoyInterval = null;
+            if (dir) {
+                rpgMove(dir[0], dir[1]);
+                rpgJoyInterval = setInterval(() => rpgMove(dir[0], dir[1]), 160);
+            }
+        }
+        function rpgHoldEnd() { // 名稱沿用舊版（切換畫面時呼叫來停止移動），現在改成清搖桿的移動間隔
+            clearInterval(rpgJoyInterval);
+            rpgJoyInterval = null;
+            rpgJoyDir = null;
         }
 
         // ---------- 狀態畫面：非戰鬥時也能看主角/夥伴的完整數值 ----------
@@ -2691,11 +2830,11 @@
         function rpgStatusScreenHTML() {
             const state = rpgState;
             const p = state.player;
-            const c = state.companion;
+            const companions = state.companions || [];
             return `
                 <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}</p>
                 ${rpgStatusCardHTML(p)}
-                ${c ? rpgStatusCardHTML(c) : ''}
+                ${companions.map(c => rpgStatusCardHTML(c)).join('')}
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
             `;
         }
@@ -2721,7 +2860,7 @@
             else action = `<button onclick="rpgEquip('${slot}','${name}')" class="btn-secondary text-xs !px-3 !py-1.5 shrink-0" ${p.gold < item.cost ? 'disabled style="opacity:.4"' : ''}>💰${item.cost} 購買</button>`;
             return `
                 <div class="flex items-center gap-3 px-3 py-2 rounded-2xl mb-2" style="background:var(--cream)">
-                    <img src="${RPG_EQUIP_ICON_SRC[item.icon]}" style="width:32px;height:32px;image-rendering:pixelated;flex-shrink:0;" />
+                    <img src="${RPG_EQUIP_ICON_SRC[item.icon]}" style="width:32px;height:32px;image-rendering:pixelated;flex-shrink:0;${slot === 'weapon' ? 'transform:rotate(-45deg);' : ''}" />
                     <div class="flex-1 min-w-0">
                         <p class="font-medium text-sm">${name}${statText ? ` <span style="color:#B3A492">${statText}</span>` : ''}</p>
                         <p class="text-xs" style="color:#B3A492">${item.desc}</p>
@@ -2788,24 +2927,21 @@
                     ${map.viewport ? `<canvas id="rpg-minimap" width="70" height="${Math.round(70 * map.rows.length / map.rows[0].length)}" style="position:absolute; top:6px; right:6px; border-radius:0.5rem; border:2px solid rgba(255,255,255,0.85); box-shadow:0 2px 6px rgba(0,0,0,0.35); background:rgba(0,0,0,0.2);"></canvas>` : ''}
                 </div>
                 <p id="rpg-dialogue-box" class="text-xs text-center mt-2" style="color:#B3A492; min-height:1.2rem;"></p>
-                <div class="flex flex-col items-center gap-2 mt-4" style="max-width:220px; margin-left:auto; margin-right:auto;">
-                    <button ${rpgHoldAttrs(0, -1)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">⬆️</button>
-                    <div class="flex gap-2">
-                        <button ${rpgHoldAttrs(-1, 0)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">⬅️</button>
-                        <button ${rpgHoldAttrs(0, 1)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">⬇️</button>
-                        <button ${rpgHoldAttrs(1, 0)} class="btn-secondary" style="width:64px; height:64px; font-size:1.5rem;">➡️</button>
-                    </div>
-                </div>
-                <p class="text-xs text-center mt-3" style="color:#B3A492">按住方向鈕可以連續走，電腦可用方向鍵/WASD 移動</p>
+                <div id="rpg-nearby-actions" class="flex gap-2 justify-center mt-2" style="min-height:2.25rem;"></div>
+                <div class="mt-2">${rpgJoystickHTML()}</div>
+                <p class="text-xs text-center mt-3" style="color:#B3A492">拖曳搖桿移動，電腦可用方向鍵/WASD</p>
                 <div style="height:20px;"></div>
-                <div class="grid grid-cols-2 gap-2">
-                    <button onclick="rpgOpenStatusScreen()" class="btn-secondary">📊 狀態</button>
-                    <button onclick="rpgOpenEquipScreen()" class="btn-secondary">🎽 裝備</button>
+                <div class="grid grid-cols-3 gap-2">
+                    <button onclick="rpgOpenCookScreen()" class="btn-amber text-xs !px-1">🍳 烹飪背包</button>
+                    <button onclick="rpgOpenStatusScreen()" class="btn-secondary text-xs !px-1">📊 狀態</button>
+                    <button onclick="rpgOpenEquipScreen()" class="btn-secondary text-xs !px-1">🎽 裝備</button>
                 </div>
             `;
             document.removeEventListener('keydown', rpgKeyHandler);
             document.addEventListener('keydown', rpgKeyHandler);
+            rpgJoystickInit();
             rpgDraw();
+            rpgCheckNearby();
         }
 
         // 算出鏡頭要對齊的左上角圖磚座標：以角色為中心，但不能讓鏡頭看到地圖邊界外的空白
@@ -2904,19 +3040,45 @@
                 }
             }
 
-            // 夥伴：畫在主角之前（如果剛好重疊，主角會蓋在上面），跟隨動畫用 companionAnimPos
-            if (state.companion && state.companionPos) {
-                const cRenderPos = state.companionAnimPos || state.companionPos;
-                const ccx = (cRenderPos.x - cam.x) * T + T / 2, ccy = (cRenderPos.y - cam.y) * T + T / 2;
+            // 調查地點（🌿）：還沒調查過的地點才會畫出來，調查過就消失
+            if (map.pois) {
+                for (let y = startY; y < endY; y++) {
+                    for (let x = startX; x < endX; x++) {
+                        const poi = map.pois[`${x},${y}`];
+                        if (!poi || poi.found) continue;
+                        const px = (x - cam.x) * T, py = (y - cam.y) * T;
+                        const pulse = 0.85 + Math.sin(performance.now() / 300) * 0.15;
+                        ctx.save();
+                        ctx.globalAlpha = pulse;
+                        const grad = ctx.createRadialGradient(px + T / 2, py + T / 2, 1, px + T / 2, py + T / 2, T / 2.2);
+                        grad.addColorStop(0, 'rgba(140,196,120,0.55)');
+                        grad.addColorStop(1, 'rgba(140,196,120,0.05)');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath(); ctx.arc(px + T / 2, py + T / 2, T / 2.2, 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+                        ctx.font = `${T * 0.55}px sans-serif`;
+                        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                        ctx.fillText('🌿', px + T / 2, py + T / 2);
+                    }
+                }
+            }
+
+            // 夥伴（最多4位）：依照隊伍尾隨順序，畫在主角之前；跟隨動畫用 companionAnimPos[]
+            (state.companions || []).forEach((comp, idx) => {
+                if (!comp || comp.hp <= 0) return;
+                const trailPos = (state.companionAnimPos && state.companionAnimPos[idx]) || (state.trail && state.trail[idx]);
+                if (!trailPos) return;
+                const ccx = (trailPos.x - cam.x) * T + T / 2, ccy = (trailPos.y - cam.y) * T + T / 2;
                 ctx.fillStyle = 'rgba(58,42,30,0.2)';
                 ctx.beginPath(); ctx.ellipse(ccx, ccy + T * 0.32, T * 0.26, 4, 0, 0, Math.PI * 2); ctx.fill();
-                const drewC = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES.companion, (cRenderPos.x - cam.x) * T, (cRenderPos.y - cam.y) * T, T);
+                const spriteKey = comp.spriteKey || 'companion';
+                const drewC = useReal && rpgDrawSprite(ctx, rpgCharImg, RPG_CHAR_TILES[spriteKey] || RPG_CHAR_TILES.companion, (trailPos.x - cam.x) * T, (trailPos.y - cam.y) * T, T);
                 if (!drewC) {
                     ctx.font = `${T - 4}px sans-serif`;
                     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                     ctx.fillText('🧑‍🌾', ccx, ccy - 2);
                 }
-            }
+            });
 
             // 角色：腳下陰影 + 真實角色素材（載入失敗才退回 emoji）；動畫進行中用 animPos 畫出滑動中間格
             const renderPos = state.animPos || state.pos;
@@ -2962,19 +3124,21 @@
             const nx = state.pos.x + dx, ny = state.pos.y + dy;
             if (ny < 0 || ny >= map.rows.length || nx < 0 || nx >= map.rows[0].length) { rpgBumpAnimation(dx, dy); return; }
             const ch = map.rows[ny][nx];
-            if (ch === '#') { rpgBumpAnimation(dx, dy); playSfx('fail'); return; } // 樹木擋路，撞牆震動回饋
+            const destKey = `${nx},${ny}`;
+            // 樹木、NPC 都擋路（NPC 現在要走到旁邊按交談按鈕才能互動，不是直接走上去）
+            if (ch === '#' || (map.npcs && map.npcs[destKey])) { rpgBumpAnimation(dx, dy); playSfx('fail'); return; }
 
             const from = { x: state.pos.x, y: state.pos.y };
             const to = { x: nx, y: ny };
-            const companionFrom = { x: state.companionPos.x, y: state.companionPos.y };
-            const companionTo = { x: from.x, y: from.y }; // 夥伴的目的地是主角剛剛離開的那一格，形成跟隨隊形
+            const trailFrom = (state.trail || []).map(p => ({ ...p }));
+            const trailTo = [from, ...trailFrom.slice(0, -1)]; // 每位夥伴補到「前一位原本站的位置」，排成跟隨隊伍
             state.animating = true;
             const duration = 140;
             const t0 = performance.now();
             function step(now) {
                 const t = Math.min(1, (now - t0) / duration);
                 state.animPos = { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
-                state.companionAnimPos = { x: companionFrom.x + (companionTo.x - companionFrom.x) * t, y: companionFrom.y + (companionTo.y - companionFrom.y) * t };
+                state.companionAnimPos = trailFrom.map((p, idx) => ({ x: p.x + (trailTo[idx].x - p.x) * t, y: p.y + (trailTo[idx].y - p.y) * t }));
                 rpgDraw();
                 if (t < 1) {
                     requestAnimationFrame(step);
@@ -2983,23 +3147,77 @@
                     state.companionAnimPos = null;
                     state.animating = false;
                     state.pos = to;
-                    state.companionPos = companionTo;
+                    state.trail = trailTo;
                     playSfx('tick');
-                    const npcKey = `${nx},${ny}`;
-                    if (map.npcs && map.npcs[npcKey]) { state.locked = true; rpgDraw(); rpgTalkTo(map.npcs[npcKey]); return; }
-                    if (map.exits && map.exits[npcKey]) { state.locked = true; rpgTransitionToExit(map.exits[npcKey]); return; }
+                    if (map.exits && map.exits[destKey]) { state.locked = true; rpgTransitionToExit(map.exits[destKey]); return; }
                     rpgDraw();
+                    rpgCheckNearby();
                     if (map.wild && ch === '.' && Math.random() < map.encounterRate) {
                         state.locked = true; // 骰到遭遇的當下立刻鎖住，避免閃爍轉場那段時間還能移動、疊出第二場戰鬥
-                        // 遭遇時可能不只一隻怪：60% 單隻、30% 兩隻、10% 三隻
-                        const roll = Math.random();
-                        const count = roll < 0.6 ? 1 : (roll < 0.9 ? 2 : 3);
-                        const ids = Array.from({ length: count }, () => map.monsters[Math.floor(Math.random() * map.monsters.length)]);
-                        setTimeout(() => rpgStartBattle(ids), 150);
+                        const encounter = rpgRollEncounter(state.player.level);
+                        setTimeout(() => rpgStartBattle(encounter), 150);
                     }
                 }
             }
             requestAnimationFrame(step);
+        }
+
+        // 檢查主角上下左右有沒有 NPC 或還沒調查過的地點，有的話在地圖畫面下方跳出對應的按鈕
+        function rpgCheckNearby() {
+            const state = rpgState;
+            if (!state || state.mode !== 'map') return;
+            const map = RPG_MAPS[state.region];
+            const { x, y } = state.pos;
+            const neighbors = [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y]];
+            let npcButton = '', poiButton = '';
+            for (const [nx, ny] of neighbors) {
+                const key = `${nx},${ny}`;
+                if (!npcButton && map.npcs && map.npcs[key]) {
+                    const npcId = map.npcs[key];
+                    const info = RPG_NPC_INFO[npcId];
+                    npcButton = `<button onclick="rpgTalkTo('${npcId}')" class="btn-primary text-sm">🗣️ 跟${info ? info.name : '對方'}交談</button>`;
+                }
+                if (!poiButton && map.pois && map.pois[key] && !map.pois[key].found) {
+                    poiButton = `<button onclick="rpgInvestigate('${key}')" class="btn-amber text-sm">🔍 調查</button>`;
+                }
+            }
+            const box = document.getElementById('rpg-nearby-actions');
+            if (box) box.innerHTML = npcButton + poiButton;
+        }
+
+        // 調查地點：有機率找到道具/食材/新食譜，也有可能是空的（假的調查點），調查過的地點不會再觸發
+        function rpgInvestigate(key) {
+            const state = rpgState;
+            if (!state || state.locked || state.animating) return;
+            const map = RPG_MAPS[state.region];
+            const poi = map.pois && map.pois[key];
+            if (!poi || poi.found) return;
+            poi.found = true;
+            playSfx('click');
+            document.getElementById('rpg-nearby-actions').innerHTML = '';
+            const box = document.getElementById('rpg-dialogue-box');
+            const sp = rpgPlayerScreenPos();
+            if (poi.item) {
+                state.player.items[poi.item] = (state.player.items[poi.item] || 0) + 1;
+                if (box) box.textContent = `🔍 找到了一份「${poi.item}」，已經放進道具欄！`;
+                playSfx('success');
+            } else if (poi.ingredient) {
+                const qty = poi.qty || 1;
+                state.player.ingredients[poi.ingredient] = (state.player.ingredients[poi.ingredient] || 0) + qty;
+                if (box) box.textContent = `🔍 採集到「${poi.ingredient}」× ${qty}！`;
+                playSfx('success');
+            } else if (poi.recipe) {
+                if (!state.player.knownRecipes.includes(poi.recipe)) state.player.knownRecipes.push(poi.recipe);
+                if (box) box.textContent = `📖 學會了新料理食譜：「${poi.recipe}」！打開🍳烹飪背包就能製作了。`;
+                playSfx('success');
+            } else if (poi.gold) {
+                state.player.gold += poi.gold;
+                if (box) box.textContent = `🔍 找到了 💰${poi.gold} 金幣！`;
+                playSfx('success');
+            } else {
+                if (box) box.textContent = '🔍 仔細找過了，這裡什麼都沒有…';
+            }
+            if (sp) rpgBurstParticle('star', { x: sp.x, y: sp.y, count: 4, size: 22, duration: 0.6, dist: 4, distVar: 8, filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' });
         }
 
         // 撞牆時角色朝那個方向小幅彈一下再彈回來，給撞到東西的回饋感
@@ -3046,7 +3264,7 @@
         function rpgTransitionToExit(exit) {
             const state = rpgState;
             const canvas = document.getElementById('rpg-canvas');
-            if (!canvas) { state.region = exit.to; state.pos = { x: exit.x, y: exit.y }; state.companionPos = { x: exit.x, y: exit.y }; renderRpgMap(); return; }
+            if (!canvas) { state.region = exit.to; state.pos = { x: exit.x, y: exit.y }; state.trail = [1, 2, 3, 4].map(() => ({ x: exit.x, y: exit.y })); renderRpgMap(); return; }
             let overlay = document.getElementById('rpg-fade-overlay');
             if (!overlay) {
                 overlay = document.createElement('div');
@@ -3060,7 +3278,7 @@
             setTimeout(() => {
                 state.region = exit.to;
                 state.pos = { x: exit.x, y: exit.y };
-                state.companionPos = { x: exit.x, y: exit.y }; // 換地區時夥伴直接跟著傳送過去，不用重新跟路
+                state.trail = [1, 2, 3, 4].map(() => ({ x: exit.x, y: exit.y })); // 換地區時夥伴直接跟著傳送過去，不用重新跟路
                 renderRpgMap();
                 setTimeout(() => {
                     const newOverlay = document.getElementById('rpg-fade-overlay');
@@ -3123,10 +3341,20 @@
             return list;
         }
 
-        function rpgStartBattle(monsterIds) {
+        // 把怪物「依序」塞進陣型（前排0~3再後排0~3），魔王戰要用這個而不是隨機擺放，
+        // 這樣才能保證魔王一定站在 rpgRollEncounter 排好的「後排第 2 位」
+        function rpgPlaceMonstersOrdered(monsterObjs) {
+            const slots = [{ row: 'front', i: 0 }, { row: 'front', i: 1 }, { row: 'front', i: 2 }, { row: 'front', i: 3 }, { row: 'back', i: 0 }, { row: 'back', i: 1 }, { row: 'back', i: 2 }, { row: 'back', i: 3 }];
+            const formation = rpgEmptyFormation();
+            monsterObjs.forEach((m, idx) => { const s = slots[idx]; if (s) formation[s.row][s.i] = m; });
+            return formation;
+        }
+
+        function rpgStartBattle(encounter) {
             const state = rpgState;
             if (!state || state.mode === 'battle' || state.battle) return; // 防止萬一被重複呼叫，疊出第二場戰鬥
-            const ids = Array.isArray(monsterIds) ? monsterIds : [monsterIds];
+            const monsterObjs = encounter.monsters;
+            const isBossFight = encounter.isBossFight;
             playSfx('burnt');
             if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
             // 戰鬥開始前的白閃轉場，經典 RPG 遇敵演出感
@@ -3142,19 +3370,22 @@
                     flash.remove();
                     state.mode = 'battle';
                     state.battleBusy = false;
-                    const monsterObjs = ids.map(id => ({ ...RPG_MONSTERS[id], curHp: RPG_MONSTERS[id].hp }));
                     const partyFormation = rpgEmptyFormation();
                     partyFormation.front[1] = state.player; // 主角固定站前排 2 號位
-                    if (state.companion && state.companion.hp > 0) partyFormation.front[2] = state.companion; // 夥伴站前排 3 號位
+                    // 所有還活著的夥伴依序填進剩下的格子（前排剩 2 格、後排 4 格，最多可以同時上場 3+4=7 位夥伴，足夠現在的 4 位）
+                    const aliveCompanions = (state.companions || []).filter(c => c.hp > 0);
+                    const partySlots = [{ row: 'front', i: 0 }, { row: 'front', i: 2 }, { row: 'front', i: 3 }, { row: 'back', i: 0 }, { row: 'back', i: 1 }, { row: 'back', i: 2 }, { row: 'back', i: 3 }];
+                    aliveCompanions.forEach((c, idx) => { const s = partySlots[idx]; if (s) partyFormation[s.row][s.i] = c; });
+                    const bossObj = monsterObjs.find(m => m.isBoss);
                     state.battle = {
-                        monsterFormation: rpgPlaceMonstersRandom(monsterObjs),
+                        monsterFormation: isBossFight ? rpgPlaceMonstersOrdered(monsterObjs) : rpgPlaceMonstersRandom(monsterObjs),
                         partyFormation,
                         target: null, // { row, i } 選中的攻擊目標
                         actor: { row: 'front', i: 1 }, // 目前正在下指令的我方角色
                         uiMode: 'main', // main | skill | item
                         phase: 'command', // command：全員下指令中／execute：依敏捷排序輪流執行
                         commands: {}, // 這一輪每個角色已經下好的指令（key 是 "row-i"）
-                        logLines: [ids.length > 1 ? `${ids.length} 隻怪物一起擋住了去路！` : `一隻${RPG_MONSTERS[ids[0]].name}擋住了去路！`],
+                        logLines: [isBossFight ? `⚠️ ${bossObj ? bossObj.name : '神秘強敵'} 率領大軍擋住了去路！` : (monsterObjs.length > 1 ? `${monsterObjs.length} 隻怪物一起擋住了去路！` : `一隻${monsterObjs[0].name}擋住了去路！`)],
                     };
                     // 預設鎖定第一個找得到的怪物當目標
                     const firstMonster = rpgFormationEntries(state.battle.monsterFormation)[0];
@@ -3196,7 +3427,7 @@
             let visual;
             if (isPlayerObj) {
                 const useReal = rpgAssetsReady && rpgCharImg && rpgCharImg.naturalWidth > 0;
-                const spriteKey = obj.isCompanion ? 'companion' : 'player';
+                const spriteKey = obj.isCompanion ? (obj.spriteKey || 'companion') : 'player';
                 const [col, r2] = RPG_CHAR_TILES[spriteKey];
                 visual = useReal
                     ? `<div style="width:${RPG_SLOT}px; height:${RPG_SLOT}px; background-image:url('${RPG_CHAR_URL}'); background-position:-${col * RPG_STRIDE * (RPG_SLOT / 16)}px -${r2 * RPG_STRIDE * (RPG_SLOT / 16)}px; background-size:${918 * (RPG_SLOT / 16)}px ${203 * (RPG_SLOT / 16)}px; image-rendering:pixelated;"></div>`
@@ -3204,13 +3435,16 @@
             } else {
                 const sheetInfo = obj.sheet ? sheetMap[obj.sheet] : null;
                 const useReal = rpgAssetsReady && sheetInfo && sheetInfo.img && sheetInfo.img.naturalWidth > 0 && obj.spriteKey;
+                // 同一顆素材套不同色相，讓「一堆共用少數幾種造型的怪物種類」看起來有差異；魔王額外加金色光暈跟放大
+                const tint = obj.hue ? `filter:hue-rotate(${obj.hue}deg) saturate(${obj.isBoss ? 2.2 : 1.3});` : '';
+                const bossFx = obj.isBoss ? `filter:hue-rotate(${obj.hue || 0}deg) saturate(2.4) drop-shadow(0 0 6px rgba(244,197,94,0.9));transform:scale(1.3);` : '';
                 visual = useReal
                     ? (() => {
                         const [col, r2] = sheetInfo.tiles[obj.spriteKey];
                         const z = RPG_SLOT / 16;
-                        return `<div style="width:${RPG_SLOT}px; height:${RPG_SLOT}px; background-image:url('${sheetInfo.url}'); background-position:-${col * sheetInfo.stride * z}px -${r2 * sheetInfo.stride * z}px; background-size:${sheetInfo.w * z}px ${sheetInfo.h * z}px; image-rendering:pixelated;"></div>`;
+                        return `<div style="width:${RPG_SLOT}px; height:${RPG_SLOT}px; background-image:url('${sheetInfo.url}'); background-position:-${col * sheetInfo.stride * z}px -${r2 * sheetInfo.stride * z}px; background-size:${sheetInfo.w * z}px ${sheetInfo.h * z}px; image-rendering:pixelated; ${bossFx || tint}"></div>`;
                     })()
-                    : `<div class="text-xl">${obj.emoji}</div>`;
+                    : `<div class="text-xl" style="${bossFx}">${obj.emoji}</div>`;
             }
             const hpPct = Math.max(0, Math.round(curHp / maxHp * 100));
             const spPct = isPlayerObj ? Math.max(0, Math.round(obj.sp / obj.maxSp * 100)) : null;
@@ -3241,19 +3475,28 @@
             return b && b.actor ? b.partyFormation[b.actor.row][b.actor.i] : null;
         }
 
+        // 戰鬥場景背景：依照目前所在地區換一種應景的漸層色（魔王戰額外用更有壓迫感的深色調）
+        const RPG_BATTLE_BG = {
+            village: 'radial-gradient(circle at 50% 15%, #E8F0D8 0%, #C3DDB0 45%, #9BC49B 100%)',
+            plains: 'linear-gradient(180deg, #F5ECC2 0%, #E8D68C 45%, #C9AE5E 100%)',
+        };
+        const RPG_BOSS_BATTLE_BG = 'radial-gradient(circle at 50% 20%, #5A2A44 0%, #3A1B30 55%, #1E1220 100%)';
+
         function renderRpgBattle() {
             const state = rpgState;
             const b = state.battle;
-            document.getElementById('game-modal-title').textContent = '⚔️ 戰鬥中';
+            const isBossFight = rpgFormationEntries(b.monsterFormation).some(e => e.obj.isBoss);
+            document.getElementById('game-modal-title').textContent = isBossFight ? '👑 魔王戰！' : '⚔️ 戰鬥中';
             // 怪物陣型：前排靠中間（左）、後排在外側（右）；我方陣型：前排靠中間（右）、後排在外側（左）
             const monsterHTML = `<div style="display:flex; gap:5px;">${rpgFormationColumnHTML('monster', b.monsterFormation, 'front')}${rpgFormationColumnHTML('monster', b.monsterFormation, 'back')}</div>`;
             const partyHTML = `<div style="display:flex; gap:5px;">${rpgFormationColumnHTML('party', b.partyFormation, 'back')}${rpgFormationColumnHTML('party', b.partyFormation, 'front')}</div>`;
+            const bg = isBossFight ? RPG_BOSS_BATTLE_BG : (RPG_BATTLE_BG[state.region] || RPG_BATTLE_BG.village);
 
             document.getElementById('game-modal-body').innerHTML = `
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; min-height:170px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; min-height:170px; background:${bg}; border-radius:1rem; padding:14px 10px; box-shadow:inset 0 0 30px rgba(0,0,0,0.08);">
                     ${partyHTML}
                     <div style="text-align:center; padding-top:24px;">
-                        <p class="text-xs" style="color:#B3A492;">VS</p>
+                        <p class="text-xs font-bold" style="color:${isBossFight ? '#F4E4CE' : '#B3A492'};">VS</p>
                     </div>
                     ${monsterHTML}
                 </div>
@@ -3280,17 +3523,117 @@
         }
 
         // 只重畫下方的操作區（主選單 / 技能清單 / 道具清單），不動陣型跟血條，避免打斷正在播放的動畫
-        // 道具資料庫：selfOnly 標記之後可以拿來做「只能用在自己身上」的道具（目前這個道具沒有限制）
-        const RPG_ITEM_INFO = {
-            '家常蛋花湯': { heal: 15, selfOnly: false },
+        // 食材小圖示（沿用裝備畫面同一批 Kenney 圖示素材，寶石代表食材、藥水瓶代表煮好的料理），取代 emoji
+        const RPG_INGREDIENT_ICON_SRC = {
+            icon_potion_yellow: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA4UlEQVR4nKWSPQ6CQBCF3xqDVlYWVBRbGyuPQUMNiWew4gxUnsDSxM5Cj0FCIhSW2lDZ2QgYxkY2/AwQ9HX7dr43sz8ALzqtZwSAYimpvG6p50NiKelt27TT9cGwCumDR30JYZb90rg6xd8JXRIDOrO1nEkAsPXmFXPjPlimHkAFaJmaMo/nFADgBwn2h2eFE3XYMjUY0oHIfQDA/XbtDGk8oyEdiKkHGq2Y0zVVBKjuIvdBL1dNwGm5mADfu2I/Un38Lo3rBgcV5+dUmYArLHt+kDT2G6/QpgIOoxSXKFHsBzVeX+r6HHGKAAAAAElFTkSuQmCC',
+            icon_potion_green: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA2klEQVR4nLWSMQ4BQRSGvxUOoVVINMoVhROQuIwj6MQBHGGjYmyhJhFRCCFkoyCR0IrQPoXF2jVjFf5kknkzmfd/789YvEtaUgZgs94B0MgtACw0SoYPus0ZANvxSffmTYlQbbm1/bNYts9Gd5PEX/9XGE/nGj/ESj5NtZgDoDNa0ZsfjATBEE0zx8pDHFdEKSUPKaXEccUYaGSE/sTm6nMNJjalQhzvF6Y47hMg6K4lCGZg+jDau/BPBCBT98jUvS/Ad0UyAEgdp/4u+7XBR4JfpG1w8YaxGtwAkvFRMuzSW9MAAAAASUVORK5CYII=',
+            icon_potion_white: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA00lEQVR4nL2RMQrCQBBFX4IewcITiI1lxMLKVkgreICcwiPYaeER0ilrQOsUFikEGyEpbAJaWNuOhUk0ELNr44Nlh2Vm/t8ZixcyjwSAML4DsJ62ACw0NPJgsYsBaN6OupoSdnZbl1mneIyXEyP1KiQ7/yO3+U3VfIjjXht30AVgczizPV2NHNg16nXOykl+IKKUkhyllPiBGA20+MI+cnhkSw0jh2HfRPttU/ygMPCprnVgUz9p8y0AeJ4HwMhd6eqqG6RpalyYY+tTfmyQJMlPDZ70ck9eAxV3mQAAAABJRU5ErkJggg==',
+            icon_potion_blue: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA/ElEQVR4nI2TIU8DQRCFvyPIashpFAbZBnG/ABIEArOuCQr+AoLfgK0lWUmWTYM+QZoqMPyEC9XNumYq2l63vZ1un3wzb+a9nbuCLsR6YT4sAeiNGh5uCoAi0ctJioxRT2YH66eq6PEnNxvVFiBH9iUj7Is1DlAi3F6V3F1fAvDx/cfnb6PpOw7UTZnatsl6EeecbOCcE+tFtAHJCF/TPmHtrZ72qQbH7N7aFOtbA/H2pIP9N1DPpdWyX2IOnStYv3K6MIaFMQCsuWyEVnz/blqyer44OGSTS55e/qkGZ60gxjgEeqOGejLj7fU81u2eMRaPQ9gZMh+WyR9sCSzya8qmcjRPAAAAAElFTkSuQmCC',
+            icon_potion_red: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAwklEQVR4nKWRIQ7CQBBF3zZ7CU7QYHCUILgBDRyohuPUQbYVGAyChKrWkNQTFBbJIChNK5rMlpes2E3+n79/jIgIQF3XAIRhCGDQITbLMgDKslRq+gRxHLeXJEl8pvejNGeM7j/MgIu+xPVswmY5BeBwuZFVD68EwZCzZjoAzjn54ZyTNBdtoZLmIvZYRLyaHOciYrVQSLukeRugO137BRnqQLMFA2AB2G2/T/O9QtfHAtyra2PgrR9co7/B6fkeZfABmalRkKE2SuAAAAAASUVORK5CYII=',
+            gem_tan: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAnklEQVR4nO2SrQ7CMBSFv0sYhhdYMl8/j+VteJy9zYLDTyBI6pc0QWNAXAT769KWkVk+15NzTpP2CB+0OJ7YmwM9r7wEIHMND3sZ9Ke7cb+eAQRg0+nS1pVnzFwDkAxPC4IlU0LheUG0JBYG2AYuk7autAB2eZkMR8UOXej7s5b+dTXpSmSHHagu7xAZf9UbkjHma9ha653nU/6Z1QVvdSdAM5GbygoAAAAASUVORK5CYII=',
+            gem_green: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAsklEQVR4nO2RLQ7CQBBG327qUASLrAFTRRAokJyDC6DRPQWgSTgADlpDCEHVlGDAYAlBEHCD4acNS7sJwfHkN/O+EaOGble406QKQEDM4rp5xESXHavDGkDxQnpeEZ1cDIgBbGQA5UdH9GA/SQlJMuRniQaUqcRCfkM65bZs3b7UShUBJNcwtEvG7M+vUFi+K7GfwpFzy84szEyxOF59nitHy8bHmbY6b0ZOof9VAePRlBsLpUYzOfUQNgAAAABJRU5ErkJggg==',
+            gem_red: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABBklEQVR4nN2QMUoFMRRFzwwuQSurX2QEQbIIwWoGrF1AetdgWpdhbZHsQpuxEDIBhYD4QSuxs3g2Jj8fRh1bX5Xc3HPfJc35yYEcrvYBuH98Iq7fyLN+/+D24RWgYTOilEIpBUCbQWAJDNDEGIkxArDDzPwA1yEC0NZbF8JbTVp/91yq/wEuIdkotbgQ/i8z9we1vihARIRpmgDouo6m/O2vQdIaY/DeF8V7jzEGa+1csy14dRForLUCoLUGYBxH6vswDHNN5PTqBYBWa01KqbyklArc9/2366/PdjdpzjkJIUgIQZxz8lVdAAkh5HPxX97IxqOUKsZsVkpJ1qvAur4Asnd0LJ+or5ntUg6WmwAAAABJRU5ErkJggg==',
+            gem_cyan: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABMElEQVR4nKWTv0rDUBTGf7e0IKm4VCQ6Zq+RoqtDQcFn6OAr6FJwsdRFfAgX+wAOHQoWirh0EbXGRZEKDrUq6CINEslxSIxN1cS2H9zhHO73h8M5ajt3Iteqxu1jiy+8vN9z93wFoPyWdAyDQbxWD0gCcWQA5tptNjKZkMD04bEnEEf2a8mmUqHmjGmS+Ac5EolxyADJnbPl/phDIzkqcRRXGccoMoEM1MNAlGsXBUBN7KFUwI8TEgCpVPoW6XKV6voU+oLG0mZXIkRkX9exHIeHUgklrRUBOG1YACzms14Es/5bkuAmar0ewPcmdi96AZn5oz+zz5bLAKxpGpbjgGsXxbWL4icJnj+b/gHLR6EQ+tMxDAlmoMw6W/lJAHYbb6ib8x/uT80mALl0GvAu9BOa0H5a9t8zdAAAAABJRU5ErkJggg==',
+            gem_white: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABaElEQVR4nJ2SsUtCURTGf1eEqCENpARbkp5hBC5uNYRDS/oHtDQVzkE01BJkW2ND4dwkFPFoiqKpZkmKa02PhGqJgooWT4O+23v2gvSbzj3fOd/57uGo+Z1Rqe/3kyp+4uJk9QFAAaK1phMHC08mVompiAx8DfPR9wxAo/ZqOEAASqWST+Bo79LEYS8RTTdp1EyzEclkMj6B65F3E4cATrdmuNld+2X1PwgBDMXHe2qG9hdeHu97F4imm0yXDgGIprsXMJsOyLsI4gMLu4V4HQRNVH+8AUSklQ6LCEop8TAo5TcWVFOv11uq5WJOjq9useKDbK4vAhCZ3fA5cM+5UqngOA6FQoFUKtUSWJmbEIDJsQQAy/vnnXYBxLZtAKrVKgDudYbuHt9M89LeWeeiDPL5vGl0HOeHKBdz0l6UAPJ6se3GZrrW2ldj27Zord08kk3GJJuMCSAeQa99AcSyLLEsS1xRrbV8A9i4mQj/qFQFAAAAAElFTkSuQmCC',
+        };
+        function rpgIngredientIconHTML(name) {
+            const key = RPG_INGREDIENT_TO_ICON[name];
+            return key && RPG_INGREDIENT_ICON_SRC[key] ? `<img src="${RPG_INGREDIENT_ICON_SRC[key]}" style="width:14px;height:14px;image-rendering:pixelated;vertical-align:-2px;" />` : '🌿';
+        }
+        function rpgDishIconHTML(name) {
+            const info = RPG_ITEM_INFO[name];
+            return info && info.icon && RPG_INGREDIENT_ICON_SRC[info.icon] ? `<img src="${RPG_INGREDIENT_ICON_SRC[info.icon]}" style="width:16px;height:16px;image-rendering:pixelated;vertical-align:-3px;" />` : '🍲';
+        }
+        const RPG_INGREDIENT_TO_ICON = { '小麥': 'gem_tan', '雞蛋': 'gem_white', '菇傘': 'gem_green', '史萊姆凝膠': 'gem_cyan', '哥布林辛香料': 'gem_red' };
+        // 依照怪物強度分級掉落對應的食材（越強的怪掉的食材越少見）
+        const RPG_TIER_INGREDIENT_DROPS = {
+            even: ['小麥', '雞蛋'],
+            plus5: ['菇傘', '雞蛋'],
+            plus10: ['史萊姆凝膠', '哥布林辛香料'],
+            plus20: ['哥布林辛香料', '史萊姆凝膠'],
+            boss: ['哥布林辛香料', '史萊姆凝膠', '菇傘'],
+        };
+        // 食譜資料庫：need 是烹調需要消耗的食材跟數量
+        const RPG_RECIPES = {
+            '家常蛋花湯': { need: { '雞蛋': 1, '小麥': 1 } },
+            '野菇燉湯': { need: { '菇傘': 2 } },
+            '香草麵包': { need: { '小麥': 2, '雞蛋': 1 } },
+            'Q彈史萊姆凍': { need: { '史萊姆凝膠': 2, '小麥': 1 } },
+            '元氣烤串': { need: { '哥布林辛香料': 1, '雞蛋': 1, '小麥': 1 } },
         };
 
-        // 把道具效果換成一句白話說明，戰鬥中的道具清單會用到
+        // 道具資料庫：selfOnly 只能用在自己身上；aoe 一次對全體我方生效；revive 可以用在已經倒下的隊友身上；spRestore 額外恢復 SP
+        const RPG_ITEM_INFO = {
+            '家常蛋花湯': { heal: 15, selfOnly: false, icon: 'icon_potion_yellow' },
+            '野菇燉湯': { heal: 28, selfOnly: false, icon: 'icon_potion_green' },
+            '香草麵包': { heal: 18, selfOnly: false, aoe: true, icon: 'icon_potion_white' },
+            'Q彈史萊姆凍': { heal: 5, spRestore: 12, selfOnly: false, icon: 'icon_potion_blue' },
+            '元氣烤串': { heal: 20, selfOnly: false, revive: true, icon: 'icon_potion_red' },
+        };
+
+        // 把道具效果換成一句白話說明，戰鬥中的道具清單、烹飪背包都會用到
         function rpgItemEffectText(name) {
             const info = RPG_ITEM_INFO[name] || {};
             const parts = [];
-            if (info.heal) parts.push(`${info.selfOnly ? '自己' : '指定對象'}回復 HP+${info.heal}`);
+            if (info.heal) parts.push(`${info.aoe ? '全體隊友' : (info.selfOnly ? '自己' : '指定對象')}回復 HP+${info.heal}`);
+            if (info.spRestore) parts.push(`回復 SP+${info.spRestore}`);
+            if (info.revive) parts.push('可以喚醒已經倒下的夥伴');
             return parts.join('、') || '效果不明';
+        }
+
+        // ---------- 烹飪背包：把打怪/調查蒐集來的食材，換成戰鬥中能用的料理道具 ----------
+        function rpgOpenCookScreen() {
+            const state = rpgState;
+            if (!state || state.mode !== 'map') return;
+            playSfx('click');
+            document.getElementById('game-modal-title').textContent = '🍳 烹飪背包';
+            document.getElementById('game-modal-body').innerHTML = rpgCookScreenHTML();
+        }
+        function rpgCookScreenHTML(message) {
+            const p = rpgState.player;
+            const ingredientNames = Object.keys(p.ingredients || {}).filter(k => p.ingredients[k] > 0);
+            const ingredientHTML = ingredientNames.length
+                ? `<div class="flex flex-wrap gap-2 mb-5">${ingredientNames.map(n => `<span class="text-xs px-3 py-1 rounded-full" style="background:var(--cream)">${rpgIngredientIconHTML(n)} ${n} × ${p.ingredients[n]}</span>`).join('')}</div>`
+                : `<p class="text-xs mb-5" style="color:#B3A492">身上還沒有任何食材，去打怪或調查地圖上的地點看看吧！</p>`;
+            const recipesHTML = (p.knownRecipes || []).map(name => {
+                const recipe = RPG_RECIPES[name];
+                if (!recipe) return '';
+                const needEntries = Object.entries(recipe.need);
+                const canCook = needEntries.every(([ing, qty]) => (p.ingredients[ing] || 0) >= qty);
+                const needText = needEntries.map(([ing, qty]) => {
+                    const owned = p.ingredients[ing] || 0;
+                    return `${rpgIngredientIconHTML(ing)}${ing} x${qty}${owned < qty ? `<span style="color:#C4453F">（現有${owned}）</span>` : ''}`;
+                }).join('、');
+                const effectText = rpgItemEffectText(name);
+                return `
+                    <div class="px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)">
+                        <div class="flex justify-between items-center gap-2">
+                            <p class="font-medium text-sm">${rpgDishIconHTML(name)} ${name}<span class="text-xs ml-2" style="color:#B3A492">${effectText}</span></p>
+                            <button onclick="rpgCookRecipe('${name}')" class="btn-amber !px-3 !py-1.5 text-xs shrink-0" ${canCook ? '' : 'disabled style="opacity:.4"'}>烹調</button>
+                        </div>
+                        <p class="text-xs mt-1" style="color:#B3A492">需要：${needText}</p>
+                    </div>`;
+            }).join('');
+            return `
+                ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
+                <h3 class="font-display font-semibold mb-2">🎒 食材背包</h3>
+                ${ingredientHTML}
+                <h3 class="font-display font-semibold mb-2">📖 已學會的料理</h3>
+                ${recipesHTML || '<p class="text-xs" style="color:#B3A492">還沒學會任何料理，去地圖上探索看看吧！</p>'}
+                <div style="height:12px;"></div>
+                <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+            `;
+        }
+        function rpgCookRecipe(name) {
+            const p = rpgState.player;
+            const recipe = RPG_RECIPES[name];
+            if (!recipe) return;
+            const canCook = Object.entries(recipe.need).every(([ing, qty]) => (p.ingredients[ing] || 0) >= qty);
+            if (!canCook) return;
+            Object.entries(recipe.need).forEach(([ing, qty]) => { p.ingredients[ing] -= qty; });
+            p.items[name] = (p.items[name] || 0) + 1;
+            playSfx('success');
+            document.getElementById('game-modal-body').innerHTML = rpgCookScreenHTML(`🍳 成功煮出了一份「${name}」，已經放進道具欄！`);
         }
 
         function rpgActionPanelHTML() {
@@ -3312,7 +3655,7 @@
                 const entries = Object.entries(p.items).filter(([, qty]) => qty > 0);
                 const rows = entries.length
                     ? entries.map(([name, qty]) => `
-                        <button onclick="rpgOpenItemTarget('${name}')" class="btn-secondary w-full" style="margin-bottom:2px;">🍲 ${name}（${qty}）</button>
+                        <button onclick="rpgOpenItemTarget('${name}')" class="btn-secondary w-full" style="margin-bottom:2px;">${rpgDishIconHTML(name)} ${name}（${qty}）</button>
                         <p class="text-xs" style="color:#B3A492; margin:0 0 8px 4px;">${rpgItemEffectText(name)}</p>
                     `).join('')
                     : `<p class="text-xs text-center mb-2" style="color:#B3A492">身上沒有道具了</p>`;
@@ -3320,8 +3663,14 @@
             }
             if (b.uiMode === 'itemTarget') {
                 const info = RPG_ITEM_INFO[b.pendingItem] || {};
-                const candidates = info.selfOnly ? [{ row: b.actor.row, i: b.actor.i, obj: actor }] : rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
-                const rows = candidates.map(e => `<button onclick="rpgBattleAction('item', '${b.pendingItem}', { row: '${e.row}', i: ${e.i} })" class="btn-secondary w-full mb-2">${e.obj.name === actor.name && e.row === b.actor.row && e.i === b.actor.i ? '🙋' : '🤝'} 給${e.obj.name}使用（❤️${e.obj.hp}/${e.obj.maxHp}）</button>`).join('');
+                const pool = info.revive ? rpgFormationEntries(b.partyFormation) : rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
+                const candidates = info.selfOnly ? [{ row: b.actor.row, i: b.actor.i, obj: actor }] : pool;
+                const rows = candidates.map(e => {
+                    const fainted = e.obj.hp <= 0;
+                    const isSelf = e.obj.name === actor.name && e.row === b.actor.row && e.i === b.actor.i;
+                    const label = fainted ? `💫 喚醒${e.obj.name}（已倒下）` : `${isSelf ? '🙋' : '🤝'} 給${e.obj.name}使用（❤️${e.obj.hp}/${e.obj.maxHp}）`;
+                    return `<button onclick="rpgBattleAction('item', '${b.pendingItem}', { row: '${e.row}', i: ${e.i} })" class="btn-secondary w-full mb-2">${label}</button>`;
+                }).join('');
                 return `<p class="text-xs text-center mb-2" style="color:#B3A492">要把「${b.pendingItem}」給誰用？</p>${rows}<button onclick="rpgBackToMenuFrom('item')" class="btn-secondary w-full">← 返回</button>`;
             }
             const totalAlive = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0).length;
@@ -3347,6 +3696,8 @@
         }
         function rpgOpenItemTarget(name) {
             if (rpgState.battle.phase !== 'command') return;
+            const info = RPG_ITEM_INFO[name] || {};
+            if (info.aoe) { rpgBattleAction('item', name, { aoe: true }); return; } // 全體效果道具不用選對象，直接使用
             rpgState.battle.pendingItem = name;
             rpgState.battle.uiMode = 'itemTarget';
             playSfx('click');
@@ -3564,17 +3915,38 @@
                             rpgBurstParticle(sk.particle, Object.assign({ count: 1, size: 90, duration: 0.5, scale: 1.3, dist: 0, distVar: 0, filter: sk.filter }, center ? { x: center.x, y: center.y } : {}));
                             playSfx('perfect');
                         } else if (cmd.action === 'item') {
-                            let recipient = cmd.itemTarget ? b.partyFormation[cmd.itemTarget.row][cmd.itemTarget.i] : null;
-                            if (!recipient || recipient.hp <= 0) recipient = actorObj; // 原本要給的人已經不在了，改給自己用
-                            const recipientDomId = cmd.itemTarget ? `rpg-slot-party-${cmd.itemTarget.row}-${cmd.itemTarget.i}` : actorDomId;
+                            const info = RPG_ITEM_INFO[cmd.extra] || {};
                             p.items[cmd.extra]--;
-                            const heal = RPG_ITEM_INFO[cmd.extra] ? RPG_ITEM_INFO[cmd.extra].heal : 15;
-                            recipient.hp = Math.min(recipient.maxHp, recipient.hp + heal);
-                            rpgLogAppend(recipient === actorObj
-                                ? `${actorObj.name}吃了${cmd.extra}，回復了 ${heal} 點 HP！`
-                                : `${actorObj.name}把${cmd.extra}給了${recipient.name}，回復了 ${heal} 點 HP！`);
-                            const center = rpgElementCenter(recipientDomId); // 回復特效要打在被回復的人身上
-                            rpgBurstParticle('light', Object.assign({ size: 55, count: 3, duration: 0.7, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' }, center ? { x: center.x, y: center.y } : {}));
+                            if (cmd.itemTarget && cmd.itemTarget.aoe) {
+                                // 全體效果：對每一位還活著（或者這道料理可以喚醒）的隊友套用效果
+                                const targets = rpgFormationEntries(b.partyFormation).filter(e => info.revive || e.obj.hp > 0);
+                                targets.forEach(({ row, i, obj }) => {
+                                    if (info.heal) obj.hp = Math.min(obj.maxHp, obj.hp + info.heal);
+                                    if (info.spRestore) obj.sp = Math.min(obj.maxSp, obj.sp + info.spRestore);
+                                    const domId = `rpg-slot-party-${row}-${i}`;
+                                    const center = rpgElementCenter(domId);
+                                    if (center) rpgBurstParticle('light', { x: center.x, y: center.y, size: 40, count: 2, duration: 0.5, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' });
+                                });
+                                rpgLogAppend(`${actorObj.name}煮了${cmd.extra}跟大家分享，全體${info.heal ? `回復 ${info.heal} 點 HP` : ''}${info.spRestore ? `、恢復 ${info.spRestore} 點 SP` : ''}！`);
+                            } else {
+                                let recipient = cmd.itemTarget ? b.partyFormation[cmd.itemTarget.row][cmd.itemTarget.i] : null;
+                                if (!recipient) recipient = actorObj;
+                                const wasFainted = recipient.hp <= 0;
+                                if (wasFainted && !info.revive) recipient = actorObj; // 保險：不能復活的道具不該套用在已倒下的人身上
+                                const recipientDomId = cmd.itemTarget ? `rpg-slot-party-${cmd.itemTarget.row}-${cmd.itemTarget.i}` : actorDomId;
+                                const healAmt = info.heal != null ? info.heal : 15;
+                                recipient.hp = Math.min(recipient.maxHp, recipient.hp + healAmt);
+                                if (info.spRestore) recipient.sp = Math.min(recipient.maxSp, recipient.sp + info.spRestore);
+                                rpgLogAppend(wasFainted
+                                    ? `${actorObj.name}餵${recipient.name}吃下${cmd.extra}，${recipient.name}奇蹟似地重新站起來了！`
+                                    : (recipient === actorObj ? `${actorObj.name}吃了${cmd.extra}，回復了 ${healAmt} 點 HP！` : `${actorObj.name}把${cmd.extra}給了${recipient.name}，回復了 ${healAmt} 點 HP！`));
+                                const center = rpgElementCenter(recipientDomId);
+                                rpgBurstParticle('light', Object.assign({ size: 55, count: 3, duration: 0.7, filter: 'sepia(1) hue-rotate(60deg) saturate(3)' }, center ? { x: center.x, y: center.y } : {}));
+                                if (wasFainted && recipient.hp > 0) {
+                                    const slotEl = document.getElementById(recipientDomId);
+                                    if (slotEl) { slotEl.style.opacity = ''; slotEl.style.transform = ''; }
+                                }
+                            }
                             playSfx('success');
                         }
                         updateBattleUI();
@@ -3648,6 +4020,21 @@
             const names = monsters.map(m => m.name).join('、');
             rpgLogAppend(`戰鬥勝利！擊敗了 ${names}！`);
             rpgLogAppend(`獲得了 ${totalGold} 金幣`);
+            // 食材掉落：每隻怪物各自獨立骰一次機率，掉的食材種類依牠的強度分級而定
+            const droppedNames = [];
+            monsters.forEach(m => {
+                if (Math.random() < 0.5) {
+                    const pool = RPG_TIER_INGREDIENT_DROPS[m.tier] || RPG_TIER_INGREDIENT_DROPS.even;
+                    const ing = pool[Math.floor(Math.random() * pool.length)];
+                    p.ingredients[ing] = (p.ingredients[ing] || 0) + 1;
+                    droppedNames.push(ing);
+                }
+            });
+            if (droppedNames.length) {
+                const counts = droppedNames.reduce((acc, n) => { acc[n] = (acc[n] || 0) + 1; return acc; }, {});
+                const text = Object.entries(counts).map(([n, c]) => `${n}×${c}`).join('、');
+                rpgLogAppend(`撿到食材：${text}`);
+            }
             const leveledEntries = [];
             survivorEntries.forEach(({ row, i, obj: member }) => {
                 member.exp += totalExp;
@@ -3683,7 +4070,7 @@
             const lostGold = Math.min(p.gold, Math.round(p.gold * 0.3));
             p.gold -= lostGold;
             p.hp = Math.round(p.maxHp * 0.5);
-            if (state.companion) state.companion.hp = Math.round(state.companion.maxHp * 0.5);
+            (state.companions || []).forEach(c => { if (c.hp > 0) c.hp = Math.round(c.maxHp * 0.5); });
             playSfx('burnt');
             rpgLogAppend('你們被打敗了，被村民救回暖廚村…');
             rpgLogAppend(`掉了 ${lostGold} 金幣，HP 恢復一半`);
@@ -3706,7 +4093,7 @@
             state.battleBusy = false;
             state.region = 'village';
             state.pos = { ...RPG_MAPS.village.start };
-            state.companionPos = { ...RPG_MAPS.village.start };
+            state.trail = [1, 2, 3, 4].map(() => ({ ...RPG_MAPS.village.start }));
             renderRpgMap();
         }
 
