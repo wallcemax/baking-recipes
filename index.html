@@ -2529,11 +2529,11 @@
                     '#..##.H....PP....H..##.#',
                     '#..#.......PP.......#..#',
                     '#..........PP..........#',
-                    '#..........PP..........#',
+                    '#...H......PP......H...#',
                     '#..........PP..........#',
                     '#.PPPPPPPPPPPPPPPPPPPP.#',
                     '#.PPPPPPPPPPPPPPPPPPPP.#',
-                    '#..........PP..........#',
+                    '#...H......PP......H...#',
                     '#..........PP..........#',
                     '#..........PH..........#',
                     '#..#.......PP.......#..#',
@@ -2903,7 +2903,7 @@
             alan_all_weak: { name: '爆香', sp: 16, mult: 0.9, pattern: 'all', particle: 'star', filter: 'sepia(1) hue-rotate(60deg) saturate(4)' },
             alan_cure_all: { name: '蔥薑蒜也是菜', sp: 30, cureStatusType: 'all', pattern: 'ally_all' },
             alan_crush: { name: '粉碎', sp: 25, mult: 3, inflictChance: 1, inflictType: 'weaken', pattern: 'single', particle: 'star', filter: 'sepia(1) hue-rotate(30deg) saturate(5)' },
-            alan_ultimate_all: { name: '究極辛香風暴', sp: 60, mult: 0, allIndividualChance: 0.2, allIndividualType: 'random', pattern: 'all', particle: 'star', filter: 'sepia(1) hue-rotate(80deg) saturate(5) brightness(1.3)' },
+            alan_ultimate_all: { name: '究極辛香風暴', sp: 60, mult: 0, groupInflictChance: 0.3, groupInflictType: 'random', pattern: 'all', particle: 'star', filter: 'sepia(1) hue-rotate(80deg) saturate(5) brightness(1.3)' },
         };
         // 每 5 級解鎖一個新技能：主角固定學恢復系列；4 位夥伴則各自有獨立的技能路線，不會學到一樣的技能
         const RPG_SKILL_PROGRESSION = {
@@ -2976,6 +2976,7 @@
             if (sk.inflictChance) parts.push(`${Math.round(sk.inflictChance * 100)}%機率使目標${RPG_STATUS_INFO[sk.inflictType].name}`);
             if (sk.instaKillChance) parts.push(`目標HP≤${Math.round(sk.instaKillThreshold * 100)}%時有${Math.round(sk.instaKillChance * 100)}%機率即死（含魔王）`);
             if (sk.allIndividualChance) parts.push(`每隻怪物各自有${Math.round(sk.allIndividualChance * 100)}%機率陷入${sk.allIndividualType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[sk.allIndividualType].name}`);
+            if (sk.groupInflictChance) parts.push(`${Math.round(sk.groupInflictChance * 100)}%機率讓敵方全體一起陷入${sk.groupInflictType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[sk.groupInflictType].name}`);
             if (sk.extraDropChance) parts.push(`${Math.round(sk.extraDropChance * 100)}%機率額外獲得食材`);
             return parts.join('、') || '效果不明';
         }
@@ -3112,6 +3113,9 @@
                 // 已經招募過的夥伴，村莊裡對應的 NPC 要拿掉，不然重新整理網頁又會冒出來
                 (saved.companions || []).forEach(c => { if (c.id) rpgRemoveNpcFromMap(RPG_MAPS.village, c.id); });
             } else {
+                // 真的開新遊戲：把地圖狀態全部重置，不然同一頁玩過一輪之後「開新遊戲」會沿用上一輪寶箱開過、夥伴招募過的狀態
+                Object.values(RPG_MAPS).forEach(m => { Object.values(m.pois || {}).forEach(poi => { poi.found = false; }); });
+                RPG_MAPS.village.npcs = { '6,3': 'shop', '17,3': 'elder', '12,12': 'innkeeper', '4,6': 'ako', '19,6': 'suisui', '4,10': 'laozhou', '19,10': 'alan' };
                 rpgState = {
                     player: rpgDefaultPlayer(),
                     companions: [], // 一開始沒有任何夥伴，要去村莊裡找他們一一對話才會加入
@@ -3258,11 +3262,40 @@
             return `
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
                 <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}　・　🏆 目前積分：${p.score || 0}</p>
-                <button onclick="rpgUploadScore()" class="btn-amber w-full mb-3">🏆 上傳分數到排行榜</button>
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                    <button onclick="rpgUploadScore()" class="btn-amber">🏆 上傳分數</button>
+                    <button onclick="rpgShowLeaderboard()" class="btn-secondary">📜 看排行榜</button>
+                </div>
                 ${rpgStatusCardHTML(p)}
                 ${companions.map((c, idx) => rpgStatusCardHTML(c, idx, companions.length)).join('')}
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
             `;
+        }
+        // 排行榜畫面跟其他遊戲的排行榜用同一套視覺風格（獎牌+名字+分數），只是資料來源換成 rpgScores
+        async function rpgShowLeaderboard() {
+            playSfx('click');
+            document.getElementById('game-modal-title').textContent = '🏆 排行榜';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div id="rpg-leaderboard-list"><p class="text-sm" style="color:#B3A492">載入中…</p></div>
+                <button onclick="renderRpgMap()" class="btn-secondary w-full mt-4">← 返回地圖</button>
+            `;
+            try {
+                const snap = await db.collection('rpgScores').orderBy('score', 'desc').limit(10).get();
+                const list = document.getElementById('rpg-leaderboard-list');
+                if (!list) return;
+                if (snap.empty) { list.innerHTML = `<p class="text-sm" style="color:#B3A492">還沒有任何紀錄，來當第一名吧！</p>`; return; }
+                list.innerHTML = snap.docs.map((doc, i) => {
+                    const d = doc.data();
+                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                    return `<div class="flex justify-between items-center px-4 py-2.5 rounded-2xl mb-2" style="background:var(--cream)">
+                        <span>${medal} ${d.userName || '匿名'}（Lv.${d.level || 1}）</span>
+                        <span class="font-bold" style="color:var(--jam)">${d.score}</span>
+                    </div>`;
+                }).join('');
+            } catch (err) {
+                const list = document.getElementById('rpg-leaderboard-list');
+                if (list) list.innerHTML = `<p class="text-sm" style="color:#C4453F">載入失敗：${err.message}</p>`;
+            }
         }
         // 把目前積分上傳到排行榜（存在 rpgScores/{uid}，Firestore 規則會擋掉「比之前紀錄低」的上傳，不用前端自己判斷）
         async function rpgUploadScore() {
@@ -3684,7 +3717,7 @@
             if (!state || state.mode !== 'map') return;
             const map = RPG_MAPS[state.region];
             const { x, y } = state.pos;
-            const neighbors = [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y]];
+            const neighbors = [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y], [x, y]]; // 最後加自己站的那一格，寶箱現在站上去也能調查
             let npcButton = '', poiButton = '';
             for (const [nx, ny] of neighbors) {
                 const key = `${nx},${ny}`;
@@ -3702,6 +3735,29 @@
         }
 
         // 調查地點：有機率找到道具/食材/新食譜，也有可能是空的（假的調查點），調查過的地點不會再觸發
+        // 夥伴專屬裝備資料庫：只會從「已經加入隊伍」的夥伴身上抽，而且每個人的武器/防具各自只會拿到一次
+        const RPG_COMPANION_EQUIPMENT = {
+            suisui: { weapon: { name: '嗜血奶油抹刀', atk: 15 }, armor: { name: '秘銀圍裙', def: 5 } },
+            alan: { weapon: { name: '金剛石肉槌', atk: 18 }, armor: { name: '耐衝鎧甲', def: 15 } },
+            laozhou: { weapon: { name: '燒烤聖火杖', atk: 10 }, armor: { name: '神聖法袍', def: 4 } },
+            ako: { weapon: { name: '神之金屬鏟', atk: 17 }, armor: { name: '精鋼大背鍋', def: 15 } },
+        };
+        // 從還沒拿到專屬裝備的「已加入」夥伴裡隨機抽一件，直接強制裝備上去（夥伴沒有裝備選擇畫面，數值直接套用）
+        function rpgTryDropCompanionEquipment() {
+            const state = rpgState;
+            const pool = [];
+            (state.companions || []).forEach(c => {
+                const gear = RPG_COMPANION_EQUIPMENT[c.id];
+                if (!gear) return;
+                if (c.weaponName !== gear.weapon.name) pool.push({ c, slot: 'weapon', item: gear.weapon });
+                if (c.armorName !== gear.armor.name) pool.push({ c, slot: 'armor', item: gear.armor });
+            });
+            if (!pool.length) return null;
+            const pick = pool[Math.floor(Math.random() * pool.length)];
+            if (pick.slot === 'weapon') { pick.c.atk += pick.item.atk; pick.c.weaponName = pick.item.name; }
+            else { pick.c.def += pick.item.def; pick.c.armorName = pick.item.name; }
+            return { name: pick.c.name, itemName: pick.item.name, slot: pick.slot };
+        }
         function rpgInvestigate(key) {
             const state = rpgState;
             if (!state || state.locked || state.animating) return;
@@ -3713,30 +3769,50 @@
             document.getElementById('rpg-nearby-actions').innerHTML = '';
             const box = document.getElementById('rpg-dialogue-box');
             const sp = rpgPlayerScreenPos();
+            const lvl = state.player.level;
+            // 極低機率（1%）直接開到夥伴專屬裝備，優先判定，蓋過原本這個寶箱該有的獎勵
+            if (Math.random() < 0.01) {
+                const gearResult = rpgTryDropCompanionEquipment();
+                if (gearResult) {
+                    if (box) box.textContent = `太好了！取得${gearResult.name}的「${gearResult.itemName}」專屬${gearResult.slot === 'weapon' ? '武器' : '防具'}！已裝備！`;
+                    playSfx('success');
+                    if (sp) rpgBurstParticle('star', { x: sp.x, y: sp.y, count: 6, size: 60, duration: 0.9 });
+                    return;
+                }
+            }
             if (poi.item) {
                 state.player.items[poi.item] = (state.player.items[poi.item] || 0) + 1;
                 if (box) box.textContent = `🔍 找到了一份「${poi.item}」，已經放進道具欄！`;
                 playSfx('success');
             } else if (poi.ingredient) {
-                const qty = poi.qty || 1;
+                // 等級越高，寶箱裡的食材數量越多（每 5 級多 1 份）
+                const qty = (poi.qty || 1) + Math.floor(lvl / 5);
                 state.player.ingredients[poi.ingredient] = (state.player.ingredients[poi.ingredient] || 0) + qty;
                 if (box) box.textContent = `🔍 採集到「${poi.ingredient}」× ${qty}！`;
                 playSfx('success');
             } else if (poi.recipe) {
-                if (state.player.knownRecipes.includes(poi.recipe)) {
+                // 等級夠高的話，有機會直接開到限定食譜（比原本這個寶箱設定的食譜更好），算是「食譜越開越好」的體現
+                let recipeToGive = poi.recipe;
+                if (lvl >= 20 && Math.random() < 0.15) {
+                    const restrictedPool = Object.keys(RPG_RECIPES).filter(name => RPG_RECIPES[name].restricted && !state.player.knownRecipes.includes(name));
+                    if (restrictedPool.length) recipeToGive = restrictedPool[Math.floor(Math.random() * restrictedPool.length)];
+                }
+                if (state.player.knownRecipes.includes(recipeToGive)) {
                     // 已經學過這道食譜了，改給金幣，不會白白浪費這個寶箱
-                    const fallbackGold = 15;
+                    const fallbackGold = 15 + lvl * 2;
                     state.player.gold += fallbackGold;
-                    if (box) box.textContent = `📖「${poi.recipe}」你已經學過了，寶箱裡改放了 💰${fallbackGold} 金幣！`;
+                    if (box) box.textContent = `📖「${recipeToGive}」你已經學過了，寶箱裡改放了 💰${fallbackGold} 金幣！`;
                 } else {
-                    state.player.knownRecipes.push(poi.recipe);
+                    state.player.knownRecipes.push(recipeToGive);
                     rpgAddScore(50, '獲得新食譜');
-                    if (box) box.textContent = `📖 學會了新料理食譜：「${poi.recipe}」！打開🍳烹飪背包就能製作了。`;
+                    if (box) box.textContent = `📖 學會了新料理食譜：「${recipeToGive}」！打開🍳烹飪背包就能製作了。`;
                 }
                 playSfx('success');
             } else if (poi.gold) {
-                state.player.gold += poi.gold;
-                if (box) box.textContent = `🔍 找到了 💰${poi.gold} 金幣！`;
+                // 等級越高，寶箱裡的金幣越多
+                const goldAmt = poi.gold + lvl * 3;
+                state.player.gold += goldAmt;
+                if (box) box.textContent = `🔍 找到了 💰${goldAmt} 金幣！`;
                 playSfx('success');
             } else {
                 if (box) box.textContent = '🔍 仔細找過了，這裡什麼都沒有…';
@@ -4940,9 +5016,21 @@
                                     : rpgResolveSkillTargets(sk.pattern || 'single', cmd.target.row, cmd.target.i, b.monsterFormation, false);
                                 let totalDmg = 0;
                                 const logBits = [];
+                                // 「整組判定」型技能（例如究極辛香風暴）：只骰一次機率，成功的話全體怪物一起中招
+                                const groupRollSuccess = sk.groupInflictChance ? Math.random() < sk.groupInflictChance : false;
                                 targets.forEach(({ row, i, obj: tObj }) => {
                                     const tDomId = `rpg-slot-monster-${row}-${i}`;
-                                    // 「個別判定」型的全體技（例如廚房的身影、究極辛香風暴）：每隻怪各自骰機率上異常狀態，不計算傷害
+                                    if (sk.groupInflictChance) {
+                                        if (groupRollSuccess) {
+                                            const type = sk.groupInflictType === 'random' ? ['poison', 'paralysis', 'weaken'][Math.floor(Math.random() * 3)] : sk.groupInflictType;
+                                            rpgInflictStatus(tObj, type, 3);
+                                            logBits.push(`${tObj.name}陷入${RPG_STATUS_INFO[type].name}`);
+                                            const tCenter = rpgElementCenter(tDomId);
+                                            if (tCenter) rpgBurstParticle(type, { x: tCenter.x, y: tCenter.y, size: 60, count: 2, duration: 0.6 });
+                                        }
+                                        return;
+                                    }
+                                    // 「個別判定」型的全體技（例如廚房的身影）：每隻怪各自骰機率上異常狀態，不計算傷害
                                     if (sk.allIndividualChance) {
                                         if (Math.random() < sk.allIndividualChance) {
                                             const type = sk.allIndividualType === 'random' ? ['poison', 'paralysis', 'weaken'][Math.floor(Math.random() * 3)] : sk.allIndividualType;
