@@ -3031,6 +3031,30 @@
             if (rpgState.mode === 'map') renderRpgMap();
             console.log(`已經把等級調到 Lv.${p.level}，金幣調到 ${p.gold}`);
         }
+        // 測試/除錯用（僅限管理者）：不用等機率，直接觸發一場魔王戰（8 隻怪、魔王固定站後排第 2 位，跟正常機率骰到的
+        // 陣型完全一樣，只是跳過骰機率那一步）。在地圖畫面時，瀏覽器主控台輸入 rpgDebugForceBoss() 就可以用
+        function rpgDebugForceBoss() {
+            if (!isAdmin()) { console.warn('只有管理者能用這個指令'); return; }
+            if (!rpgState || rpgState.mode !== 'map') { console.warn('要在地圖畫面（不是戰鬥中）才能用這個指令'); return; }
+            const playerLevel = rpgState.player.level;
+            const monsterLevel = playerLevel + 20 + Math.floor(Math.random() * 11);
+            const stats = rpgMonsterStatsAtLevel(monsterLevel, true);
+            const species = RPG_MONSTER_SPECIES.dark_cuisine_king;
+            const escortStats = rpgMonsterStatsAtLevel(playerLevel + 10, false);
+            const monsters = [];
+            for (let slotIdx = 0; slotIdx < 8; slotIdx++) {
+                if (slotIdx === 5) {
+                    monsters.push({ id: 'dark_cuisine_king', ...species, ...stats, curHp: stats.hp, isBoss: true, aiType: 'low_hp' });
+                } else {
+                    const escortId = RPG_MONSTER_POOL[Math.floor(Math.random() * RPG_MONSTER_POOL.length)];
+                    const escortSpecies = RPG_MONSTER_SPECIES[escortId];
+                    monsters.push({ id: escortId, ...escortSpecies, ...escortStats, curHp: escortStats.hp, aiType: rpgRandomMonsterAI() });
+                }
+            }
+            rpgState.locked = true;
+            rpgStartBattle({ monsters, isBossFight: true });
+            console.log('已經強制觸發魔王戰！');
+        }
         // 4 位可以招募的夥伴，地圖上會排成一列跟在主角後面走，戰鬥時也會一起上場
         // 夥伴的基礎資料表（用 id 對應，招募的時候才會照這份資料生出角色物件塞進 state.companions）
         const RPG_COMPANION_TEMPLATES = {
