@@ -831,9 +831,11 @@
             userProgress.totalRecipesCreated = (userProgress.totalRecipesCreated || 0) + 1;
             userProgress.categoryRecipesCreated = userProgress.categoryRecipesCreated || {};
             userProgress.categoryRecipesCreated[category] = (userProgress.categoryRecipesCreated[category] || 0) + 1;
-            // 第一次新增食譜：解鎖異世界料理者遊戲卡片（以後永久可見），並直接把玩家傳送進遊戲
-            const isFirstEverRecipe = userProgress.totalRecipesCreated === 1 && !userProgress.rpgUnlocked;
-            if (isFirstEverRecipe) userProgress.rpgUnlocked = true;
+            // 解鎖異世界料理者遊戲卡片（以後永久可見），並直接把玩家傳送進遊戲。
+            // 注意：不能用「totalRecipesCreated === 1」判斷，這個功能上線之前就已經新增過食譜的人，
+            // 這個數字早就不是 1 了，永遠不會觸發解鎖——所以改成單純看「還沒解鎖過」，不管這是他的第幾道食譜
+            const shouldUnlockRpg = !userProgress.rpgUnlocked;
+            if (shouldUnlockRpg) userProgress.rpgUnlocked = true;
 
             // 連續新增食譜天數（跟登入連續天數是分開算的兩件事）
             const today = todayDateString();
@@ -862,7 +864,7 @@
             const newly = checkUnlocks();
             await saveUserProgress();
             if (newly.length) showAchievementToast(newly);
-            if (isFirstEverRecipe) {
+            if (shouldUnlockRpg) {
                 // 稍微停頓一下讓「食譜已上傳！」的提示先跑完，再把玩家傳送進異世界
                 setTimeout(() => {
                     alert('螢幕突然發出溫暖的光芒——你被吸進了一個叫「風味大陸（Flavoria）」的異世界！');
