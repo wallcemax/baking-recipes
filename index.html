@@ -1033,6 +1033,7 @@
                         <button onclick="showLeaderboard('dash')" class="chip">廚房挑戰賽</button>
                         <button onclick="showLeaderboard('diner')" class="chip">深夜食堂</button>
                         <button onclick="showLeaderboard('tinydiner')" class="chip">餐廳經營</button>
+                        <button onclick="showLeaderboard('rpg')" class="chip">異世界料理者</button>
                     </div>
                     <div id="leaderboard-list"><p class="text-sm" style="color:#B3A492">點上面的按鈕看排行榜</p></div>
                 </div>
@@ -3261,47 +3262,19 @@
             const companions = state.companions || [];
             return `
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
-                <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}　・　🏆 目前積分：${p.score || 0}</p>
-                <div class="grid grid-cols-2 gap-2 mb-3">
-                    <button onclick="rpgUploadScore()" class="btn-amber">🏆 上傳分數</button>
-                    <button onclick="rpgShowLeaderboard()" class="btn-secondary">📜 看排行榜</button>
-                </div>
+                <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}</p>
                 ${rpgStatusCardHTML(p)}
                 ${companions.map((c, idx) => rpgStatusCardHTML(c, idx, companions.length)).join('')}
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
             `;
         }
-        // 排行榜畫面跟其他遊戲的排行榜用同一套視覺風格（獎牌+名字+分數），只是資料來源換成 rpgScores
-        async function rpgShowLeaderboard() {
-            playSfx('click');
-            document.getElementById('game-modal-title').textContent = '🏆 排行榜';
-            document.getElementById('game-modal-body').innerHTML = `
-                <div id="rpg-leaderboard-list"><p class="text-sm" style="color:#B3A492">載入中…</p></div>
-                <button onclick="renderRpgMap()" class="btn-secondary w-full mt-4">← 返回地圖</button>
-            `;
-            try {
-                const snap = await db.collection('rpgScores').orderBy('score', 'desc').limit(10).get();
-                const list = document.getElementById('rpg-leaderboard-list');
-                if (!list) return;
-                if (snap.empty) { list.innerHTML = `<p class="text-sm" style="color:#B3A492">還沒有任何紀錄，來當第一名吧！</p>`; return; }
-                list.innerHTML = snap.docs.map((doc, i) => {
-                    const d = doc.data();
-                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-                    return `<div class="flex justify-between items-center px-4 py-2.5 rounded-2xl mb-2" style="background:var(--cream)">
-                        <span>${medal} ${d.userName || '匿名'}（Lv.${d.level || 1}）</span>
-                        <span class="font-bold" style="color:var(--jam)">${d.score}</span>
-                    </div>`;
-                }).join('');
-            } catch (err) {
-                const list = document.getElementById('rpg-leaderboard-list');
-                if (list) list.innerHTML = `<p class="text-sm" style="color:#C4453F">載入失敗：${err.message}</p>`;
-            }
-        }
+
         // 把目前積分上傳到排行榜（存在 rpgScores/{uid}，Firestore 規則會擋掉「比之前紀錄低」的上傳，不用前端自己判斷）
         async function rpgUploadScore() {
             if (!currentUser) { alert('請先登入才能上傳分數'); return; }
             const state = rpgState;
             if (!state) return;
+            const box = document.getElementById('rpg-dialogue-box');
             try {
                 await db.collection('rpgScores').doc(currentUser.uid).set({
                     userId: currentUser.uid, userName: currentUser.displayName || '匿名',
@@ -3309,9 +3282,9 @@
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 });
                 playSfx('success');
-                document.getElementById('game-modal-body').innerHTML = rpgStatusScreenHTML('🏆 分數已經上傳到排行榜！');
+                if (box) box.textContent = '🏆 分數已經上傳到排行榜！';
             } catch (err) {
-                document.getElementById('game-modal-body').innerHTML = rpgStatusScreenHTML('目前分數沒有比排行榜上的紀錄高，所以沒有更新。');
+                if (box) box.textContent = '目前分數沒有比排行榜上的紀錄高，所以沒有更新。';
             }
         }
         // 調整隊伍站位：交換兩位夥伴在陣列中的順序（跟隨隊形、戰鬥站位都是照這個順序決定的）
@@ -3408,7 +3381,7 @@
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="flex justify-between items-center mb-2 text-xs" style="color:#B3A492">
                     <span>Lv.${state.player.level} ・ ❤️${state.player.hp}/${state.player.maxHp} ・ 💠${state.player.sp}/${state.player.maxSp}</span>
-                    <span>💰${state.player.gold}</span>
+                    <span>💰${state.player.gold} ・ 🏆${state.player.score || 0}</span>
                 </div>
                 <div style="position:relative; max-width:100%; width:${width}px; margin:0 auto;">
                     <canvas id="rpg-canvas" width="${width}" height="${height}" style="display:block; border-radius:1rem; border:1px solid var(--line); max-width:100%;"></canvas>
@@ -3424,6 +3397,7 @@
                     <button onclick="rpgOpenStatusScreen()" class="btn-secondary text-xs">📊 狀態</button>
                     <button onclick="rpgOpenEquipScreen()" class="btn-secondary text-xs">🎽 裝備</button>
                     <button onclick="rpgOpenFormationScreen()" class="btn-secondary text-xs">🪑 隊形</button>
+                    <button onclick="rpgUploadScore()" class="btn-secondary text-xs" style="grid-column: span 2;">🏆 上傳分數到排行榜</button>
                 </div>
             `;
             document.removeEventListener('keydown', rpgKeyHandler);
@@ -5393,20 +5367,25 @@
                     <button onclick="showLeaderboard('dash')" class="chip ${gameId === 'dash' ? 'active' : ''}">廚房挑戰賽</button>
                     <button onclick="showLeaderboard('diner')" class="chip ${gameId === 'diner' ? 'active' : ''}">深夜食堂</button>
                     <button onclick="showLeaderboard('tinydiner')" class="chip ${gameId === 'tinydiner' ? 'active' : ''}">餐廳經營</button>
+                    <button onclick="showLeaderboard('rpg')" class="chip ${gameId === 'rpg' ? 'active' : ''}">異世界料理者</button>
                 </div>
                 <div id="leaderboard-list"><p class="text-sm" style="color:#B3A492">載入中…</p></div>
                 <button onclick="renderGameMenu()" class="btn-secondary w-full mt-4">返回選單</button>
             `;
             try {
-                const snap = await db.collection('gameScores').where('gameId', '==', gameId).orderBy('score', 'desc').limit(10).get();
+                // 異世界料理者的積分是存在自己專屬的 rpgScores（一人一筆、可以覆蓋），跟其他小遊戲的 gameScores（每次都新增一筆）不是同一種資料
+                const snap = gameId === 'rpg'
+                    ? await db.collection('rpgScores').orderBy('score', 'desc').limit(10).get()
+                    : await db.collection('gameScores').where('gameId', '==', gameId).orderBy('score', 'desc').limit(10).get();
                 const list = document.getElementById('leaderboard-list');
                 if (!list) return;
                 if (snap.empty) { list.innerHTML = `<p class="text-sm" style="color:#B3A492">還沒有任何紀錄，來當第一名吧！</p>`; return; }
                 list.innerHTML = snap.docs.map((doc, i) => {
                     const d = doc.data();
                     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                    const nameText = gameId === 'rpg' ? `${d.userName || '匿名'}（Lv.${d.level || 1}）` : (d.userName || '匿名');
                     return `<div class="flex justify-between items-center px-4 py-2.5 rounded-2xl mb-2" style="background:var(--cream)">
-                        <span>${medal} ${d.userName || '匿名'}</span>
+                        <span>${medal} ${nameText}</span>
                         <span class="font-bold" style="color:var(--jam)">${d.score}</span>
                     </div>`;
                 }).join('');
