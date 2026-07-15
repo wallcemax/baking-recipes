@@ -2764,10 +2764,12 @@
         // 依照「這次要出現的等級」算出怪物數值（魔王額外再乘一次加成，血更厚、打起來更有王者架式）
         function rpgMonsterStatsAtLevel(level, isBoss) {
             const lvl = Math.max(1, level);
-            // 加了一個跟等級平方成正比的項，讓高等怪物不只是線性變強，而是越到後面強度拉開得越明顯
-            const hp = Math.round((10 + lvl * 4.5 + lvl * lvl * 0.15) * (isBoss ? 3.2 : 1));
-            const atk = Math.round((2 + lvl * 1.4 + lvl * lvl * 0.025) * (isBoss ? 1.6 : 1));
-            const def = Math.round((lvl * 0.6 + lvl * lvl * 0.012) * (isBoss ? 1.5 : 1));
+            // 原本有跟等級平方成正比的項，魔王常常會出現在「主角等級+20~30」，平方項在那個等級區間會暴衝到不合理的程度
+            // （實測 Lv51 玩家防禦 80 遇到魔王，一擊就被打了 600+ 傷害，HP 上限才 433，等於一定死）。
+            // 改成單純線性成長，魔王另外用倍率做出「明顯比較強」的感覺，但不會強到一擊必殺
+            const hp = Math.round((10 + lvl * 7) * (isBoss ? 2.2 : 1));
+            const atk = Math.round((2 + lvl * 1.6) * (isBoss ? 1.25 : 1));
+            const def = Math.round(lvl * 0.9 * (isBoss ? 1.3 : 1));
             const agi = Math.round(3 + lvl * 0.7);
             const sp = Math.round(6 + lvl * 1.2);
             const exp = Math.round(lvl * 5 * (isBoss ? 5 : 1));
@@ -2870,9 +2872,10 @@
             mountain_delicacy: { name: '山珍海味', sp: 20, cureStatusType: 'multi', cureTypes: ['paralysis', 'weaken'], pattern: 'ally_single' },
             banquet_blessing: { name: '盛宴祝福', sp: 30, healPct: 0.5, pattern: 'ally_column_adjacent_pierce' },
             legendary_feast_prayer: { name: '傳說盛宴禱詞', sp: 45, healPct: 0.7, revive: true, pattern: 'ally_all' },
+            legendary_ongoing_feast: { name: '傳說持續盛宴', sp: 30, healBuffPct: 0.2, buffTurns: 3, pattern: 'ally_all' },
 
             // ================= 阿柯（火炒系，防禦BUFF/範圍/灼傷/攻擊BUFF）=================
-            ako_def_buff: { name: '甩鍋熱炒', sp: 5, defBuffPct: 0.05, buffTurns: 3, pattern: 'ally_single' },
+            ako_def_buff: { name: '甩鍋熱炒', sp: 5, defBuffPct: 0.05, buffTurns: 3, pattern: 'ally_all' },
             ako_cross: { name: '烈焰十字炒', sp: 10, mult: 1.2, pattern: 'column_adjacent_pierce', particle: 'magic', filter: 'sepia(1) hue-rotate(280deg) saturate(4)' },
             ako_column: { name: '炒鍋爆擊', sp: 15, mult: 1.5, pattern: 'column_adjacent', particle: 'magic', filter: 'sepia(1) hue-rotate(300deg) saturate(4)' },
             ako_burn: { name: '烈焰炙燒', sp: 20, mult: 2.0, pattern: 'single', burnChance: 1, burnTurns: 3, particle: 'magic', filter: 'sepia(1) hue-rotate(0deg) saturate(5) brightness(1.2)' },
@@ -2908,7 +2911,7 @@
         };
         // 每 5 級解鎖一個新技能：主角固定學恢復系列；4 位夥伴則各自有獨立的技能路線，不會學到一樣的技能
         const RPG_SKILL_PROGRESSION = {
-            player: { 5: 'simple_party', 10: 'warm_soup_cure', 15: 'bbq_feast', 20: 'mountain_delicacy', 25: 'banquet_blessing', 30: 'legendary_feast_prayer' },
+            player: { 5: 'simple_party', 10: 'warm_soup_cure', 15: 'bbq_feast', 20: 'mountain_delicacy', 25: 'banquet_blessing', 30: 'legendary_feast_prayer', 35: 'legendary_ongoing_feast' },
         };
         const RPG_SKILL_PROGRESSION_BY_COMPANION = {
             '阿柯': { 5: 'ako_def_buff', 10: 'ako_cross', 15: 'ako_column', 20: 'ako_burn', 25: 'ako_atk_buff', 30: 'ako_ultimate' },
@@ -2971,6 +2974,7 @@
             if (sk.atkBuffMult != null) parts.push(`下次攻擊力×${sk.atkBuffMult}`);
             if (sk.atkBuffPct != null) parts.push(`全體攻擊+${Math.round(sk.atkBuffPct * 100)}%（持續${sk.buffTurns}回合）`);
             if (sk.agiBuffPct != null) parts.push(`全體敏捷+${Math.round(sk.agiBuffPct * 100)}%（持續${sk.buffTurns}回合）`);
+            if (sk.healBuffPct != null) parts.push(`每回合持續回復 HP ${Math.round(sk.healBuffPct * 100)}%，持續${sk.buffTurns}回合`);
             if (sk.defDebuffPct != null) parts.push(`使目標防禦${Math.round(sk.defDebuffPct * 100)}%（持續${sk.debuffTurns}回合）`);
             if (sk.critChance) parts.push(`${Math.round(sk.critChance * 100)}%機率爆擊×${sk.critMult}`);
             if (sk.burnChance) parts.push(`附加灼傷（每回合扣1%HP，持續${sk.burnTurns}回合）`);
@@ -4857,7 +4861,7 @@
         // 執行這一輪：把我方已下指令的角色跟所有還活著的怪物，依敏捷（agi）由高到低排成一串，
         // 逐一輪流執行——敏捷高的怪物有可能插在我方角色中間、甚至搶在所有我方角色行動前先出手
         // 異常狀態：poison 每回合開始扣 5% 上限 HP／weaken 每回合開始扣 5% 上限 SP／paralysis 這次跟下一次輪到行動時都會被跳過
-        const RPG_STATUS_INFO = { poison: { name: '中毒', emoji: '☠️' }, paralysis: { name: '麻痺', emoji: '⚡' }, weaken: { name: '衰弱', emoji: '💫' }, burn: { name: '灼傷', emoji: '🔥' } };
+        const RPG_STATUS_INFO = { poison: { name: '中毒', emoji: '☠️' }, paralysis: { name: '麻痺', emoji: '⚡' }, weaken: { name: '衰弱', emoji: '💫' }, burn: { name: '灼傷', emoji: '🔥' }, bleed: { name: '流血', emoji: '🩸' } };
         function rpgInflictStatus(obj, type, turns) {
             if (!obj.statuses) obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0 };
             obj.statuses[type] = Math.max(obj.statuses[type] || 0, turns);
@@ -4871,9 +4875,17 @@
         // buff 的回合數也是在這裡一起倒數
         function rpgApplyStatusTicks(b) {
             rpgFormationEntries(b.partyFormation).forEach(({ row, i, obj }) => {
+                const domId = `rpg-slot-party-${row}-${i}`;
+                // 持續回復（例如傳說持續盛宴）要在 rpgTickBuffs 把回合數砍完之前先結算，不然最後一回合會抓不到
+                if (obj.buffs && obj.buffs.regenPct && obj.hp > 0) {
+                    const healAmt = Math.max(1, Math.round(obj.maxHp * obj.buffs.regenPct.value));
+                    obj.hp = Math.min(obj.maxHp, obj.hp + healAmt);
+                    rpgLogAppend(`✨ ${obj.name}持續恢復中，回復了 ${healAmt} 點 HP！`);
+                    const center = rpgElementCenter(domId);
+                    if (center) rpgBurstParticle('buff', { x: center.x, y: center.y, size: 45, count: 2, duration: 0.5 });
+                }
                 rpgTickBuffs(obj);
                 if (!obj.statuses || obj.hp <= 0) return;
-                const domId = `rpg-slot-party-${row}-${i}`;
                 if (obj.statuses.poison > 0) {
                     const dmg = Math.max(1, Math.round(obj.maxHp * 0.01));
                     obj.hp = Math.max(0, obj.hp - dmg);
@@ -4887,6 +4899,13 @@
                     rpgLogAppend(`🔥 ${obj.name}灼傷發作，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#C4453F');
                     obj.statuses.burn--;
+                }
+                if (obj.statuses.bleed > 0) {
+                    const dmg = Math.max(1, Math.round(obj.maxHp * 0.01));
+                    obj.hp = Math.max(0, obj.hp - dmg);
+                    rpgLogAppend(`🩸 ${obj.name}流血中，扣了 ${dmg} 點 HP！`);
+                    rpgFloatDamage(domId, dmg, '#A8324A');
+                    obj.statuses.bleed--;
                 }
                 if (obj.statuses.weaken > 0) {
                     const dmg = Math.max(1, Math.round(obj.maxSp * 0.01));
@@ -4912,6 +4931,13 @@
                     rpgLogAppend(`🔥 ${obj.name}灼傷發作，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#C4453F');
                     obj.statuses.burn--;
+                }
+                if (obj.statuses.bleed > 0) {
+                    const dmg = Math.max(1, Math.round(obj.hp * 0.01));
+                    obj.curHp = Math.max(0, obj.curHp - dmg);
+                    rpgLogAppend(`🩸 ${obj.name}流血中，扣了 ${dmg} 點 HP！`);
+                    rpgFloatDamage(domId, dmg, '#A8324A');
+                    obj.statuses.bleed--;
                 }
                 if (obj.statuses.weaken > 0 && obj.curSp !== undefined) {
                     const dmg = Math.max(1, Math.round((obj.sp || 10) * 0.01));
@@ -5023,7 +5049,7 @@
                                     rpgLogAppend(`${actorObj.name}使出「${sk.name}」，這次沒有額外收穫。`);
                                 }
                                 playSfx('click');
-                            } else if (sk.healPct != null || sk.cureStatusType || sk.defBuffPct != null || sk.atkBuffMult != null || sk.atkBuffPct != null || sk.agiBuffPct != null) {
+                            } else if (sk.healPct != null || sk.cureStatusType || sk.defBuffPct != null || sk.atkBuffMult != null || sk.atkBuffPct != null || sk.agiBuffPct != null || sk.healBuffPct != null) {
                                 // 我方技能：恢復／解除異常／增益，範圍可能是單體、上下相鄰、十字、或全體
                                 let targets;
                                 if (cmd.itemTarget && cmd.itemTarget.aoe) {
@@ -5038,7 +5064,7 @@
                                     const domId = `rpg-slot-party-${row}-${i}`;
                                     const wasFainted = obj.hp <= 0;
                                     if (wasFainted && !sk.revive) return;
-                                    const isBuffEffect = sk.defBuffPct != null || sk.atkBuffMult != null || sk.atkBuffPct != null || sk.agiBuffPct != null;
+                                    const isBuffEffect = sk.defBuffPct != null || sk.atkBuffMult != null || sk.atkBuffPct != null || sk.agiBuffPct != null || sk.healBuffPct != null;
                                     if (sk.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * sk.healPct));
                                     if (sk.cureStatusType && obj.statuses) {
                                         if (sk.cureStatusType === 'all') { obj.statuses.poison = 0; obj.statuses.paralysis = 0; obj.statuses.weaken = 0; obj.statuses.burn = 0; }
@@ -5049,6 +5075,7 @@
                                     if (sk.atkBuffMult != null) obj.buffs = Object.assign(obj.buffs || {}, { atkBuffMult: { value: sk.atkBuffMult } }); // 用掉下一次攻擊才消失，不用回合數
                                     if (sk.atkBuffPct != null) rpgApplyBuff(obj, 'atkBuffPct', sk.atkBuffPct, sk.buffTurns || 3);
                                     if (sk.agiBuffPct != null) rpgApplyBuff(obj, 'agiBuffPct', sk.agiBuffPct, sk.buffTurns || 3);
+                                    if (sk.healBuffPct != null) rpgApplyBuff(obj, 'regenPct', sk.healBuffPct, sk.buffTurns || 3);
                                     const center = rpgElementCenter(domId);
                                     if (center) {
                                         const particleType = wasFainted && obj.hp > 0 ? 'revive' : (isBuffEffect ? 'buff' : 'light');
@@ -5229,13 +5256,34 @@
                     const victimDomId = `rpg-slot-party-${victim.row}-${victim.i}`;
                     const monsterDomId = `rpg-slot-monster-${entry.row}-${entry.i}`;
                     // Lv20 以上的怪物開始會用技能（傷害更高、扣自己的 SP）或直接對我方施放異常狀態，不再只會普通攻擊
+                    // 魔王還有額外 10% 機率使出「全體異常狀態」的必中攻擊，不用另外判定命中，一定會成功
                     let actionKind = 'attack';
-                    if ((monsterObj.level || 0) >= 20) {
+                    if (monsterObj.isBoss && Math.random() < 0.1) {
+                        actionKind = 'groupStatus';
+                    } else if ((monsterObj.level || 0) >= 20) {
                         const roll = Math.random();
                         if (roll < 0.2) actionKind = 'status';
                         else if (roll < 0.5 && monsterObj.curSp >= 5) actionKind = 'skill';
                     }
                     rpgLungeAttack(monsterDomId, -60, () => {
+                        if (actionKind === 'groupStatus') {
+                            const types = ['poison', 'bleed', 'burn'];
+                            const type = types[Math.floor(Math.random() * types.length)];
+                            const info = RPG_STATUS_INFO[type];
+                            const aliveParty = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
+                            aliveParty.forEach(({ row, i, obj }) => {
+                                rpgInflictStatus(obj, type, 3);
+                                const domId = `rpg-slot-party-${row}-${i}`;
+                                const center = rpgElementCenter(domId);
+                                if (center) rpgBurstParticle(type === 'bleed' ? 'poison' : type, { x: center.x, y: center.y, size: 60, count: 2, duration: 0.6 });
+                            });
+                            rpgLogAppend(`${info.emoji} ${monsterObj.name}使出必中的全體攻擊，讓大家都陷入「${info.name}」！`);
+                            playSfx('fail');
+                            if (navigator.vibrate) navigator.vibrate([120, 60, 120, 60, 120]);
+                            updateBattleUI();
+                            setTimeout(runNext, 600);
+                            return;
+                        }
                         if (actionKind === 'status') {
                             const types = ['poison', 'paralysis', 'weaken'];
                             const type = types[Math.floor(Math.random() * types.length)];
@@ -5252,7 +5300,7 @@
                         let dmg;
                         if (actionKind === 'skill') {
                             monsterObj.curSp = Math.max(0, monsterObj.curSp - 5);
-                            dmg = Math.max(1, Math.round((monsterObj.atk * 1.7) - rpgEffectiveDef(victim.obj) + (Math.random() * 3 - 1)));
+                            dmg = Math.max(1, Math.round((monsterObj.atk * 1.4) - rpgEffectiveDef(victim.obj) + (Math.random() * 3 - 1)));
                             rpgLogAppend(`✨ ${monsterObj.name}使出強力技能攻擊${victim.obj.name}，造成 ${dmg} 點傷害！`);
                         } else {
                             dmg = Math.max(1, Math.round(monsterObj.atk - rpgEffectiveDef(victim.obj) + (Math.random() * 3 - 1)));
