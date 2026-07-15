@@ -831,6 +831,9 @@
             userProgress.totalRecipesCreated = (userProgress.totalRecipesCreated || 0) + 1;
             userProgress.categoryRecipesCreated = userProgress.categoryRecipesCreated || {};
             userProgress.categoryRecipesCreated[category] = (userProgress.categoryRecipesCreated[category] || 0) + 1;
+            // 第一次新增食譜：解鎖異世界料理者遊戲卡片（以後永久可見），並直接把玩家傳送進遊戲
+            const isFirstEverRecipe = userProgress.totalRecipesCreated === 1 && !userProgress.rpgUnlocked;
+            if (isFirstEverRecipe) userProgress.rpgUnlocked = true;
 
             // 連續新增食譜天數（跟登入連續天數是分開算的兩件事）
             const today = todayDateString();
@@ -859,6 +862,13 @@
             const newly = checkUnlocks();
             await saveUserProgress();
             if (newly.length) showAchievementToast(newly);
+            if (isFirstEverRecipe) {
+                // 稍微停頓一下讓「食譜已上傳！」的提示先跑完，再把玩家傳送進異世界
+                setTimeout(() => {
+                    alert('螢幕突然發出溫暖的光芒——你被吸進了一個叫「風味大陸（Flavoria）」的異世界！');
+                    startRpgGame();
+                }, 300);
+            }
         }
 
         // 按下「大功告成」時呼叫；用「不重複的食譜 id」計算次數，
@@ -1019,11 +1029,11 @@
                     <p class="font-display font-bold text-lg">小餐廳經營模擬</p>
                     <p class="text-xs mt-1" style="color:#B3A492">用平台真實食譜的熱量換算售價，排菜單、抓備料量，經營 10 天看誰賺最多！</p>
                 </button>
-                ${isAdmin() ? `
+                ${(isAdmin() || (userProgress && userProgress.rpgUnlocked)) ? `
                 <button onclick="playSfx('click'); startRpgGame()" class="w-full p-5 rounded-2xl text-left mb-6" style="background:linear-gradient(135deg, #F4E4CE, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
                     <div class="text-4xl mb-2">🗺️</div>
-                    <p class="font-display font-bold text-lg">異世界料理者 <span class="text-xs font-normal" style="color:#B3A492">（搶先體驗版・僅管理者可見）</span></p>
-                    <p class="text-xs mt-1" style="color:#B3A492">回合制料理 RPG，在暖廚村跟麥穗平原探索、打怪升級，更多地區陸續開放中！</p>
+                    <p class="font-display font-bold text-lg">異世界料理者</p>
+                    <p class="text-xs mt-1" style="color:#B3A492">某天深夜，你在食譜頁面按下「儲存」的瞬間，螢幕突然發出溫暖的光芒——<br>你被吸進了一個叫「風味大陸（Flavoria）」的異世界。</p>
                 </button>` : ''}
                 <div>
                     <h3 class="font-display font-semibold text-lg mb-3">🏆 排行榜</h3>
@@ -2997,7 +3007,7 @@
 
         function rpgDefaultPlayer() {
             return {
-                name: '你', level: 1, exp: 0, expToNext: 20,
+                name: (currentUser && currentUser.displayName) || '你', level: 1, exp: 0, expToNext: 20,
                 hp: 30, maxHp: 30, atk: 6, def: 2, sp: 10, maxSp: 10, agi: 6,
                 gold: 50, score: 0, // score：積分系統用的累計分數，跟金幣是分開的
                 weaponName: '新手鍋鏟', armorName: '破舊圍裙',
@@ -3088,11 +3098,13 @@
         }
 
         async function startRpgGame() {
-            if (!isAdmin()) { alert('這個遊戲還在測試中，暫時只有管理者能玩'); return; }
             if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            if (!isAdmin() && !(userProgress && userProgress.rpgUnlocked)) { alert('要先新增過一份食譜，才能進入異世界料理者喔！'); return; }
             qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup(); tinyDinerCleanup(); rpgCleanup();
             ensureAudioContext();
+            document.getElementById('game-modal').classList.remove('hidden');
             document.getElementById('game-modal').classList.add('rpg-fullscreen');
+            pushModalHistoryState();
             document.getElementById('game-modal-title').textContent = '🗺️ 異世界料理者';
             document.getElementById('game-modal-body').innerHTML = `<p class="text-center text-sm py-10" style="color:#B3A492">載入中…</p>`;
             const saved = await rpgLoadSavedGame();
@@ -3117,6 +3129,16 @@
                 // 真的開新遊戲：把地圖狀態全部重置，不然同一頁玩過一輪之後「開新遊戲」會沿用上一輪寶箱開過、夥伴招募過的狀態
                 Object.values(RPG_MAPS).forEach(m => { Object.values(m.pois || {}).forEach(poi => { poi.found = false; }); });
                 RPG_MAPS.village.npcs = { '6,3': 'shop', '17,3': 'elder', '12,12': 'innkeeper', '4,6': 'ako', '19,6': 'suisui', '4,10': 'laozhou', '19,10': 'alan' };
+                // 地圖字元也要一起復原成 'H'，不然同一頁前一輪如果已經招募過夥伴，字元會停在 '.'，變成看不見但還是會擋路的隱形 NPC
+                Object.entries(RPG_MAPS.village.npcs).forEach(([key]) => {
+                    const [xStr, yStr] = key.split(',');
+                    const x = Number(xStr), y = Number(yStr);
+                    if (RPG_MAPS.village.rows[y]) {
+                        const rowChars = RPG_MAPS.village.rows[y].split('');
+                        rowChars[x] = 'H';
+                        RPG_MAPS.village.rows[y] = rowChars.join('');
+                    }
+                });
                 rpgState = {
                     player: rpgDefaultPlayer(),
                     companions: [], // 一開始沒有任何夥伴，要去村莊裡找他們一一對話才會加入
@@ -3138,7 +3160,7 @@
                 // 新遊戲第一次進來，主角先自言自語一下，比較有進入感
                 const box = document.getElementById('rpg-dialogue-box');
                 if (box) {
-                    const fullText = '你：這裡是哪裡？到處看看好了。';
+                    const fullText = `${rpgState.player.name}：這裡是哪裡？到處看看好了。`;
                     box.textContent = '';
                     let i = 0;
                     const typer = setInterval(() => {
@@ -3873,7 +3895,19 @@
         // 從地圖上找到某個 npcId 站的格子並移除（招募成功後那個人就離開原本站的地方，加入隊伍了）
         function rpgRemoveNpcFromMap(map, npcId) {
             for (const key in map.npcs) {
-                if (map.npcs[key] === npcId) { delete map.npcs[key]; break; }
+                if (map.npcs[key] === npcId) {
+                    delete map.npcs[key];
+                    // 地圖字元本身也要把 'H' 換回空地，不然雖然 npcs 清單裡拿掉了，畫面還是會照字元畫出東西
+                    // （沒有對應 npcId 時，NPC 繪圖那段程式碼會預設畫出村長，導致夥伴消失的位置變成村長圖案）
+                    const [xStr, yStr] = key.split(',');
+                    const x = Number(xStr), y = Number(yStr);
+                    if (map.rows[y]) {
+                        const rowChars = map.rows[y].split('');
+                        rowChars[x] = '.';
+                        map.rows[y] = rowChars.join('');
+                    }
+                    break;
+                }
             }
         }
         // 夥伴招募：先照劇情台詞一句一句用打字機效果播出來，播完才判斷有沒有滿足加入條件
@@ -3895,7 +3929,7 @@
                     if (i >= fullText.length) {
                         clearInterval(typer);
                         lineIdx++;
-                        setTimeout(playNextLine, 900);
+                        setTimeout(playNextLine, 1400);
                     }
                 }, 28);
             };
