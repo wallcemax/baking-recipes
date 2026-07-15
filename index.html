@@ -2872,7 +2872,7 @@
             mountain_delicacy: { name: '山珍海味', sp: 20, cureStatusType: 'multi', cureTypes: ['paralysis', 'weaken'], pattern: 'ally_single' },
             banquet_blessing: { name: '盛宴祝福', sp: 30, healPct: 0.5, pattern: 'ally_column_adjacent_pierce' },
             legendary_feast_prayer: { name: '傳說盛宴禱詞', sp: 45, healPct: 0.7, revive: true, pattern: 'ally_all' },
-            legendary_ongoing_feast: { name: '傳說持續盛宴', sp: 30, healBuffPct: 0.2, buffTurns: 3, pattern: 'ally_all' },
+            legendary_ongoing_feast: { name: '傳說持續盛宴', sp: 30, healBuffPct: 0.35, buffTurns: 3, pattern: 'ally_all' },
 
             // ================= 阿柯（火炒系，防禦BUFF/範圍/灼傷/攻擊BUFF）=================
             ako_def_buff: { name: '甩鍋熱炒', sp: 5, defBuffPct: 0.05, buffTurns: 3, pattern: 'ally_all' },
@@ -5075,7 +5075,13 @@
                                     if (sk.atkBuffMult != null) obj.buffs = Object.assign(obj.buffs || {}, { atkBuffMult: { value: sk.atkBuffMult } }); // 用掉下一次攻擊才消失，不用回合數
                                     if (sk.atkBuffPct != null) rpgApplyBuff(obj, 'atkBuffPct', sk.atkBuffPct, sk.buffTurns || 3);
                                     if (sk.agiBuffPct != null) rpgApplyBuff(obj, 'agiBuffPct', sk.agiBuffPct, sk.buffTurns || 3);
-                                    if (sk.healBuffPct != null) rpgApplyBuff(obj, 'regenPct', sk.healBuffPct, sk.buffTurns || 3);
+                                    if (sk.healBuffPct != null) {
+                                        // 施放的當下就先補一次血，算第一回合；接下來的回合開始輪流結算，總共還是三回合份的回復
+                                        const immediateHeal = Math.max(1, Math.round(obj.maxHp * sk.healBuffPct));
+                                        obj.hp = Math.min(obj.maxHp, obj.hp + immediateHeal);
+                                        const remainingTurns = (sk.buffTurns || 3) - 1;
+                                        if (remainingTurns > 0) rpgApplyBuff(obj, 'regenPct', sk.healBuffPct, remainingTurns);
+                                    }
                                     const center = rpgElementCenter(domId);
                                     if (center) {
                                         const particleType = wasFainted && obj.hp > 0 ? 'revive' : (isBuffEffect ? 'buff' : 'light');
