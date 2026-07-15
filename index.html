@@ -2427,6 +2427,7 @@
             '破舊圍裙': { def: 0, cost: 0, icon: 'icon_armor', desc: '穿了很多年的圍裙，勉強擋一下油噴，聊勝於無。' },
             '學徒制服': { def: 4, cost: 60, icon: 'icon_armor2', desc: '正式一點的廚師服，防禦力比破舊圍裙好上不少。' },
             '星級主廚服': { def: 10, cost: 400, icon: 'icon_armor3', desc: '星級餐廳主廚才穿得上的正式服裝，防禦力相當扎實。' },
+            '料理之神的廚服': { def: 14, cost: 4000, icon: 'icon_armor3', desc: '傳說中料理之神親自賜下的廚服，穿上後渾身充滿安心感。' },
         };
         // 算「連同裝備加成」之後的實際攻擊/防禦力：只有主角有 weaponName/armorName 對得上這兩份清單，
         // 夥伴／怪物身上沒有對應的裝備名稱，會自動回退成原本的 atk/def
@@ -2564,12 +2565,7 @@
                     '19,10': 'alan',
                 },
                 pois: {
-                    '3,1': { item: '家常蛋花湯' },
-                    '20,1': { ingredient: '雞蛋', qty: 2 },
-                    '3,16': { ingredient: '蜂蜜', qty: 2 },
-                    '20,16': { gold: 20 },
-                    '8,1': { ingredient: '起司', qty: 1 },
-                    '15,16': { recipe: '蜂蜜烤餅' },
+                    '3,1': {}, '20,1': {}, '3,16': {}, '20,16': {}, '8,1': {}, '15,16': {},
                 },
                 exits: { '11,17': { to: 'plains', x: 6, y: 1 }, '12,17': { to: 'plains', x: 7, y: 1 } },
                 wild: false,
@@ -2594,13 +2590,7 @@
                 start: { x: 7, y: 1 },
                 npcs: {},
                 pois: {
-                    '2,1': { ingredient: '蜂蜜', qty: 2 },
-                    '12,1': { ingredient: '菇傘', qty: 2 },
-                    '2,8': { ingredient: '哥布林辛香料', qty: 2 },
-                    '12,8': { recipe: '起司烤菇' },
-                    '7,6': { ingredient: '小麥', qty: 3 },
-                    '4,3': { ingredient: '起司', qty: 2 },
-                    '9,3': { gold: 25 },
+                    '2,1': {}, '12,1': {}, '2,8': {}, '12,8': {}, '7,6': {}, '4,3': {}, '9,3': {},
                 },
                 exits: { '6,10': { to: 'village', x: 11, y: 16 }, '7,10': { to: 'village', x: 12, y: 16 } },
                 wild: true,
@@ -3025,6 +3015,22 @@
             if (!state || !state.player) return;
             state.player.score = (state.player.score || 0) + amount;
         }
+        // 測試/除錯用（僅限管理者）：把主角練到指定等級、金幣調到指定數值，方便直接測試魔王戰之類的高等內容，
+        // 不用真的慢慢練。在遊戲畫面打開時，瀏覽器主控台輸入 rpgDebugBoost(50, 99999) 就可以用
+        function rpgDebugBoost(targetLevel, gold) {
+            if (!isAdmin()) { console.warn('只有管理者能用這個指令'); return; }
+            if (!rpgState) { console.warn('要先進入遊戲（打開地圖畫面）才能用這個指令'); return; }
+            const p = rpgState.player;
+            while (p.level < targetLevel) {
+                p.level++;
+                p.maxHp += 8; p.maxSp += 2; p.atk += 2; p.def += 1; p.agi += 1;
+                rpgCheckSkillUnlock(p);
+            }
+            p.hp = p.maxHp; p.sp = p.maxSp;
+            if (gold != null) p.gold = gold;
+            if (rpgState.mode === 'map') renderRpgMap();
+            console.log(`已經把等級調到 Lv.${p.level}，金幣調到 ${p.gold}`);
+        }
         // 4 位可以招募的夥伴，地圖上會排成一列跟在主角後面走，戰鬥時也會一起上場
         // 夥伴的基礎資料表（用 id 對應，招募的時候才會照這份資料生出角色物件塞進 state.companions）
         const RPG_COMPANION_TEMPLATES = {
@@ -3053,10 +3059,10 @@
                 failLine: '沒有雞蛋啊……那你先去張羅一顆吧，我在這裡不會跑的。',
             },
             alan: {
-                require: { type: 'ingredient', name: '小麥' },
-                lines: ['嘿，你就是最近在村子裡到處跑的那個料理者吧？我是阿藍，研究辛香調味的。', '我想試做一款新配方，缺一份小麥當基底。你要是能給我一份小麥，我就加入你的隊伍！'],
+                require: { type: 'ingredient', name: '蜂蜜' },
+                lines: ['嘿，你就是最近在村子裡到處跑的那個料理者吧？我是阿藍，研究辛香調味的。', '我想試做一款新配方，缺一份蜂蜜提味。你要是能給我一份蜂蜜，我就加入你的隊伍！'],
                 joinLine: '太好了，那我們就是隊友了！',
-                failLine: '小麥啊……你先去找找看吧，我在這裡等你。',
+                failLine: '蜂蜜啊……你先去找找看吧，我在這裡等你。',
             },
         };
         // ---------- 存檔／讀檔：存到 Firestore，換裝置、換瀏覽器都能繼續 ----------
@@ -3754,6 +3760,7 @@
             else { pick.c.def += pick.item.def; pick.c.armorName = pick.item.name; }
             return { name: pick.c.name, itemName: pick.item.name, slot: pick.slot };
         }
+        const RPG_ALL_INGREDIENTS = ['小麥', '雞蛋', '菇傘', '史萊姆凝膠', '哥布林辛香料', '蜂蜜', '起司'];
         function rpgInvestigate(key) {
             const state = rpgState;
             if (!state || state.locked || state.animating) return;
@@ -3766,7 +3773,8 @@
             const box = document.getElementById('rpg-dialogue-box');
             const sp = rpgPlayerScreenPos();
             const lvl = state.player.level;
-            // 極低機率（1%）直接開到夥伴專屬裝備，優先判定，蓋過原本這個寶箱該有的獎勵
+            const isWild = !!map.wild;
+            // 極低機率（1%）直接開到夥伴專屬裝備，優先判定，蓋過原本這次寶箱該有的獎勵
             if (Math.random() < 0.01) {
                 const gearResult = rpgTryDropCompanionEquipment();
                 if (gearResult) {
@@ -3776,42 +3784,51 @@
                     return;
                 }
             }
-            if (poi.item) {
-                state.player.items[poi.item] = (state.player.items[poi.item] || 0) + 1;
-                if (box) box.textContent = `🔍 找到了一份「${poi.item}」，已經放進道具欄！`;
-                playSfx('success');
-            } else if (poi.ingredient) {
+            // 每個寶箱打開前才隨機決定這次會開到什麼，不是固定在某個位置放某樣東西——同一個寶箱重複刷新，開到的內容也不會一樣
+            const roll = Math.random() * 100;
+            // 野外（麥穗平原）多一種「直接開到料理成品」的可能，機率比其他選項低；村莊的寶箱比較單純，沒有這個選項
+            const rewardType = isWild
+                ? (roll < 52 ? 'ingredient' : roll < 74 ? 'gold' : roll < 88 ? 'recipe' : 'dish')
+                : (roll < 55 ? 'ingredient' : roll < 85 ? 'gold' : 'recipe');
+
+            if (rewardType === 'ingredient') {
+                const ing = RPG_ALL_INGREDIENTS[Math.floor(Math.random() * RPG_ALL_INGREDIENTS.length)];
                 // 等級越高，寶箱裡的食材數量越多（每 5 級多 1 份）
-                const qty = (poi.qty || 1) + Math.floor(lvl / 5);
-                state.player.ingredients[poi.ingredient] = (state.player.ingredients[poi.ingredient] || 0) + qty;
-                if (box) box.textContent = `🔍 採集到「${poi.ingredient}」× ${qty}！`;
+                const qty = 1 + Math.floor(Math.random() * 2) + Math.floor(lvl / 5);
+                state.player.ingredients[ing] = (state.player.ingredients[ing] || 0) + qty;
+                if (box) box.textContent = `🔍 採集到「${ing}」× ${qty}！`;
                 playSfx('success');
-            } else if (poi.recipe) {
-                // 等級夠高的話，有機會直接開到限定食譜（比原本這個寶箱設定的食譜更好），算是「食譜越開越好」的體現
-                let recipeToGive = poi.recipe;
+            } else if (rewardType === 'dish') {
+                const dishPool = Object.keys(RPG_RECIPES).filter(name => !RPG_RECIPES[name].restricted);
+                const dish = dishPool[Math.floor(Math.random() * dishPool.length)];
+                state.player.items[dish] = (state.player.items[dish] || 0) + 1;
+                if (box) box.textContent = `🔍 意外挖到一份現成的「${dish}」，已經放進道具欄！`;
+                playSfx('success');
+            } else if (rewardType === 'recipe') {
+                // 等級夠高的話，有機會直接開到限定食譜，算是「食譜越開越好」的體現
+                const normalPool = Object.keys(RPG_RECIPES).filter(name => !RPG_RECIPES[name].restricted && !state.player.knownRecipes.includes(name));
+                let recipeToGive = normalPool.length ? normalPool[Math.floor(Math.random() * normalPool.length)] : null;
                 if (lvl >= 20 && Math.random() < 0.15) {
                     const restrictedPool = Object.keys(RPG_RECIPES).filter(name => RPG_RECIPES[name].restricted && !state.player.knownRecipes.includes(name));
                     if (restrictedPool.length) recipeToGive = restrictedPool[Math.floor(Math.random() * restrictedPool.length)];
                 }
-                if (state.player.knownRecipes.includes(recipeToGive)) {
-                    // 已經學過這道食譜了，改給金幣，不會白白浪費這個寶箱
+                if (!recipeToGive) {
+                    // 食譜都學過了，改給金幣，不會白白浪費這個寶箱
                     const fallbackGold = 15 + lvl * 2;
                     state.player.gold += fallbackGold;
-                    if (box) box.textContent = `📖「${recipeToGive}」你已經學過了，寶箱裡改放了 💰${fallbackGold} 金幣！`;
+                    if (box) box.textContent = `📖 食譜都已經學過了，寶箱裡改放了 💰${fallbackGold} 金幣！`;
                 } else {
                     state.player.knownRecipes.push(recipeToGive);
                     rpgAddScore(50, '獲得新食譜');
                     if (box) box.textContent = `📖 學會了新料理食譜：「${recipeToGive}」！打開🍳烹飪背包就能製作了。`;
                 }
                 playSfx('success');
-            } else if (poi.gold) {
+            } else {
                 // 等級越高，寶箱裡的金幣越多
-                const goldAmt = poi.gold + lvl * 3;
+                const goldAmt = 15 + lvl * 3 + Math.floor(Math.random() * 10);
                 state.player.gold += goldAmt;
                 if (box) box.textContent = `🔍 找到了 💰${goldAmt} 金幣！`;
                 playSfx('success');
-            } else {
-                if (box) box.textContent = '🔍 仔細找過了，這裡什麼都沒有…';
             }
             if (sp) rpgBurstParticle('star', { x: sp.x, y: sp.y, count: 4, size: 22, duration: 0.6, dist: 4, distVar: 8, filter: 'sepia(1) hue-rotate(10deg) saturate(4) brightness(1.2)' });
         }
