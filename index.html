@@ -3021,7 +3021,7 @@
             const atk = Math.round((2 + lvl * 1.6) * (isBoss ? 1.25 : 1));
             const def = Math.round(lvl * 0.9 * (isBoss ? 1.3 : 1));
             const agi = Math.round(3 + lvl * 0.7);
-            const sp = Math.round(6 + lvl * 1.2);
+            const sp = Math.round((6 + lvl * 1.2) * (isBoss ? 3 : 1));
             const exp = Math.round(lvl * 5 * (isBoss ? 5 : 1));
             const gold = Math.round(lvl * 3 * (isBoss ? 6 : 1));
             return { level: lvl, hp, atk, def, agi, sp, exp, gold };
@@ -3194,6 +3194,9 @@
             else if (pattern === 'row_pierce') coords = [[targetRow, targetIdx], [otherRow, targetIdx]];
             else if (pattern === 'column_adjacent') coords = [[targetRow, targetIdx - 1], [targetRow, targetIdx], [targetRow, targetIdx + 1]];
             else if (pattern === 'column_adjacent_pierce') coords = [[targetRow, targetIdx - 1], [targetRow, targetIdx], [targetRow, targetIdx + 1], [otherRow, targetIdx]];
+            else if (pattern === 'column_2') { const other = targetIdx < 3 ? targetIdx + 1 : targetIdx - 1; coords = [[targetRow, targetIdx], [targetRow, other]]; }
+            else if (pattern === 'column_4') coords = [[targetRow, 0], [targetRow, 1], [targetRow, 2], [targetRow, 3]];
+            else if (pattern === 'square_4') { const other = targetIdx < 3 ? targetIdx + 1 : targetIdx - 1; coords = [[targetRow, targetIdx], [targetRow, other], [otherRow, targetIdx], [otherRow, other]]; }
             else coords = [[targetRow, targetIdx]]; // single
             return coords.map(([r, i]) => get(r, i)).filter(Boolean);
         }
@@ -4557,20 +4560,43 @@
                     : `<div class="text-xl" style="${bossFx}">${obj.emoji}</div>`;
             }
             const hpPct = Math.max(0, Math.round(curHp / maxHp * 100));
-            const spPct = isPlayerObj ? Math.max(0, Math.round(obj.sp / obj.maxSp * 100)) : null;
+            const spPct = isPlayerObj
+                ? Math.max(0, Math.round(obj.sp / obj.maxSp * 100))
+                : (obj.sp ? Math.max(0, Math.round((obj.curSp || 0) / obj.sp * 100)) : null);
             const interactive = b.phase === 'command';
             const clickAttr = interactive ? (isMonster ? `onclick="rpgSelectTarget('${row}', ${i})"` : `onclick="rpgSelectActor('${row}', ${i})"`) : '';
             return `
                 <div id="${domId}" ${clickAttr} class="rpg-combat-slot" style="width:${RPG_SLOT}px; cursor:${interactive ? 'pointer' : 'default'}; text-align:center; transition:opacity .5s, transform .5s, filter .12s; ${isDead ? 'opacity:0;' : (isQueued ? 'opacity:0.45;' : '')}">
                     <div style="height:8px; line-height:8px; font-size:8px;">${isTarget ? '▼' : (isQueued ? '✓' : (isActor ? '●' : ''))}</div>
-                    <div style="border-radius:0.4rem; ${isTarget || isActor ? 'background:rgba(196,69,63,0.15); box-shadow:0 0 0 1.5px var(--jam);' : ''}">${visual}</div>
+                    <div style="position:relative; border-radius:0.4rem; ${isTarget || isActor ? 'background:rgba(196,69,63,0.15); box-shadow:0 0 0 1.5px var(--jam);' : ''}">${visual}${rpgStatusBuffIconsHTML(obj, domId)}</div>
                     <div style="height:4px; border-radius:999px; overflow:hidden; background:var(--line); margin-top:2px;">
                         <div id="${domId}-hp" style="height:100%; width:${hpPct}%; background:${isPlayerObj ? 'var(--sage)' : '#C4453F'}; transition:width .3s;"></div>
                     </div>
-                    ${isPlayerObj ? `<div style="height:3px; border-radius:999px; overflow:hidden; background:var(--line); margin-top:1px;">
+                    ${spPct !== null ? `<div style="height:3px; border-radius:999px; overflow:hidden; background:var(--line); margin-top:1px;">
                         <div id="${domId}-sp" style="height:100%; width:${spPct}%; background:#7B9FD1; transition:width .3s;"></div>
                     </div>` : ''}
                 </div>`;
+        }
+        // 異常狀態/buff 的小圖示：疊在角色圖案左上角，一排放不下就自然往右延伸出去（不會換行擠壓角色圖案）
+        function rpgStatusBuffIconsHTML(obj, domId) {
+            return `<div id="${domId}-icons" style="position:absolute; top:1px; left:1px; display:flex; flex-wrap:nowrap; gap:1px; z-index:2; pointer-events:none; width:max-content;">${rpgStatusBuffIconsInner(obj)}</div>`;
+        }
+        function rpgStatusBuffIconsInner(obj) {
+            const icons = [];
+            if (obj.statuses) {
+                Object.keys(RPG_STATUS_INFO).forEach(key => {
+                    if (obj.statuses[key] > 0) icons.push(RPG_STATUS_INFO[key].emoji);
+                });
+            }
+            if (obj.buffs) {
+                Object.keys(obj.buffs).forEach(key => {
+                    if (key === 'defBuffPct') icons.push(obj.buffs[key].value >= 0 ? '🛡️' : '💢');
+                    else if (key === 'atkBuffPct' || key === 'atkBuffMult') icons.push('⚔️');
+                    else if (key === 'agiBuffPct') icons.push('💨');
+                    else if (key === 'regenPct') icons.push('💚');
+                });
+            }
+            return icons.map(e => `<span style="font-size:8px; line-height:1; background:rgba(255,255,255,0.8); border-radius:2px; padding:0.5px 1px;">${e}</span>`).join('');
         }
 
         function rpgFormationColumnHTML(side, formation, rowKey) {
@@ -4990,14 +5016,22 @@
             const b = state.battle;
             if (!b) return;
             rpgFormationEntries(b.monsterFormation).forEach(({ row, i, obj }) => {
-                const bar = document.getElementById(`rpg-slot-monster-${row}-${i}-hp`);
+                const domId = `rpg-slot-monster-${row}-${i}`;
+                const bar = document.getElementById(`${domId}-hp`);
                 if (bar) bar.style.width = Math.max(0, Math.round(obj.curHp / obj.hp * 100)) + '%';
+                const spBar = document.getElementById(`${domId}-sp`);
+                if (spBar && obj.sp) spBar.style.width = Math.max(0, Math.round((obj.curSp || 0) / obj.sp * 100)) + '%';
+                const icons = document.getElementById(`${domId}-icons`);
+                if (icons) icons.innerHTML = rpgStatusBuffIconsInner(obj);
             });
             rpgFormationEntries(b.partyFormation).forEach(({ row, i, obj }) => {
-                const hpBar = document.getElementById(`rpg-slot-party-${row}-${i}-hp`);
+                const domId = `rpg-slot-party-${row}-${i}`;
+                const hpBar = document.getElementById(`${domId}-hp`);
                 if (hpBar) hpBar.style.width = Math.max(0, Math.round(obj.hp / obj.maxHp * 100)) + '%';
-                const spBar = document.getElementById(`rpg-slot-party-${row}-${i}-sp`);
+                const spBar = document.getElementById(`${domId}-sp`);
                 if (spBar) spBar.style.width = Math.max(0, Math.round(obj.sp / obj.maxSp * 100)) + '%';
+                const icons = document.getElementById(`${domId}-icons`);
+                if (icons) icons.innerHTML = rpgStatusBuffIconsInner(obj);
             });
             rpgRefreshActionPanel();
         }
@@ -5208,6 +5242,17 @@
 
 
         // 依照這隻怪物的「攻擊喜好」挑我方目標：血少優先／血多優先／完全隨機／偏好特定站位（沒人在那格就改隨機）
+        // 35 級以上的「小怪」（不含魔王）有 2% 機率會使出這些多體攻擊技能，觸發後照 chance 權重抽一種；
+        // 倍率都是 1（跟一般攻擊差不多，強項在打到多個目標，不是單體傷害特別高）
+        const RPG_MONSTER_SKILLS = [
+            { name: '前後夾擊', sp: 15, mult: 1, pattern: 'row_pierce', chance: 0.25 },
+            { name: '連環雙擊', sp: 15, mult: 1, pattern: 'column_2', chance: 0.25 },
+            { name: '貫穿三重奏', sp: 18, mult: 1, pattern: 'column_adjacent', chance: 0.15 },
+            { name: '十字風暴', sp: 33, mult: 1, pattern: 'column_adjacent_pierce', chance: 0.10 },
+            { name: '縱列橫掃', sp: 33, mult: 1, pattern: 'column_4', chance: 0.10 },
+            { name: '方陣衝擊', sp: 33, mult: 1, pattern: 'square_4', chance: 0.10 },
+            { name: '天崩地裂', sp: 48, mult: 1, pattern: 'all', chance: 0.05 },
+        ];
         function rpgChooseMonsterTarget(monsterObj, aliveMembers) {
             const type = monsterObj.aiType || 'random';
             if (type === 'low_hp') return aliveMembers.reduce((a, b) => (b.obj.hp < a.obj.hp ? b : a));
@@ -5535,14 +5580,24 @@
                     const bossEntryForHeal = rpgFormationEntries(b.monsterFormation).find(e => e.obj.isBoss && e.obj.curHp > 0);
                     const isBossHealerSlot = bossEntryForHeal && !monsterObj.isBoss && bossEntryForHeal.row === entry.row && Math.abs(bossEntryForHeal.i - entry.i) === 1;
                     let actionKind = 'attack';
+                    let multiSkill = null;
                     if (isBossHealerSlot && bossEntryForHeal.obj.curHp < bossEntryForHeal.obj.hp && Math.random() < 0.1) {
                         actionKind = 'healBoss';
                     } else if (monsterObj.isBoss && Math.random() < 0.1) {
                         actionKind = 'groupStatus';
+                    } else if (!monsterObj.isBoss && (monsterObj.level || 0) >= 35 && Math.random() < 0.02) {
+                        // 35 級以上的小怪（魔王不算）2% 機率使出多體攻擊技能，照權重抽是哪一種
+                        const roll = Math.random() * 100;
+                        let cum = 0, picked = null;
+                        for (const sk of RPG_MONSTER_SKILLS) {
+                            cum += sk.chance * 100;
+                            if (roll < cum) { picked = sk; break; }
+                        }
+                        if (picked && monsterObj.curSp >= picked.sp) { actionKind = 'multiAttack'; multiSkill = picked; }
                     } else if ((monsterObj.level || 0) >= 20) {
                         const roll = Math.random();
                         if (roll < 0.2) actionKind = 'status';
-                        else if (roll < 0.5 && monsterObj.curSp >= 5) actionKind = 'skill';
+                        else if (roll < 0.5 && monsterObj.curSp >= 10) actionKind = 'skill';
                     }
                     rpgLungeAttack(monsterDomId, -60, () => {
                         if (actionKind === 'healBoss') {
@@ -5588,9 +5643,38 @@
                             setTimeout(runNext, 500);
                             return;
                         }
+                        if (actionKind === 'multiAttack') {
+                            monsterObj.curSp = Math.max(0, monsterObj.curSp - multiSkill.sp);
+                            const targets = multiSkill.pattern === 'all'
+                                ? rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0)
+                                : rpgResolveSkillTargets(multiSkill.pattern, victim.row, victim.i, b.partyFormation, true);
+                            let totalDmg = 0;
+                            targets.forEach(({ row, i, obj: tObj }) => {
+                                const dmg = Math.max(1, Math.round(monsterObj.atk * multiSkill.mult - rpgEffectiveDef(tObj) + (Math.random() * 3 - 1)));
+                                tObj.hp = Math.max(0, tObj.hp - dmg);
+                                totalDmg += dmg;
+                                const domId = `rpg-slot-party-${row}-${i}`;
+                                rpgFlashHit(domId);
+                                rpgFloatDamage(domId, dmg, '#C4453F');
+                                if (tObj.hp <= 0) {
+                                    const slotEl = document.getElementById(domId);
+                                    if (slotEl) { slotEl.style.opacity = '0'; slotEl.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; }
+                                }
+                            });
+                            rpgLogAppend(`✨ ${monsterObj.name}使出「${multiSkill.name}」，對 ${targets.length} 位隊友造成總共 ${totalDmg} 點傷害！`);
+                            if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                            playSfx('perfect');
+                            if (rpgFormationEntries(b.partyFormation).every(e => e.obj.hp <= 0)) {
+                                setTimeout(() => rpgBattleLose(), 550);
+                                return;
+                            }
+                            updateBattleUI();
+                            setTimeout(runNext, 600);
+                            return;
+                        }
                         let dmg;
                         if (actionKind === 'skill') {
-                            monsterObj.curSp = Math.max(0, monsterObj.curSp - 5);
+                            monsterObj.curSp = Math.max(0, monsterObj.curSp - 10);
                             dmg = Math.max(1, Math.round((monsterObj.atk * 1.4) - rpgEffectiveDef(victim.obj) + (Math.random() * 3 - 1)));
                             rpgLogAppend(`✨ ${monsterObj.name}使出強力技能攻擊${victim.obj.name}，造成 ${dmg} 點傷害！`);
                         } else {
