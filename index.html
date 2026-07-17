@@ -2638,6 +2638,7 @@
         const RPG_CHAR_TILES = {
             player: [0, 5], elder: [1, 6], shop: [0, 7], innkeeper: [1, 7], goblin: [0, 3],
             companion: [1, 8], companion2: [0, 9], companion3: [1, 9], companion4: [0, 10],
+            ingredientShop: [1, 4],
         };
         const RPG_DUNGEON_TILES = {
             slime: [0, 9], mushroom: [3, 10], humanoid: [1, 9], imp: [2, 9], troll: [3, 9],
@@ -2785,7 +2786,7 @@
                 name: '暖廚村',
                 rows: [
                     '########################',
-                    '#......................#',
+                    '#...........H..........#',
                     '#..........PP..........#',
                     '#..##.H....PP....H..##.#',
                     '#..#.......PP.......#..#',
@@ -3086,7 +3087,7 @@
             shop: { name: '食譜商店', icon: '🏪', lines: ['歡迎光臨！我這裡有一些外面找不到的高級食譜喔。'], shop: true },
             elder: { name: '村長', icon: '👴', lines: ['孩子，這個世界失去美味已經好久了……', '往南邊的麥穗平原去看看吧，那裡的魔物最近變得特別暴躁。', '打倒一些怪物、累積經驗，你會慢慢變強的。'] },
             innkeeper: { name: '旅館老闆', icon: '🛏️', lines: ['要不要在這裡休息一下？（幫全隊，包含倒下的夥伴，免費全回復！）'], heal: true },
-            ingredientShop: { name: '食材商店', icon: '🧺', lines: ['歡迎光臨食材行！不管要買還是要賣，通通都算你 1 塊錢一份！'], ingredientShop: true },
+            ingredientShop: { name: '食材商店', icon: '🧺', lines: ['歡迎光臨食材行！買入 2 塊錢一份，賣出算你 1 塊錢一份，公道價！'], ingredientShop: true },
         };
 
         let rpgState = null;
@@ -3216,6 +3217,9 @@
                 row_pierce: '貫穿前後排（同一位置的前後怪一起打）',
                 column_adjacent: '波及上下（連帶打到相鄰的怪）',
                 column_adjacent_pierce: '波及上下＋後方（十字範圍）',
+                column_2: '波及上下其中一格（2體）',
+                column_4: '整排掃過去（前排或後排全部4體）',
+                square_4: '2×2 方陣（上下＋前後4體）',
                 all: '全體攻擊',
                 self: '對自己使用，不用選目標',
                 ally_single: '指定一位夥伴',
@@ -3259,6 +3263,9 @@
             else if (shape === 'row_pierce') { cells[1][0] = true; cells[1][1] = true; }
             else if (shape === 'column_adjacent') { cells[0][0] = true; cells[1][0] = true; cells[2][0] = true; }
             else if (shape === 'column_adjacent_pierce') { cells[0][0] = true; cells[1][0] = true; cells[2][0] = true; cells[1][1] = true; }
+            else if (shape === 'column_2') { cells[1][0] = true; cells[2][0] = true; }
+            else if (shape === 'column_4') { cells[0][0] = true; cells[1][0] = true; cells[2][0] = true; cells[3][0] = true; }
+            else if (shape === 'square_4') { cells[1][0] = true; cells[2][0] = true; cells[1][1] = true; cells[2][1] = true; }
             else if (shape === 'all') cells = cells.map(r => r.map(() => true));
             const rowsHtml = cells.map(r => `<div style="display:flex; gap:2px;">${r.map(on => `<div style="width:9px;height:9px;border-radius:2px;background:${on ? '#C4453F' : '#E8DCC8'};"></div>`).join('')}</div>`).join('');
             return `<div style="display:inline-flex; flex-direction:column; gap:2px; vertical-align:middle; margin-left:6px;">${rowsHtml}</div>`;
@@ -3441,7 +3448,7 @@
             } else {
                 // 真的開新遊戲：把地圖狀態全部重置，不然同一頁玩過一輪之後「開新遊戲」會沿用上一輪寶箱開過、夥伴招募過的狀態
                 Object.values(RPG_MAPS).forEach(m => { Object.values(m.pois || {}).forEach(poi => { poi.found = false; }); });
-                RPG_MAPS.village.npcs = { '6,3': 'shop', '17,3': 'elder', '12,12': 'innkeeper', '4,6': 'ako', '19,6': 'suisui', '4,10': 'laozhou', '19,10': 'alan' };
+                RPG_MAPS.village.npcs = { '6,3': 'shop', '17,3': 'elder', '12,12': 'innkeeper', '4,6': 'ako', '19,6': 'suisui', '4,10': 'laozhou', '19,10': 'alan', '12,1': 'ingredientShop' };
                 // 地圖字元也要一起復原成 'H'，不然同一頁前一輪如果已經招募過夥伴，字元會停在 '.'，變成看不見但還是會擋路的隱形 NPC
                 Object.entries(RPG_MAPS.village.npcs).forEach(([key]) => {
                     const [xStr, yStr] = key.split(',');
@@ -4350,13 +4357,13 @@
                         <div class="flex-1 min-w-0">
                             <p class="font-medium text-sm">${RPG_INGREDIENT_EMOJI[ing] || '🍽️'} ${ing}<span class="text-xs ml-2" style="color:#B3A492">背包裡有 ${owned} 份</span></p>
                         </div>
-                        <button onclick="rpgBuyIngredient('${ing}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${p.gold < 1 ? 'disabled style="opacity:.4"' : ''}>💰1 買入</button>
+                        <button onclick="rpgBuyIngredient('${ing}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${p.gold < 2 ? 'disabled style="opacity:.4"' : ''}>💰2 買入</button>
                         <button onclick="rpgSellIngredient('${ing}')" class="btn-secondary text-xs !px-3 !py-1.5 shrink-0" ${owned < 1 ? 'disabled style="opacity:.4"' : ''}>💰1 賣出</button>
                     </div>`;
             }).join('');
             return `
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
-                <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${rpgState.player.gold}　・　不管買還是賣，任何食材都是 1 塊錢一份</p>
+                <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${rpgState.player.gold}　・　任何食材買入都是 💰2、賣出都是 💰1</p>
                 ${rows}
                 <div style="height:8px;"></div>
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
@@ -4364,8 +4371,8 @@
         }
         function rpgBuyIngredient(name) {
             const p = rpgState.player;
-            if (p.gold < 1) return;
-            p.gold -= 1;
+            if (p.gold < 2) return;
+            p.gold -= 2;
             p.ingredients[name] = (p.ingredients[name] || 0) + 1;
             playSfx('buy');
             document.getElementById('game-modal-body').innerHTML = rpgIngredientShopHTML(`買了 1 份「${name}」！`);
@@ -4755,7 +4762,7 @@
             const info = RPG_ITEM_INFO[name];
             return (info && info.emoji) || '🍲';
         }
-        const RPG_INGREDIENT_EMOJI = { '小麥': '🌾', '雞蛋': '🥚', '菇傘': '🍄', '史萊姆凝膠': '🟢', '哥布林辛香料': '🌶️', '蜂蜜': '🍯', '起司': '🧀', '蔥': '🌱', '薑': '🫚', '蒜': '🧄', '胡椒': '⚫', '奶油': '🧈' };
+        const RPG_INGREDIENT_EMOJI = { '小麥': '🌾', '雞蛋': '🥚', '菇傘': '🍄', '史萊姆凝膠': '🟢', '哥布林辛香料': '🌶️', '蜂蜜': '🍯', '起司': '🧀', '蔥': '🌱', '薑': '🟤', '蒜': '🧄', '胡椒': '⚫', '奶油': '🧈' };
         // 依照「這隻怪物的等級比主角高多少」決定掉落食材的稀有度（差距越大掉的食材越少見）
         function rpgIngredientDropPool(monster, playerLevel) {
             const diff = (monster.level || playerLevel) - playerLevel;
@@ -4921,7 +4928,7 @@
                 const canCook = needEntries.every(([ing, qty]) => (p.ingredients[ing] || 0) >= qty);
                 const needText = needEntries.map(([ing, qty]) => {
                     const owned = p.ingredients[ing] || 0;
-                    return `${rpgIngredientIconHTML(ing)}${ing} x${qty}${owned < qty ? `<span style="color:#C4453F">（現有${owned}）</span>` : ''}`;
+                    return `${rpgIngredientIconHTML(ing)}${ing}(${owned < qty ? `<span style="color:#C4453F">${owned}</span>` : owned}/${qty})`;
                 }).join('、');
                 const effectText = rpgItemEffectText(name);
                 return `
@@ -4977,7 +4984,7 @@
                     const ingredientText = sk.ingredientCost
                         ? `・需要 ${Object.entries(sk.ingredientCost).map(([ing, qty]) => {
                             const owned = p.ingredients[ing] || 0;
-                            return `${rpgIngredientIconHTML(ing)}${ing}×${qty}${owned < qty ? `<span style="color:#C4453F">（現有${owned}）</span>` : ''}`;
+                            return `${rpgIngredientIconHTML(ing)}${ing}(${owned < qty ? `<span style="color:#C4453F">${owned}</span>` : owned}/${qty})`;
                         }).join('、')}`
                         : '';
                     return `
