@@ -209,6 +209,7 @@
                 <div class="flex items-center gap-1 sm:gap-2 shrink-0">
                     <button onclick="showGameModal()" class="text-xl leading-none" style="color:var(--jam)" title="遊戲場" aria-label="遊戲場">🎮</button>
                     <button id="admin-nutrition-btn" onclick="showAdminNutritionModal()" class="hidden btn-secondary !px-2.5 sm:!px-4 !py-2 sm:!py-2.5 text-xs sm:text-sm whitespace-nowrap" title="食材熱量管理">🛠<span class="hidden sm:inline"> 食材熱量管理</span></button>
+                    <button id="admin-orphan-images-btn" onclick="showOrphanedImagesModal()" class="hidden btn-secondary !px-2.5 sm:!px-4 !py-2 sm:!py-2.5 text-xs sm:text-sm whitespace-nowrap" title="孤兒圖片清單">🖼<span class="hidden sm:inline"> 孤兒圖片清單</span></button>
                     <button id="admin-achievements-btn" onclick="showAdminAchievementsModal()" class="hidden btn-secondary !px-2.5 sm:!px-4 !py-2 sm:!py-2.5 text-xs sm:text-sm whitespace-nowrap" title="成就總覽">📋<span class="hidden sm:inline"> 成就總覽</span></button>
                     <div id="user-info" class="flex items-center gap-2 sm:gap-3 shrink-0"></div>
                 </div>
@@ -285,6 +286,20 @@
                 <button onclick="saveAdminNutrition()" class="btn-primary w-full mb-8">💾 儲存這筆食材資料</button>
                 <h3 class="font-display font-semibold text-lg mb-3">目前已收錄／AI 估算過的食材</h3>
                 <div id="admin-nutri-list" class="space-y-2"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 孤兒 Cloudinary 圖片清單（管理者用）-->
+    <div id="orphaned-images-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">🖼 孤兒圖片清單</h2>
+                <button onclick="closeOrphanedImagesModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <p class="text-xs mb-4" style="color:#B3A492">這個網站上傳圖片是用「unsigned upload preset」直接從瀏覽器傳到 Cloudinary，沒有後端伺服器；Cloudinary 刪除圖片一定要用 API Secret 簽名，這個 Secret 不能放進前端程式碼，所以沒辦法在使用者刪圖的當下自動同步刪除 Cloudinary 上的檔案。這裡列出的是使用者刪除/更換過的圖片網址，麻煩定期點連結到 Cloudinary 後台手動刪除，刪除後可以按「標記已處理」從清單移除。</p>
+                <div id="orphaned-images-list" class="space-y-2"></div>
             </div>
         </div>
     </div>
@@ -439,6 +454,21 @@
         const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
         const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
         const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+        // 這個網站的圖片是用「unsigned upload preset」直接從瀏覽器上傳到 Cloudinary，沒有後端伺服器。
+        // Cloudinary 刪除圖片一定要用 API Secret 簽名的請求，這個 Secret 絕對不能放進前端程式碼（放了誰都能刪光整個帳號的圖），
+        // 所以沒辦法在這個純前端網站裡直接、安全地在使用者刪圖時同步刪除 Cloudinary 上的檔案。
+        // 折衷做法：把「被移除掉的圖片網址」記錄下來，方便之後手動或用有 Secret 保護的後端批次清掉。
+        function logOrphanedCloudinaryImage(url, reason) {
+            if (!url || !db) return;
+            try {
+                db.collection('orphanedCloudinaryImages').add({
+                    url, reason,
+                    userId: currentUser ? currentUser.uid : null,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                }).catch(err => console.warn('記錄孤兒圖片失敗', err && err.message));
+            } catch (err) { console.warn('記錄孤兒圖片失敗', err && err.message); }
+        }
 
         let selectedImageFile = null; // 使用者本次選擇要上傳的新圖片
         let currentImageUrl = '';     // 目前食譜的圖片網址(編輯時保留舊圖用)
@@ -5671,6 +5701,11 @@
                 adminBtn.classList.toggle('hidden', !isAdmin());
                 adminBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
             }
+            const adminOrphanBtn = document.getElementById('admin-orphan-images-btn');
+            if (adminOrphanBtn) {
+                adminOrphanBtn.classList.toggle('hidden', !isAdmin());
+                adminOrphanBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
+            }
             const adminAchBtn = document.getElementById('admin-achievements-btn');
             if (adminAchBtn) {
                 adminAchBtn.classList.toggle('hidden', !isAdmin());
@@ -6678,6 +6713,49 @@
             consumeModalHistoryState(fromPopState);
         }
 
+        function showOrphanedImagesModal() {
+            if (!isAdmin()) return;
+            document.getElementById('orphaned-images-modal').classList.remove('hidden');
+            loadOrphanedImagesList();
+            pushModalHistoryState();
+        }
+        function closeOrphanedImagesModal(fromPopState) {
+            document.getElementById('orphaned-images-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
+        }
+        async function loadOrphanedImagesList() {
+            const list = document.getElementById('orphaned-images-list');
+            if (!list) return;
+            list.innerHTML = `<p class="text-sm" style="color:#B3A492">載入中…</p>`;
+            try {
+                const snap = await db.collection('orphanedCloudinaryImages').orderBy('createdAt', 'desc').limit(100).get();
+                if (snap.empty) { list.innerHTML = `<p class="text-sm" style="color:#B3A492">目前沒有待處理的孤兒圖片！</p>`; return; }
+                list.innerHTML = snap.docs.map(doc => {
+                    const d = doc.data();
+                    const time = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate().toLocaleString('zh-TW') : '';
+                    return `
+                        <div class="flex items-center gap-3 px-4 py-2.5 rounded-2xl" style="background:var(--cream)">
+                            <img src="${d.url}" class="w-12 h-12 object-cover rounded-xl shrink-0" style="border:1px solid var(--line)" loading="lazy">
+                            <div class="flex-1 min-w-0">
+                                <a href="${d.url}" target="_blank" class="text-xs underline break-all" style="color:var(--jam)">${d.url}</a>
+                                <p class="text-xs mt-0.5" style="color:#B3A492">${d.reason || ''}${time ? '　・　' + time : ''}</p>
+                            </div>
+                            <button onclick="markOrphanedImageHandled('${doc.id}')" class="btn-secondary !px-3 !py-1.5 text-xs shrink-0">標記已處理</button>
+                        </div>`;
+                }).join('');
+            } catch (err) {
+                list.innerHTML = `<p class="text-sm" style="color:#C4453F">載入失敗：${err.message}</p>`;
+            }
+        }
+        async function markOrphanedImageHandled(docId) {
+            try {
+                await db.collection('orphanedCloudinaryImages').doc(docId).delete();
+                loadOrphanedImagesList();
+            } catch (err) {
+                alert('標記失敗：' + err.message);
+            }
+        }
+
         // 把「關聯關鍵字」輸入框的文字（逗號或頓號分隔）整理成陣列，並自動把主要名稱也加進去，
         // 確保用主要名稱查詢時一定找得到
         function parseAdminKeywords(name) {
@@ -7336,6 +7414,11 @@
         function deleteRecipe(recipe) {
             if (!canEditRecipe(recipe)) { alert("你沒有權限刪除這個食譜"); return; }
             if (confirm("確定刪除此食譜？")) {
+                if (recipe.imageUrl) logOrphanedCloudinaryImage(recipe.imageUrl, '刪除食譜（主圖）');
+                (recipe.steps || []).forEach(s => {
+                    const stepImageUrl = typeof s === 'string' ? null : (s && s.imageUrl);
+                    if (stepImageUrl) logOrphanedCloudinaryImage(stepImageUrl, '刪除食譜（步驟圖片）');
+                });
                 db.collection("recipes").doc(recipe.id).delete().then(() => {
                     alert("食譜已刪除");
                     closeDetail();
@@ -7394,6 +7477,7 @@
         }
 
         function removeSelectedImage() {
+            if (currentImageUrl) logOrphanedCloudinaryImage(currentImageUrl, '使用者移除食譜主圖');
             selectedImageFile = null;
             currentImageUrl = '';
             document.getElementById('image-file-input').value = '';
@@ -7510,6 +7594,7 @@
             }
             const wrap = document.getElementById(`step-image-preview-wrap-${idx}`);
             const previewImg = document.getElementById(`step-image-preview-${idx}`);
+            const oldStepImageUrl = document.getElementById(`step-image-${idx}`).value; // 先記住舊的，等新圖上傳成功才記錄成孤兒圖片
             const reader = new FileReader();
             reader.onload = e => {
                 previewImg.src = e.target.result;
@@ -7520,12 +7605,15 @@
             uploadImageToCloudinary(file).then(url => {
                 document.getElementById(`step-image-${idx}`).value = url;
                 previewImg.src = url;
+                if (oldStepImageUrl) logOrphanedCloudinaryImage(oldStepImageUrl, '使用者換掉步驟圖片');
             }).catch(err => {
                 alert('步驟圖片上傳失敗：' + err.message);
             });
         }
 
         function removeStepImage(idx) {
+            const oldUrl = document.getElementById(`step-image-${idx}`).value;
+            if (oldUrl) logOrphanedCloudinaryImage(oldUrl, '使用者移除步驟圖片');
             document.getElementById(`step-image-${idx}`).value = '';
             document.getElementById(`step-image-file-${idx}`).value = '';
             document.getElementById(`step-image-preview-wrap-${idx}`).classList.add('hidden');
@@ -7566,8 +7654,10 @@
             if (selectedImageFile) {
                 saveBtn.textContent = '📤 圖片上傳中...';
                 saveBtn.disabled = true;
+                const oldImageUrl = currentImageUrl; // 先記住舊圖網址，等一下上傳成功、確定要換掉了才記錄成孤兒圖片
                 try {
                     imageUrl = await uploadImageToCloudinary(selectedImageFile);
+                    if (oldImageUrl) logOrphanedCloudinaryImage(oldImageUrl, '使用者換掉食譜主圖');
                 } catch (err) {
                     alert('圖片上傳失敗：' + err.message);
                     saveBtn.textContent = originalBtnText;
