@@ -175,6 +175,12 @@
         }
         .dash-shake { animation: dashShake 0.5s ease-in-out 2; }
 
+        /* 廚房挑戰賽・烘焙賽道：節奏拌料的圓圈長大動畫 */
+        @keyframes dashRhythmGrow {
+            0% { width: 20px; height: 20px; opacity: 0.9; }
+            100% { width: 172px; height: 172px; opacity: 0.5; }
+        }
+
         /* 神廚火候控制：完美區間的發光呼吸動畫 */
         @keyframes qteZoneGlow {
             0%, 100% { filter: brightness(1); }
@@ -1049,7 +1055,7 @@
                 <button onclick="playSfx('click'); startDashGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:linear-gradient(135deg, #E8F0E4, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
                     <div class="text-4xl mb-2">🍽️</div>
                     <p class="font-display font-bold text-lg">虛擬廚房挑戰賽</p>
-                    <p class="text-xs mt-1" style="color:#B3A492">切菜＋火候控制，過關後還會推薦同分類的真食譜給你！</p>
+                    <p class="text-xs mt-1" style="color:#B3A492">隨機抽到的菜色不同，玩法也不一樣：快炒要切菜顧火、烘焙要抓節奏顧烤箱、冷藏甜點要搶時間擺盤！過關後還會推薦同分類的真食譜給你。</p>
                 </button>
                 <button onclick="playSfx('click'); startDinerGame()" class="w-full p-5 rounded-2xl text-left mb-4" style="background:linear-gradient(135deg, #EAE2F2, var(--cream)); border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s;">
                     <div class="text-4xl mb-2">🌙</div>
@@ -1365,17 +1371,21 @@
         }
 
         // ---------- 虛擬廚房挑戰賽（切菜 → 火候 → 結算，過關後推薦同分類真食譜）----------
+        // 虛擬廚房挑戰賽：依料理種類分成三條不同玩法的賽道，抽到不同菜會玩到完全不一樣的小遊戲
+        //   stir（快炒烹飪：中/西/日式、其他）  → 切菜 + 火候控制
+        //   bake（烘焙：蛋糕/麵包/餅乾塔派）    → 節奏拌料 + 烤箱蓄熱計時
+        //   chill（冷藏組裝：健康餐/慕斯布丁/寶寶食品）→ 食材擺盤 + 裝飾加分
         const DASH_DISHES = [
-            { name: '奶油炒野菇', category: '西式烹飪', ingredients: ['🍄', '🧈', '🧄', '🌿'] },
-            { name: '蔥爆牛肉', category: '中式烹飪', ingredients: ['🥩', '🧅', '🧄', '🌶️'] },
-            { name: '照燒雞腿', category: '日式烹飪', ingredients: ['🍗', '🧅', '🍯', '🌰'] },
-            { name: '田園蔬菜沙拉', category: '健康餐', ingredients: ['🥬', '🍅', '🥕', '🧀'] },
-            { name: '蜂蜜檸檬磅蛋糕', category: '蛋糕/糕餅', ingredients: ['🍋', '🍯', '🥚', '🧈'] },
-            { name: '蒜香奶油餐包', category: '麵包/包子', ingredients: ['🌾', '🧈', '🧄', '🥛'] },
-            { name: '檸檬奶酥塔', category: '餅乾/塔派', ingredients: ['🍋', '🧈', '🌾', '🥚'] },
-            { name: '芒果奶酪', category: '慕斯/布丁', ingredients: ['🥭', '🍮', '🥛', '🍯'] },
-            { name: '南瓜蔬菜泥', category: '寶寶食品', ingredients: ['🎃', '🥕', '🍚', '🍌'] },
-            { name: '私房萬用醬料', category: '其他', ingredients: ['🧄', '🌶️', '🍯', '🧂'] },
+            { name: '奶油炒野菇', category: '西式烹飪', track: 'stir', ingredients: ['🍄', '🧈', '🧄', '🌿'] },
+            { name: '蔥爆牛肉', category: '中式烹飪', track: 'stir', ingredients: ['🥩', '🧅', '🧄', '🌶️'] },
+            { name: '照燒雞腿', category: '日式烹飪', track: 'stir', ingredients: ['🍗', '🧅', '🍯', '🌰'] },
+            { name: '田園蔬菜沙拉', category: '健康餐', track: 'chill', ingredients: ['🥬', '🍅', '🥕', '🧀'] },
+            { name: '蜂蜜檸檬磅蛋糕', category: '蛋糕/糕餅', track: 'bake', ingredients: ['🍋', '🍯', '🥚', '🧈'] },
+            { name: '蒜香奶油餐包', category: '麵包/包子', track: 'bake', ingredients: ['🌾', '🧈', '🧄', '🥛'] },
+            { name: '檸檬奶酥塔', category: '餅乾/塔派', track: 'bake', ingredients: ['🍋', '🧈', '🌾', '🥚'] },
+            { name: '芒果奶酪', category: '慕斯/布丁', track: 'chill', ingredients: ['🥭', '🍮', '🥛', '🍯'] },
+            { name: '南瓜蔬菜泥', category: '寶寶食品', track: 'chill', ingredients: ['🎃', '🥕', '🍚', '🍌'] },
+            { name: '私房萬用醬料', category: '其他', track: 'stir', ingredients: ['🧄', '🌶️', '🍯', '🧂'] },
         ];
         let dashGameState = null;
 
@@ -1383,7 +1393,12 @@
             if (dashGameState) {
                 if (dashGameState.chopTimeoutId) clearTimeout(dashGameState.chopTimeoutId);
                 if (dashGameState.heatRafId) cancelAnimationFrame(dashGameState.heatRafId);
+                if (dashGameState.rhythmTimeoutId) clearTimeout(dashGameState.rhythmTimeoutId);
+                if (dashGameState.ovenRafId) cancelAnimationFrame(dashGameState.ovenRafId);
+                if (dashGameState.platingTimerId) clearTimeout(dashGameState.platingTimerId);
+                if (dashGameState.garnishTimers) dashGameState.garnishTimers.forEach(t => clearTimeout(t));
                 dashGameState.heatRunning = false;
+                dashGameState.ovenRunning = false;
             }
             dashGameState = null;
         }
@@ -1393,21 +1408,33 @@
             qteCleanup(); stockGameCleanup(); dashGameCleanup();
             ensureAudioContext(); // 在按下「開始」這個真正的點擊當下解鎖音效
             const dish = DASH_DISHES[Math.floor(Math.random() * DASH_DISHES.length)];
-            dashGameState = { dish, chopIndex: 0, chopHits: 0, chopTotal: dish.ingredients.length, chopResolved: false, chopTimeoutId: null, heatRunning: false, heatSuccess: false, heatRafId: null };
-            renderDashChopRound();
+            dashGameState = {
+                dish,
+                primaryHits: 0, primaryTotal: dish.ingredients.length, // 三條賽道共用：第一階段命中數/總數
+                secondaryHits: 0, secondaryTotal: 1,                    // 三條賽道共用：第二階段命中數/總數
+                chopIndex: 0, chopResolved: false, chopTimeoutId: null,
+                heatRunning: false, heatRafId: null,
+                rhythmIndex: 0, rhythmResolved: false, rhythmTimeoutId: null,
+                ovenRunning: false, ovenRafId: null, ovenLevel: 0,
+                platingPlaced: {}, platingTimeLeft: 6.0, platingTimerId: null,
+                garnishHits: 0, garnishTotal: 4, garnishActive: -1, garnishRound: 0, garnishTimers: [],
+            };
+            if (dish.track === 'bake') renderDashRhythmRound();
+            else if (dish.track === 'chill') renderDashPlatingRound();
+            else renderDashChopRound();
         }
 
-        // 階段一：備料切菜——食材依序出現，消失前點一下才算切到
+        // ============== 賽道 A・快炒烹飪：切菜 + 火候控制 ==============
         function renderDashChopRound() {
             const state = dashGameState;
             if (!state) return;
-            if (state.chopIndex >= state.chopTotal) { startDashHeat(); return; }
+            if (state.chopIndex >= state.primaryTotal) { startDashHeat(); return; }
             const dish = state.dish;
             const emoji = dish.ingredients[state.chopIndex];
             state.chopResolved = false;
             document.getElementById('game-modal-title').textContent = `🔪 備料切菜（${dish.name}）`;
             document.getElementById('game-modal-body').innerHTML = `
-                <p class="text-center text-sm mb-2" style="color:#B3A492">第 ${state.chopIndex + 1}/${state.chopTotal} 項食材 ・ 命中 <span style="color:var(--jam); font-weight:600">${state.chopHits}</span></p>
+                <p class="text-center text-sm mb-2" style="color:#B3A492">第 ${state.chopIndex + 1}/${state.primaryTotal} 項食材 ・ 命中 <span style="color:var(--jam); font-weight:600">${state.primaryHits}</span></p>
                 <div class="flex justify-center items-center rounded-3xl" style="height:200px; background:radial-gradient(circle, rgba(244,228,234,0.6), transparent 70%);">
                     <button onclick="dashChopHit()" class="text-7xl" style="animation: dashPop 0.9s linear forwards; filter:drop-shadow(0 6px 10px rgba(58,42,30,0.25));">${emoji}</button>
                 </div>
@@ -1427,14 +1454,13 @@
             if (!state || state.chopResolved) return;
             state.chopResolved = true;
             clearTimeout(state.chopTimeoutId);
-            state.chopHits++;
+            state.primaryHits++;
             playSfx('chop');
             if (navigator.vibrate) navigator.vibrate([30]);
             state.chopIndex++;
             setTimeout(renderDashChopRound, 200);
         }
 
-        // 階段二：火候控制（沿用神廚火候控制的移動指針機制，這裡只需要一次判定）
         function startDashHeat() {
             const state = dashGameState;
             if (!state) return;
@@ -1470,22 +1496,213 @@
             if (!state || !state.heatRunning) return;
             state.heatRunning = false;
             if (state.heatRafId) cancelAnimationFrame(state.heatRafId);
-            state.heatSuccess = state.heatPosition >= state.heatZoneStart && state.heatPosition <= state.heatZoneStart + state.heatZoneWidth;
-            playSfx(state.heatSuccess ? 'success' : 'burnt');
-            if (navigator.vibrate) navigator.vibrate(state.heatSuccess ? [60] : [150, 60, 150]);
+            const success = state.heatPosition >= state.heatZoneStart && state.heatPosition <= state.heatZoneStart + state.heatZoneWidth;
+            state.secondaryHits = success ? 1 : 0;
+            playSfx(success ? 'success' : 'burnt');
+            if (navigator.vibrate) navigator.vibrate(success ? [60] : [150, 60, 150]);
             finishDashGame();
         }
 
-        // 結算：依切菜命中率＋火候成功與否評分，燒焦時有搞笑抖動動畫，並推薦同分類真食譜
+        // ============== 賽道 B・烘焙：節奏拌料 + 烤箱蓄熱計時 ==============
+        const DASH_RHYTHM_TOTAL = 5;
+        function renderDashRhythmRound() {
+            const state = dashGameState;
+            if (!state) return;
+            if (state.rhythmIndex >= DASH_RHYTHM_TOTAL) { startDashOven(); return; }
+            state.rhythmResolved = false;
+            document.getElementById('game-modal-title').textContent = `🥣 節奏拌料（${state.dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-center text-sm mb-2" style="color:#B3A492">第 ${state.rhythmIndex + 1}/${DASH_RHYTHM_TOTAL} 下 ・ 命中 <span style="color:var(--jam); font-weight:600">${state.primaryHits}</span></p>
+                <div class="flex justify-center items-center" style="height:200px;">
+                    <div style="position:relative; width:172px; height:172px;">
+                        <div style="position:absolute; inset:0; border-radius:999px; border:4px solid var(--honey);"></div>
+                        <div id="dash-rhythm-ring" style="position:absolute; inset:0; margin:auto; width:20px; height:20px; border-radius:999px; background:var(--jam); animation:dashRhythmGrow 1.15s linear forwards;"></div>
+                    </div>
+                </div>
+                <button onclick="dashRhythmTap()" class="btn-primary w-full mt-4 text-lg">🥄 攪拌！</button>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-2">放棄遊戲</button>
+            `;
+            state.rhythmTimeoutId = setTimeout(() => {
+                if (state.rhythmResolved) return;
+                state.rhythmResolved = true;
+                playSfx('fail');
+                state.rhythmIndex++;
+                setTimeout(renderDashRhythmRound, 200);
+            }, 1200);
+        }
+        function dashRhythmTap() {
+            const state = dashGameState;
+            if (!state || state.rhythmResolved) return;
+            const ring = document.getElementById('dash-rhythm-ring');
+            if (!ring) return;
+            const size = ring.getBoundingClientRect().width;
+            // 圓圈長到接近外框（172px）時點下去才算準
+            const hit = size >= 128 && size <= 172;
+            state.rhythmResolved = true;
+            clearTimeout(state.rhythmTimeoutId);
+            if (hit) { state.primaryHits++; playSfx('chop'); if (navigator.vibrate) navigator.vibrate([30]); }
+            else { playSfx('fail'); }
+            state.rhythmIndex++;
+            setTimeout(renderDashRhythmRound, 200);
+        }
+
+        function startDashOven() {
+            const state = dashGameState;
+            if (!state) return;
+            state.ovenLevel = 0;
+            state.ovenRunning = false;
+            state.ovenZoneStart = 55 + Math.random() * 15; // 目標區間偏高，烤箱要蓄熱到一定程度才好
+            state.ovenZoneWidth = 14;
+            document.getElementById('game-modal-title').textContent = `🔥 烤箱計時（${state.dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-center text-sm mb-4" style="color:var(--jam)">按住「加熱」蓄熱，熱度進到綠色區間時放開！</p>
+                <div style="position:relative; height:200px; width:60px; margin:0 auto; border-radius:999px; overflow:hidden; background:linear-gradient(180deg, #E4DACB, #EFEAE0); box-shadow:inset 0 2px 6px rgba(58,42,30,0.15);">
+                    <div style="position:absolute; left:0; right:0; bottom:${state.ovenZoneStart}%; height:${state.ovenZoneWidth}%; background:linear-gradient(180deg, #7FAE7F, #9BC49B); box-shadow:0 0 14px 2px rgba(111,140,110,0.55); animation:qteZoneGlow 1.1s ease-in-out infinite;"></div>
+                    <div id="dash-oven-fill" style="position:absolute; left:0; right:0; bottom:0; height:0%; background:linear-gradient(180deg, #E8A33D, #C4453F);"></div>
+                </div>
+                <button id="dash-oven-btn" class="btn-primary w-full mt-6 text-lg select-none" style="touch-action:none;">🔥 按住加熱</button>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-2">放棄遊戲</button>
+            `;
+            const btn = document.getElementById('dash-oven-btn');
+            if (btn) {
+                btn.addEventListener('pointerdown', e => { e.preventDefault(); dashOvenStart(); });
+                btn.addEventListener('pointerup', e => { e.preventDefault(); dashOvenRelease(); });
+                btn.addEventListener('pointerleave', e => { e.preventDefault(); dashOvenRelease(); });
+            }
+        }
+        function dashOvenStart() {
+            const state = dashGameState;
+            if (!state || state.ovenRunning) return;
+            state.ovenRunning = true;
+            dashOvenLoop();
+        }
+        function dashOvenLoop() {
+            const state = dashGameState;
+            if (!state || !state.ovenRunning) return;
+            state.ovenLevel = Math.min(100, state.ovenLevel + 1.8);
+            const fill = document.getElementById('dash-oven-fill');
+            if (fill) fill.style.height = state.ovenLevel + '%';
+            if (state.ovenLevel >= 100) { dashOvenRelease(); return; }
+            state.ovenRafId = requestAnimationFrame(dashOvenLoop);
+        }
+        function dashOvenRelease() {
+            const state = dashGameState;
+            if (!state || !state.ovenRunning) return;
+            state.ovenRunning = false;
+            if (state.ovenRafId) cancelAnimationFrame(state.ovenRafId);
+            const success = state.ovenLevel >= state.ovenZoneStart && state.ovenLevel <= state.ovenZoneStart + state.ovenZoneWidth;
+            state.secondaryHits = success ? 1 : 0;
+            playSfx(success ? 'success' : 'burnt');
+            if (navigator.vibrate) navigator.vibrate(success ? [60] : [150, 60, 150]);
+            finishDashGame();
+        }
+
+        // ============== 賽道 C・冷藏組裝：食材擺盤 + 裝飾加分 ==============
+        function renderDashPlatingRound() {
+            const state = dashGameState;
+            if (!state) return;
+            state.platingPlaced = {};
+            state.platingTimeLeft = 6.0;
+            document.getElementById('game-modal-title').textContent = `🍽️ 食材擺盤（${state.dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = dashPlatingHTML();
+            dashPlatingTimerLoop();
+        }
+        function dashPlatingHTML() {
+            const state = dashGameState;
+            const dish = state.dish;
+            const positions = [{ top: '10%', left: '50%' }, { top: '50%', left: '87%' }, { top: '88%', left: '50%' }, { top: '50%', left: '13%' }];
+            const slotsHtml = dish.ingredients.map((emoji, i) => {
+                const placed = !!state.platingPlaced[i];
+                const pos = positions[i] || positions[0];
+                return `<button ${placed ? 'disabled' : `onclick="dashPlatingPlace(${i})"`} style="position:absolute; top:${pos.top}; left:${pos.left}; transform:translate(-50%,-50%); width:56px; height:56px; border-radius:999px; border:2px dashed ${placed ? 'var(--sage)' : '#D9C9A8'}; background:${placed ? 'rgba(159,196,159,0.3)' : 'rgba(255,255,255,0.6)'}; display:flex; align-items:center; justify-content:center; font-size:1.6rem;">${placed ? emoji : '？'}</button>`;
+            }).join('');
+            return `
+                <p class="text-center text-sm mb-2" style="color:#B3A492">時間內把所有食材點上盤子！剩餘 <span id="dash-plating-timer" style="color:var(--jam); font-weight:600">${state.platingTimeLeft.toFixed(1)}</span> 秒</p>
+                <div style="position:relative; width:220px; height:220px; margin:0 auto 16px; border-radius:999px; background:radial-gradient(circle, rgba(244,228,234,0.6), transparent 70%); border:3px solid var(--paper);">
+                    ${slotsHtml}
+                </div>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full">放棄遊戲</button>
+            `;
+        }
+        function dashPlatingTimerLoop() {
+            const state = dashGameState;
+            if (!state || state.primaryHits >= state.primaryTotal) return;
+            state.platingTimeLeft -= 0.1;
+            const timerEl = document.getElementById('dash-plating-timer');
+            if (timerEl) timerEl.textContent = Math.max(0, state.platingTimeLeft).toFixed(1);
+            if (state.platingTimeLeft <= 0) { startDashGarnish(); return; }
+            state.platingTimerId = setTimeout(dashPlatingTimerLoop, 100);
+        }
+        function dashPlatingPlace(i) {
+            const state = dashGameState;
+            if (!state || state.platingPlaced[i]) return;
+            state.platingPlaced[i] = true;
+            state.primaryHits++;
+            playSfx('chop');
+            if (navigator.vibrate) navigator.vibrate([30]);
+            document.getElementById('game-modal-body').innerHTML = dashPlatingHTML();
+            if (state.primaryHits >= state.primaryTotal) { clearTimeout(state.platingTimerId); setTimeout(startDashGarnish, 300); }
+        }
+
+        function startDashGarnish() {
+            const state = dashGameState;
+            if (!state) return;
+            if (state.platingTimerId) clearTimeout(state.platingTimerId);
+            state.garnishHits = 0;
+            state.garnishTotal = 4;
+            state.garnishActive = -1;
+            state.garnishRound = 0;
+            document.getElementById('game-modal-title').textContent = `✨ 裝飾加分（${state.dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-center text-sm mb-4" style="color:#B3A492">閃光出現時點一下加分！</p>
+                <div style="position:relative; width:220px; height:180px; margin:0 auto;">
+                    ${[0, 1, 2, 3].map(i => `<button id="dash-garnish-${i}" onclick="dashGarnishTap(${i})" style="position:absolute; width:52px; height:52px; border-radius:999px; background:var(--cream); border:2px solid var(--line); transition:background .15s, box-shadow .15s; ${['top:0;left:8%', 'top:0;right:8%', 'bottom:0;left:8%', 'bottom:0;right:8%'][i]}"></button>`).join('')}
+                </div>
+            `;
+            dashGarnishNextFlash();
+        }
+        function dashGarnishNextFlash() {
+            const state = dashGameState;
+            if (!state) return;
+            state.garnishRound++;
+            if (state.garnishRound > state.garnishTotal) { finishDashGame(); return; }
+            const idx = Math.floor(Math.random() * 4);
+            state.garnishActive = idx;
+            const btn = document.getElementById(`dash-garnish-${idx}`);
+            if (btn) { btn.style.background = 'var(--honey)'; btn.style.boxShadow = '0 0 16px 4px rgba(232,163,61,0.6)'; }
+            state.garnishTimers.push(setTimeout(() => {
+                if (state.garnishActive === idx) {
+                    if (btn) { btn.style.background = 'var(--cream)'; btn.style.boxShadow = 'none'; }
+                    state.garnishActive = -1;
+                    dashGarnishNextFlash();
+                }
+            }, 700));
+        }
+        function dashGarnishTap(i) {
+            const state = dashGameState;
+            if (!state || state.garnishActive !== i) return;
+            state.garnishHits++;
+            state.secondaryHits = state.garnishHits;
+            state.secondaryTotal = state.garnishTotal;
+            state.garnishActive = -1;
+            playSfx('chop');
+            if (navigator.vibrate) navigator.vibrate([30]);
+            const btn = document.getElementById(`dash-garnish-${i}`);
+            if (btn) { btn.style.background = 'var(--sage)'; btn.style.boxShadow = 'none'; }
+            setTimeout(dashGarnishNextFlash, 150);
+        }
+
+        // 結算：三條賽道統一用「第一階段命中率(佔60分) + 第二階段命中率(佔30分)」計分，
+        // 燒焦時有搞笑抖動動畫，並推薦同分類真食譜
         function finishDashGame() {
             const state = dashGameState;
             if (!state) return;
-            const chopScore = state.chopHits * 15;
-            const heatScore = state.heatSuccess ? 30 : 0;
-            const score = chopScore + heatScore;
+            const primaryScore = Math.round(state.primaryHits / state.primaryTotal * 60);
+            const secondaryScore = Math.round(state.secondaryHits / state.secondaryTotal * 30);
+            const score = primaryScore + secondaryScore;
             let rating, emoji;
-            if (state.chopHits === state.chopTotal && state.heatSuccess) { rating = '特級料理'; emoji = '✨'; }
-            else if (state.chopHits >= state.chopTotal / 2 || state.heatSuccess) { rating = '普通'; emoji = '🍽️'; }
+            if (state.primaryHits === state.primaryTotal && state.secondaryHits === state.secondaryTotal) { rating = '特級料理'; emoji = '✨'; }
+            else if (state.primaryHits >= state.primaryTotal / 2 || state.secondaryHits >= state.secondaryTotal / 2) { rating = '普通'; emoji = '🍽️'; }
             else { rating = '燒焦了！'; emoji = '🔥😱'; }
             const dish = state.dish;
             dashGameState = null;
