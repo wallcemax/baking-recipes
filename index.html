@@ -2747,6 +2747,13 @@
         RPG_PARTICLE_URLS.smoke = RPG_PARTICLE_URLS.smoke_10;
         RPG_PARTICLE_URLS.magic = RPG_PARTICLE_URLS.magic_05;
         // 在遊戲彈窗正中央噴出一把特效粒子，用 CSS filter 上色（這幾張素材本身是白色/灰階，套色很方便）
+        // options.style 決定動畫「怎麼動」，不是每種特效都用同一種向外噴散：
+        //   'burst'（預設）：向外噴散，一般命中/爆擊/異常狀態用
+        //   'spin'  ：原地旋轉不太位移，適合龍捲風、風之術、水之狂擊這種「原地轉」的技能
+        //   'pierce'：從 options.x/y 直線飛到 options.x2/y2，適合大地鐵壁貫穿這種貫穿前後排、研磨棒投擲這種丟擲的技能
+        //   'slash' ：單次快速橫掃過目標，不旋轉，適合雙刀連擊、抹刀的秘密這種斬擊技能
+        //   'rise'  ：原地往上飄並淡出，適合致命甜心這種浮出愛心符號的技能
+        //   'drop'  ：從目標上方快速砸落，適合怒雷狂擊、光之劍這種由上而下的技能
         function rpgBurstParticle(type, options) {
             options = options || {};
             const url = RPG_PARTICLE_URLS[type];
@@ -2758,22 +2765,121 @@
             const cy = options.y != null ? options.y : rect.height / 3;
             const count = options.count || 6;
             const size = options.size || 46;
+            const style = options.style || 'burst';
+            const duration = options.duration || 0.6;
             const glowFilter = `${options.filter || 'none'} drop-shadow(0 0 3px rgba(255,255,255,0.9)) drop-shadow(0 0 6px rgba(255,255,255,0.5))`;
+
+            if (style === 'pierce') {
+                // 貫穿/投擲：一張圖從起點直線飛到終點，沿途留下淡淡的殘影
+                const x2 = options.x2 != null ? options.x2 : cx;
+                const y2 = options.y2 != null ? options.y2 : cy;
+                const dx = x2 - cx, dy = y2 - cy;
+                const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                for (let i = 0; i < Math.max(2, count); i++) {
+                    const img = document.createElement('img');
+                    img.src = url;
+                    img.style.cssText = `position:absolute; left:${cx}px; top:${cy}px; width:${size}px; height:${size}px; margin:${-size / 2}px; pointer-events:none; z-index:50; opacity:0; filter:${glowFilter}; transform:translate(0px,0px) rotate(${angle}deg) scale(${options.scale || 1});`;
+                    container.appendChild(img);
+                    const delay = i * (duration * 1000 * 0.08);
+                    setTimeout(() => {
+                        img.style.opacity = i === 0 ? '1' : '0.5';
+                        requestAnimationFrame(() => {
+                            img.style.transition = `transform ${duration * 0.7}s linear, opacity ${duration * 0.7}s ease-in`;
+                            img.style.transform = `translate(${dx}px, ${dy}px) rotate(${angle}deg) scale(${options.scale || 1})`;
+                            setTimeout(() => { img.style.opacity = '0'; }, duration * 700);
+                        });
+                    }, delay);
+                    setTimeout(() => img.remove(), duration * 1000 + 300);
+                }
+                return;
+            }
+
+            if (style === 'drop') {
+                // 由上而下砸落：從目標正上方快速落下再閃一下
+                for (let i = 0; i < count; i++) {
+                    const img = document.createElement('img');
+                    img.src = url;
+                    const startY = cy - (size * 1.8);
+                    img.style.cssText = `position:absolute; left:${cx}px; top:${startY}px; width:${size}px; height:${size}px; margin:${-size / 2}px; pointer-events:none; z-index:50; opacity:0; filter:${glowFilter}; transform:scale(0.8) rotate(0deg);`;
+                    container.appendChild(img);
+                    requestAnimationFrame(() => {
+                        img.style.transition = `top ${duration * 0.5}s ease-in, opacity ${duration * 0.5}s ease-in`;
+                        img.style.opacity = '1';
+                        img.style.top = `${cy}px`;
+                        setTimeout(() => {
+                            img.style.transition = `opacity ${duration * 0.4}s ease-out, transform ${duration * 0.4}s ease-out`;
+                            img.style.opacity = '0';
+                            img.style.transform = `scale(${options.scale || 1.3}) rotate(${(Math.random() - 0.5) * 40}deg)`;
+                        }, duration * 500);
+                    });
+                    setTimeout(() => img.remove(), duration * 1000 + 200);
+                }
+                return;
+            }
+
             for (let i = 0; i < count; i++) {
                 const img = document.createElement('img');
                 img.src = url;
-                img.style.cssText = `position:absolute; left:${cx}px; top:${cy}px; width:${size}px; height:${size}px; margin:${-size / 2}px; pointer-events:none; z-index:50; opacity:0; filter:${glowFilter}; transform:scale(0.65) rotate(0deg);`;
-                container.appendChild(img);
-                const angle = Math.random() * Math.PI * 2;
-                const dist = (options.dist || 26) + Math.random() * (options.distVar || 30);
-                const dx = Math.cos(angle) * dist, dy = Math.sin(angle) * dist;
-                requestAnimationFrame(() => {
-                    img.style.transition = `transform ${options.duration || 0.6}s ease-out, opacity ${options.duration || 0.6}s ease-out`;
-                    img.style.opacity = '1';
-                    img.style.transform = `translate(${dx}px, ${dy}px) scale(${options.scale || 1.3}) rotate(${Math.random() * 180}deg)`;
-                    setTimeout(() => { img.style.opacity = '0'; }, (options.duration || 0.6) * 1000 * 0.55);
-                });
-                setTimeout(() => img.remove(), (options.duration || 0.6) * 1000 + 150);
+                if (style === 'spin') {
+                    // 原地旋轉：位移很小，主要靠持續旋轉表現「原地轉」的感覺
+                    const jitterX = (Math.random() - 0.5) * (options.dist || 10);
+                    const jitterY = (Math.random() - 0.5) * (options.dist || 10);
+                    img.style.cssText = `position:absolute; left:${cx}px; top:${cy}px; width:${size}px; height:${size}px; margin:${-size / 2}px; pointer-events:none; z-index:50; opacity:0; filter:${glowFilter}; transform:translate(0px,0px) scale(0.7) rotate(0deg);`;
+                    container.appendChild(img);
+                    requestAnimationFrame(() => {
+                        img.style.transition = `transform ${duration}s linear, opacity ${duration * 0.3}s ease-in`;
+                        img.style.opacity = String(0.9 - i * 0.1);
+                        img.style.transform = `translate(${jitterX}px, ${jitterY}px) scale(${options.scale || 1.2}) rotate(${360 + i * 40}deg)`;
+                        setTimeout(() => { img.style.opacity = '0'; }, duration * 1000 * 0.75);
+                    });
+                } else if (style === 'slash') {
+                    // 斬擊：不旋轉，橫向快速掃過目標，扁長比例強調「一刀劃過」
+                    const slashAngle = options.angle != null ? options.angle : -30;
+                    img.style.cssText = `position:absolute; left:${cx}px; top:${cy}px; width:${size * 1.6}px; height:${size * 0.6}px; margin-left:${-size * 0.8}px; margin-top:${-size * 0.3}px; pointer-events:none; z-index:50; opacity:0; filter:${glowFilter}; transform:translateX(${-size}px) rotate(${slashAngle}deg) scale(0.7);`;
+                    container.appendChild(img);
+                    requestAnimationFrame(() => {
+                        img.style.transition = `transform ${duration * 0.5}s ease-out, opacity ${duration * 0.5}s ease-out`;
+                        img.style.opacity = '1';
+                        img.style.transform = `translateX(${size}px) rotate(${slashAngle}deg) scale(1.05)`;
+                        setTimeout(() => { img.style.opacity = '0'; }, duration * 1000 * 0.4);
+                    });
+                } else if (style === 'pulse') {
+                    // 原地擴散：從小圈慢慢放大並淡出，適合治療圈/魔法陣/煙霧環這種「原地展開」的效果
+                    img.style.cssText = `position:absolute; left:${cx}px; top:${cy}px; width:${size}px; height:${size}px; margin:${-size / 2}px; pointer-events:none; z-index:50; opacity:0; filter:${glowFilter}; transform:scale(${0.4 + i * 0.15}) rotate(0deg);`;
+                    container.appendChild(img);
+                    requestAnimationFrame(() => {
+                        img.style.transition = `transform ${duration}s ease-out, opacity ${duration}s ease-out`;
+                        img.style.opacity = String(0.85 - i * 0.12);
+                        img.style.transform = `scale(${(options.scale || 1.6) + i * 0.35}) rotate(${(Math.random() - 0.5) * 15}deg)`;
+                        setTimeout(() => { img.style.opacity = '0'; }, duration * 1000 * 0.65);
+                    });
+                } else if (style === 'rise') {
+                    // 上飄淡出：原地慢慢往上浮，適合心形/符號類特效
+                    const driftX = (Math.random() - 0.5) * (options.distVar || 14);
+                    img.style.cssText = `position:absolute; left:${cx + driftX}px; top:${cy}px; width:${size}px; height:${size}px; margin:${-size / 2}px; pointer-events:none; z-index:50; opacity:0; filter:${glowFilter}; transform:translateY(0px) scale(0.6) rotate(0deg);`;
+                    container.appendChild(img);
+                    const riseDist = (options.dist || 30) + i * 10;
+                    requestAnimationFrame(() => {
+                        img.style.transition = `transform ${duration}s ease-out, opacity ${duration}s ease-out`;
+                        img.style.opacity = '1';
+                        img.style.transform = `translateY(-${riseDist}px) scale(${options.scale || 1.1}) rotate(${(Math.random() - 0.5) * 20}deg)`;
+                        setTimeout(() => { img.style.opacity = '0'; }, duration * 1000 * 0.6);
+                    });
+                } else {
+                    // 預設：向外噴散（一般命中/爆擊/異常狀態）
+                    img.style.cssText = `position:absolute; left:${cx}px; top:${cy}px; width:${size}px; height:${size}px; margin:${-size / 2}px; pointer-events:none; z-index:50; opacity:0; filter:${glowFilter}; transform:scale(0.65) rotate(0deg);`;
+                    container.appendChild(img);
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = (options.dist || 26) + Math.random() * (options.distVar || 30);
+                    const dx = Math.cos(angle) * dist, dy = Math.sin(angle) * dist;
+                    requestAnimationFrame(() => {
+                        img.style.transition = `transform ${duration}s ease-out, opacity ${duration}s ease-out`;
+                        img.style.opacity = '1';
+                        img.style.transform = `translate(${dx}px, ${dy}px) scale(${options.scale || 1.3}) rotate(${Math.random() * 180}deg)`;
+                        setTimeout(() => { img.style.opacity = '0'; }, duration * 1000 * 0.55);
+                    });
+                }
+                setTimeout(() => img.remove(), duration * 1000 + 150);
             }
         }
 
@@ -3156,17 +3262,17 @@
         // minLevel 對應「每 5 級學一個新技能」的進度表，見 RPG_SKILL_PROGRESSION
         const RPG_SKILLS = {
             // ================= 主角（恢復系）=================
-            basic_heal: { name: '簡易急救術', sp: 4, healPct: 0.2, pattern: 'ally_single', particle: 'circle_05', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' },
-            simple_party: { name: '簡單派對', sp: 8, healPct: 0.2, pattern: 'ally_column_adjacent', particle: 'slash_01', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' },
-            warm_soup_cure: { name: '暖心濃湯', sp: 10, cureStatusType: 'multi', cureTypes: ['poison', 'fear'], pattern: 'ally_single', particle: 'twirl_02', filter: 'sepia(1) hue-rotate(310deg) saturate(5.5) contrast(1.15)' },
+            basic_heal: { name: '簡易急救術', sp: 4, healPct: 0.2, pattern: 'ally_single', particle: 'circle_05', effectStyle: 'pulse', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' },
+            simple_party: { name: '簡單派對', sp: 8, healPct: 0.2, pattern: 'ally_column_adjacent', particle: 'slash_01', effectStyle: 'slash', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' },
+            warm_soup_cure: { name: '暖心濃湯', sp: 10, cureStatusType: 'multi', cureTypes: ['poison', 'fear'], pattern: 'ally_single', particle: 'twirl_02', effectStyle: 'spin', filter: 'sepia(1) hue-rotate(310deg) saturate(5.5) contrast(1.15)' },
             bbq_feast: { name: '燒烤晚宴', sp: 20, healPct: 0.3, revive: true, pattern: 'ally_single' },
             mountain_delicacy: { name: '山珍海味', sp: 20, cureStatusType: 'multi', cureTypes: ['paralysis', 'weaken'], pattern: 'ally_single' },
             banquet_blessing: { name: '盛宴祝福', sp: 30, healPct: 0.5, pattern: 'ally_column_adjacent_pierce' },
-            legendary_feast_prayer: { name: '傳說盛宴禱詞', sp: 45, healPct: 0.7, revive: true, pattern: 'ally_all', particle: 'magic_02', filter: 'sepia(1) hue-rotate(35deg) saturate(6.5) brightness(1.45) contrast(1.15)' },
-            legendary_ongoing_feast: { name: '傳說持續盛宴', sp: 30, healBuffPct: 0.35, spRegenFlat: 8, buffTurns: 3, pattern: 'ally_all', ingredientCost: { '雞蛋': 1, '起司': 1, '蜂蜜': 1, '史萊姆凝膠': 1, '菇傘': 1, '小麥': 1 }, particle: 'magic_05', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' },
+            legendary_feast_prayer: { name: '傳說盛宴禱詞', sp: 45, healPct: 0.7, revive: true, pattern: 'ally_all', particle: 'magic_02', effectStyle: 'pulse', filter: 'sepia(1) hue-rotate(35deg) saturate(6.5) brightness(1.45) contrast(1.15)' },
+            legendary_ongoing_feast: { name: '傳說持續盛宴', sp: 30, healBuffPct: 0.35, spRegenFlat: 8, buffTurns: 3, pattern: 'ally_all', ingredientCost: { '雞蛋': 1, '起司': 1, '蜂蜜': 1, '史萊姆凝膠': 1, '菇傘': 1, '小麥': 1 }, particle: 'magic_05', effectStyle: 'pulse', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' },
 
             // ================= 阿柯（火炒系，防禦BUFF/範圍/灼傷/攻擊BUFF）=================
-            ako_def_buff: { name: '甩鍋熱炒', sp: 5, defBuffPct: 0.08, buffTurns: 3, pattern: 'ally_all', ingredientCost: { '雞蛋': 1 }, particle: 'twirl_01', filter: 'sepia(1) hue-rotate(350deg) saturate(6.5) brightness(1.3) contrast(1.15)' },
+            ako_def_buff: { name: '甩鍋熱炒', sp: 5, defBuffPct: 0.08, buffTurns: 3, pattern: 'ally_all', ingredientCost: { '雞蛋': 1 }, particle: 'twirl_01', effectStyle: 'spin', filter: 'sepia(1) hue-rotate(350deg) saturate(6.5) brightness(1.3) contrast(1.15)' },
             ako_cross: { name: '烈焰十字炒', sp: 10, mult: 1.2, pattern: 'column_adjacent_pierce', particle: 'star_01', filter: 'sepia(1) hue-rotate(0deg) saturate(6.5) brightness(1.35) contrast(1.15)' },
             ako_column: { name: '炒鍋爆擊', sp: 15, mult: 1.5, pattern: 'column_adjacent', particle: 'fire_02', filter: 'sepia(1) hue-rotate(0deg) saturate(6.5) brightness(1.35) contrast(1.15)' },
             ako_burn: { name: '烈焰炙燒', sp: 20, mult: 2.0, pattern: 'single', burnChance: 1, burnTurns: 3, particle: 'fire_02', filter: 'sepia(1) hue-rotate(0deg) saturate(6.5) brightness(1.35) contrast(1.15)' }, // TODO: 待補上傳 muzzle_03 後換回
@@ -3175,30 +3281,30 @@
 
             // ================= 小穗（貫穿/爆擊/敏捷/即死系）=================
             suisui_material: { name: '材料0元購', sp: 5, extraDropChance: 0.5, pattern: 'self', particle: 'dirt_03', filter: 'grayscale(1) brightness(0.9)' },
-            suisui_double: { name: '雙刀連擊', sp: 8, mult: 1, hits: 2, extraDropChance: 0.2, pattern: 'single', particle: 'scratch_01', filter: 'brightness(0.15) contrast(3)' },
-            suisui_crit_bleed: { name: '致命甜心', sp: 12, mult: 1.2, critChance: 0.5, critMult: 2, burnChance: 1, burnTurns: 3, pattern: 'single', particle: 'symbol_01', filter: 'sepia(1) hue-rotate(310deg) saturate(5.5) contrast(1.15)' },
-            suisui_agi_buff: { name: '風之術', sp: 15, agiBuffPct: 0.1, critBuffChance: 0.1, critBuffMult: 1.4, buffTurns: 3, pattern: 'ally_all', particle: 'light_02', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' },
-            suisui_crit_weaken: { name: '抹刀的秘密', sp: 22, mult: 2, critChance: 0.5, critMult: 2, inflictChance: 0.5, inflictType: 'weaken', pattern: 'single', particle: 'slash_03', filter: 'brightness(1.05)' },
+            suisui_double: { name: '雙刀連擊', sp: 8, mult: 1, hits: 2, extraDropChance: 0.2, pattern: 'single', particle: 'scratch_01', effectStyle: 'slash', filter: 'brightness(0.15) contrast(3)' },
+            suisui_crit_bleed: { name: '致命甜心', sp: 12, mult: 1.2, critChance: 0.5, critMult: 2, burnChance: 1, burnTurns: 3, pattern: 'single', particle: 'symbol_01', effectStyle: 'rise', filter: 'sepia(1) hue-rotate(310deg) saturate(5.5) contrast(1.15)' },
+            suisui_agi_buff: { name: '風之術', sp: 15, agiBuffPct: 0.1, critBuffChance: 0.1, critBuffMult: 1.4, buffTurns: 3, pattern: 'ally_all', particle: 'light_02', effectStyle: 'spin', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' },
+            suisui_crit_weaken: { name: '抹刀的秘密', sp: 22, mult: 2, critChance: 0.5, critMult: 2, inflictChance: 0.5, inflictType: 'weaken', pattern: 'single', particle: 'slash_03', effectStyle: 'slash', filter: 'brightness(1.05)' },
             suisui_paralyze_all: { name: '廚房的身影', sp: 25, mult: 0, allIndividualChance: 0.25, allIndividualType: 'paralysis', pattern: 'all', particle: 'flame_02', filter: 'sepia(1) hue-rotate(50deg) saturate(6.5) brightness(1.35) contrast(1.15)' },
             suisui_execute: { name: '最後的裝飾', sp: 35, mult: 3.5, instaKillThreshold: 0.2, instaKillChance: 0.01, pattern: 'single', particle: 'star_07', filter: 'sepia(1) hue-rotate(35deg) saturate(6.5) brightness(1.45) contrast(1.15)', ingredientCost: { '奶油': 1 } },
 
             // ================= 老周（坦克/範圍系）=================
             laozhou_all_weak: { name: '老者的遷怒', sp: 5, mult: 0.9, pattern: 'all', particle: 'trace_04', filter: 'sepia(1) hue-rotate(355deg) saturate(6.0) contrast(1.15)', ingredientCost: { '雞蛋': 1 } },
-            laozhou_single: { name: '怒雷狂擊', sp: 8, mult: 1.5, inflictChance: 0.1, inflictType: 'paralysis', pattern: 'single', particle: 'spark_06', filter: 'sepia(1) hue-rotate(35deg) saturate(6.5) brightness(1.45) contrast(1.15)' },
+            laozhou_single: { name: '怒雷狂擊', sp: 8, mult: 1.5, inflictChance: 0.1, inflictType: 'paralysis', pattern: 'single', particle: 'spark_06', effectStyle: 'drop', filter: 'sepia(1) hue-rotate(35deg) saturate(6.5) brightness(1.45) contrast(1.15)' },
             laozhou_column: { name: '烈焰牆', sp: 15, mult: 1.4, burnChance: 0.1, pattern: 'column_adjacent', particle: 'fire_02', filter: 'sepia(1) hue-rotate(0deg) saturate(6.5) brightness(1.35) contrast(1.15)' }, // TODO: 待補上傳 muzzle_03 後換回
-            laozhou_row_pierce: { name: '大地鐵壁貫穿', sp: 18, mult: 2, defDebuffPct: -0.1, debuffTurns: 2, pattern: 'row_pierce', particle: 'trace_01_rotated', filter: 'sepia(1) hue-rotate(15deg) saturate(4.5) brightness(1.05) contrast(1.15)' },
-            laozhou_cross: { name: '水之狂擊', sp: 23, mult: 1.9, atkDebuffPct: -0.05, debuffChance: 0.1, debuffTurns: 2, pattern: 'column_adjacent_pierce', particle: 'twirl_03', filter: 'sepia(1) hue-rotate(160deg) saturate(5.5) contrast(1.15)' },
-            laozhou_column2: { name: '龍捲風', sp: 30, mult: 2.2, pattern: 'column_4', particle: 'smoke_09', filter: 'grayscale(1) brightness(0.9)' },
-            laozhou_ultimate_all: { name: '光之劍', sp: 40, mult: 2.3, pattern: 'all', particle: 'star_08', filter: 'sepia(1) hue-rotate(50deg) saturate(7) brightness(1.5) contrast(1.15)' },
+            laozhou_row_pierce: { name: '大地鐵壁貫穿', sp: 18, mult: 2, defDebuffPct: -0.1, debuffTurns: 2, pattern: 'row_pierce', particle: 'trace_01_rotated', effectStyle: 'pierce', filter: 'sepia(1) hue-rotate(15deg) saturate(4.5) brightness(1.05) contrast(1.15)' },
+            laozhou_cross: { name: '水之狂擊', sp: 23, mult: 1.9, atkDebuffPct: -0.05, debuffChance: 0.1, debuffTurns: 2, pattern: 'column_adjacent_pierce', particle: 'twirl_03', effectStyle: 'spin', filter: 'sepia(1) hue-rotate(160deg) saturate(5.5) contrast(1.15)' },
+            laozhou_column2: { name: '龍捲風', sp: 30, mult: 2.2, pattern: 'column_4', particle: 'smoke_09', effectStyle: 'spin', filter: 'grayscale(1) brightness(0.9)' },
+            laozhou_ultimate_all: { name: '光之劍', sp: 40, mult: 2.3, pattern: 'all', particle: 'star_08', effectStyle: 'drop', filter: 'sepia(1) hue-rotate(50deg) saturate(7) brightness(1.5) contrast(1.15)' },
 
             // ================= 阿藍（辛香/敏捷/異常狀態系）=================
             alan_single: { name: '斷筋碎骨', sp: 5, mult: 1.3, pattern: 'single', particle: 'dirt_03', filter: 'grayscale(1) brightness(0.9)' },
             alan_atk_buff_all: { name: '辛香料研磨', sp: 8, atkBuffPct: 0.05, buffTurns: 3, pattern: 'ally_all', ingredientCost: { '胡椒': 1 } },
-            alan_single2: { name: '研磨棒投擲', sp: 10, mult: 1.5, pattern: 'single', particle: 'trace_04', filter: 'sepia(1) hue-rotate(355deg) saturate(6.0) contrast(1.15)' }, // TODO: 待補上傳 scorch_01 後換回
+            alan_single2: { name: '研磨棒投擲', sp: 10, mult: 1.5, pattern: 'single', particle: 'trace_04', effectStyle: 'pierce', filter: 'sepia(1) hue-rotate(355deg) saturate(6.0) contrast(1.15)' }, // TODO: 待補上傳 scorch_01 後換回
             alan_all_weak: { name: '爆香', sp: 16, mult: 0.9, pattern: 'all', particle: 'fire_02', filter: 'sepia(1) hue-rotate(0deg) saturate(6.5) brightness(1.35) contrast(1.15)', ingredientCost: { '哥布林辛香料': 1 } }, // TODO: 待補上傳 muzzle_03 後換回
-            alan_cure_all: { name: '蔥薑蒜也是菜', sp: 30, cureStatusType: 'all', pattern: 'ally_all', ingredientCost: { '蔥': 1, '薑': 1, '蒜': 1 }, particle: 'smoke_10', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' },
+            alan_cure_all: { name: '蔥薑蒜也是菜', sp: 30, cureStatusType: 'all', pattern: 'ally_all', ingredientCost: { '蔥': 1, '薑': 1, '蒜': 1 }, particle: 'smoke_10', effectStyle: 'pulse', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' },
             alan_crush: { name: '粉碎', sp: 25, mult: 3, inflictChance: 1, inflictType: 'weaken', pattern: 'single', particle: 'dirt_03', filter: 'grayscale(1) brightness(0.9)' },
-            alan_ultimate_all: { name: '究極辛香風暴', sp: 60, mult: 0, groupInflictChance: 0.3, groupInflictType: 'random', pattern: 'all', particle: 'smoke_09', filter: 'sepia(1) hue-rotate(80deg) saturate(6.5) brightness(1.45) contrast(1.15)', ingredientCost: { '胡椒': 1, '哥布林辛香料': 1 } },
+            alan_ultimate_all: { name: '究極辛香風暴', sp: 60, mult: 0, groupInflictChance: 0.3, groupInflictType: 'random', pattern: 'all', particle: 'smoke_09', effectStyle: 'spin', filter: 'sepia(1) hue-rotate(80deg) saturate(6.5) brightness(1.45) contrast(1.15)', ingredientCost: { '胡椒': 1, '哥布林辛香料': 1 } },
         };
         // 每 5 級解鎖一個新技能：主角固定學恢復系列；4 位夥伴則各自有獨立的技能路線，不會學到一樣的技能
         const RPG_SKILL_PROGRESSION = {
@@ -5580,7 +5686,7 @@
                                 }
                                 if (sk.particle) {
                                     const selfCenter = rpgElementCenter(actorDomId);
-                                    if (selfCenter) rpgBurstParticle(sk.particle, { x: selfCenter.x, y: selfCenter.y, size: 38, count: 2, duration: 0.6, filter: sk.filter || 'none' });
+                                    if (selfCenter) rpgBurstParticle(sk.particle, { x: selfCenter.x, y: selfCenter.y, size: 38, count: 2, duration: 0.6, filter: sk.filter || 'none', style: sk.effectStyle });
                                 }
                                 playSfx('click');
                             } else if (sk.healPct != null || sk.cureStatusType || sk.defBuffPct != null || sk.atkBuffMult != null || sk.atkBuffPct != null || sk.agiBuffPct != null || sk.healBuffPct != null || sk.spRegenFlat != null || sk.critBuffChance != null) {
@@ -5626,7 +5732,7 @@
                                     const center = rpgElementCenter(domId);
                                     if (center) {
                                         if (sk.particle) {
-                                            rpgBurstParticle(sk.particle, { x: center.x, y: center.y, size: 38, count: 2, duration: 0.6, filter: sk.filter || 'none' });
+                                            rpgBurstParticle(sk.particle, { x: center.x, y: center.y, size: 38, count: 2, duration: 0.6, filter: sk.filter || 'none', style: sk.effectStyle });
                                         } else {
                                             const particleType = wasFainted && obj.hp > 0 ? 'revive' : (isBuffEffect ? 'buff' : 'light');
                                             rpgBurstParticle(particleType, { x: center.x, y: center.y, size: particleType === 'revive' ? 70 : 40, count: particleType === 'revive' ? 3 : 2, duration: 0.6, filter: particleType === 'light' ? 'sepia(1) hue-rotate(60deg) saturate(4.5) contrast(1.15)' : 'none' });
@@ -5645,10 +5751,19 @@
                                 const logBits = [];
                                 // 「整組判定」型技能（例如究極辛香風暴）：只骰一次機率，成功的話全體怪物一起中招
                                 const groupRollSuccess = sk.groupInflictChance ? Math.random() < sk.groupInflictChance : false;
+                                if (sk.particle && sk.effectStyle === 'pierce' && targets.length) {
+                                    // 貫穿/投擲類技能：不要每隻怪各炸一次，改成一次性從起點飛到終點
+                                    const firstT = targets[0], lastT = targets[targets.length - 1];
+                                    const pierceStart = targets.length > 1
+                                        ? rpgElementCenter(`rpg-slot-monster-${firstT.row}-${firstT.i}`)
+                                        : rpgElementCenter(actorDomId);
+                                    const pierceEnd = rpgElementCenter(`rpg-slot-monster-${lastT.row}-${lastT.i}`);
+                                    if (pierceStart && pierceEnd) rpgBurstParticle(sk.particle, { x: pierceStart.x, y: pierceStart.y, x2: pierceEnd.x, y2: pierceEnd.y, size: 44, duration: 0.5, style: 'pierce', filter: sk.filter, count: 3 });
+                                }
                                 targets.forEach(({ row, i, obj: tObj }) => {
                                     const tDomId = `rpg-slot-monster-${row}-${i}`;
                                     const castCenter = rpgElementCenter(tDomId);
-                                    if (sk.particle && castCenter) rpgBurstParticle(sk.particle, { x: castCenter.x, y: castCenter.y, count: 1, size: 44, duration: 0.5, scale: 1.05, dist: 0, distVar: 0, filter: sk.filter });
+                                    if (sk.particle && castCenter && sk.effectStyle !== 'pierce') rpgBurstParticle(sk.particle, { x: castCenter.x, y: castCenter.y, count: 1, size: 44, duration: 0.5, scale: 1.05, dist: 0, distVar: 0, filter: sk.filter, style: sk.effectStyle });
                                     if (sk.groupInflictChance) {
                                         if (groupRollSuccess) {
                                             if (sk.groupInflictType === 'random') {
