@@ -4750,9 +4750,15 @@
         }
 
         // 找下一個「還活著、這一輪還沒下指令」的我方角色，設成目前的 actor；找不到就回傳 false（代表全員下完指令了）
+        // 已經被麻痺／恐懼的角色，這回合本來就不能自己選擇行動（執行階段會直接跳過或胡亂攻擊），
+        // 不需要讓玩家特地幫他下指令，直接自動補一個空指令、跳到下一個真正能行動的角色
         function rpgAdvanceToNextCommander() {
             const b = rpgState.battle;
-            const next = rpgFormationEntries(b.partyFormation).find(e => e.obj.hp > 0 && !b.commands[`${e.row}-${e.i}`]);
+            let next = rpgFormationEntries(b.partyFormation).find(e => e.obj.hp > 0 && !b.commands[`${e.row}-${e.i}`]);
+            while (next && next.obj.statuses && (next.obj.statuses.paralysis > 0 || next.obj.statuses.fear > 0)) {
+                b.commands[`${next.row}-${next.i}`] = { action: 'skip' };
+                next = rpgFormationEntries(b.partyFormation).find(e => e.obj.hp > 0 && !b.commands[`${e.row}-${e.i}`]);
+            }
             if (next) { b.actor = { row: next.row, i: next.i }; return true; }
             return false;
         }
