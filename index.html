@@ -2952,7 +2952,7 @@
                     '#..........PP..........#',
                     '#...H......PP......H...#',
                     '#..........PP..........#',
-                    '#.PPPPPPPPPPHPPPPPPPPP.#',
+                    '#.PPPPPPPPPPPPPPPPPPPP.#',
                     '#.PPPPPPPPPPPPPPPPPPPP.#',
                     '#...H......PP......H...#',
                     '#..........PP..........#',
@@ -2973,7 +2973,6 @@
                     '4,10': 'laozhou',
                     '19,10': 'alan',
                     '12,1': 'ingredientShop',
-                    '12,8': 'ginhaku',
                 },
                 pois: {
                     '3,1': {}, '20,1': {}, '3,16': {}, '20,16': {}, '8,1': {}, '15,16': {},
@@ -3629,7 +3628,7 @@
             } else {
                 // 真的開新遊戲：把地圖狀態全部重置，不然同一頁玩過一輪之後「開新遊戲」會沿用上一輪寶箱開過、夥伴招募過的狀態
                 Object.values(RPG_MAPS).forEach(m => { Object.values(m.pois || {}).forEach(poi => { poi.found = false; }); });
-                RPG_MAPS.village.npcs = { '6,3': 'shop', '17,3': 'elder', '12,12': 'innkeeper', '4,6': 'ako', '19,6': 'suisui', '4,10': 'laozhou', '19,10': 'alan', '12,1': 'ingredientShop', '12,8': 'ginhaku' };
+                RPG_MAPS.village.npcs = { '6,3': 'shop', '17,3': 'elder', '12,12': 'innkeeper', '4,6': 'ako', '19,6': 'suisui', '4,10': 'laozhou', '19,10': 'alan', '12,1': 'ingredientShop' };
                 // 地圖字元也要一起復原成 'H'，不然同一頁前一輪如果已經招募過夥伴，字元會停在 '.'，變成看不見但還是會擋路的隱形 NPC
                 Object.entries(RPG_MAPS.village.npcs).forEach(([key]) => {
                     const [xStr, yStr] = key.split(',');
@@ -3897,6 +3896,8 @@
             const state = rpgState;
             if (!state) return;
             state.locked = false; // 每次回到地圖畫面，代表上一個事件（戰鬥/對話/轉場）已經結束，重新解鎖移動
+            rpgSyncGinhakuAvailability(); // 銀白只有二周目以後才會出現在村莊廣場，每次回地圖畫面都檢查一次
+            rpgSyncBattleFormation(); // 防呆：確保每個已加入的夥伴都有排進隊形
             rpgStartBgm('explore');
             const map = RPG_MAPS[state.region];
             const viewCols = map.viewport ? map.viewport.w : map.rows[0].length;
@@ -4430,6 +4431,42 @@
         }
 
         // 從地圖上找到某個 npcId 站的格子並移除（招募成功後那個人就離開原本站的地方，加入隊伍了）
+        // 銀白只有二周目以後（ngPlus >= 1）才會出現在村莊廣場正中央；已經招募過的話就不用再放 NPC 了
+        // 防呆：掃描目前所有夥伴，只要有人不在隊形表裡（例如舊存檔在這次修正之前就已經招募過，卡在隊形外面），
+        // 就自動塞進第一個空格，確保每個已加入的夥伴都排得進隊形、都能上場戰鬥
+        function rpgSyncBattleFormation() {
+            const state = rpgState;
+            if (!state || !state.companions) return;
+            if (!state.battleFormation) state.battleFormation = rpgDefaultBattleFormation();
+            const slots = ['front0', 'front1', 'front2', 'front3', 'back0', 'back1', 'back2', 'back3'];
+            const assignedIndices = new Set(slots.map(k => state.battleFormation[k]).filter(v => v !== 'player' && v != null));
+            state.companions.forEach((c, idx) => {
+                if (!assignedIndices.has(idx)) {
+                    const emptySlot = slots.find(k => state.battleFormation[k] == null);
+                    if (emptySlot) { state.battleFormation[emptySlot] = idx; assignedIndices.add(idx); }
+                }
+            });
+        }
+        function rpgSyncGinhakuAvailability() {
+            const state = rpgState;
+            if (!state || !state.player) return;
+            const map = RPG_MAPS.village;
+            const key = '12,8';
+            const alreadyRecruited = (state.companions || []).some(c => c.id === 'ginhaku');
+            const shouldShow = (state.player.ngPlus || 0) >= 1 && !alreadyRecruited;
+            const currentlyShown = map.npcs[key] === 'ginhaku';
+            if (shouldShow && !currentlyShown) {
+                map.npcs[key] = 'ginhaku';
+                const rowChars = map.rows[8].split('');
+                rowChars[12] = 'H';
+                map.rows[8] = rowChars.join('');
+            } else if (!shouldShow && currentlyShown) {
+                delete map.npcs[key];
+                const rowChars = map.rows[8].split('');
+                rowChars[12] = 'P';
+                map.rows[8] = rowChars.join('');
+            }
+        }
         function rpgRemoveNpcFromMap(map, npcId) {
             for (const key in map.npcs) {
                 if (map.npcs[key] === npcId) {
@@ -4440,7 +4477,7 @@
                     const x = Number(xStr), y = Number(yStr);
                     if (map.rows[y]) {
                         const rowChars = map.rows[y].split('');
-                        rowChars[x] = '.';
+                        rowChars[x] = (npcId === 'ginhaku') ? 'P' : '.'; // 銀白站在廣場石板上，消失後要還原成石板路，不是草地
                         map.rows[y] = rowChars.join('');
                     }
                     break;
@@ -4491,6 +4528,13 @@
                 }
                 state.companions.push({ ...template });
                 rpgRemoveNpcFromMap(RPG_MAPS.village, npcId);
+                // 隊形表原本是寫死指定前 4 位夥伴的位置，新加入的夥伴不會自動出現在隊形裡；
+                // 這裡補上：新夥伴一入隊，就自動塞進隊形表第一個還空著的格子，不然她永遠沒辦法上場戰鬥
+                if (!state.battleFormation) state.battleFormation = rpgDefaultBattleFormation();
+                const newCompanionIndex = state.companions.length - 1;
+                const emptySlotKey = ['front0', 'front1', 'front2', 'front3', 'back0', 'back1', 'back2', 'back3']
+                    .find(k => state.battleFormation[k] == null);
+                if (emptySlotKey) state.battleFormation[emptySlotKey] = newCompanionIndex;
                 rpgAddScore(250, `招募了${template.name}`);
                 fullText = `${template.name}：${info.joinLine}`;
                 playSfx('success');
