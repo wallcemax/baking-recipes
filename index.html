@@ -3788,11 +3788,13 @@
             const p = state.player;
             const companions = state.companions || [];
             return `
+                <div style="max-width:520px; margin-left:auto; margin-right:auto;">
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
                 <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}</p>
                 ${rpgStatusCardHTML(p)}
                 ${companions.map((c, idx) => rpgStatusCardHTML(c, idx, companions.length)).join('')}
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+                </div>
             `;
         }
 
@@ -3870,6 +3872,7 @@
             const weaponRows = Object.entries(RPG_WEAPONS).filter(([, item]) => !item.ngRequired || (p.ngPlus || 0) >= item.ngRequired).map(([name, item]) => rpgEquipRowHTML('weapon', name, item, p)).join('');
             const armorRows = Object.entries(RPG_ARMORS).filter(([, item]) => !item.ngRequired || (p.ngPlus || 0) >= item.ngRequired).map(([name, item]) => rpgEquipRowHTML('armor', name, item, p)).join('');
             return `
+                <div style="max-width:520px; margin-left:auto; margin-right:auto;">
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
                 <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}</p>
                 <h3 class="font-display font-semibold mb-2">🔪 武器</h3>
@@ -3878,6 +3881,7 @@
                 ${armorRows}
                 <div style="height:8px;"></div>
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+                </div>
             `;
         }
 
@@ -3921,7 +3925,7 @@
             const height = viewRows * RPG_TILE;
             document.getElementById('game-modal-title').textContent = `🗺️ ${map.name}`;
             document.getElementById('game-modal-body').innerHTML = `
-                <div class="flex justify-between items-center mb-2 text-xs" style="color:#B3A492">
+                <div class="flex justify-between items-center mb-2 text-xs" style="color:#B3A492; max-width:520px; margin-left:auto; margin-right:auto;">
                     <span>Lv.${state.player.level} ・ ❤️${state.player.hp}/${state.player.maxHp} ・ 💠${state.player.sp}/${state.player.maxSp} ・ 📍<span id="rpg-pos-display">(${state.pos.x},${state.pos.y})</span></span>
                     <span class="flex items-center gap-2">💰${state.player.gold} ・ 🏆${state.player.score || 0} ・ 🔁第${(state.player.ngPlus || 0) + 1}周目 <button id="rpg-bgm-toggle" onclick="rpgToggleBgmMute()" style="border:none; background:none; cursor:pointer; font-size:1rem; line-height:1;">${rpgBgmMuted ? '🔇' : '🎵'}</button></span>
                 </div>
@@ -3934,7 +3938,7 @@
                 <div class="mt-2">${rpgJoystickHTML()}</div>
                 <p class="text-xs text-center mt-3" style="color:#B3A492">拖曳搖桿移動，電腦可用方向鍵/WASD</p>
                 <div style="height:20px;"></div>
-                <div class="grid grid-cols-2 gap-2">
+                <div class="grid grid-cols-2 gap-2" style="max-width:520px; margin-left:auto; margin-right:auto;">
                     <button onclick="rpgOpenCookScreen()" class="btn-amber text-xs">🍳 烹飪背包</button>
                     <button onclick="rpgOpenStatusScreen()" class="btn-secondary text-xs">📊 狀態</button>
                     <button onclick="rpgOpenEquipScreen()" class="btn-secondary text-xs">🎽 裝備</button>
@@ -4489,6 +4493,16 @@
             if (!state || !state.companions) return;
             if (!state.battleFormation) state.battleFormation = rpgDefaultBattleFormation();
             const slots = ['front0', 'front1', 'front2', 'front3', 'back0', 'back1', 'back2', 'back3'];
+            // 防呆：修復舊版預設隊形留下的問題——同一個索引被兩個格子同時引用，導致同一個角色重複出現。
+            // 只保留「先出現」的那一格，其餘引用同一個索引的格子清空，讓下面補齊空格的邏輯把它們還給正確的夥伴
+            const seenIndices = new Set();
+            slots.forEach(k => {
+                const v = state.battleFormation[k];
+                if (v !== 'player' && v != null) {
+                    if (seenIndices.has(v)) state.battleFormation[k] = null;
+                    else seenIndices.add(v);
+                }
+            });
             const assignedIndices = new Set(slots.map(k => state.battleFormation[k]).filter(v => v !== 'player' && v != null));
             state.companions.forEach((c, idx) => {
                 if (!assignedIndices.has(idx)) {
@@ -4725,6 +4739,7 @@
             const emptyHint = !discovered.length ? `<p class="text-xs mb-3" style="color:#B3A492">還沒有任何食材上架喔，去打怪或調查地圖上的地點，第一次拿到某種食材後，這裡才會開放買賣那種食材。</p>` : '';
             const lockedHint = (discovered.length && lockedCount > 0) ? `<p class="text-xs mb-3" style="color:#B3A492">還有 ${lockedCount} 種食材尚未上架，第一次實際拿到後才會出現在這裡。</p>` : '';
             return `
+                <div style="max-width:520px; margin-left:auto; margin-right:auto;">
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
                 <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${rpgState.player.gold}　・　任何食材買入都是 💰2、賣出都是 💰1</p>
                 ${emptyHint}
@@ -4732,6 +4747,7 @@
                 ${lockedHint}
                 <div style="height:8px;"></div>
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+                </div>
             `;
         }
         function rpgBuyIngredient(name) {
@@ -4780,11 +4796,13 @@
                     </div>`;
             }).join('');
             return `
+                <div style="max-width:520px; margin-left:auto; margin-right:auto;">
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
                 <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${rpgState.player.gold}　・　標示「✨限定」的食譜只有這裡買得到，或者打贏強敵/魔王有機會直接掉落</p>
                 ${rows}
                 <div style="height:8px;"></div>
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+                </div>
             `;
         }
         function rpgBuyRecipe(name) {
@@ -4810,7 +4828,13 @@
             back0: ['back', 0], back1: ['back', 1], back2: ['back', 2], back3: ['back', 3],
         };
         function rpgDefaultBattleFormation() {
-            return { front0: 0, front1: 'player', front2: 1, front3: 2, back0: 3, back1: null, back2: null, back3: null };
+            // 一開始只有主角站在 front1，其餘 7 格都是空的；夥伴依照「加入隊伍的順序」自動依序補進
+            // front0 → front2 → front3 → back0 → back1 → back2 → back3（順序看 rpgSyncBattleFormation／
+            // rpgResolveCompanionJoin 裡「找第一個空格」那段程式碼）。
+            // 原本這裡是寫死 front0/front2/front3/back0 = 0/1/2/3，即使那幾位夥伴根本還沒加入隊伍也會預先佔位，
+            // 跟後來「新夥伴自動補進第一個空格」的邏輯一衝突，就會出現「同一個索引被兩個格子同時引用」，
+            // 畫面上看起來就像同一個角色重複出現兩次——這就是使用者反應隊形有很多重複角色的根本原因
+            return { front0: null, front1: 'player', front2: null, front3: null, back0: null, back1: null, back2: null, back3: null };
         }
         let rpgFormationSelectedSlot = null;
         function rpgOpenFormationScreen() {
@@ -4837,6 +4861,7 @@
             const frontCol = ['front0', 'front1', 'front2', 'front3'].map(renderSlot).join('');
             const backCol = ['back0', 'back1', 'back2', 'back3'].map(renderSlot).join('');
             return `
+                <div style="max-width:520px; margin-left:auto; margin-right:auto;">
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
                 <p class="text-xs text-center mb-3" style="color:#B3A492">前排在左、後排在右；點兩個格子可以互換隊形（倒下的夥伴不會出現在戰鬥中，但隊形設定還在，救回來會回到原位）</p>
                 <div style="display:flex; gap:16px; justify-content:center;">
@@ -4845,6 +4870,7 @@
                 </div>
                 <div style="height:8px;"></div>
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+                </div>
             `;
         }
         function rpgFormationClickSlot(key) {
@@ -5329,6 +5355,7 @@
                     </div>`;
             }).join('');
             return `
+                <div style="max-width:520px; margin-left:auto; margin-right:auto;">
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
                 ${rpgMapItemsSectionHTML()}
                 <h3 class="font-display font-semibold mb-2">🎒 食材背包</h3>
@@ -5337,6 +5364,7 @@
                 ${recipesHTML || '<p class="text-xs" style="color:#B3A492">還沒學會任何料理，去地圖上探索看看吧！</p>'}
                 <div style="height:12px;"></div>
                 <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+                </div>
             `;
         }
         function rpgCookRecipe(name) {
