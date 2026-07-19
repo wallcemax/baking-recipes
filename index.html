@@ -3916,7 +3916,7 @@
             document.getElementById('game-modal-title').textContent = `🗺️ ${map.name}`;
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="flex justify-between items-center mb-2 text-xs" style="color:#B3A492">
-                    <span>Lv.${state.player.level} ・ ❤️${state.player.hp}/${state.player.maxHp} ・ 💠${state.player.sp}/${state.player.maxSp}</span>
+                    <span>Lv.${state.player.level} ・ ❤️${state.player.hp}/${state.player.maxHp} ・ 💠${state.player.sp}/${state.player.maxSp} ・ 📍<span id="rpg-pos-display">(${state.pos.x},${state.pos.y})</span></span>
                     <span class="flex items-center gap-2">💰${state.player.gold} ・ 🏆${state.player.score || 0} ・ 🔁第${(state.player.ngPlus || 0) + 1}周目 <button id="rpg-bgm-toggle" onclick="rpgToggleBgmMute()" style="border:none; background:none; cursor:pointer; font-size:1rem; line-height:1;">${rpgBgmMuted ? '🔇' : '🎵'}</button></span>
                 </div>
                 <div style="position:relative; max-width:100%; width:${width}px; margin:0 auto;">
@@ -4209,6 +4209,8 @@
                     state.animating = false;
                     state.pos = to;
                     state.trail = trailTo;
+                    const posEl = document.getElementById('rpg-pos-display');
+                    if (posEl) posEl.textContent = `(${to.x},${to.y})`;
                     playSfx('tick');
                     if (map.exits && map.exits[destKey]) { state.locked = true; rpgTransitionToExit(map.exits[destKey]); return; }
                     rpgDraw();
@@ -4326,13 +4328,13 @@
                 const qty = Math.max(1, Math.round((1 + Math.floor(Math.random() * 2) + Math.floor(lvl / 5)) * ngMult));
                 state.player.ingredients[ing] = (state.player.ingredients[ing] || 0) + qty;
                 rpgMarkIngredientDiscovered(state.player, ing);
-                if (box) box.textContent = `🔍 採集到「${ing}」× ${qty}！`;
+                if (box) box.textContent = `🔍 採集到${RPG_INGREDIENT_EMOJI[ing] || ''}「${ing}」× ${qty}！`;
                 playSfx('success');
             } else if (rewardType === 'dish') {
                 const dishPool = Object.keys(RPG_RECIPES).filter(name => !RPG_RECIPES[name].restricted);
                 const dish = dishPool[Math.floor(Math.random() * dishPool.length)];
                 state.player.items[dish] = (state.player.items[dish] || 0) + 1;
-                if (box) box.textContent = `🔍 意外挖到一份現成的「${dish}」，已經放進道具欄！`;
+                if (box) box.textContent = `🔍 意外挖到一份現成的${(RPG_ITEM_INFO[dish] || {}).emoji || ''}「${dish}」，已經放進道具欄！`;
                 playSfx('success');
             } else if (rewardType === 'recipe') {
                 // 等級夠高的話，有機會直接開到限定食譜，算是「食譜越開越好」的體現
@@ -4350,7 +4352,7 @@
                 } else {
                     state.player.knownRecipes.push(recipeToGive);
                     rpgAddScore(50, '獲得新食譜');
-                    if (box) box.textContent = `📖 學會了新料理食譜：「${recipeToGive}」！打開🍳烹飪背包就能製作了。`;
+                    if (box) box.textContent = `📖 學會了新料理食譜：${(RPG_ITEM_INFO[recipeToGive] || {}).emoji || ''}「${recipeToGive}」！打開🍳烹飪背包就能製作了。`;
                 }
                 playSfx('success');
             } else {
@@ -4693,7 +4695,7 @@
             p.gold -= 2;
             p.ingredients[name] = (p.ingredients[name] || 0) + 1;
             playSfx('buy');
-            document.getElementById('game-modal-body').innerHTML = rpgIngredientShopHTML(`買了 1 份「${name}」！`);
+            document.getElementById('game-modal-body').innerHTML = rpgIngredientShopHTML(`買了 1 份${RPG_INGREDIENT_EMOJI[name] || ''}「${name}」！`);
         }
         function rpgSellIngredient(name) {
             const p = rpgState.player;
@@ -4750,7 +4752,7 @@
             p.knownRecipes.push(name);
             rpgAddScore(50, '獲得新食譜');
             playSfx('buy');
-            document.getElementById('game-modal-body').innerHTML = rpgRecipeShopHTML(`📖 學會了「${name}」！`);
+            document.getElementById('game-modal-body').innerHTML = rpgRecipeShopHTML(`📖 學會了${(RPG_ITEM_INFO[name] || {}).emoji || ''}「${name}」！`);
         }
 
         // ---------- 回合制戰鬥 ----------
@@ -5920,7 +5922,7 @@
                                     const ing = pool[Math.floor(Math.random() * pool.length)];
                                     p.ingredients[ing] = (p.ingredients[ing] || 0) + 1;
                                     rpgMarkIngredientDiscovered(p, ing);
-                                    rpgLogAppend(`${actorObj.name}使出「${sk.name}」，意外多拿到了 1 份「${ing}」！`);
+                                    rpgLogAppend(`${actorObj.name}使出「${sk.name}」，意外多拿到了 1 份${RPG_INGREDIENT_EMOJI[ing] || ''}「${ing}」！`);
                                 } else {
                                     rpgLogAppend(`${actorObj.name}使出「${sk.name}」，這次沒有額外收穫。`);
                                 }
@@ -6115,7 +6117,7 @@
                                         const ing = pool[Math.floor(Math.random() * pool.length)];
                                         p.ingredients[ing] = (p.ingredients[ing] || 0) + 1;
                                         rpgMarkIngredientDiscovered(p, ing);
-                                        logBits.push(`意外拿到了「${ing}」`);
+                                        logBits.push(`意外拿到了${RPG_INGREDIENT_EMOJI[ing] || ''}「${ing}」`);
                                     }
                                     if (isCrit) logBits.push(`爆擊了${tObj.name}`);
                                     if (isInstaKill) logBits.push(`${tObj.name}被瞬間擊倒`);
@@ -6249,6 +6251,9 @@
                         actionKind = 'fear';
                     } else if (!monsterObj.isBoss && (monsterObj.level || 0) - p.level >= 5 && Math.random() < 0.05) {
                         actionKind = 'fear';
+                    } else if ((p.ngPlus || 0) >= 1 && Math.random() < 0.08) {
+                        // 二周目以後（ngPlus >= 1），怪物才會多一種「施放失明」的可能，一周目完全不會出現
+                        actionKind = 'blind';
                     } else if (!monsterObj.isBoss && (monsterObj.level || 0) >= 35 && Math.random() < 0.02) {
                         // 35 級以上的小怪（魔王不算）2% 機率使出多體攻擊技能，照權重抽是哪一種
                         const roll = Math.random() * 100;
@@ -6297,6 +6302,17 @@
                         if (actionKind === 'fear') {
                             rpgInflictStatus(victim.obj, 'fear', 2);
                             rpgLogAppend(`😱 ${monsterObj.name}對${victim.obj.name}施放了「恐懼」，接下來兩回合可能會陷入混亂、胡亂攻擊！`);
+                            const vCenter = rpgElementCenter(victimDomId);
+                            if (vCenter) rpgBurstParticle('debuff', { x: vCenter.x, y: vCenter.y, size: 40, count: 2, duration: 0.6 });
+                            playSfx('status');
+                            updateBattleUI();
+                            setTimeout(runNext, 500);
+                            return;
+                        }
+                        if (actionKind === 'blind') {
+                            // 二周目以後怪物才會用到的招式：讓玩家陷入失明，接下來幾回合攻擊有 30% 機率落空
+                            rpgInflictStatus(victim.obj, 'blind', 3);
+                            rpgLogAppend(`😵 ${monsterObj.name}對${victim.obj.name}噴出了刺激的粉末，讓${victim.obj.name}陷入了「失明」！`);
                             const vCenter = rpgElementCenter(victimDomId);
                             if (vCenter) rpgBurstParticle('debuff', { x: vCenter.x, y: vCenter.y, size: 40, count: 2, duration: 0.6 });
                             playSfx('status');
@@ -6441,7 +6457,7 @@
             });
             if (droppedNames.length) {
                 const counts = droppedNames.reduce((acc, n) => { acc[n] = (acc[n] || 0) + 1; return acc; }, {});
-                const text = Object.entries(counts).map(([n, c]) => `${n}×${c}`).join('、');
+                const text = Object.entries(counts).map(([n, c]) => `${RPG_INGREDIENT_EMOJI[n] || ''}${n}×${c}`).join('、');
                 rpgLogAppend(`撿到食材：${text}`);
             }
             // 限定食譜稀有掉落：打贏魔王或比自己強不少的強敵，有機會直接學會一道限定食譜
@@ -6454,7 +6470,7 @@
                     const wonRecipe = restrictedPool[Math.floor(Math.random() * restrictedPool.length)];
                     p.knownRecipes.push(wonRecipe);
                     rpgAddScore(50, '獲得新食譜');
-                    rpgLogAppend(`✨ 這場硬仗讓你頓悟了限定食譜「${wonRecipe}」的做法！`);
+                    rpgLogAppend(`✨ 這場硬仗讓你頓悟了限定食譜${(RPG_ITEM_INFO[wonRecipe] || {}).emoji || ''}「${wonRecipe}」的做法！`);
                 }
             }
             const leveledEntries = [];
