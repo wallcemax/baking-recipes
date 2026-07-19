@@ -5560,15 +5560,16 @@
 
         function rpgFloatDamage(elId, amount, color) {
             const target = document.getElementById(elId);
-            const container = document.getElementById('game-modal-body');
-            if (!target || !container) return;
+            if (!target) return;
             const tRect = target.getBoundingClientRect();
-            const cRect = container.getBoundingClientRect();
-            container.style.position = container.style.position || 'relative';
+            // 改成直接掛在 document.body 上、用 position:fixed 配合視窗座標，不再依賴 game-modal-body 這個容器本身。
+            // 原本是掛在容器裡面：如果數字剛加進去，緊接著又有別的戰鬥畫面重繪把容器 innerHTML 整個換掉，
+            // 數字會在使用者看到之前就被清空——手機效能通常比較慢，這兩件事前後腳發生的機率更高，
+            // 桌機比較快、多半能搶先畫出來，這很可能是同一套程式在手機上比較容易看不到數字的原因
             const num = document.createElement('div');
             num.textContent = `-${amount}`;
-            num.style.cssText = `position:absolute; left:${tRect.left - cRect.left + tRect.width / 2}px; top:${tRect.top - cRect.top}px; transform:translate(-50%,0); font-weight:800; font-size:1.2rem; color:${color}; text-shadow:0 2px 3px rgba(0,0,0,0.35), 0 0 2px #fff; pointer-events:none; z-index:60; transition:transform .8s ease-out, opacity .8s ease-out; opacity:1;`;
-            container.appendChild(num);
+            num.style.cssText = `position:fixed; left:${tRect.left + tRect.width / 2}px; top:${tRect.top}px; transform:translate(-50%,0); font-weight:800; font-size:1.2rem; color:${color}; text-shadow:0 2px 3px rgba(0,0,0,0.35), 0 0 2px #fff; pointer-events:none; z-index:9999; transition:transform .8s ease-out, opacity .8s ease-out; opacity:1;`;
+            document.body.appendChild(num);
             requestAnimationFrame(() => { num.style.transform = 'translate(-50%, -38px)'; num.style.opacity = '0'; });
             setTimeout(() => num.remove(), 850);
         }
