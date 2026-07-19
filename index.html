@@ -3247,6 +3247,8 @@
             innkeeper: { name: '旅館老闆', icon: '🛏️', lines: ['要不要在這裡休息一下？（幫全隊，包含倒下的夥伴，免費全回復！）'], heal: true },
             ingredientShop: { name: '食材商店', icon: '🧺', lines: ['歡迎光臨食材行！買入 2 塊錢一份，賣出算你 1 塊錢一份，公道價！'], ingredientShop: true },
         };
+        // 這幾個 NPC 設定上是站在廣場/門口的石板地，腳下要畫石板路而不是草地
+        const RPG_NPC_STANDS_ON_PATH = { innkeeper: true, ingredientShop: true, ginhaku: true };
 
         let rpgState = null;
         let rpgWatchdogTimer = null;
@@ -4002,9 +4004,11 @@
                     const px = (x - cam.x) * T, py = (y - cam.y) * T;
 
                     if (useReal) {
-                        // 底層地形：水 / 泥土路 / 草地（樹木跟 NPC 也是站在草地上）
+                        // 底層地形：水 / 泥土路 / 草地（樹木跟大部分 NPC 都是站在草地上；
+                        // 但旅館老闆、食材商店、銀白這幾個本來就設定站在廣場/門口的石板上，所以他們腳下要畫石板路，不是草地）
+                        const standingNpcId = ch === 'H' ? map.npcs[`${x},${y}`] : null;
                         if (ch === '~') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.water, px, py, T);
-                        else if (ch === 'P') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.path, px, py, T);
+                        else if (ch === 'P' || RPG_NPC_STANDS_ON_PATH[standingNpcId]) rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.path, px, py, T);
                         else rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.grass, px, py, T);
 
                         if (ch === 'E') {
