@@ -613,6 +613,8 @@
             { id: 'finish_total_10', type: 'totalFinish', threshold: 10, achievement: { name: '以後我就住這了', desc: '開始準備相關定居程序。' } },
             { id: 'finish_total_15', type: 'totalFinish', threshold: 15, achievement: { name: '開始想明天要吃什麼', desc: '吃什麼成為每天的煩惱。' } },
             { id: 'finish_total_20', type: 'totalFinish', threshold: 20, title: { icon: '🍽️', name: '大胃王的' }, achievement: { name: '情緒價值已經無法滿足', desc: '胃口已經被養大了。' } },
+            // ---- 異世界料理者：被魔王擊敗累計次數 ----
+            { id: 'rpg_boss_loss_5', type: 'rpgBossLossCount', threshold: 5, title: { icon: '🤮', name: '難吃的' }, achievement: { name: '我覺得不錯吃阿', desc: '這應該不算是自我感覺良好吧？' } },
 
             // ---- 大功告成：蛋糕/糕餅 ----
             { id: 'finish_cake_1', type: 'categoryFinish', category: '蛋糕/糕餅', threshold: 1, achievement: { name: '你喜歡吃鹹的還是甜的?', desc: '真讓人欲罷不能。' } },
@@ -795,6 +797,7 @@
                     case 'earlyMorningCreate': current = userProgress.earlyMorningCreateCount || 0; break;
                     case 'afternoonCreateCount': current = userProgress.afternoonCreateCount || 0; break;
                     case 'ingredientKeyword': current = (userProgress.ingredientKeywordCounts || {})[rule.id] || 0; break;
+                    case 'rpgBossLossCount': current = userProgress.rpgBossLossCount || 0; break;
                 }
                 if (current >= rule.threshold) {
                     if (rule.title && !userProgress.unlockedTitleIds.includes(rule.id)) {
@@ -825,6 +828,7 @@
                 case 'earlyMorningCreate': return `在清晨（8點前）新增食譜`;
                 case 'afternoonCreateCount': return `在下午時段新增食譜累計 ${rule.threshold} 次`;
                 case 'ingredientKeyword': return `食材名稱含有「${rule.keywords.join('、')}」累計使用 ${rule.threshold} 次（可跨食譜累計）`;
+                case 'rpgBossLossCount': return `在異世界料理者裡被魔王擊敗累計 ${rule.threshold} 次`;
                 default: return '';
             }
         }
@@ -3773,6 +3777,7 @@
                         <p>✨ 經驗　${obj.exp}/${obj.expToNext}</p>
                     </div>
                     ${obj.weaponName ? `<p class="text-xs mt-2" style="color:#B3A492">🔪 武器：${obj.weaponName}${obj.weaponFusionLv ? ` <span style="color:var(--sage)">LV.${obj.weaponFusionLv}${obj.weaponFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}${obj.armorName ? `　👕 防具：${obj.armorName}${obj.armorFusionLv ? ` <span style="color:var(--sage)">LV.${obj.armorFusionLv}${obj.armorFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}` : ''}</p>` : ''}
+                    ${!obj.isCompanion && obj.badTasteMarkCount ? `<p class="text-xs mt-1" style="color:#B3A492">🤮 敗者的難吃印 × ${obj.badTasteMarkCount}${obj.badTasteMarkCount >= 5 ? '（已集滿！）' : `（再集 ${5 - obj.badTasteMarkCount} 個解鎖稱號）`}</p>` : ''}
                     ${isCompanion ? `
                         <div class="flex items-center justify-between mt-2 pt-2" style="border-top:1px solid var(--line);">
                             <p class="text-xs" style="color:#B3A492">隊形：跟隨在第 ${idx + 2} 位</p>
@@ -6592,12 +6597,26 @@
         function rpgBattleLose() {
             const state = rpgState;
             const p = state.player;
+            const isBossLoss = !!(state.battle && rpgFormationEntries(state.battle.monsterFormation).some(e => e.obj.isBoss));
             const lostGold = Math.min(p.gold, Math.round(p.gold * 0.3));
             p.gold -= lostGold;
             p.hp = Math.max(1, Math.round(p.maxHp * 0.1));
             (state.companions || []).forEach(c => { c.hp = Math.max(1, Math.round(c.maxHp * 0.1)); }); // 不管戰鬥中有沒有倒下，回村莊時全隊都要救回來，不然倒下的夥伴會永遠消失
             rpgStopBgm();
             playSfx('defeat');
+            if (isBossLoss) {
+                // 被魔王擊敗：不是消耗品，是「證明被電過幾次」的收集物，所以不放進 p.items（不然會出現在戰鬥道具清單裡，變成能拿來亂用的假道具）
+                p.badTasteMarkCount = (p.badTasteMarkCount || 0) + 1;
+                rpgLogAppend('魔王：「難吃……太難吃了……給你一個敗者的難吃印。」');
+                rpgLogAppend(`🤮 獲得了「敗者的難吃印」！（目前累計 ${p.badTasteMarkCount} 個）`);
+                // 這個材料是跟網站的稱號/成就系統掛鉤的（不是遊戲內部道具），收集滿 5 個會解鎖「難吃的」稱號，要同步寫回 userProgress 才能觸發檢查
+                if (typeof userProgress !== 'undefined' && userProgress) {
+                    userProgress.rpgBossLossCount = (userProgress.rpgBossLossCount || 0) + 1;
+                    const newly = checkUnlocks();
+                    saveUserProgress();
+                    if (newly.length) showAchievementToast(newly);
+                }
+            }
             rpgLogAppend('你們全員陣亡了，被村民救回暖廚村…已自動儲存進度。');
             rpgLogAppend(`掉了 ${lostGold} 金幣，HP 只恢復到 1/10`);
             document.querySelectorAll('#rpg-battle-actions button').forEach(btn => btn.disabled = true);
