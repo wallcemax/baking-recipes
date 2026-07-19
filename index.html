@@ -5200,7 +5200,7 @@
             '胡蘿蔔炒蛋': { need: { '雞蛋': 2, '胡蘿蔔': 1 }, cost: 45, ngRequired: 1 },
             '燒酒雞': { need: { '米酒': 2, '雞肉': 2, '胡椒': 1 }, cost: 80 },
             // 限定食譜：不會從一般調查點拿到，只能來食譜商店花大錢買，或是打贏強敵/魔王小機率直接掉落已學會
-            '傳說主廚全餐': { need: Object.fromEntries(RPG_ALL_INGREDIENTS.map(ing => [ing, 5])), cost: 50000, restricted: true },
+            '傳說主廚全餐': { need: Object.fromEntries(RPG_ALL_INGREDIENTS.filter(ing => !RPG_INGREDIENT_NG_REQUIRED[ing]).map(ing => [ing, 5])), cost: 50000, restricted: true },
             '黃金蜜汁烤串': { need: { '蜂蜜': 4, '起司': 4, '哥布林辛香料': 4, '菇傘': 4 }, cost: 20000, restricted: true },
         };
 
@@ -6591,8 +6591,12 @@
                     playSfx('levelup');
                 }, 100 + idx * 350);
             });
-            // 讀完戰鬥記錄後自動回到地圖，不用再手動點繼續
-            setTimeout(() => rpgBackToMap(), 2600);
+            // 不再自動倒數強制回地圖——原本 2.6 秒後就會被切走，經驗值/食材掉落這些訊息還沒看完就消失了。
+            // 改成顯示一個「繼續」按鈕，戰鬥紀錄本身可以往上捲動慢慢看，看完再自己按繼續，不會被趕、也不會拖到想快速略過的人
+            const actionsEl = document.getElementById('rpg-battle-actions');
+            if (actionsEl) {
+                actionsEl.innerHTML = `<button onclick="rpgBackToMap()" class="btn-primary w-full">🎉 繼續</button>`;
+            }
         }
 
         function rpgBattleLose() {
