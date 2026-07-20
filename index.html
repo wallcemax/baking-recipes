@@ -6106,6 +6106,19 @@
             });
             entries.sort((x, y) => (y.agi + Math.random() * 0.1) - (x.agi + Math.random() * 0.1));
             rpgApplyStatusTicks(b); // 中毒/衰弱在每輪開始時統一結算一次
+            // 中毒/灼傷/流血這類持續傷害有可能在這裡就把最後一隻怪或最後一位夥伴打死，
+            // 如果不在這裡立刻判斷勝敗，遊戲會照常跑完這一輪剩下的行動，
+            // 導致玩家後面選不到目標、卡住無法繼續（這裡先攔下來，直接結算勝負）
+            if (rpgFormationEntries(b.monsterFormation).every(e => e.obj.curHp <= 0)) {
+                updateBattleUI();
+                setTimeout(() => rpgBattleWin(), 200);
+                return;
+            }
+            if (rpgFormationEntries(b.partyFormation).every(e => e.obj.hp <= 0)) {
+                updateBattleUI();
+                setTimeout(() => rpgBattleLose(), 200);
+                return;
+            }
             // 魔王的「隨從召喚」：場上還有隨從死亡的話，每回合開始都有 5% 機率把死掉的隨從全部復活（滿血復活）
             const bossEntryForSummon = rpgFormationEntries(b.monsterFormation).find(e => e.obj.isBoss && e.obj.curHp > 0);
             if (bossEntryForSummon) {
