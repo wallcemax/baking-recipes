@@ -4107,8 +4107,18 @@
                             ctx.fillStyle = grad;
                             ctx.beginPath(); ctx.arc(px + T / 2, py + T / 2, T / 2 - 2, 0, Math.PI * 2); ctx.fill();
                         }
-                        if (decorTile) rpgDrawSprite(ctx, rpgTownImg, decorTile, px, py, T, RPG_TOWN_STRIDE);
-                        else if (ch === '#') rpgDrawSprite(ctx, rpgTownImg, RPG_TOWN_TILES.tree, px, py, T, RPG_TOWN_STRIDE);
+                        if (decorTile) {
+                            const gp = map.gatherPoints && map.gatherPoints[`${x},${y}`];
+                            if (gp && !gp.available) {
+                                // 採集點被採過、還沒刷新：畫成半透明，一眼就看得出「這裡暫時沒東西可採」
+                                ctx.save();
+                                ctx.globalAlpha = 0.35;
+                                rpgDrawSprite(ctx, rpgTownImg, decorTile, px, py, T, RPG_TOWN_STRIDE);
+                                ctx.restore();
+                            } else {
+                                rpgDrawSprite(ctx, rpgTownImg, decorTile, px, py, T, RPG_TOWN_STRIDE);
+                            }
+                        } else if (ch === '#') rpgDrawSprite(ctx, rpgTownImg, RPG_TOWN_TILES.tree, px, py, T, RPG_TOWN_STRIDE);
                         const decorDungeonTile = state.region === 'village' ? RPG_VILLAGE_DECOR_DUNGEON[`${x},${y}`] : null;
                         if (decorDungeonTile) rpgDrawSprite(ctx, rpgDungeonImg, decorDungeonTile, px, py, T, RPG_DUNGEON_STRIDE);
                         if (ch === 'H') {
@@ -4311,6 +4321,9 @@
         function rpgCheckNearby() {
             const state = rpgState;
             if (!state || state.mode !== 'map') return;
+            // 鎖定中（正在跟人對話、播動畫、事件進行中……）就不要重建按鈕，不然像老麥這種「打完字才跳出來的選項」
+            // 會被這裡重新蓋回預設的「🗣️ 交談」按鈕，選項就會像是自己消失一樣
+            if (state.locked) return;
             const map = RPG_MAPS[state.region];
             const { x, y } = state.pos;
             const neighbors = [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y], [x, y]]; // 最後加自己站的那一格，寶箱現在站上去也能調查
