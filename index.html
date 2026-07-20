@@ -2644,6 +2644,13 @@
         const RPG_TOWN_STRIDE = 16;
         const RPG_TOWN_TILES = { grass: [0, 0], tree: [2, 1] };
         let rpgTownImg = null;
+        // 暖廚村食譜商店房子背景：村莊座標 -> tilemap_packed 圖磚座標 [col,row]；(6,3) 是食材商人本人站的位置，
+        // 疊圖磚只當背景畫在他腳下，不會蓋掉 NPC 本體
+        const RPG_VILLAGE_DECOR = {
+            '5,1': [4, 4], '6,1': [5, 4], '7,1': [6, 4], '8,1': [7, 4],
+            '5,2': [4, 5], '6,2': [5, 5], '7,2': [6, 5], '8,2': [7, 5],
+            '5,4': [4, 6], '6,3': [5, 7], '7,3': [5, 6], '8,3': [7, 6],
+        };
         const RPG_CHAR_TILES = {
             player: [0, 5], elder: [1, 6], shop: [0, 7], innkeeper: [1, 7], goblin: [0, 3],
             companion: [1, 8], companion2: [0, 9], companion3: [1, 9], companion4: [0, 10],
@@ -2949,10 +2956,10 @@
                 name: '暖廚村',
                 rows: [
                     '########################',
-                    '#..........PH..........#',
-                    '#..........PP..........#',
-                    '#..##.H....PP....H..##.#',
-                    '#..#.......PP.......#..#',
+                    '#....####..PH..........#',
+                    '#....####..PP..........#',
+                    '#..##.H##..PP....H..##.#',
+                    '#..#.#.....PP.......#..#',
                     '#..........PP..........#',
                     '#...H......PP......H...#',
                     '#..........PP..........#',
@@ -2979,7 +2986,7 @@
                     '12,1': 'ingredientShop',
                 },
                 pois: {
-                    '3,1': {}, '20,1': {}, '3,16': {}, '20,16': {}, '8,1': {}, '15,16': {},
+                    '3,1': {}, '20,1': {}, '3,16': {}, '20,16': {}, '9,1': {}, '15,16': {},
                 },
                 exits: { '11,17': { to: 'plains', x: 6, y: 1 }, '12,17': { to: 'plains', x: 7, y: 1 } },
                 wild: false,
@@ -4033,6 +4040,7 @@
                         // 底層地形：水 / 泥土路 / 草地（樹木跟大部分 NPC 都是站在草地上；
                         // 但旅館老闆、食材商店、銀白這幾個本來就設定站在廣場/門口的石板上，所以他們腳下要畫石板路，不是草地）
                         const standingNpcId = ch === 'H' ? map.npcs[`${x},${y}`] : null;
+                        const decorTile = state.region === 'village' ? RPG_VILLAGE_DECOR[`${x},${y}`] : null;
                         if (ch === '~') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.water, px, py, T);
                         else if (ch === 'P' || RPG_NPC_STANDS_ON_PATH[standingNpcId]) rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.path, px, py, T);
                         else rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.grass, px, py, T);
@@ -4045,7 +4053,8 @@
                             ctx.fillStyle = grad;
                             ctx.beginPath(); ctx.arc(px + T / 2, py + T / 2, T / 2 - 2, 0, Math.PI * 2); ctx.fill();
                         }
-                        if (ch === '#') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.tree, px, py, T);
+                        if (decorTile) rpgDrawSprite(ctx, rpgTownImg, decorTile, px, py, T, RPG_TOWN_STRIDE);
+                        else if (ch === '#') rpgDrawSprite(ctx, rpgTerrainImg, RPG_TERRAIN_TILES.tree, px, py, T);
                         if (ch === 'H') {
                             const npcId = map.npcs[`${x},${y}`];
                             const companionSpriteKey = { ako: 'hero_ako', suisui: 'hero_suisui', laozhou: 'hero_laozhou', alan: 'hero_alan', ginhaku: 'hero_ginhaku' }[npcId];
