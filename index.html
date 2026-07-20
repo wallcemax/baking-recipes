@@ -2704,7 +2704,7 @@
             // 主角/夥伴的人物造型，跟武器圖示，都是使用者新提供的 tilemap_packed 素材
             hero_player: [2, 8], hero_ako: [3, 7], hero_suisui: [3, 8], hero_laozhou: [0, 7], hero_alan: [1, 8], hero_ginhaku: [0, 11], hero_laomai: [2, 11],
             weapon_sword: [7, 8], weapon_axe: [10, 9], weapon_dagger: [11, 10], weapon_hammer: [9, 9], weapon_wand: [9, 10], weapon_potion: [1, 11],
-            chest_closed: [5, 7], chest_open: [7, 7],
+            chest_closed: [5, 7], chest_open: [7, 7], anvil: [2, 6],
         };
         let rpgTerrainImg = null, rpgCharImg = null, rpgDungeonImg = null, rpgMonsterImg = null, rpgAssetsReady = false;
         // 額外一份怪物/生物總表（使用者提供的素材，直接內嵌成 base64，不用另外連網下載），
@@ -2731,6 +2731,7 @@
             '龍息主廚刀': { atk: 12, cost: 500, hue: 130, desc: '刀鋒帶著若有似無的熱氣，據說是仿照傳說神兵打造的。' },
             '料理之神的餐具': { atk: 25, cost: 5000, hue: 45, desc: '傳說級的餐具，握在手上就能感受到滿滿的美味力量。' },
             '龍神料理刀': { atk: 40, cost: 20000, hue: 280, ngRequired: 1, desc: '傳說中龍神親自淬鍊的料理刀，刀鋒所至，食材與敵人都無法抵擋。' },
+            '老麥的龍鱗巨劍': { atk: 45, cost: 50000, hue: 200, ngRequired: 2, desc: '老麥親手鍛造的巨劍，劍身覆滿龍鱗般的紋路。可以拿去找老麥用神祕金屬精煉鍛造，變得更強。' },
         };
         const RPG_ARMORS = {
             '破舊圍裙': { def: 0, cost: 0, icon: 'icon_armor', desc: '穿了很多年的圍裙，勉強擋一下油噴，聊勝於無。' },
@@ -2738,21 +2739,29 @@
             '星級主廚服': { def: 10, cost: 400, icon: 'icon_armor3', desc: '星級餐廳主廚才穿得上的正式服裝，防禦力相當扎實。' },
             '料理之神的廚服': { def: 14, cost: 4000, icon: 'icon_armor3', desc: '傳說中料理之神親自賜下的廚服，穿上後渾身充滿安心感。' },
             '龍神廚袍': { def: 20, cost: 16000, icon: 'icon_armor3', ngRequired: 1, desc: '龍神親自加持的廚袍，鱗片般的織紋擁有近乎無敵的防禦力。' },
+            '老麥的龍鱗鍛造鎧': { def: 25, cost: 30000, icon: 'icon_armor3', ngRequired: 2, desc: '老麥用畢生手藝鍛出的鎧甲，層層鱗甲堅不可摧。可以拿去找老麥用神祕金屬精煉鍛造，變得更強。' },
         };
         // 算「連同裝備加成」之後的實際攻擊/防禦力：只有主角有 weaponName/armorName 對得上這兩份清單，
         // 夥伴／怪物身上沒有對應的裝備名稱，會自動回退成原本的 atk/def
+        // 精煉鍛造：不管是主角自己的裝備、還是夥伴的專屬裝備，都用「裝備名稱」去查目前的強化等級，
+        // 每 +1 級再疊乘 5% 強度，最高疊到 +10（即 ×1.5），跟融合系統（直接加在 obj.atk/def 上）完全獨立、可以同時生效
+        function rpgForgeMult(itemName) {
+            if (!itemName) return 1;
+            const lv = (rpgState && rpgState.player && rpgState.player.forgeLevels && rpgState.player.forgeLevels[itemName]) || 0;
+            return 1 + lv * 0.05;
+        }
         function rpgEffectiveAtk(obj) {
             const w = RPG_WEAPONS[obj.weaponName];
             const base = obj.atk + (w ? w.atk : 0);
             const pct = obj.buffs && obj.buffs.atkBuffPct ? obj.buffs.atkBuffPct.value : 0;
             const sousVideMult = obj.buffs && obj.buffs.sousVide ? obj.buffs.sousVide.value : 1;
-            return Math.round(base * (1 + pct) * sousVideMult);
+            return Math.round(base * (1 + pct) * sousVideMult * rpgForgeMult(obj.weaponName));
         }
         function rpgEffectiveDef(obj) {
             const a = RPG_ARMORS[obj.armorName];
             const base = obj.def + (a ? a.def : 0);
             const pct = obj.buffs && obj.buffs.defBuffPct ? obj.buffs.defBuffPct.value : 0;
-            return Math.round(base * (1 + pct));
+            return Math.round(base * (1 + pct) * rpgForgeMult(obj.armorName));
         }
         // 敏捷有暫時性 buff 的話，排行動順序要算進去
         function rpgEffectiveAgi(obj) {
@@ -3405,6 +3414,14 @@
             ginhaku_marinate: { name: '醃漬', sp: 32, grantDodgeNext: true, pattern: 'ally_column_4', particle: 'window_04', effectStyle: 'pulse', filter: 'sepia(1) hue-rotate(35deg) saturate(6.5) brightness(1.35) contrast(1.15)', sfx: 'shield' },
             ginhaku_sousvide: { name: '舒肥', sp: 60, grantSousVide: true, pattern: 'ally_single', particle: 'light_01', effectStyle: 'pulse', filter: 'sepia(1) hue-rotate(340deg) saturate(3) brightness(1.3) contrast(1.1)', sfx: 'simmer' },
             ginhaku_tech: { name: '科技與狠活', sp: 30, mult: 2, allIndividualChance: 0.5, allIndividualType: 'fear', pattern: 'column_4', particle: 'twirl_02', effectStyle: 'burst', filter: 'sepia(1) hue-rotate(270deg) saturate(5.5) contrast(1.15)', sfx: 'chemFizz' },
+            // ---- 老麥專屬技能（三周目加入）----
+            laomai_catchup: { name: '加速學習追趕', passive: true, pattern: 'passive', isCatchupPassive: true },
+            laomai_refine_basic: { name: '初級精煉鍛造', passive: true, pattern: 'passive', isForgeUnlock: true },
+            laomai_ore_sense: { name: '礦石嗅覺', passive: true, pattern: 'passive', oreSenseBonus: 0.05 },
+            laomai_thunder_hammer: { name: '雷神之槌', sp: 30, mult: 2, pattern: 'column_4', particle: 'spark_06', effectStyle: 'drop', filter: 'sepia(1) hue-rotate(35deg) saturate(6.5) brightness(1.45) contrast(1.15)', sfx: 'thunder' },
+            laomai_refine_ultimate: { name: '究極精煉鍛造', passive: true, pattern: 'passive', forgeRateBonus: 0.1 },
+            laomai_gold_gamble: { name: '一擲千金', sp: 10, pattern: 'single', goldGambleDamage: true, particle: 'twirl_01', effectStyle: 'spin', filter: 'sepia(1) hue-rotate(45deg) saturate(5) brightness(1.3) contrast(1.1)', sfx: 'coin' },
+            laomai_hot_anvil: { name: '火熱鐵砧', sp: 50, pattern: 'single', rhythmForge: true, comboMax: 12, comboMult: 1.4, particle: 'muzzle_02', sfx: 'fireHit' },
         };
         // 每 5 級解鎖一個新技能：主角固定學恢復系列；4 位夥伴則各自有獨立的技能路線，不會學到一樣的技能
         const RPG_SKILL_PROGRESSION = {
@@ -3416,6 +3433,7 @@
             '老周': { 5: 'laozhou_single', 10: 'laozhou_column', 15: 'laozhou_row_pierce', 20: 'laozhou_cross', 25: 'laozhou_column2', 30: 'laozhou_ultimate_all' },
             '阿藍': { 5: 'alan_atk_buff_all', 10: 'alan_single2', 15: 'alan_all_weak', 20: 'alan_cure_all', 25: 'alan_crush', 30: 'alan_ultimate_all' },
             '銀白': { 10: 'ginhaku_blend', 20: 'ginhaku_smoky', 30: 'ginhaku_marinate', 40: 'ginhaku_sousvide', 50: 'ginhaku_tech' },
+            '老麥': { 15: 'laomai_ore_sense', 25: 'laomai_thunder_hammer', 35: 'laomai_refine_ultimate', 45: 'laomai_gold_gamble', 55: 'laomai_hot_anvil' },
         };
         // 角色升到新等級時檢查有沒有新技能可以學，回傳學到的技能名稱（沒有就回傳 null）
         function rpgCheckSkillUnlock(member) {
@@ -3494,6 +3512,11 @@
             if (sk.grantSousVide) parts.push('目標沒被打的每回合攻擊力再疊加×1.1，被攻擊或戰鬥結束就重置');
             if (sk.groupInflictChance) parts.push(`${Math.round(sk.groupInflictChance * 100)}%機率讓敵方全體一起陷入${sk.groupInflictType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[sk.groupInflictType].name}`);
             if (sk.extraDropChance) parts.push(`${Math.round(sk.extraDropChance * 100)}%機率額外獲得食材`);
+            if (sk.isForgeUnlock) parts.push('解鎖「精煉鍛造」功能，可以用神祕金屬強化裝備');
+            if (sk.oreSenseBonus) parts.push(`神祕金屬掉落率+${Math.round(sk.oreSenseBonus * 100)}%，寶箱開到食材時也會一併掉落神祕金屬，不再是擇一`);
+            if (sk.forgeRateBonus) parts.push(`精煉鍛造成功率+${Math.round(sk.forgeRateBonus * 100)}%`);
+            if (sk.goldGambleDamage) parts.push('隨機消耗1~999金幣，造成等值傷害（無視自己攻擊力與敵方防禦力）');
+            if (sk.rhythmForge) parts.push(`敲擊小遊戲，最多連段${sk.comboMax || 12}下，每下威力ATK×${sk.comboMult || 1.4}，沒接到就會中斷連段`);
             return parts.join('、') || '效果不明';
         }
         function rpgSkillRangeGridHTML(pattern) {
@@ -3524,6 +3547,7 @@
                 items: { '家常蛋花湯': 2 },
                 ingredients: {}, // 食材背包：{ 食材名稱: 數量 }
                 materials: {}, // 特殊材料背包：跟食材分開放，不是食材（例如神祕金屬），{ 材料名稱: 數量 }
+                forgeLevels: {}, // 精煉鍛造：{ 裝備名稱: 目前強化等級(0~10) }，跟裝備融合系統各自獨立、互不干擾
                 discoveredIngredients: {}, // 食材商店解鎖紀錄：{ 食材名稱: true }，必須第一次實際得到過該食材才會開放商店買賣
                 knownRecipes: ['家常蛋花湯'], // 已經學會、可以在烹飪背包裡製作的料理
                 skills: ['basic_heal'],
@@ -3598,6 +3622,7 @@
             laozhou: { id: 'laozhou', name: '老周', level: 1, exp: 0, expToNext: 20, hp: 32, maxHp: 32, atk: 6, def: 4, sp: 6, maxSp: 6, agi: 3, weaponName: '燒烤鐵叉', skills: ['laozhou_all_weak', 'laozhou_catchup'], isCompanion: true, spriteKey: 'hero_laozhou', spriteSheet: 'dungeon', weaponSprite: 'weapon_wand', weaponHue: 270 },
             alan: { id: 'alan', name: '阿藍', level: 1, exp: 0, expToNext: 20, hp: 22, maxHp: 22, atk: 5, def: 2, sp: 9, maxSp: 9, agi: 9, weaponName: '辛香研磨棒', skills: ['alan_single', 'alan_catchup'], isCompanion: true, spriteKey: 'hero_alan', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer' },
             ginhaku: { id: 'ginhaku', name: '銀白', level: 1, exp: 0, expToNext: 20, hp: 21, maxHp: 21, atk: 4, def: 2, sp: 14, maxSp: 14, agi: 8, weaponName: '藥草調味瓶', skills: ['ginhaku_passive'], isCompanion: true, spriteKey: 'hero_ginhaku', spriteSheet: 'dungeon', weaponSprite: 'weapon_potion', weaponHue: 200 },
+            laomai: { id: 'laomai', name: '老麥', level: 1, exp: 0, expToNext: 20, hp: 34, maxHp: 34, atk: 8, def: 6, sp: 12, maxSp: 12, agi: 3, weaponName: '鍛造巨錘', weaponFusionLv: 1, skills: ['laomai_catchup', 'laomai_refine_basic'], isCompanion: true, spriteKey: 'hero_laomai', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer', weaponHue: 30 },
         };
         // 招募條件跟劇情台詞：require 是 null 代表直接加入；否則要交出對應的道具/食材才會加入
         const RPG_COMPANION_RECRUIT_INFO = {
@@ -3841,7 +3866,7 @@
                         <p>💨 敏捷　${obj.agi}</p>
                         <p>✨ 經驗　${obj.exp}/${obj.expToNext}</p>
                     </div>
-                    ${obj.weaponName ? `<p class="text-xs mt-2" style="color:#B3A492">🔪 武器：${obj.weaponName}${obj.weaponFusionLv ? ` <span style="color:var(--sage)">LV.${obj.weaponFusionLv}${obj.weaponFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}${obj.armorName ? `　👕 防具：${obj.armorName}${obj.armorFusionLv ? ` <span style="color:var(--sage)">LV.${obj.armorFusionLv}${obj.armorFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}` : ''}</p>` : ''}
+                    ${obj.weaponName ? `<p class="text-xs mt-2" style="color:#B3A492">🔪 武器：${obj.weaponName}${obj.weaponFusionLv ? ` <span style="color:var(--sage)">LV.${obj.weaponFusionLv}${obj.weaponFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}${(rpgState.player.forgeLevels && rpgState.player.forgeLevels[obj.weaponName]) ? ` <span style="color:#C77B3B">⚒️+${rpgState.player.forgeLevels[obj.weaponName]}</span>` : ''}${obj.armorName ? `　👕 防具：${obj.armorName}${obj.armorFusionLv ? ` <span style="color:var(--sage)">LV.${obj.armorFusionLv}${obj.armorFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}${(rpgState.player.forgeLevels && rpgState.player.forgeLevels[obj.armorName]) ? ` <span style="color:#C77B3B">⚒️+${rpgState.player.forgeLevels[obj.armorName]}</span>` : ''}` : ''}</p>` : ''}
                     ${!obj.isCompanion && obj.badTasteMarkCount ? `<p class="text-xs mt-1" style="color:#B3A492">🤮 敗者的難吃印 × ${obj.badTasteMarkCount}${obj.badTasteMarkCount >= 5 ? '（已集滿！）' : `（再集 ${5 - obj.badTasteMarkCount} 個解鎖稱號）`}</p>` : ''}
                     ${isCompanion ? `
                         <div class="flex items-center justify-between mt-2 pt-2" style="border-top:1px solid var(--line);">
@@ -4384,6 +4409,7 @@
             laozhou: { weapon: { name: '燒烤聖火杖', atk: 10 }, armor: { name: '神聖法袍', def: 4 } },
             ako: { weapon: { name: '神之金屬鏟', atk: 17 }, armor: { name: '精鋼大背鍋', def: 15 } },
             ginhaku: { weapon: { name: '魔晶調料瓶', atk: 10 }, armor: { name: '神魔融合服', def: 8 } },
+            laomai: { weapon: { name: '鍛造巨錘', atk: 14 }, armor: { name: '老麥的鍛冶重甲', def: 16 } },
         };
         // 從還沒拿到專屬裝備的「已加入」夥伴裡隨機抽一件，直接強制裝備上去（夥伴沒有裝備選擇畫面，數值直接套用）
         // 二周目以後（ngPlus > 0），已經拿過的專屬裝備還能再重複掉落，重複獲得會自動「融合」：等級 +1、武器 ATK+1／防具 DEF+1，融合到 LV.10 封頂就不會再掉落了
@@ -4439,8 +4465,8 @@
             const isWild = !!map.wild;
             const ngMult = Math.pow(1.3, state.player.ngPlus || 0); // 周目倍率：怪物變強的同時，寶箱獎勵也跟著等比例變好，不然二週目只會更難、沒有更好玩
             // 夥伴專屬裝備掉落機率：跟魔王一樣，隊伍總等級÷100 的百分比，優先判定，蓋過原本這次寶箱該有的獎勵；
-            // 另外疊加保底機率：一周目保底 1%，二周目以後（ngPlus >= 1）保底提高到 5%
-            const equipFloor = (state.player.ngPlus || 0) >= 1 ? 0.05 : 0.01;
+            // 另外疊加保底機率：一周目保底 1%，二周目保底提高到 5%，三周目起（ngPlus >= 2）保底再提高到 10%
+            const equipFloor = (state.player.ngPlus || 0) >= 2 ? 0.10 : (state.player.ngPlus || 0) >= 1 ? 0.05 : 0.01;
             if (Math.random() < (rpgTotalPartyLevel() / 10000) + equipFloor) {
                 const gearResult = rpgTryDropCompanionEquipment();
                 if (gearResult) {
@@ -4452,15 +4478,23 @@
                     return;
                 }
             }
-            // 神祕金屬：野外（麥穗平原）寶箱限定，完成老麥的融合任務之後才會開始有機會出現，3% 機率；
+            // 神祕金屬：野外（麥穗平原）寶箱限定，完成老麥的融合任務之後才會開始有機會出現，基礎 3% 機率；
             // 效果未知、不是食材（不進 p.ingredients，不會出現在食材商店），另外開一個 p.materials 分類收著
-            if (isWild && state.player.fusionUnlocked && Math.random() < 0.03) {
+            // 老麥的「礦石嗅覺」被動（LV15）：機率額外 +5%，而且開到食材的寶箱不會再跟金屬擇一，兩種都會拿到
+            const hasOreSense = (state.companions || []).some(c => c.id === 'laomai' && c.skills && c.skills.includes('laomai_ore_sense'));
+            const metalChance = 0.03 + (hasOreSense ? 0.05 : 0);
+            let metalMsgPrefix = '';
+            if (isWild && state.player.fusionUnlocked && Math.random() < metalChance) {
                 state.player.materials = state.player.materials || {};
                 state.player.materials['神祕金屬'] = (state.player.materials['神祕金屬'] || 0) + 1;
-                if (box) box.textContent = `❓ 寶箱裡有一塊冰冷、散發微光的「神祕金屬」，用途不明……先收進背包裡吧。（目前累計 ${state.player.materials['神祕金屬']} 個）`;
-                playSfx('news');
-                if (sp) rpgBurstParticle('light', { x: sp.x, y: sp.y, count: 4, size: 34, duration: 0.8, filter: 'grayscale(1) brightness(1.1) contrast(1.2)' });
-                return;
+                if (!hasOreSense) {
+                    if (box) box.textContent = `❓ 寶箱裡有一塊冰冷、散發微光的「神祕金屬」，用途不明……先收進背包裡吧。（目前累計 ${state.player.materials['神祕金屬']} 個）`;
+                    playSfx('news');
+                    if (sp) rpgBurstParticle('light', { x: sp.x, y: sp.y, count: 4, size: 34, duration: 0.8, filter: 'grayscale(1) brightness(1.1) contrast(1.2)' });
+                    return;
+                }
+                // 有礦石嗅覺的話不 return，繼續往下讓寶箱照常開出食材/金幣/食譜等一般獎勵，最後把神祕金屬的訊息一起附上
+                metalMsgPrefix = `❓ 順手多挖到一塊「神祕金屬」（目前累計 ${state.player.materials['神祕金屬']} 個）！　`;
             }
             // 每個寶箱打開前才隨機決定這次會開到什麼，不是固定在某個位置放某樣東西——同一個寶箱重複刷新，開到的內容也不會一樣
             const roll = Math.random() * 100;
@@ -4468,6 +4502,12 @@
             const rewardType = isWild
                 ? (roll < 52 ? 'ingredient' : roll < 74 ? 'gold' : roll < 88 ? 'recipe' : 'dish')
                 : (roll < 55 ? 'ingredient' : roll < 85 ? 'gold' : 'recipe');
+            // 礦石嗅覺：即使這次沒觸發前面獨立的金屬掉落判定，只要這次寶箱開到的是食材，也額外有礦石嗅覺的加成機率再多掉 1 個神祕金屬
+            if (!metalMsgPrefix && hasOreSense && isWild && state.player.fusionUnlocked && rewardType === 'ingredient' && Math.random() < metalChance) {
+                state.player.materials = state.player.materials || {};
+                state.player.materials['神祕金屬'] = (state.player.materials['神祕金屬'] || 0) + 1;
+                metalMsgPrefix = `❓ 順手多挖到一塊「神祕金屬」（目前累計 ${state.player.materials['神祕金屬']} 個）！　`;
+            }
 
             if (rewardType === 'ingredient') {
                 const availableIngredients = RPG_ALL_INGREDIENTS.filter(ing => !RPG_INGREDIENT_NG_REQUIRED[ing] || (state.player.ngPlus || 0) >= RPG_INGREDIENT_NG_REQUIRED[ing]);
@@ -4510,6 +4550,7 @@
                 if (box) box.textContent = `🔍 找到了 💰${goldAmt} 金幣！`;
                 playSfx('success');
             }
+            if (metalMsgPrefix && box) box.textContent = metalMsgPrefix + box.textContent;
             if (sp) rpgBurstParticle('star', { x: sp.x, y: sp.y, count: 4, size: 26, duration: 0.6, dist: 4, distVar: 8, filter: 'sepia(1) hue-rotate(10deg) saturate(5.5) brightness(1.35) contrast(1.15)' });
         }
 
@@ -4601,7 +4642,7 @@
         function rpgSyncCompanionPassives() {
             const state = rpgState;
             if (!state || !state.companions) return;
-            const passiveByCompanionId = { ako: 'ako_catchup', suisui: 'suisui_catchup', laozhou: 'laozhou_catchup', alan: 'alan_catchup', ginhaku: 'ginhaku_passive' };
+            const passiveByCompanionId = { ako: 'ako_catchup', suisui: 'suisui_catchup', laozhou: 'laozhou_catchup', alan: 'alan_catchup', ginhaku: 'ginhaku_passive', laomai: 'laomai_catchup' };
             state.companions.forEach(c => {
                 const passiveId = passiveByCompanionId[c.id];
                 if (passiveId && c.skills && !c.skills.includes(passiveId)) c.skills.push(passiveId);
@@ -4670,13 +4711,28 @@
                 map.rows[8] = rowChars.join('');
             }
         }
-        // 鐵匠老麥：一周目時 (6,14) 是一塊留言板（圖2招牌圖磚，純文字調查點）；二周目起換成本人站在那裡（圖1人物圖磚，可以對話）。
-        // 地圖字元本身一直維持 '#'（不可穿越），只是切換「調查」跟「對話」兩種互動方式跟視覺
+        // 鐵匠老麥：一周目時 (6,14) 是一塊留言板（圖2招牌圖磚，純文字調查點）；二周目起換成本人站在那裡（圖1人物圖磚，可以對話）；
+        // 三周目起完成傳說主廚全餐任務後，老麥會直接加入隊伍，這時候招牌/本人都不該再出現在這個格子，格子也要還原成可以走的空地
         function rpgSyncLaomaiAvailability() {
             const state = rpgState;
             if (!state || !state.player) return;
             const map = RPG_MAPS.village;
             const key = '6,14';
+            const alreadyJoined = (state.companions || []).some(c => c.id === 'laomai');
+            if (alreadyJoined) {
+                if (map.npcs[key] === 'laomai') delete map.npcs[key];
+                delete map.pois[key];
+                delete RPG_VILLAGE_DECOR[key];
+                delete RPG_VILLAGE_DECOR_DUNGEON[key];
+                const [xStr, yStr] = key.split(',');
+                const x = Number(xStr), y = Number(yStr);
+                if (map.rows[y] && map.rows[y][x] === '#') {
+                    const rowChars = map.rows[y].split('');
+                    rowChars[x] = '.';
+                    map.rows[y] = rowChars.join('');
+                }
+                return;
+            }
             const isNgPlus = (state.player.ngPlus || 0) >= 1;
             // 防呆：不管目前是什麼狀態，每次都強制修正成「正確且互斥」的單一狀態，
             // 避免存檔載入順序之類的邊界情況，讓留言板(POI)跟老麥本人(NPC)同時存在、UI 同時跳出兩顆按鈕搶著蓋來蓋去
@@ -4837,9 +4893,17 @@
             const actionsEl0 = document.getElementById('rpg-nearby-actions');
             if (actionsEl0) actionsEl0.innerHTML = '';
             playSfx('click');
-            const fullText = p.laomaiQuestDone
-                ? '老麥：融合裝備的訣竅我都教你了，剩下就看你的手氣囉！'
-                : '老麥：世界旅行時我發現武器防具的融合原理，給我五個🍡 黃金蜜汁烤串我可以教你。';
+            // 三個階段：①還沒解鎖融合（一周目起）→ 黃金蜜汁烤串任務；②已解鎖融合但還沒到三周目/還沒解鍛造任務 → 原本的固定台詞；
+            // ③三周目起、融合任務已完成、鍛造任務還沒完成 → 傳說主廚全餐招募任務，成功後老麥直接加入隊伍
+            const readyForForgeQuest = !!p.fusionUnlocked && (p.ngPlus || 0) >= 2 && !p.laomaiForgeQuestDone;
+            let fullText;
+            if (!p.fusionUnlocked) {
+                fullText = '老麥：世界旅行時我發現武器防具的融合原理，給我五個🍡 黃金蜜汁烤串我可以教你。';
+            } else if (readyForForgeQuest) {
+                fullText = '老麥：呵，好久不見。這趟旅行我又學到新東西了——「精煉鍛造」，能把神祕金屬鍛進裝備裡讓它變得更強！不過在那之前，我的肚子餓扁了，你要是能弄來五份🍱「傳說主廚全餐」，我就跟你們一起上路，把這身鍛造手藝教給大家！';
+            } else {
+                fullText = '老麥：融合裝備的訣竅我都教你了，剩下就看你的手氣囉！';
+            }
             box.textContent = '';
             let i = 0;
             const typer = setInterval(() => {
@@ -4848,17 +4912,27 @@
                 if (i % 2 === 0 && fullText[i - 1] && fullText[i - 1].trim()) playSfx('blip');
                 if (i >= fullText.length) {
                     clearInterval(typer);
-                    if (p.laomaiQuestDone) {
-                        setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; } }, 1200);
+                    if (readyForForgeQuest) {
+                        setTimeout(() => {
+                            const actions = document.getElementById('rpg-nearby-actions');
+                            if (actions) actions.innerHTML = `
+                                <button onclick="rpgGiveLaomaiFeast()" class="btn-amber text-sm">🍱 給他 5 份傳說主廚全餐</button>
+                                <button onclick="rpgLaomaiForgeDecline()" class="btn-secondary text-sm">🚪 先不要</button>
+                            `;
+                        }, 250);
                         return;
                     }
-                    setTimeout(() => {
-                        const actions = document.getElementById('rpg-nearby-actions');
-                        if (actions) actions.innerHTML = `
-                            <button onclick="rpgGiveLaomaiSkewers()" class="btn-amber text-sm">🍡 給他 5 個黃金蜜汁烤串</button>
-                            <button onclick="rpgLaomaiDecline()" class="btn-secondary text-sm">🚪 先不要</button>
-                        `;
-                    }, 250);
+                    if (!p.fusionUnlocked) {
+                        setTimeout(() => {
+                            const actions = document.getElementById('rpg-nearby-actions');
+                            if (actions) actions.innerHTML = `
+                                <button onclick="rpgGiveLaomaiSkewers()" class="btn-amber text-sm">🍡 給他 5 個黃金蜜汁烤串</button>
+                                <button onclick="rpgLaomaiDecline()" class="btn-secondary text-sm">🚪 先不要</button>
+                            `;
+                        }, 250);
+                        return;
+                    }
+                    setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; } }, 1200);
                 }
             }, 28);
         }
@@ -4889,6 +4963,49 @@
             if (actions) actions.innerHTML = '';
             const box = document.getElementById('rpg-dialogue-box');
             if (box) box.textContent = '老麥：好吧，等你想通了、東西湊齊了再回來找我。';
+            playSfx('click');
+            if (state) { state.locked = false; state.customDialogueActive = false; }
+        }
+        // 三周目起：用 5 份傳說主廚全餐招募老麥，成功後直接加入隊伍（不是普通的「先劇情台詞再判斷」流程，
+        // 老麥一直都是特例，這裡跟給黃金蜜汁烤串那段一樣手動處理，不走 rpgResolveCompanionJoin 那套）
+        function rpgGiveLaomaiFeast() {
+            const state = rpgState;
+            const p = state.player;
+            const actions = document.getElementById('rpg-nearby-actions');
+            if (actions) actions.innerHTML = '';
+            const box = document.getElementById('rpg-dialogue-box');
+            if (!((p.items['傳說主廚全餐'] || 0) >= 5)) {
+                if (box) box.textContent = '老麥：嗯？數量不太夠喔，傳說主廚全餐可不是隨便就能弄到手的東西，先湊齊五份再來吧。';
+                playSfx('fail');
+                setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; } }, 1800);
+                return;
+            }
+            p.items['傳說主廚全餐'] -= 5;
+            if (p.items['傳說主廚全餐'] <= 0) delete p.items['傳說主廚全餐'];
+            p.laomaiForgeQuestDone = true;
+            if (!state.companions.some(c => c.id === 'laomai')) {
+                state.companions.push({ ...RPG_COMPANION_TEMPLATES.laomai });
+                rpgRemoveNpcFromMap(RPG_MAPS.village, 'laomai');
+                if (!state.battleFormation) state.battleFormation = rpgDefaultBattleFormation();
+                const newCompanionIndex = state.companions.length - 1;
+                const emptySlotKey = ['front0', 'front1', 'front2', 'front3', 'back0', 'back1', 'back2', 'back3']
+                    .find(k => state.battleFormation[k] == null);
+                if (emptySlotKey) state.battleFormation[emptySlotKey] = newCompanionIndex;
+                rpgAddScore(300, '招募了老麥');
+            }
+            playSfx('success');
+            if (box) box.textContent = '老麥：好、好吃！這味道……不愧是傳說主廚全餐！好，這幾年旅行學來的鍛造手藝，也是時候派上用場了。以後我跟你們一起闖！我還會「精煉鍛造」，用那些神祕金屬幫大家把裝備打得更硬，儘管來找我！';
+            const sp = rpgPlayerScreenPos();
+            if (sp) rpgBurstParticle('star', { x: sp.x, y: sp.y, count: 5, size: 34, duration: 0.8 });
+            rpgSaveGame(true);
+            setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; rpgDraw(); rpgCheckNearby(); } }, 3000);
+        }
+        function rpgLaomaiForgeDecline() {
+            const state = rpgState;
+            const actions = document.getElementById('rpg-nearby-actions');
+            if (actions) actions.innerHTML = '';
+            const box = document.getElementById('rpg-dialogue-box');
+            if (box) box.textContent = '老麥：好吧，等你湊齊了再回來找我，我不會跑的。';
             playSfx('click');
             if (state) { state.locked = false; state.customDialogueActive = false; }
         }
@@ -5046,6 +5163,102 @@
             rpgAddScore(50, '獲得新食譜');
             playSfx('buy');
             document.getElementById('game-modal-body').innerHTML = rpgRecipeShopHTML(`📖 學會了${(RPG_ITEM_INFO[name] || {}).emoji || ''}「${name}」！`);
+        }
+
+        // ---------- 精煉鍛造：老麥加入隊伍後才能使用，用神祕金屬強化夥伴專屬裝備跟主角在三周目買到的新裝備 ----------
+        // 判斷老麥現在是否已經在隊伍裡（精煉鍛造功能是否已經解鎖）
+        function rpgLaomaiInParty() {
+            const state = rpgState;
+            return !!(state && (state.companions || []).some(c => c.id === 'laomai'));
+        }
+        // 列出目前可以拿去鍛造的裝備：①主角自己買下的、三周目才開賣的兩件新裝備 ②已加入隊伍的夥伴，
+        // 而且已經拿到「真正的專屬武器/防具」（不是一開始就有的初始裝備）③老麥自己的武器（他一入隊就直接算專屬裝備）
+        function rpgForgeTargetList() {
+            const state = rpgState;
+            const p = state.player;
+            const list = [];
+            ['老麥的龍鱗巨劍', '老麥的龍鱗鍛造鎧'].forEach(name => {
+                const isWeapon = !!RPG_WEAPONS[name];
+                const ownedKey = isWeapon ? 'ownedWeapons' : 'ownedArmors';
+                if ((p[ownedKey] || []).includes(name)) list.push({ itemName: name, ownerLabel: '你自己', slot: isWeapon ? 'weapon' : 'armor' });
+            });
+            (state.companions || []).forEach(c => {
+                const gear = RPG_COMPANION_EQUIPMENT[c.id];
+                if (!gear) return;
+                if (c.weaponName === gear.weapon.name) list.push({ itemName: c.weaponName, ownerLabel: c.name, slot: 'weapon' });
+                if (c.armorName === gear.armor.name) list.push({ itemName: c.armorName, ownerLabel: c.name, slot: 'armor' });
+            });
+            return list;
+        }
+        // 成功率規則：+1 是 100%、+2 是 95%……每級遞減 5%，最高 +10（55%）；
+        // 老麥的「究極精煉鍛造」被動（LV35）再疊加 +10%（上限封頂 100%）
+        function rpgForgeSuccessRate(currentLv) {
+            const state = rpgState;
+            const hasUltimate = (state.companions || []).some(c => c.id === 'laomai' && c.skills && c.skills.includes('laomai_refine_ultimate'));
+            const base = Math.max(55, 100 - currentLv * 5);
+            return Math.min(100, base + (hasUltimate ? 10 : 0));
+        }
+        function rpgOpenForgeScreen() {
+            const state = rpgState;
+            if (!state || state.mode !== 'map' || !rpgLaomaiInParty()) return;
+            playSfx('click');
+            document.getElementById('game-modal-title').textContent = '🔨 精煉鍛造';
+            document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML();
+        }
+        function rpgForgeScreenHTML(message) {
+            const p = rpgState.player;
+            p.forgeLevels = p.forgeLevels || {};
+            const metalCount = (p.materials && p.materials['神祕金屬']) || 0;
+            const targets = rpgForgeTargetList();
+            const rows = targets.map(({ itemName, ownerLabel, slot }) => {
+                const lv = p.forgeLevels[itemName] || 0;
+                const isMax = lv >= 10;
+                const rate = isMax ? 0 : rpgForgeSuccessRate(lv);
+                const canForge = !isMax && metalCount >= 1;
+                return `
+                    <div class="flex items-center gap-3 px-3 py-2 rounded-2xl mb-2" style="background:var(--cream)">
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium text-sm">${slot === 'weapon' ? '🔪' : '👕'} ${itemName}<span class="text-xs ml-2" style="color:#B3A492">${ownerLabel}・目前 ⚒️+${lv}${isMax ? '（已滿等）' : `・成功率 ${rate}%`}</span></p>
+                        </div>
+                        <button onclick="rpgDoForge('${itemName}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${canForge ? '' : 'disabled style="opacity:.4"'}>${isMax ? '已滿等' : '❓×1 鍛造'}</button>
+                    </div>`;
+            }).join('');
+            const emptyHint = !targets.length ? `<p class="text-xs mb-3" style="color:#B3A492">目前還沒有可以鍛造的裝備。夥伴要先拿到真正的專屬武器/防具（不是一開始就有的初始裝備），或是你自己買下三周目才開賣的新裝備，才能拿來這裡鍛造。</p>` : '';
+            return `
+                <div style="max-width:520px; margin-left:auto; margin-right:auto;">
+                ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
+                <p class="text-xs mb-3" style="color:#B3A492"><img src="${RPG_MYSTERY_METAL_ICON}" style="width:14px;height:14px;image-rendering:pixelated;vertical-align:middle;"> 目前神祕金屬：${metalCount} 個　・　每次鍛造消耗 1 個，最高可以鍛造到 +10（強度+50%）</p>
+                <p class="text-xs mb-3" style="color:#B3A492">鍛造成功：裝備強度 +5%（可疊加）　・　鍛造失敗：裝備不會消失，但強度會歸零，得重新來過</p>
+                ${emptyHint}
+                ${rows}
+                <div style="height:8px;"></div>
+                <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+                </div>
+            `;
+        }
+        function rpgDoForge(itemName) {
+            const state = rpgState;
+            if (!rpgLaomaiInParty()) return;
+            const p = state.player;
+            p.forgeLevels = p.forgeLevels || {};
+            const metalCount = (p.materials && p.materials['神祕金屬']) || 0;
+            const lv = p.forgeLevels[itemName] || 0;
+            if (lv >= 10 || metalCount < 1) return;
+            p.materials['神祕金屬'] -= 1;
+            if (p.materials['神祕金屬'] <= 0) delete p.materials['神祕金屬'];
+            const rate = rpgForgeSuccessRate(lv);
+            const success = Math.random() * 100 < rate;
+            let message;
+            if (success) {
+                p.forgeLevels[itemName] = lv + 1;
+                message = `⚒️ 鍛造成功！「${itemName}」強度提升到 +${lv + 1}！`;
+                playSfx('success');
+            } else {
+                p.forgeLevels[itemName] = 0;
+                message = `💢 鍛造失敗了……「${itemName}」沒有損壞，但強度被打回 +0，只能重新來過。`;
+                playSfx('fail');
+            }
+            document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML(message);
         }
 
         // ---------- 回合制戰鬥 ----------
@@ -5595,6 +5808,7 @@
                 <h3 class="font-display font-semibold mb-2">🎒 食材背包</h3>
                 ${ingredientHTML}
                 ${materialNames.length ? `<h3 class="font-display font-semibold mb-2">❓ 特殊材料</h3>${materialHTML}` : ''}
+                ${rpgLaomaiInParty() ? `<button onclick="rpgOpenForgeScreen()" class="btn-amber w-full mb-4">🔨 精煉鍛造（找老麥打裝備）</button>` : ''}
                 <h3 class="font-display font-semibold mb-2">📖 已學會的料理</h3>
                 ${recipesHTML || '<p class="text-xs" style="color:#B3A492">還沒學會任何料理，去地圖上探索看看吧！</p>'}
                 <div style="height:12px;"></div>
@@ -6088,6 +6302,128 @@
             return aliveMembers[Math.floor(Math.random() * aliveMembers.length)];
         }
 
+        // 產生怪物圖磚的HTML（跟戰鬥陣型格子共用同一套「從總表裁切」邏輯，抽出來讓火熱鐵砧小遊戲也能重用）
+        function rpgMonsterVisualHTML(obj, size) {
+            const sheetMap = {
+                char: { img: rpgCharImg, url: RPG_CHAR_URL, tiles: RPG_CHAR_TILES, stride: RPG_STRIDE, w: 918, h: 203 },
+                dungeon: { img: rpgDungeonImg, url: RPG_DUNGEON_URL, tiles: RPG_DUNGEON_TILES, stride: RPG_DUNGEON_STRIDE, w: RPG_DUNGEON_W, h: RPG_DUNGEON_H },
+                monster: { img: rpgMonsterImg, url: RPG_MONSTER_SRC, tiles: null, stride: 16, w: RPG_MONSTER_SHEET_W, h: RPG_MONSTER_SHEET_H },
+            };
+            const sheetInfo = obj.sheet ? sheetMap[obj.sheet] : null;
+            const useReal = rpgAssetsReady && sheetInfo && sheetInfo.img && sheetInfo.img.naturalWidth > 0 && (obj.spriteKey || obj.pos);
+            const tint = obj.hue ? `filter:hue-rotate(${obj.hue}deg) saturate(${obj.isBoss ? 2.2 : 1.3});` : '';
+            if (!useReal) return `<div style="font-size:${Math.round(size * 0.65)}px; line-height:1;">${obj.emoji || '❓'}</div>`;
+            const [col, r2] = obj.pos || sheetInfo.tiles[obj.spriteKey];
+            const z = size / 16;
+            return `<div style="width:${size}px; height:${size}px; background-image:url('${sheetInfo.url}'); background-position:-${col * sheetInfo.stride * z}px -${r2 * sheetInfo.stride * z}px; background-size:${sheetInfo.w * z}px ${sheetInfo.h * z}px; image-rendering:pixelated; ${tint}"></div>`;
+        }
+        // 火熱鐵砧的敲擊小遊戲：怪物被放上放大的鐵砧（圖1(2,6)），旁邊擺著鐵鎚（圖1(9,9)）；
+        // 趁鐵塊發光（計時條還沒歸零）之前點鐵鎚，鐵鎚會往下揮打一次動畫，怪物跟著震動、扣血、旁邊顯示連段數，
+        // 每接到一段都用 comboMult 當威力倍率打一次目標；只要有一段沒接到（逾時沒點，或目標已經被打死）就會中斷，
+        // 結束後（連段中斷 / 打滿 comboMax 段 / 目標被打死）呼叫 onComplete(最終連段數, 總傷害) 把控制權交還給戰鬥流程
+        function rpgRunHotAnvilMinigame(actorObj, targetObj, targetDomId, sk, onComplete) {
+            const maxCombo = sk.comboMax || 12;
+            let combo = 0;
+            let totalDmg = 0;
+            let resolved = false;
+            const z = RPG_DUNGEON_STRIDE; // 鐵砧要放大顯示，直接用一整個 stride(16px) 當放大單位比較好算
+            const anvilSize = 120;
+            const anvilZ = anvilSize / 16;
+            const [aCol, aRow] = RPG_DUNGEON_TILES.anvil;
+            const [hCol, hRow] = RPG_DUNGEON_TILES.weapon_hammer;
+            const monsterSize = 64;
+            const overlay = document.createElement('div');
+            overlay.id = 'rpg-anvil-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(13,10,20,0.88); z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px;';
+            overlay.innerHTML = `
+                <style>
+                    @keyframes rpgHammerSwing { 0%{transform:rotate(0deg) translate(0,0);} 35%{transform:rotate(-55deg) translate(-6px,-10px);} 60%{transform:rotate(35deg) translate(4px,8px);} 100%{transform:rotate(0deg) translate(0,0);} }
+                    @keyframes rpgAnvilShake { 0%,100%{transform:translate(0,0);} 25%{transform:translate(-3px,1px);} 50%{transform:translate(3px,-1px);} 75%{transform:translate(-2px,1px);} }
+                    #rpg-anvil-hammer.swing { animation: rpgHammerSwing .3s ease; }
+                    #rpg-anvil-monster.shake { animation: rpgAnvilShake .3s ease; }
+                </style>
+                <p style="color:#F4E4CE; font-size:1.05rem; font-weight:600; text-align:center;">🔨 火熱鐵砧！趁鐵還熱，跟著節奏用力槌打！</p>
+                <div style="position:relative; width:${anvilSize}px; height:${Math.round(anvilSize * 1.1)}px; display:flex; align-items:flex-end; justify-content:center;">
+                    <div id="rpg-anvil-monster" style="position:absolute; bottom:${Math.round(anvilSize * 0.52)}px; left:50%; transform:translateX(-50%); z-index:2;">${rpgMonsterVisualHTML(targetObj, monsterSize)}</div>
+                    <div style="width:${anvilSize}px; height:${anvilSize}px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${aCol * RPG_DUNGEON_STRIDE * anvilZ}px -${aRow * RPG_DUNGEON_STRIDE * anvilZ}px; background-size:${RPG_DUNGEON_W * anvilZ}px ${RPG_DUNGEON_H * anvilZ}px; image-rendering:pixelated; z-index:1;"></div>
+                    <div id="rpg-anvil-hammer" style="position:absolute; top:-18px; right:-6px; width:44px; height:44px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${hCol * RPG_DUNGEON_STRIDE * (44 / 16)}px -${hRow * RPG_DUNGEON_STRIDE * (44 / 16)}px; background-size:${RPG_DUNGEON_W * (44 / 16)}px ${RPG_DUNGEON_H * (44 / 16)}px; image-rendering:pixelated; cursor:pointer; transform-origin:80% 20%; z-index:3; -webkit-tap-highlight-color:transparent;"></div>
+                </div>
+                <p id="rpg-anvil-combo" style="color:#F4C55E; font-size:1.8rem; font-weight:800;">連段 0 / ${maxCombo}</p>
+                <div style="width:220px; height:12px; border-radius:6px; background:#3A2E22; overflow:hidden;">
+                    <div id="rpg-anvil-timer-bar" style="height:100%; width:100%; background:#E0763B;"></div>
+                </div>
+                <p style="color:#B3A492; font-size:.8rem; text-align:center;">在鐵塊發光的瞬間點鐵鎚！沒接到就會中斷連段</p>
+            `;
+            document.body.appendChild(overlay);
+            playSfx('click');
+            let beatTimeoutId = null;
+            const comboEl = () => document.getElementById('rpg-anvil-combo');
+            const timerBarEl = () => document.getElementById('rpg-anvil-timer-bar');
+            const hammerEl = () => document.getElementById('rpg-anvil-hammer');
+            const monsterEl = () => document.getElementById('rpg-anvil-monster');
+            function finish() {
+                if (resolved) return;
+                resolved = true;
+                if (beatTimeoutId) clearTimeout(beatTimeoutId);
+                overlay.remove();
+                onComplete(combo, totalDmg);
+            }
+            function missBeat() {
+                if (resolved) return;
+                playSfx('fail');
+                const cEl = comboEl();
+                if (cEl) cEl.textContent = `連段中斷！最終 ${combo} 段`;
+                setTimeout(finish, 500);
+            }
+            function doHit() {
+                if (resolved || targetObj.curHp <= 0) return;
+                if (beatTimeoutId) clearTimeout(beatTimeoutId);
+                combo++;
+                const dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * (sk.comboMult || 1.4) - rpgEffectiveDef(targetObj) + (Math.random() * 3 - 1)));
+                totalDmg += dmg;
+                targetObj.curHp = Math.max(0, targetObj.curHp - dmg);
+                // 鐵鎚往下揮一下的動畫、怪物跟著震一下，順便在小遊戲畫面裡自己飄一個傷害數字（真正的戰鬥格子被遮住看不到）
+                const hEl = hammerEl();
+                if (hEl) { hEl.classList.remove('swing'); void hEl.offsetWidth; hEl.classList.add('swing'); }
+                const mEl = monsterEl();
+                if (mEl) {
+                    mEl.classList.remove('shake');
+                    void mEl.offsetWidth;
+                    mEl.classList.add('shake');
+                    const dmgNum = document.createElement('div');
+                    dmgNum.textContent = `-${dmg}`;
+                    dmgNum.style.cssText = 'position:absolute; left:50%; top:-6px; transform:translateX(-50%); color:#F4C55E; font-weight:800; font-size:1rem; text-shadow:0 1px 2px rgba(0,0,0,0.6); animation: rpgDmgFloat .6s ease forwards; pointer-events:none;';
+                    if (!document.getElementById('rpg-anvil-dmg-keyframe')) {
+                        const styleTag = document.createElement('style');
+                        styleTag.id = 'rpg-anvil-dmg-keyframe';
+                        styleTag.textContent = '@keyframes rpgDmgFloat { 0%{opacity:1; transform:translate(-50%,0);} 100%{opacity:0; transform:translate(-50%,-24px);} }';
+                        document.head.appendChild(styleTag);
+                    }
+                    mEl.appendChild(dmgNum);
+                    setTimeout(() => dmgNum.remove(), 650);
+                }
+                playSfx('hit');
+                const cEl = comboEl();
+                if (cEl) cEl.textContent = `連段 ${combo} / ${maxCombo}`;
+                if (targetObj.curHp <= 0 || combo >= maxCombo) { setTimeout(finish, 350); return; }
+                nextBeat();
+            }
+            function nextBeat() {
+                const bar = timerBarEl();
+                const beatWindowMs = Math.max(420, 700 - combo * 20); // 連段越多，節奏稍微加快，增加難度
+                if (bar) {
+                    bar.style.transition = 'none';
+                    bar.style.width = '100%';
+                    void bar.offsetWidth; // 強制 reflow，讓下面的 transition 重新生效
+                    bar.style.transition = `width ${beatWindowMs}ms linear`;
+                    bar.style.width = '0%';
+                }
+                beatTimeoutId = setTimeout(missBeat, beatWindowMs);
+                const h = hammerEl();
+                if (h) h.onclick = doHit;
+            }
+            nextBeat();
+        }
         function rpgExecuteRound(monstersOnly) {
             const state = rpgState;
             const b = state.battle;
@@ -6204,6 +6540,27 @@
                             actorObj.sp = Math.max(0, actorObj.sp - sk.sp);
                             if (sk.ingredientCost) rpgDeductIngredients(p, sk.ingredientCost);
                             multiHandled = true;
+                            if (sk.rhythmForge) {
+                                // 火熱鐵砧：跳出敲擊小遊戲，最多連續 comboMax 段，每段命中都用 comboMult 當威力倍率打同一個目標；
+                                // 沒接到就直接中斷連段，小遊戲結束後才把結果整合回戰鬥紀錄、繼續往下一位行動者
+                                const anvilTarget = targetObj;
+                                const anvilTargetDomId = targetDomId;
+                                rpgRunHotAnvilMinigame(actorObj, anvilTarget, anvilTargetDomId, sk, (finalCombo, totalDmg) => {
+                                    rpgLogAppend(finalCombo > 0
+                                        ? `${actorObj.name}使出「${sk.name}」，連續槌打了 ${finalCombo} 段，總共造成 ${totalDmg} 點傷害！`
+                                        : `${actorObj.name}使出「${sk.name}」，可惜第一下就沒接到節奏，這次沒有造成傷害。`);
+                                    updateBattleUI();
+                                    if (anvilTarget.curHp <= 0) {
+                                        const el = document.getElementById(anvilTargetDomId);
+                                        if (el) { el.style.opacity = '0'; el.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; }
+                                        const remaining = rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0);
+                                        b.target = remaining.length ? { row: remaining[0].row, i: remaining[0].i } : null;
+                                        if (!remaining.length) { setTimeout(() => rpgBattleWin(), 550); return; }
+                                    }
+                                    setTimeout(runNext, 500);
+                                });
+                                return;
+                            }
                             if (sk.pattern === 'collide') {
                                 // 調和：隨機挑敵方兩個還活著的單位讓他們互撞，各自用對方的攻防計算傷害；場上不到兩隻敵人就直接失效
                                 const aliveMonsters = rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0);
@@ -6401,8 +6758,17 @@
                                         logBits.push(`對${tObj.name}的攻擊因為失明而落空`);
                                         return;
                                     }
-                                    let dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * (sk.mult || 0) - rpgEffectiveDef(tObj) + (Math.random() * 3 - 1)));
-                                    if (actorObj.buffs && actorObj.buffs.atkBuffMult) { dmg = Math.round(dmg * actorObj.buffs.atkBuffMult.value); delete actorObj.buffs.atkBuffMult; }
+                                    let dmg;
+                                    if (sk.goldGambleDamage) {
+                                        // 一擲千金：隨機消耗1~999金幣（金幣不夠就有多少花多少），造成等值傷害，完全無視自己攻擊力與敵方防禦力
+                                        const gambleAmt = Math.max(0, Math.min(999, Math.floor(Math.random() * 999) + 1, p.gold));
+                                        p.gold = Math.max(0, p.gold - gambleAmt);
+                                        dmg = Math.max(1, gambleAmt);
+                                        logBits.push(`豪擲了 💰${gambleAmt} 金幣`);
+                                    } else {
+                                        dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * (sk.mult || 0) - rpgEffectiveDef(tObj) + (Math.random() * 3 - 1)));
+                                    }
+                                    if (!sk.goldGambleDamage && actorObj.buffs && actorObj.buffs.atkBuffMult) { dmg = Math.round(dmg * actorObj.buffs.atkBuffMult.value); delete actorObj.buffs.atkBuffMult; }
                                     let isCrit = false;
                                     if (sk.critChance && Math.random() < sk.critChance) { dmg = Math.round(dmg * sk.critMult); isCrit = true; }
                                     else { const critBuffMult = rpgRollCritBuff(actorObj); if (critBuffMult > 1) { dmg = Math.round(dmg * critBuffMult); isCrit = true; } }
@@ -6867,11 +7233,15 @@
             const state = rpgState;
             if (!state) return;
             const justEnteredNgPlus = !!(state.player && state.player.ngPlus === 1); // 剛好等於 1，代表這次擊敗魔王第一次進入二周目，只會顯示這一次
+            // 三周目起、融合任務已完成、但還沒完成鍛造任務招募老麥的話，也加一句過場台詞提醒玩家
+            const justEnteredForgeQuest = !!(state.player && state.player.ngPlus >= 2 && state.player.fusionUnlocked && !state.player.laomaiForgeQuestDone);
             // 剛進二周目的話，把「老麥回家了」加成過場的最後一句台詞，用一樣的打字機速度慢慢顯示、停留夠久，
             // 不會像塞在小字幕欄那樣一閃而過看不清楚
             const lines = justEnteredNgPlus
                 ? [...RPG_BOSS_DEFEAT_LINES, '旅行中的鐵匠老麥，似乎已經回到暖廚村了……']
-                : RPG_BOSS_DEFEAT_LINES;
+                : justEnteredForgeQuest
+                    ? [...RPG_BOSS_DEFEAT_LINES, '鐵匠老麥似乎有話要說……']
+                    : RPG_BOSS_DEFEAT_LINES;
             const overlay = document.createElement('div');
             overlay.style.cssText = 'position:fixed; inset:0; background:#0D0A14; opacity:0; z-index:9999; transition:opacity 1s ease-in-out; display:flex; align-items:center; justify-content:center; padding:24px;';
             const textBox = document.createElement('p');
@@ -6923,7 +7293,11 @@
         // 打完魔王強制送回旅館後，補一句說明訊息（跟一般睡一覺的訊息分開寫，才知道是被魔王戰結尾強制送回來的）
         function rpgLogAppendVillageArrival() {
             const box = document.getElementById('rpg-dialogue-box');
-            if (box) box.textContent = '💤 你們拖著疲憊的身軀回到了暖廚村，旅館老闆二話不說讓大家在這裡好好睡了一覺……全隊已回復、進度已強制存檔。';
+            const state = rpgState;
+            const p = state && state.player;
+            const pendingLaomaiForge = !!(p && p.fusionUnlocked && (p.ngPlus || 0) >= 2 && !p.laomaiForgeQuestDone);
+            if (box) box.textContent = '💤 你們拖著疲憊的身軀回到了暖廚村，旅館老闆二話不說讓大家在這裡好好睡了一覺……全隊已回復、進度已強制存檔。'
+                + (pendingLaomaiForge ? '鐵匠老麥似乎有話要說……' : '');
         }
 
         function rpgBattleLose() {
