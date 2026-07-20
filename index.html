@@ -4452,9 +4452,9 @@
                     return;
                 }
             }
-            // 神祕金屬：野外（麥穗平原）寶箱限定，完成老麥的融合任務之後才會開始有機會出現，5% 機率；
+            // 神祕金屬：野外（麥穗平原）寶箱限定，完成老麥的融合任務之後才會開始有機會出現，3% 機率；
             // 效果未知、不是食材（不進 p.ingredients，不會出現在食材商店），另外開一個 p.materials 分類收著
-            if (isWild && state.player.fusionUnlocked && Math.random() < 0.05) {
+            if (isWild && state.player.fusionUnlocked && Math.random() < 0.03) {
                 state.player.materials = state.player.materials || {};
                 state.player.materials['神祕金屬'] = (state.player.materials['神祕金屬'] || 0) + 1;
                 if (box) box.textContent = `❓ 寶箱裡有一塊冰冷、散發微光的「神祕金屬」，用途不明……先收進背包裡吧。（目前累計 ${state.player.materials['神祕金屬']} 個）`;
@@ -6853,6 +6853,12 @@
         function rpgBossVictoryCutscene() {
             const state = rpgState;
             if (!state) return;
+            const justEnteredNgPlus = !!(state.player && state.player.ngPlus === 1); // 剛好等於 1，代表這次擊敗魔王第一次進入二周目，只會顯示這一次
+            // 剛進二周目的話，把「老麥回家了」加成過場的最後一句台詞，用一樣的打字機速度慢慢顯示、停留夠久，
+            // 不會像塞在小字幕欄那樣一閃而過看不清楚
+            const lines = justEnteredNgPlus
+                ? [...RPG_BOSS_DEFEAT_LINES, '旅行中的鐵匠老麥，似乎已經回到暖廚村了……']
+                : RPG_BOSS_DEFEAT_LINES;
             const overlay = document.createElement('div');
             overlay.style.cssText = 'position:fixed; inset:0; background:#0D0A14; opacity:0; z-index:9999; transition:opacity 1s ease-in-out; display:flex; align-items:center; justify-content:center; padding:24px;';
             const textBox = document.createElement('p');
@@ -6863,7 +6869,7 @@
             playSfx('bossAlert');
             let lineIdx = 0;
             const playNextLine = () => {
-                if (lineIdx >= RPG_BOSS_DEFEAT_LINES.length) {
+                if (lineIdx >= lines.length) {
                     setTimeout(() => {
                         overlay.style.opacity = '0';
                         setTimeout(() => {
@@ -6885,7 +6891,7 @@
                     }, 1400);
                     return;
                 }
-                const fullText = RPG_BOSS_DEFEAT_LINES[lineIdx];
+                const fullText = lines[lineIdx];
                 textBox.textContent = '';
                 let i = 0;
                 const typer = setInterval(() => {
@@ -6904,10 +6910,7 @@
         // 打完魔王強制送回旅館後，補一句說明訊息（跟一般睡一覺的訊息分開寫，才知道是被魔王戰結尾強制送回來的）
         function rpgLogAppendVillageArrival() {
             const box = document.getElementById('rpg-dialogue-box');
-            const state = rpgState;
-            const justEnteredNgPlus = state && state.player && state.player.ngPlus === 1; // 剛好等於 1，代表這次擊敗魔王第一次進入二周目，只會顯示這一次
-            const suffix = justEnteredNgPlus ? '　旅行中的鐵匠老麥似乎已經回家了……' : '';
-            if (box) box.textContent = `💤 你們拖著疲憊的身軀回到了暖廚村，旅館老闆二話不說讓大家在這裡好好睡了一覺……全隊已回復、進度已強制存檔。${suffix}`;
+            if (box) box.textContent = '💤 你們拖著疲憊的身軀回到了暖廚村，旅館老闆二話不說讓大家在這裡好好睡了一覺……全隊已回復、進度已強制存檔。';
         }
 
         function rpgBattleLose() {
