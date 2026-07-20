@@ -4334,8 +4334,7 @@
                     const npcId = map.npcs[key];
                     const info = RPG_NPC_INFO[npcId] || RPG_COMPANION_TEMPLATES[npcId];
                     npcButton = `<button onclick="rpgTalkTo('${npcId}')" class="btn-primary text-sm">🗣️ 跟${info ? info.name : '對方'}交談</button>`;
-                }
-                if (!poiButton && map.pois && map.pois[key] && !map.pois[key].found) {
+                } else if (!poiButton && map.pois && map.pois[key] && !map.pois[key].found) {
                     poiButton = `<button onclick="rpgInvestigate('${key}')" class="btn-amber text-sm">🔍 調查</button>`;
                 }
                 if (!gatherButton && map.gatherPoints && map.gatherPoints[key] && map.gatherPoints[key].available) {
@@ -4432,8 +4431,9 @@
             const isWild = !!map.wild;
             const ngMult = Math.pow(1.3, state.player.ngPlus || 0); // 周目倍率：怪物變強的同時，寶箱獎勵也跟著等比例變好，不然二週目只會更難、沒有更好玩
             // 夥伴專屬裝備掉落機率：跟魔王一樣，隊伍總等級÷100 的百分比，優先判定，蓋過原本這次寶箱該有的獎勵；
-            // 另外加上 1% 保底，直接疊加在原本公式上面（例如原本算出來 0.8%，保底後變成 1.8%）
-            if (Math.random() < (rpgTotalPartyLevel() / 10000) + 0.01) {
+            // 另外疊加保底機率：一周目保底 1%，二周目以後（ngPlus >= 1）保底提高到 5%
+            const equipFloor = (state.player.ngPlus || 0) >= 1 ? 0.05 : 0.01;
+            if (Math.random() < (rpgTotalPartyLevel() / 10000) + equipFloor) {
                 const gearResult = rpgTryDropCompanionEquipment();
                 if (gearResult) {
                     if (box) box.textContent = gearResult.isDuplicate
@@ -4660,14 +4660,15 @@
             const map = RPG_MAPS.village;
             const key = '6,14';
             const isNgPlus = (state.player.ngPlus || 0) >= 1;
-            const currentlyNpc = map.npcs[key] === 'laomai';
-            if (isNgPlus && !currentlyNpc) {
+            // 防呆：不管目前是什麼狀態，每次都強制修正成「正確且互斥」的單一狀態，
+            // 避免存檔載入順序之類的邊界情況，讓留言板(POI)跟老麥本人(NPC)同時存在、UI 同時跳出兩顆按鈕搶著蓋來蓋去
+            if (isNgPlus) {
                 map.npcs[key] = 'laomai';
                 delete map.pois[key];
                 delete RPG_VILLAGE_DECOR[key];
                 RPG_VILLAGE_DECOR_DUNGEON[key] = [2, 7];
-            } else if (!isNgPlus && currentlyNpc) {
-                delete map.npcs[key];
+            } else {
+                if (map.npcs[key] === 'laomai') delete map.npcs[key];
                 map.pois[key] = { sign: true, text: '留言板：獨自世界旅行中人不在家　鐵匠-老麥' };
                 delete RPG_VILLAGE_DECOR_DUNGEON[key];
                 RPG_VILLAGE_DECOR[key] = [11, 6];
