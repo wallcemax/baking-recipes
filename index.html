@@ -5736,6 +5736,8 @@
         // 每一輪開始（下指令變成執行的那一刻）幫全場上了中毒/灼傷/衰弱的角色扣血/扣SP，麻痺不在這裡扣，是在真的輪到行動時才判斷要不要跳過；
         // buff 的回合數也是在這裡一起倒數
         function rpgApplyStatusTicks(b) {
+            // 中毒/流血/灼傷/衰弱的持續傷害比例：一周目 3%，二周目以後（ngPlus >= 1）加重成 5%
+            const dotPct = ((rpgState && rpgState.player && rpgState.player.ngPlus) || 0) >= 1 ? 0.05 : 0.03;
             rpgFormationEntries(b.partyFormation).forEach(({ row, i, obj }) => {
                 const domId = `rpg-slot-party-${row}-${i}`;
                 // 持續回復（例如傳說持續盛宴）要在 rpgTickBuffs 把回合數砍完之前先結算，不然最後一回合會抓不到
@@ -5761,21 +5763,21 @@
                 }
                 rpgTickBuffs(obj);
                 if (obj.statuses.poison > 0) {
-                    const dmg = Math.max(1, Math.round(obj.maxHp * 0.03));
+                    const dmg = Math.max(1, Math.round(obj.maxHp * dotPct));
                     obj.hp = Math.max(0, obj.hp - dmg);
                     rpgLogAppend(`☠️ ${obj.name}中毒發作，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#7A3FA0');
                     obj.statuses.poison--;
                 }
                 if (obj.statuses.burn > 0) {
-                    const dmg = Math.max(1, Math.round(obj.maxHp * 0.03));
+                    const dmg = Math.max(1, Math.round(obj.maxHp * dotPct));
                     obj.hp = Math.max(0, obj.hp - dmg);
                     rpgLogAppend(`🔥 ${obj.name}灼傷發作，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#C4453F');
                     obj.statuses.burn--;
                 }
                 if (obj.statuses.bleed > 0) {
-                    const dmg = Math.max(1, Math.round(obj.maxHp * 0.03));
+                    const dmg = Math.max(1, Math.round(obj.maxHp * dotPct));
                     obj.hp = Math.max(0, obj.hp - dmg);
                     rpgLogAppend(`🩸 ${obj.name}流血中，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#A8324A');
@@ -5794,28 +5796,28 @@
                 if (!obj.statuses || obj.curHp <= 0) return;
                 const domId = `rpg-slot-monster-${row}-${i}`;
                 if (obj.statuses.poison > 0) {
-                    const dmg = Math.max(1, Math.round(obj.hp * 0.03));
+                    const dmg = Math.max(1, Math.round(obj.hp * dotPct));
                     obj.curHp = Math.max(0, obj.curHp - dmg);
                     rpgLogAppend(`☠️ ${obj.name}中毒發作，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#7A3FA0');
                     obj.statuses.poison--;
                 }
                 if (obj.statuses.burn > 0) {
-                    const dmg = Math.max(1, Math.round(obj.hp * 0.03));
+                    const dmg = Math.max(1, Math.round(obj.hp * dotPct));
                     obj.curHp = Math.max(0, obj.curHp - dmg);
                     rpgLogAppend(`🔥 ${obj.name}灼傷發作，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#C4453F');
                     obj.statuses.burn--;
                 }
                 if (obj.statuses.bleed > 0) {
-                    const dmg = Math.max(1, Math.round(obj.hp * 0.03));
+                    const dmg = Math.max(1, Math.round(obj.hp * dotPct));
                     obj.curHp = Math.max(0, obj.curHp - dmg);
                     rpgLogAppend(`🩸 ${obj.name}流血中，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#A8324A');
                     obj.statuses.bleed--;
                 }
                 if (obj.statuses.weaken > 0 && obj.curSp !== undefined) {
-                    const dmg = Math.max(1, Math.round((obj.sp || 10) * 0.03));
+                    const dmg = Math.max(1, Math.round((obj.sp || 10) * dotPct));
                     obj.curSp = Math.max(0, obj.curSp - dmg);
                     rpgLogAppend(`💫 ${obj.name}衰弱中，扣了 ${dmg} 點 SP！`);
                     obj.statuses.weaken--;
@@ -6557,6 +6559,17 @@
                     rpgLogAppend(`✨ 這場硬仗讓你頓悟了限定食譜${(RPG_ITEM_INFO[wonRecipe] || {}).emoji || ''}「${wonRecipe}」的做法！`);
                 }
             }
+            // 夥伴專屬裝備掉落：擊敗魔王 100% 保底掉落一件（還沒拿到的優先，都拿滿了才會看二周目的融合池）；
+            // 擊敗強敵則是 2% 機率，跟寶箱那邊的判定共用同一個函式，一樣會考慮「還沒取得」跟「還沒滿等融合」的裝備
+            const equipDropChance = isBossKill ? 1 : (isStrongKill ? 0.02 : 0);
+            if (equipDropChance > 0 && Math.random() < equipDropChance) {
+                const gearResult = rpgTryDropCompanionEquipment();
+                if (gearResult) {
+                    rpgLogAppend(gearResult.isDuplicate
+                        ? `⚔️ ${gearResult.name}的「${gearResult.itemName}」已經重複獲得，自動進行融合！目前 LV.${gearResult.fusionLv}${gearResult.fusionLv >= 10 ? '　MAX' : ''}`
+                        : `⚔️ 太好了！取得${gearResult.name}的「${gearResult.itemName}」專屬${gearResult.slot === 'weapon' ? '武器' : '防具'}！已裝備！`);
+                }
+            }
             const leveledEntries = [];
             survivorEntries.forEach(({ row, i, obj: member }) => {
                 // 加速學習追趕（現在每位夥伴都有這個被動，只是倍率不同：銀白 ×10、其他夥伴 ×3）：
@@ -6592,11 +6605,76 @@
                 }, 100 + idx * 350);
             });
             // 不再自動倒數強制回地圖——原本 2.6 秒後就會被切走，經驗值/食材掉落這些訊息還沒看完就消失了。
-            // 改成顯示一個「繼續」按鈕，戰鬥紀錄本身可以往上捲動慢慢看，看完再自己按繼續，不會被趕、也不會拖到想快速略過的人
+            // 改成顯示一個「繼續」按鈕，戰鬥紀錄本身可以往上捲動慢慢看，看完再自己按繼續，不會被趕、也不會拖到想快速略過的人；
+            // 打贏魔王則是先進過場動畫跟台詞，看完才會回地圖
             const actionsEl = document.getElementById('rpg-battle-actions');
             if (actionsEl) {
-                actionsEl.innerHTML = `<button onclick="rpgBackToMap()" class="btn-primary w-full">🎉 繼續</button>`;
+                actionsEl.innerHTML = isBossKill
+                    ? `<button onclick="rpgBossVictoryCutscene()" class="btn-primary w-full">🎉 繼續</button>`
+                    : `<button onclick="rpgBackToMap()" class="btn-primary w-full">🎉 繼續</button>`;
             }
+        }
+        // 魔王戰勝利過場：黑暗料理王不甘心地撂下「東山再起」式的台詞，畫面淡出後強制送回村莊旅館並且睡一覺、強制存檔
+        const RPG_BOSS_DEFEAT_LINES = [
+            '黑暗料理王：哼……這……這只是暫時的挫敗！黑暗料理的滋味，永遠不會被真正遺忘……',
+            '黑暗料理王：你們儘管得意！我會東山再起，用更邪惡的食譜捲土重來！',
+            '黑暗料理王：這場敗仗，只會讓我更加飢渴……我們，後會有期！！',
+        ];
+        function rpgBossVictoryCutscene() {
+            const state = rpgState;
+            if (!state) return;
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed; inset:0; background:#0D0A14; opacity:0; z-index:9999; transition:opacity 1s ease-in-out; display:flex; align-items:center; justify-content:center; padding:24px;';
+            const textBox = document.createElement('p');
+            textBox.style.cssText = 'color:#F4E4CE; font-size:1.05rem; line-height:1.9; max-width:520px; text-align:center; text-shadow:0 2px 6px rgba(0,0,0,0.6);';
+            overlay.appendChild(textBox);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => { overlay.style.opacity = '1'; });
+            playSfx('bossAlert');
+            let lineIdx = 0;
+            const playNextLine = () => {
+                if (lineIdx >= RPG_BOSS_DEFEAT_LINES.length) {
+                    setTimeout(() => {
+                        overlay.style.opacity = '0';
+                        setTimeout(() => {
+                            overlay.remove();
+                            // 強制送回村莊旅館，直接套用睡一覺的全隊回復效果，並且強制存檔
+                            state.mode = 'map';
+                            state.battle = null;
+                            state.battleBusy = false;
+                            state.region = 'village';
+                            state.pos = { x: 12, y: 12 }; // 旅館老闆的座標
+                            state.trail = [1, 2, 3, 4].map(() => ({ ...state.pos }));
+                            state.player.hp = state.player.maxHp;
+                            state.player.sp = state.player.maxSp;
+                            (state.companions || []).forEach(c => { c.hp = c.maxHp; c.sp = c.maxSp; });
+                            renderRpgMap();
+                            rpgLogAppendVillageArrival();
+                            rpgSaveGame(true);
+                        }, 1000);
+                    }, 1400);
+                    return;
+                }
+                const fullText = RPG_BOSS_DEFEAT_LINES[lineIdx];
+                textBox.textContent = '';
+                let i = 0;
+                const typer = setInterval(() => {
+                    i++;
+                    textBox.textContent = fullText.slice(0, i);
+                    if (i % 2 === 0 && fullText[i - 1] && fullText[i - 1].trim()) playSfx('blip');
+                    if (i >= fullText.length) {
+                        clearInterval(typer);
+                        lineIdx++;
+                        setTimeout(playNextLine, 1600);
+                    }
+                }, 32);
+            };
+            playNextLine();
+        }
+        // 打完魔王強制送回旅館後，補一句說明訊息（跟一般睡一覺的訊息分開寫，才知道是被魔王戰結尾強制送回來的）
+        function rpgLogAppendVillageArrival() {
+            const box = document.getElementById('rpg-dialogue-box');
+            if (box) box.textContent = '💤 你們拖著疲憊的身軀回到了暖廚村，旅館老闆二話不說讓大家在這裡好好睡了一覺……全隊已回復、進度已強制存檔。';
         }
 
         function rpgBattleLose() {
