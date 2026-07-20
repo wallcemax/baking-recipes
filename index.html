@@ -3513,10 +3513,11 @@
             if (sk.groupInflictChance) parts.push(`${Math.round(sk.groupInflictChance * 100)}%機率讓敵方全體一起陷入${sk.groupInflictType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[sk.groupInflictType].name}`);
             if (sk.extraDropChance) parts.push(`${Math.round(sk.extraDropChance * 100)}%機率額外獲得食材`);
             if (sk.isForgeUnlock) parts.push('解鎖「精煉鍛造」功能，可以用神祕金屬強化裝備');
-            if (sk.oreSenseBonus) parts.push(`神祕金屬掉落率+${Math.round(sk.oreSenseBonus * 100)}%，寶箱開到食材時也會一併掉落神祕金屬，不再是擇一`);
+            if (sk.oreSenseBonus) parts.push(`神祕金屬掉落率+${Math.round(sk.oreSenseBonus * 100)}%、每次獲得數量加倍，寶箱開到食材時也會一併掉落神祕金屬，不再是擇一`);
             if (sk.forgeRateBonus) parts.push(`精煉鍛造成功率+${Math.round(sk.forgeRateBonus * 100)}%`);
             if (sk.goldGambleDamage) parts.push('隨機消耗1~999金幣，造成等值傷害（無視自己攻擊力與敵方防禦力）');
             if (sk.rhythmForge) parts.push(`敲擊小遊戲，最多連段${sk.comboMax || 12}下，每下威力ATK×${sk.comboMult || 1.4}，沒接到就會中斷連段`);
+            if (sk.isCatchupPassive) parts.push('隊伍等級落後主角時，經驗值取得倍率會自動提升，幫忙追上隊伍進度');
             return parts.join('、') || '效果不明';
         }
         function rpgSkillRangeGridHTML(pattern) {
@@ -3867,6 +3868,15 @@
                         <p>✨ 經驗　${obj.exp}/${obj.expToNext}</p>
                     </div>
                     ${obj.weaponName ? `<p class="text-xs mt-2" style="color:#B3A492">🔪 武器：${obj.weaponName}${obj.weaponFusionLv ? ` <span style="color:var(--sage)">LV.${obj.weaponFusionLv}${obj.weaponFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}${(rpgState.player.forgeLevels && rpgState.player.forgeLevels[obj.weaponName]) ? ` <span style="color:#C77B3B">⚒️+${rpgState.player.forgeLevels[obj.weaponName]}</span>` : ''}${obj.armorName ? `　👕 防具：${obj.armorName}${obj.armorFusionLv ? ` <span style="color:var(--sage)">LV.${obj.armorFusionLv}${obj.armorFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}${(rpgState.player.forgeLevels && rpgState.player.forgeLevels[obj.armorName]) ? ` <span style="color:#C77B3B">⚒️+${rpgState.player.forgeLevels[obj.armorName]}</span>` : ''}` : ''}</p>` : ''}
+                    ${(obj.skills && obj.skills.length) ? `
+                        <div class="mt-2 pt-2" style="border-top:1px solid var(--line);">
+                            <p class="text-xs font-medium mb-1" style="color:#7A6A58">📖 技能</p>
+                            ${obj.skills.map(id => {
+                                const sk = RPG_SKILLS[id];
+                                if (!sk) return '';
+                                return `<p class="text-xs mb-0.5" style="color:#B3A492">${sk.passive ? '🔸被動' : '🔹主動'}「${sk.name}」${sk.sp ? `（${sk.sp}SP）` : ''}：${rpgSkillPowerText(sk)}</p>`;
+                            }).join('')}
+                        </div>` : ''}
                     ${!obj.isCompanion && obj.badTasteMarkCount ? `<p class="text-xs mt-1" style="color:#B3A492">🤮 敗者的難吃印 × ${obj.badTasteMarkCount}${obj.badTasteMarkCount >= 5 ? '（已集滿！）' : `（再集 ${5 - obj.badTasteMarkCount} 個解鎖稱號）`}</p>` : ''}
                     ${isCompanion ? `
                         <div class="flex items-center justify-between mt-2 pt-2" style="border-top:1px solid var(--line);">
@@ -4486,7 +4496,8 @@
             let metalMsgPrefix = '';
             if (isWild && state.player.fusionUnlocked && Math.random() < metalChance) {
                 state.player.materials = state.player.materials || {};
-                state.player.materials['神祕金屬'] = (state.player.materials['神祕金屬'] || 0) + 1;
+                const metalGain = hasOreSense ? 2 : 1; // 礦石嗅覺：除了掉落率+5%，每次拿到的數量也直接加倍
+                state.player.materials['神祕金屬'] = (state.player.materials['神祕金屬'] || 0) + metalGain;
                 if (!hasOreSense) {
                     if (box) box.textContent = `❓ 寶箱裡有一塊冰冷、散發微光的「神祕金屬」，用途不明……先收進背包裡吧。（目前累計 ${state.player.materials['神祕金屬']} 個）`;
                     playSfx('news');
@@ -4494,7 +4505,7 @@
                     return;
                 }
                 // 有礦石嗅覺的話不 return，繼續往下讓寶箱照常開出食材/金幣/食譜等一般獎勵，最後把神祕金屬的訊息一起附上
-                metalMsgPrefix = `❓ 順手多挖到一塊「神祕金屬」（目前累計 ${state.player.materials['神祕金屬']} 個）！　`;
+                metalMsgPrefix = `❓ 順手多挖到了 ${metalGain} 塊「神祕金屬」（礦石嗅覺加成，目前累計 ${state.player.materials['神祕金屬']} 個）！　`;
             }
             // 每個寶箱打開前才隨機決定這次會開到什麼，不是固定在某個位置放某樣東西——同一個寶箱重複刷新，開到的內容也不會一樣
             const roll = Math.random() * 100;
@@ -4502,11 +4513,11 @@
             const rewardType = isWild
                 ? (roll < 52 ? 'ingredient' : roll < 74 ? 'gold' : roll < 88 ? 'recipe' : 'dish')
                 : (roll < 55 ? 'ingredient' : roll < 85 ? 'gold' : 'recipe');
-            // 礦石嗅覺：即使這次沒觸發前面獨立的金屬掉落判定，只要這次寶箱開到的是食材，也額外有礦石嗅覺的加成機率再多掉 1 個神祕金屬
+            // 礦石嗅覺：即使這次沒觸發前面獨立的金屬掉落判定，只要這次寶箱開到的是食材，也額外有礦石嗅覺的加成機率再多掉神祕金屬（一樣是雙倍數量）
             if (!metalMsgPrefix && hasOreSense && isWild && state.player.fusionUnlocked && rewardType === 'ingredient' && Math.random() < metalChance) {
                 state.player.materials = state.player.materials || {};
-                state.player.materials['神祕金屬'] = (state.player.materials['神祕金屬'] || 0) + 1;
-                metalMsgPrefix = `❓ 順手多挖到一塊「神祕金屬」（目前累計 ${state.player.materials['神祕金屬']} 個）！　`;
+                state.player.materials['神祕金屬'] = (state.player.materials['神祕金屬'] || 0) + 2;
+                metalMsgPrefix = `❓ 順手多挖到了 2 塊「神祕金屬」（礦石嗅覺加成，目前累計 ${state.player.materials['神祕金屬']} 個）！　`;
             }
 
             if (rewardType === 'ingredient') {
@@ -5209,6 +5220,7 @@
             const p = rpgState.player;
             p.forgeLevels = p.forgeLevels || {};
             const metalCount = (p.materials && p.materials['神祕金屬']) || 0;
+            const hasUltimate = (rpgState.companions || []).some(c => c.id === 'laomai' && c.skills && c.skills.includes('laomai_refine_ultimate'));
             const targets = rpgForgeTargetList();
             const rows = targets.map(({ itemName, ownerLabel, slot }) => {
                 const lv = p.forgeLevels[itemName] || 0;
@@ -5218,7 +5230,7 @@
                 return `
                     <div class="flex items-center gap-3 px-3 py-2 rounded-2xl mb-2" style="background:var(--cream)">
                         <div class="flex-1 min-w-0">
-                            <p class="font-medium text-sm">${slot === 'weapon' ? '🔪' : '👕'} ${itemName}<span class="text-xs ml-2" style="color:#B3A492">${ownerLabel}・目前 ⚒️+${lv}${isMax ? '（已滿等）' : `・成功率 ${rate}%`}</span></p>
+                            <p class="font-medium text-sm">${slot === 'weapon' ? '🔪' : '👕'} ${itemName}<span class="text-xs ml-2" style="color:#B3A492">${ownerLabel}・目前 ⚒️+${lv}${isMax ? '（已滿等）' : `・成功率 ${rate}%${hasUltimate ? '（已含究極精煉鍛造+10%）' : ''}`}</span></p>
                         </div>
                         <button onclick="rpgDoForge('${itemName}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${canForge ? '' : 'disabled style="opacity:.4"'}>${isMax ? '已滿等' : '❓×1 鍛造'}</button>
                     </div>`;
@@ -5229,6 +5241,7 @@
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
                 <p class="text-xs mb-3" style="color:#B3A492"><img src="${RPG_MYSTERY_METAL_ICON}" style="width:14px;height:14px;image-rendering:pixelated;vertical-align:middle;"> 目前神祕金屬：${metalCount} 個　・　每次鍛造消耗 1 個，最高可以鍛造到 +10（強度+50%）</p>
                 <p class="text-xs mb-3" style="color:#B3A492">鍛造成功：裝備強度 +5%（可疊加）　・　鍛造失敗：裝備不會消失，但強度會歸零，得重新來過</p>
+                ${hasUltimate ? `<p class="text-xs mb-3 font-medium" style="color:var(--sage)">🔥 老麥的「究極精煉鍛造」已生效：所有鍛造成功率 +10%（+1的成功率原本就是100%，所以要 +2 以後才看得出差異；越高等的鍛造差異越明顯）</p>` : ''}
                 ${emptyHint}
                 ${rows}
                 <div style="height:8px;"></div>
@@ -6355,6 +6368,8 @@
                 <p style="color:#B3A492; font-size:.8rem; text-align:center;">在鐵塊發光的瞬間點鐵鎚！沒接到就會中斷連段</p>
             `;
             document.body.appendChild(overlay);
+            const prevBgmMood = rpgBgmMood; // 記住原本在放的BGM（通常是battle/boss），小遊戲結束後要換回去
+            rpgStartBgm('forge'); // 換成鍛造敲擊節奏的專屬BGM，玩家要跟著這個節奏點下鎚
             playSfx('click');
             let beatTimeoutId = null;
             const comboEl = () => document.getElementById('rpg-anvil-combo');
@@ -6365,6 +6380,7 @@
                 if (resolved) return;
                 resolved = true;
                 if (beatTimeoutId) clearTimeout(beatTimeoutId);
+                rpgStartBgm(prevBgmMood || 'battle'); // 小遊戲結束，換回原本的戰鬥BGM
                 overlay.remove();
                 onComplete(combo, totalDmg);
             }
@@ -6410,7 +6426,9 @@
             }
             function nextBeat() {
                 const bar = timerBarEl();
-                const beatWindowMs = Math.max(420, 700 - combo * 20); // 連段越多，節奏稍微加快，增加難度
+                // 接拍窗口直接對齊 forge BGM 的拍子長度（tempo 秒），不是隨便設定的倒數條——
+                // 玩家聽到的鼓點跟畫面上的計時條會是同一個節奏，才算真的「跟著節奏打」
+                const beatWindowMs = Math.round(RPG_BGM_PATTERNS.forge.tempo * 1000);
                 if (bar) {
                     bar.style.transition = 'none';
                     bar.style.width = '100%';
@@ -8163,6 +8181,9 @@
             explore: { tempo: 0.42, wave: 'triangle', gain: 0.095, notes: [392, 440, 494, 440, 523, 494, 440, 392, 349, 392, 440, 392, 330, 349, 392, 349] },
             battle: { tempo: 0.22, wave: 'square', gain: 0.085, notes: [220, 220, 262, 220, 247, 247, 294, 247, 220, 262, 294, 330, 294, 262, 220, 196] },
             boss: { tempo: 0.19, wave: 'sawtooth', gain: 0.09, notes: [174, 174, 207, 174, 196, 196, 233, 196, 174, 207, 233, 261, 233, 196, 174, 146] },
+            // 火熱鐵砧專用：固定拍子的鍛造敲擊感旋律，节奏小遊戲的「接拍窗口」直接對齊這裡的 tempo，
+            // 讓玩家是真的跟著這段 BGM 的節奏點下鎚，而不是純粹看計時條
+            forge: { tempo: 0.4, wave: 'square', gain: 0.1, notes: [220, 220, 165, 220, 262, 262, 196, 262, 294, 294, 220, 294, 220, 196, 165, 147] },
         };
         function rpgStopBgm() {
             if (rpgBgmTimer) { clearTimeout(rpgBgmTimer); rpgBgmTimer = null; }
