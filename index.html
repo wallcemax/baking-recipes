@@ -3321,13 +3321,17 @@
             rpgState = null;
         }
         // 監控卡住的移動狀態：不管是什麼原因造成的卡死，超過約 2 秒沒有解除就強制解鎖，
-        // 這樣手機上不管碰到什麼奇怪的觸控/事件問題，最多卡 2 秒就會自動恢復，不會整個玩不了
+        // 這樣手機上不管碰到什麼奇怪的觸控/事件問題，最多卡 2 秒就會自動恢復，不會整個玩不了。
+        // 但要排除「正在合法等玩家做選擇」的情況（例如老麥的任務對話跳出「給烤串／先不要」兩個按鈕），
+        // 不然這個計時器會誤判成卡住、強制重繪，把自訂的選項按鈕蓋掉——用「附近按鈕區塊目前有沒有東西」當判斷依據
         function rpgStartWatchdog() {
             if (rpgWatchdogTimer) clearInterval(rpgWatchdogTimer);
             rpgWatchdogTimer = setInterval(() => {
                 const state = rpgState;
                 if (!state) return;
-                if (state.mode === 'map' && (state.animating || state.locked)) {
+                const actionsEl = document.getElementById('rpg-nearby-actions');
+                const awaitingPlayerChoice = !!(actionsEl && actionsEl.innerHTML.trim()) || !!state.customDialogueActive;
+                if (state.mode === 'map' && (state.animating || state.locked) && !awaitingPlayerChoice) {
                     state.stuckTicks = (state.stuckTicks || 0) + 1;
                     if (state.stuckTicks > 4) {
                         state.animating = false;
@@ -3979,6 +3983,7 @@
             const state = rpgState;
             if (!state) return;
             state.locked = false; // 每次回到地圖畫面，代表上一個事件（戰鬥/對話/轉場）已經結束，重新解鎖移動
+            state.customDialogueActive = false; // 同樣重設，避免上一次的自訂對話萬一沒清乾淨、殘留下來卡住監控計時器的判斷
             rpgDedupeCompanions(); // 防呆：修掉可能已經存在的重複夥伴（例如兩個小穗）
             rpgSyncCompanionPassives(); // 防呆：舊存檔的夥伴補上加速學習追趕被動
             rpgSyncGinhakuAvailability(); // 銀白只有二周目以後才會出現在村莊廣場，每次回地圖畫面都檢查一次
@@ -4813,6 +4818,7 @@
             const box = document.getElementById('rpg-dialogue-box');
             if (!box) return;
             state.locked = true;
+            state.customDialogueActive = true; // 整段對話（含打字機階段）都不讓監控計時器介入，避免超過 2 秒被誤判成卡住
             // 一開始就把原本那顆「跟老麥交談」按鈕清掉，不然對話期間它還留在畫面上可以再點一次，
             // 誤觸就會讓整個流程重新跑一遍、打字機重來，看起來就像選項一下子就消失了
             const actionsEl0 = document.getElementById('rpg-nearby-actions');
@@ -4830,7 +4836,7 @@
                 if (i >= fullText.length) {
                     clearInterval(typer);
                     if (p.laomaiQuestDone) {
-                        setTimeout(() => { if (rpgState) rpgState.locked = false; }, 1200);
+                        setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; } }, 1200);
                         return;
                     }
                     setTimeout(() => {
@@ -4852,7 +4858,7 @@
             if (!((p.items['黃金蜜汁烤串'] || 0) >= 5)) {
                 if (box) box.textContent = '老麥：嗯？數量不太夠喔，你是不是想拿別的東西呼嚨我？先去湊齊五個再來吧。';
                 playSfx('fail');
-                setTimeout(() => { if (rpgState) rpgState.locked = false; }, 1800);
+                setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; } }, 1800);
                 return;
             }
             p.items['黃金蜜汁烤串'] -= 5;
@@ -4862,7 +4868,7 @@
             playSfx('success');
             if (box) box.textContent = '老麥：好吃！這味道……沒錯，就是這個！來，仔細聽好：寶箱如果開到你隊友已經有的專屬武器或防具，不會浪費掉，而是會自動融合，讓那件裝備變得更強，最多可以融合到滿等。放心去闖吧！';
             rpgSaveGame(true);
-            setTimeout(() => { if (rpgState) rpgState.locked = false; }, 2600);
+            setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; } }, 2600);
         }
         function rpgLaomaiDecline() {
             const state = rpgState;
@@ -4871,7 +4877,7 @@
             const box = document.getElementById('rpg-dialogue-box');
             if (box) box.textContent = '老麥：好吧，等你想通了、東西湊齊了再回來找我。';
             playSfx('click');
-            if (state) state.locked = false;
+            if (state) { state.locked = false; state.customDialogueActive = false; }
         }
         function rpgInnSleepConfirm(yes) {
             const state = rpgState;
