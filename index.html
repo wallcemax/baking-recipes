@@ -4618,7 +4618,8 @@
             (state.companions || []).forEach(c => {
                 const gear = RPG_COMPANION_EQUIPMENT[c.id];
                 if (!gear) return;
-                [['weapon', 'weaponName', 'weaponFusionLv', 'atk'], ['armor', 'armorName', 'armorFusionLv', 'def']].forEach(([slot, nameField, fusionField, statField]) => {
+                [['weapon', 'weaponName', 'weaponFusionLv', 'atk', 'weaponManifested'], ['armor', 'armorName', 'armorFusionLv', 'def', 'armorManifested']].forEach(([slot, nameField, fusionField, statField, manifestField]) => {
+                    if (c[manifestField]) return; // 已經幻化的欄位完全跳過，不會被寶箱獎勵覆蓋回原本名稱
                     const item = gear[slot];
                     const has = c[nameField] === item.name;
                     if (!has) {
@@ -4646,10 +4647,17 @@
                 if (!gear) return;
                 const hasWeapon = c.weaponName === gear.weapon.name;
                 const hasArmor = c.armorName === gear.armor.name;
-                if (!hasWeapon) pool.push({ c, slot: 'weapon', item: gear.weapon, isDuplicate: false });
-                else if (ngPlus > 0 && fusionUnlocked && (c.weaponFusionLv || 1) < 10) pool.push({ c, slot: 'weapon', item: gear.weapon, isDuplicate: true });
-                if (!hasArmor) pool.push({ c, slot: 'armor', item: gear.armor, isDuplicate: false });
-                else if (ngPlus > 0 && fusionUnlocked && (c.armorFusionLv || 1) < 10) pool.push({ c, slot: 'armor', item: gear.armor, isDuplicate: true });
+                // 重點修正：已經幻化的武器/防具改了名字，跟原本專屬裝備的名稱對不上，如果不特別排除，
+                // 系統會誤判成「這個人還沒拿到專屬裝備」，之後又掉到同一件裝備時就會把幻化裝備整個蓋掉、
+                // 打回原本名稱的LV.1——幻化過的欄位要完全排除在掉落池之外，不會再被任何掉落影響
+                if (!c.weaponManifested) {
+                    if (!hasWeapon) pool.push({ c, slot: 'weapon', item: gear.weapon, isDuplicate: false });
+                    else if (ngPlus > 0 && fusionUnlocked && (c.weaponFusionLv || 1) < 10) pool.push({ c, slot: 'weapon', item: gear.weapon, isDuplicate: true });
+                }
+                if (!c.armorManifested) {
+                    if (!hasArmor) pool.push({ c, slot: 'armor', item: gear.armor, isDuplicate: false });
+                    else if (ngPlus > 0 && fusionUnlocked && (c.armorFusionLv || 1) < 10) pool.push({ c, slot: 'armor', item: gear.armor, isDuplicate: true });
+                }
             });
             if (!pool.length) return null;
             const pick = pool[Math.floor(Math.random() * pool.length)];
