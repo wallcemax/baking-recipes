@@ -2733,6 +2733,8 @@
             '料理之神的餐具': { atk: 25, cost: 5000, hue: 45, desc: '傳說級的餐具，握在手上就能感受到滿滿的美味力量。' },
             '龍神料理刀': { atk: 40, cost: 20000, hue: 280, ngRequired: 1, desc: '傳說中龍神親自淬鍊的料理刀，刀鋒所至，食材與敵人都無法抵擋。' },
             '老麥的龍鱗巨劍': { atk: 45, cost: 50000, hue: 200, ngRequired: 2, desc: '老麥親手鍛造的巨劍，劍身覆滿龍鱗般的紋路。可以拿去找老麥用神祕金屬精煉鍛造，變得更強。' },
+            '龍魂饗宴刀': { atk: 40, cost: 0, hue: 280, ngRequired: 1, isManifest: true, desc: '龍神料理刀精煉到極限後幻化而成，數值不變，但寄宿著「事半功倍」的力量：全隊受到的HP治療（含持續恢復）+10%。' },
+            '龍鱗饗魂巨劍': { atk: 45, cost: 0, hue: 200, ngRequired: 2, isManifest: true, desc: '老麥的龍鱗巨劍幻化而成的至寶，數值不變，但寄宿著「事半功倍」的力量：全隊受到的HP治療（含持續恢復）+10%。' },
         };
         const RPG_ARMORS = {
             '破舊圍裙': { def: 0, cost: 0, icon: 'icon_armor', desc: '穿了很多年的圍裙，勉強擋一下油噴，聊勝於無。' },
@@ -2741,6 +2743,8 @@
             '料理之神的廚服': { def: 14, cost: 4000, icon: 'icon_armor3', desc: '傳說中料理之神親自賜下的廚服，穿上後渾身充滿安心感。' },
             '龍神廚袍': { def: 20, cost: 16000, icon: 'icon_armor3', ngRequired: 1, desc: '龍神親自加持的廚袍，鱗片般的織紋擁有近乎無敵的防禦力。' },
             '老麥的龍鱗鍛造鎧': { def: 25, cost: 30000, icon: 'icon_armor3', ngRequired: 2, desc: '老麥用畢生手藝鍛出的鎧甲，層層鱗甲堅不可摧。可以拿去找老麥用神祕金屬精煉鍛造，變得更強。' },
+            '龍魂・饗甲': { def: 20, cost: 0, icon: 'icon_armor3', ngRequired: 1, isManifest: true, desc: '龍神廚袍幻化而成，數值不變，寄宿著讓穿戴者體魄脫胎換骨的力量。' },
+            '龍鱗・饗魂鎧': { def: 25, cost: 0, icon: 'icon_armor3', ngRequired: 2, isManifest: true, desc: '老麥的龍鱗鍛造鎧幻化而成，數值不變，寄宿著讓穿戴者體魄脫胎換骨的力量。' },
         };
         // 算「連同裝備加成」之後的實際攻擊/防禦力：只有主角有 weaponName/armorName 對得上這兩份清單，
         // 夥伴／怪物身上沒有對應的裝備名稱，會自動回退成原本的 atk/def
@@ -2764,7 +2768,9 @@
             const pct = obj.buffs && obj.buffs.defBuffPct ? obj.buffs.defBuffPct.value : 0;
             // 軟化：防禦力再打 92 折（-8%），只有「甩鍋熱炒」能解除抵銷，其他解除異常狀態的手段都對這個沒有用
             const softenedMult = (obj.statuses && obj.statuses.softened > 0) ? 0.92 : 1;
-            return Math.round(base * (1 + pct) * rpgForgeMult(obj.armorName) * softenedMult);
+            // 防具幻化：DEF額外+5%
+            const armorManifestMult = obj.armorManifested ? 1.05 : 1;
+            return Math.round(base * (1 + pct) * rpgForgeMult(obj.armorName) * softenedMult * armorManifestMult);
         }
         // 敏捷有暫時性 buff 的話，排行動順序要算進去
         function rpgEffectiveAgi(obj) {
@@ -4454,6 +4460,71 @@
 
         // 調查地點：有機率找到道具/食材/新食譜，也有可能是空的（假的調查點），調查過的地點不會再觸發
         // 夥伴專屬裝備資料庫：只會從「已經加入隊伍」的夥伴身上抽，而且每個人的武器/防具各自只會拿到一次
+        // ---------- 幻化系統：武器精煉+10且融合等級也滿了(玩家自己的武器不用管融合，只看精煉)以後可以幻化成新武器，
+        // 數值完全不變、但不能再精煉/融合，並解鎖專屬的技能加成 ----------
+        const RPG_MANIFEST_NAMES = {
+            '龍神料理刀': '龍魂饗宴刀',
+            '老麥的龍鱗巨劍': '龍鱗饗魂巨劍',
+            '神之金屬鏟': '焰刃・炊神鏟',
+            '嗜血奶油抹刀': '雙月・嗜甜刃',
+            '金剛石肉槌': '破嵐・金剛槌',
+            '燒烤聖火杖': '雷炎・聖火杖',
+            '魔晶調料瓶': '魔晶・調和瓶',
+            '鍛造巨錘': '鍛神・巨錘',
+            '神射手之弓': '追魂・獵弓',
+            '龍神廚袍': '龍魂・饗甲',
+            '老麥的龍鱗鍛造鎧': '龍鱗・饗魂鎧',
+            '精鋼大背鍋': '玄鋼・饗甲',
+            '秘銀圍裙': '秘銀・饗裙',
+            '耐衝鎧甲': '破嵐・饗鎧',
+            '神聖法袍': '聖焰・饗袍',
+            '神魔融合服': '魔晶・饗融服',
+            '老麥的鍛冶重甲': '鍛神・饗甲',
+            '神射手皮甲': '追魂・饗甲',
+        };
+        // 每個技能各自的幻化加成：delta是在原本數值上累加、set是直接覆蓋成指定值
+        const RPG_MANIFEST_SKILL_BONUS = {
+            ako_def_buff: { defBuffPct: { delta: 0.02 } },
+            ako_burn: { mult: { delta: 0.2 } },
+            ako_atk_buff: { atkBuffMult: { delta: 0.2 } },
+            suisui_material: { extraDropChance: { set: 1 } },
+            suisui_double: { mult: { delta: 0.1 }, extraDropChance: { set: 0.5 } },
+            suisui_crit_bleed: { mult: { delta: 0.2 } },
+            suisui_agi_buff: { agiBuffPct: { delta: 0.02 }, critBuffChance: { delta: 0.1 } },
+            suisui_crit_weaken: { mult: { delta: 0.2 }, critChance: { set: 0.7 } },
+            suisui_paralyze_all: { allIndividualChance: { delta: 0.05 } },
+            suisui_execute: { mult: { delta: 0.5 } },
+            alan_single: { mult: { delta: 0.1 } },
+            alan_atk_buff_all: { atkBuffPct: { delta: 0.03 } },
+            alan_ultimate_all: { groupInflictChance: { delta: 0.05 } },
+            laozhou_single: { mult: { delta: 0.2 } },
+            laozhou_column: { mult: { delta: 0.2 } },
+            laozhou_cross: { mult: { delta: 0.2 } },
+            ginhaku_sousvide: { sousVideGrowth: { set: 1.15 } },
+            ginhaku_tech: { mult: { delta: 0.2 } },
+            ginhaku_blend: { quadCollideChance: { set: 0.2 } },
+            laomai_thunder_hammer: { mult: { delta: 0.2 } },
+            laomai_gold_gamble: { goldCostHalved: { set: true } },
+            laomai_hot_anvil: { comboMax: { delta: 3 } },
+            kai_steal_gold: { stealFraction: { set: 1 } },
+            kai_snipe: { mult: { delta: 0.5 } },
+            kai_meteor: { mult: { delta: 0.1 }, sp: { delta: -5 } },
+            kai_poison_rain: { mult: { delta: 0.1 }, sp: { delta: -5 } },
+            kai_arrow_storm: { mult: { delta: 0.1 }, sp: { delta: -5 } },
+            kai_charge: { atkBuffMult: { delta: 0.2 } },
+        };
+        // 套用幻化加成：如果這個角色的武器沒有幻化，原樣傳回；有幻化的話，依照上面那張表調整這個技能的數值
+        function rpgApplyManifestBonus(actorObj, skillId, sk) {
+            if (!sk || !actorObj || !actorObj.weaponManifested) return sk;
+            const bonus = RPG_MANIFEST_SKILL_BONUS[skillId];
+            if (!bonus) return sk;
+            const out = { ...sk };
+            Object.entries(bonus).forEach(([field, rule]) => {
+                if (rule.set !== undefined) out[field] = rule.set;
+                else if (rule.delta !== undefined) out[field] = (sk[field] || 0) + rule.delta;
+            });
+            return out;
+        }
         const RPG_COMPANION_EQUIPMENT = {
             suisui: { weapon: { name: '嗜血奶油抹刀', atk: 15 }, armor: { name: '秘銀圍裙', def: 5 } },
             alan: { weapon: { name: '金剛石肉槌', atk: 18 }, armor: { name: '耐衝鎧甲', def: 15 } },
@@ -5455,20 +5526,27 @@
             const metalCount = (p.materials && p.materials['神祕金屬']) || 0;
             const hasUltimate = (rpgState.companions || []).some(c => c.id === 'laomai' && c.skills && c.skills.includes('laomai_refine_ultimate'));
             const targets = rpgForgeTargetList();
-            const rows = targets.map(({ key, itemName, ownerLabel, slot, getLv }) => {
+            const rows = targets.map(({ key, itemName, ownerLabel, slot, getLv, ownerObj }) => {
                 const lv = getLv();
                 const isMax = lv >= 10;
                 const isBracelet = itemName === '風之加護手環';
                 const rate = isMax ? 0 : rpgForgeSuccessRate(lv, itemName);
                 const canForge = !isMax && metalCount >= 1;
                 const rateText = isBracelet ? '成功率 100%（固定，不會隨等級遞減）' : `成功率 ${rate}%${hasUltimate ? '（已含究極精煉鍛造+10%）' : ''}`;
+                const isPlayerOwner = ownerObj === p;
+                const fusionField = slot === 'weapon' ? 'weaponFusionLv' : 'armorFusionLv';
+                const manifestedField = slot === 'weapon' ? 'weaponManifested' : 'armorManifested';
+                const fusionOk = isPlayerOwner || (ownerObj[fusionField] || 0) >= 10;
+                const eligibleForManifest = (slot === 'weapon' || slot === 'armor') && isMax && fusionOk && !ownerObj[manifestedField];
                 return `
                     <div class="flex items-center gap-3 px-3 py-2 rounded-2xl mb-2" style="background:var(--cream)">
                         <div class="flex-1 min-w-0">
                             <p class="font-medium text-sm">${isBracelet ? '💍' : (slot === 'weapon' ? '🔪' : '👕')} ${itemName}<span class="text-xs ml-2" style="color:#B3A492">${ownerLabel}・目前 ⚒️+${lv}${isMax ? '（已滿等）' : `・${rateText}`}</span></p>
                             ${isBracelet ? `<p class="text-xs mt-0.5" style="color:#B3A492">${ownerLabel}的敏捷 +${1 + lv * 2}（基礎+1，每級再+2，每個人各自獨立）</p>` : ''}
+                            ${eligibleForManifest ? `<p class="text-xs mt-0.5 font-medium" style="color:#C77B3B">✨ 精煉${isPlayerOwner ? '' : '跟融合'}都已經滿等，可以幻化成全新的${slot === 'weapon' ? '武器' : '防具'}了！${slot === 'armor' ? `（幻化效果：${ownerLabel}最大HP+10%、最大SP+10%、DEF+5%）` : ''}</p>` : ''}
                         </div>
                         <button onclick="rpgDoForge('${key}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${canForge ? '' : 'disabled style="opacity:.4"'}>${isMax ? '已滿等' : '❓×1 鍛造'}</button>
+                        ${eligibleForManifest ? `<button onclick="rpgManifestEquip('${key}')" class="btn-secondary text-xs !px-3 !py-1.5 shrink-0">✨ 幻化</button>` : ''}
                     </div>`;
             }).join('');
             const emptyHint = !targets.length ? `<p class="text-xs mb-3" style="color:#B3A492">目前還沒有可以鍛造的裝備。夥伴要先拿到真正的專屬武器/防具（不是一開始就有的初始裝備），或是你自己買下三周目才開賣的新裝備，才能拿來這裡鍛造。</p>` : '';
@@ -5486,6 +5564,57 @@
                 </div>
             `;
         }
+        // 幻化：武器/防具精煉滿+10、融合也滿LV.10（玩家自己的裝備不用管融合，因為玩家裝備本來就沒有融合機制）之後，
+        // 可以變成全新名稱的幻化裝備。武器數值不變、解鎖專屬技能加成；防具則是裝備主人最大HP+10%、最大SP+10%、DEF+5%
+        function rpgManifestEquip(key) {
+            const state = rpgState;
+            const p = state.player;
+            if (!rpgLaomaiInParty()) return;
+            const entry = rpgForgeTargetList().find(e => e.key === key);
+            if (!entry || (entry.slot !== 'weapon' && entry.slot !== 'armor')) return;
+            const owner = entry.ownerObj;
+            const isPlayerOwner = owner === p;
+            const isWeapon = entry.slot === 'weapon';
+            const fusionField = isWeapon ? 'weaponFusionLv' : 'armorFusionLv';
+            const manifestedField = isWeapon ? 'weaponManifested' : 'armorManifested';
+            const nameField = isWeapon ? 'weaponName' : 'armorName';
+            const ownedKey = isWeapon ? 'ownedWeapons' : 'ownedArmors';
+            const lv = entry.getLv();
+            if (lv < 10) return;
+            if (!isPlayerOwner && (owner[fusionField] || 0) < 10) return;
+            if (owner[manifestedField]) return;
+            const newName = RPG_MANIFEST_NAMES[entry.itemName] || `${entry.itemName}・幻化`;
+            if (isPlayerOwner) {
+                p[ownedKey] = p[ownedKey] || [];
+                const idx = p[ownedKey].indexOf(entry.itemName);
+                if (idx >= 0) p[ownedKey].splice(idx, 1);
+                p[ownedKey].push(newName);
+                p[nameField] = newName;
+                p[manifestedField] = true;
+            } else {
+                owner[nameField] = newName;
+                owner[manifestedField] = true;
+            }
+            if (p.forgeLevels) delete p.forgeLevels[entry.itemName]; // 舊名稱的鍛造等級資料清掉，新名稱不能再鍛造
+            let effectMsg;
+            if (isWeapon) {
+                effectMsg = '數值完全不變，但解鎖了專屬的強化效果——再也不能精煉或融合了。';
+            } else {
+                // 防具幻化：一次性把最大HP/SP各拉高10%（連帶把目前HP/SP也補上同樣的增量，不是只拉高上限卻沒補血），DEF+5%則是動態計算，不用在這裡改數值
+                const hpBonus = Math.round(owner.maxHp * 0.1);
+                const spBonus = Math.round(owner.maxSp * 0.1);
+                owner.maxHp += hpBonus;
+                owner.hp += hpBonus;
+                owner.maxSp += spBonus;
+                owner.sp += spBonus;
+                effectMsg = `${owner.name}的最大HP+${hpBonus}、最大SP+${spBonus}，防禦力也再+5%，而且再也不能精煉或融合了。`;
+            }
+            playSfx('success');
+            rpgAddScore(500, isWeapon ? '武器幻化' : '防具幻化');
+            rpgSaveGame(true);
+            document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML(`✨「${entry.itemName}」幻化成了「${newName}」！${effectMsg}`);
+        }
+        function rpgManifestWeapon(key) { rpgManifestEquip(key); } // 保留舊名稱呼叫，避免之前的呼叫點漏改
         function rpgDoForge(key) {
             const state = rpgState;
             if (!rpgLaomaiInParty()) return;
@@ -6458,7 +6587,10 @@
         // 治療倍率：中了「味覺喪失」的話，不管是治療道具還是技能的HP回復量、持續恢復每回合的回復量，都只剩一半
         // （吃再好的料理也吃不出味道，效果自然打折）；沒中的話維持原本100%
         function rpgHealMult(obj) {
-            return (obj && obj.statuses && obj.statuses.tasteless > 0) ? 0.5 : 1;
+            let mult = (obj && obj.statuses && obj.statuses.tasteless > 0) ? 0.5 : 1;
+            // 龍魂饗宴刀/龍鱗饗魂巨劍幻化效果：主角的武器幻化以後，全隊受到的HP治療（含持續恢復）都+10%
+            if (rpgState && rpgState.player && rpgState.player.weaponManifested) mult *= 1.1;
+            return mult;
         }
         // 失明狀態：攻擊方（不分我方怪物）只要還有失明的回合數，這次攻擊/技能就有 30% 機率落空
         function rpgRollMiss(actorObj) {
@@ -6558,7 +6690,7 @@
                         delete obj.buffs.sousVide;
                         rpgLogAppend(`${obj.name}舒肥的效果因為受到攻擊而中斷、重置了。`);
                     } else {
-                        obj.buffs.sousVide.value = +(obj.buffs.sousVide.value * 1.1).toFixed(3);
+                        obj.buffs.sousVide.value = +(obj.buffs.sousVide.value * (obj.buffs.sousVide.growth || 1.1)).toFixed(3);
                         rpgLogAppend(`🍳 ${obj.name}持續舒肥中，攻擊力累積提升到 ${Math.round(obj.buffs.sousVide.value * 100)}%！`);
                     }
                 }
@@ -7207,7 +7339,7 @@
                             playSfx(isCritBuff ? 'crit' : 'hit');
                             }
                         } else if (cmd.action === 'skill') {
-                            const sk = RPG_SKILLS[cmd.extra];
+                            const sk = rpgApplyManifestBonus(actorObj, cmd.extra, RPG_SKILLS[cmd.extra]);
                             actorObj.sp = Math.max(0, actorObj.sp - sk.sp);
                             if (sk.ingredientCost) rpgDeductIngredients(p, sk.ingredientCost);
                             multiHandled = true;
@@ -7244,10 +7376,35 @@
                             }
                             if (sk.pattern === 'collide') {
                                 // 調和：隨機挑敵方兩個還活著的單位讓他們互撞，各自用對方的攻防計算傷害；場上不到兩隻敵人就直接失效
+                                // 幻化加成：如果場上有4隻以上敵人，額外有機率變成四體一起互撞（循環：A打B、B打C、C打D、D打A）
                                 const aliveMonsters = rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0);
                                 if (aliveMonsters.length < 2) {
                                     rpgLogAppend(`${actorObj.name}使出「${sk.name}」，但敵方只剩一隻，沒有東西可以互撞，這次沒有效果。`);
                                     playSfx('fail');
+                                } else if (sk.quadCollideChance && aliveMonsters.length >= 4 && Math.random() < sk.quadCollideChance) {
+                                    const shuffled4 = [...aliveMonsters].sort(() => Math.random() - 0.5).slice(0, 4);
+                                    const dmgTaken = shuffled4.map((pick, idx) => {
+                                        const attacker = shuffled4[(idx + 3) % 4]; // 前一個人打這一個
+                                        return Math.max(1, Math.round(attacker.obj.atk * (sk.collideMult || 2) - rpgEffectiveDef(pick.obj) + (Math.random() * 3 - 1)));
+                                    });
+                                    shuffled4.forEach((pick, idx) => { pick.obj.curHp = Math.max(0, pick.obj.curHp - dmgTaken[idx]); });
+                                    shuffled4.forEach((pick, idx) => {
+                                        const domId = `rpg-slot-monster-${pick.row}-${pick.i}`;
+                                        rpgFlashHit(domId);
+                                        rpgFloatDamage(domId, dmgTaken[idx], '#C4453F');
+                                        const center = rpgElementCenter(domId);
+                                        if (center) rpgBurstParticle('circle_03', { x: center.x, y: center.y, size: 44, count: 2, duration: 0.5, filter: 'sepia(1) hue-rotate(200deg) saturate(6) contrast(1.15)' });
+                                        if (pick.obj.curHp <= 0) { const el = document.getElementById(domId); if (el) { el.style.opacity = '0'; el.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; } }
+                                    });
+                                    rpgLogAppend(`${actorObj.name}使出「${sk.name}」，幻化的力量讓${shuffled4.map(e => e.obj.name).join('、')}四個一起狠狠互撞！`);
+                                    playSfx('collide');
+                                    const remaining4 = rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0);
+                                    b.target = remaining4.length ? { row: remaining4[0].row, i: remaining4[0].i } : null;
+                                    if (rpgMonstersCleared(b)) {
+                                        updateBattleUI();
+                                        setTimeout(() => rpgBattleWin(), 700);
+                                        return;
+                                    }
                                 } else {
                                     const shuffled = [...aliveMonsters].sort(() => Math.random() - 0.5);
                                     const [pickA, pickB] = shuffled;
@@ -7324,7 +7481,7 @@
                                     if (sk.agiBuffPct != null) rpgApplyBuff(obj, 'agiBuffPct', sk.agiBuffPct, sk.buffTurns || 3);
                                     if (sk.critBuffChance != null) rpgApplyBuff(obj, 'critBuff', { chance: sk.critBuffChance, mult: sk.critBuffMult }, sk.buffTurns || 3);
                                     if (sk.grantDodgeNext) obj.buffs = Object.assign(obj.buffs || {}, { dodgeNext: { value: true } }); // 醃漬：這回合能免除一次攻擊，被打到就會消耗掉
-                                    if (sk.grantSousVide) obj.buffs = Object.assign(obj.buffs || {}, { sousVide: { value: 1, wasHitThisRound: false } }); // 舒肥：沒被打的每回合攻擊力再乘1.1倍，被打到或戰鬥結束就重置
+                                    if (sk.grantSousVide) obj.buffs = Object.assign(obj.buffs || {}, { sousVide: { value: 1, wasHitThisRound: false, growth: sk.sousVideGrowth || 1.1 } }); // 舒肥：沒被打的每回合攻擊力再乘成長倍率(預設1.1)，被打到或戰鬥結束就重置
                                     if (sk.healBuffPct != null) {
                                         // 施放的當下就先補一次血，算第一回合；接下來的回合開始輪流結算，總共還是三回合份的回復
                                         const immediateHeal = Math.max(1, Math.round(obj.maxHp * sk.healBuffPct * rpgHealMult(obj)));
@@ -7443,9 +7600,10 @@
                                     if (sk.goldGambleDamage) {
                                         // 一擲千金：隨機消耗1~999金幣（金幣不夠就有多少花多少），造成等值傷害，完全無視自己攻擊力與敵方防禦力
                                         const gambleAmt = Math.max(0, Math.min(999, Math.floor(Math.random() * 999) + 1, p.gold));
-                                        p.gold = Math.max(0, p.gold - gambleAmt);
+                                        const goldCost = sk.goldCostHalved ? Math.ceil(gambleAmt / 2) : gambleAmt;
+                                        p.gold = Math.max(0, p.gold - goldCost);
                                         dmg = Math.max(1, gambleAmt);
-                                        logBits.push(`豪擲了 💰${gambleAmt} 金幣`);
+                                        logBits.push(`豪擲了 💰${gambleAmt} 金幣${sk.goldCostHalved ? `（幻化效果：實際只花了${goldCost}）` : ''}`);
                                     } else {
                                         dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * (sk.mult || 0) - rpgEffectiveDef(tObj) + (Math.random() * 3 - 1)));
                                     }
@@ -7496,7 +7654,7 @@
                                     if (sk.stealGold && !b.kaiGoldStolen) {
                                         // 劫富濟貧：一次對全場所有怪物偷走各自一半的金幣獎勵，直接進主角口袋；
                                         // 整場戰鬥只有第一次使用才會真的偷到錢，之後再用這招就只剩攻擊效果、不會再偷
-                                        const stolen = Math.max(1, Math.round((tObj.gold || 0) * 0.5));
+                                        const stolen = Math.max(1, Math.round((tObj.gold || 0) * (sk.stealFraction || 0.5)));
                                         p.gold += stolen;
                                         tObj.gold = Math.max(0, (tObj.gold || 0) - stolen);
                                         logBits.push(`還順手劫走了 ${stolen} 金幣`);
