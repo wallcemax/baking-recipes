@@ -2769,7 +2769,7 @@
             // 軟化：防禦力再打 92 折（-8%），只有「甩鍋熱炒」能解除抵銷，其他解除異常狀態的手段都對這個沒有用
             const softenedMult = (obj.statuses && obj.statuses.softened > 0) ? 0.92 : 1;
             // 防具幻化：DEF額外+5%
-            const armorManifestMult = obj.armorManifested ? 1.05 : 1;
+            const armorManifestMult = obj.armorManifested ? 1.1 : 1;
             return Math.round(base * (1 + pct) * rpgForgeMult(obj.armorName) * softenedMult * armorManifestMult);
         }
         // 敏捷有暫時性 buff 的話，排行動順序要算進去
@@ -3519,39 +3519,45 @@
             }[pattern] || '單體攻擊';
         }
         // 把技能的各種效果（傷害倍率、治療、buff、異常狀態…）組合成一句白話說明
-        function rpgSkillPowerText(sk) {
+        // skillId/actorObj 是可選參數：如果角色的武器已經幻化，就把幻化加成套用到顯示的數值上，
+        // 並且用綠色字體額外標註「+多少，來自幻化武器『XXX』的效果」，讓玩家看得出來這個加成是哪裡來的
+        function rpgSkillPowerText(sk, skillId, actorObj) {
+            const manifestBonus = (actorObj && actorObj.weaponManifested && skillId) ? RPG_MANIFEST_SKILL_BONUS[skillId] : null;
+            const weaponName = actorObj ? actorObj.weaponName : '';
+            const note = (field, text) => (manifestBonus && manifestBonus[field]) ? ` <span style="color:#2E9E4F; font-weight:600;">(${text}，來自幻化武器「${weaponName}」的效果)</span>` : '';
+            const effSk = manifestBonus ? rpgApplyManifestBonus(actorObj, skillId, sk) : sk;
             const parts = [];
-            if (sk.mult) parts.push(`威力 ATK×${sk.mult}${sk.hits > 1 ? `（連續${sk.hits}次）` : ''}`);
-            if (sk.healPct) parts.push(`回復 HP ${Math.round(sk.healPct * 100)}%${sk.revive ? '（可喚醒倒下夥伴）' : ''}`);
+            if (effSk.mult) parts.push(`威力 ATK×${effSk.mult}${effSk.hits > 1 ? `（連續${effSk.hits}次）` : ''}${note('mult', `+${manifestBonus?.mult?.delta}倍`)}`);
+            if (effSk.healPct) parts.push(`回復 HP ${Math.round(effSk.healPct * 100)}%${effSk.revive ? '（可喚醒倒下夥伴）' : ''}`);
             if (sk.cureStatusType === 'all') parts.push('解除全部異常狀態（包含只有這招才能解的「味覺喪失」）');
             else if (sk.cureStatusType === 'multi' && sk.cureTypes) parts.push(`解除${sk.cureTypes.map(t => RPG_STATUS_INFO[t].name).join('／')}`);
             else if (sk.cureStatusType) parts.push(`解除${RPG_STATUS_INFO[sk.cureStatusType].name}`);
-            if (sk.defBuffPct != null) parts.push(`防禦+${Math.round(sk.defBuffPct * 100)}%（持續${sk.buffTurns}回合）`);
-            if (sk.atkBuffMult != null) parts.push(`下次攻擊力×${sk.atkBuffMult}`);
-            if (sk.atkBuffPct != null) parts.push(`全體攻擊+${Math.round(sk.atkBuffPct * 100)}%（持續${sk.buffTurns}回合）`);
-            if (sk.agiBuffPct != null) parts.push(`全體敏捷+${Math.round(sk.agiBuffPct * 100)}%（持續${sk.buffTurns}回合）`);
-            if (sk.healBuffPct != null) parts.push(`每回合持續回復 HP ${Math.round(sk.healBuffPct * 100)}%，持續${sk.buffTurns}回合`);
-            if (sk.spRegenFlat != null) parts.push(`每回合持續回復 SP ${sk.spRegenFlat} 點，持續${sk.buffTurns}回合`);
-            if (sk.critBuffChance != null) parts.push(`全體會心爆擊率+${Math.round(sk.critBuffChance * 100)}%（爆擊時攻擊倍率×${sk.critBuffMult}，持續${sk.buffTurns}回合）`);
-            if (sk.defDebuffPct != null) parts.push(`使目標防禦${Math.round(sk.defDebuffPct * 100)}%（持續${sk.debuffTurns}回合）`);
-            if (sk.atkDebuffPct != null) parts.push(`${sk.debuffChance != null ? Math.round(sk.debuffChance * 100) + '%機率' : ''}使目標攻擊力${Math.round(sk.atkDebuffPct * 100)}%（持續${sk.debuffTurns}回合）`);
-            if (sk.critChance) parts.push(`${Math.round(sk.critChance * 100)}%機率爆擊×${sk.critMult}`);
-            if (sk.burnChance) parts.push(`附加灼傷（每回合扣1%HP，持續${sk.burnTurns}回合）`);
-            if (sk.inflictChance) parts.push(`${Math.round(sk.inflictChance * 100)}%機率使目標${RPG_STATUS_INFO[sk.inflictType].name}`);
-            if (sk.instaKillChance) parts.push(`目標HP≤${Math.round(sk.instaKillThreshold * 100)}%時有${Math.round(sk.instaKillChance * 100)}%機率即死（含魔王）`);
-            if (sk.allIndividualChance) parts.push(`每隻怪物各自有${Math.round(sk.allIndividualChance * 100)}%機率陷入${sk.allIndividualType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[sk.allIndividualType].name}`);
+            if (effSk.defBuffPct != null) parts.push(`防禦+${Math.round(effSk.defBuffPct * 100)}%（持續${effSk.buffTurns}回合）${note('defBuffPct', `+${Math.round(manifestBonus?.defBuffPct?.delta * 100)}%`)}`);
+            if (effSk.atkBuffMult != null) parts.push(`下次攻擊力×${effSk.atkBuffMult}${note('atkBuffMult', `+${manifestBonus?.atkBuffMult?.delta}倍`)}`);
+            if (effSk.atkBuffPct != null) parts.push(`全體攻擊+${Math.round(effSk.atkBuffPct * 100)}%（持續${effSk.buffTurns}回合）${note('atkBuffPct', `+${Math.round(manifestBonus?.atkBuffPct?.delta * 100)}%`)}`);
+            if (effSk.agiBuffPct != null) parts.push(`全體敏捷+${Math.round(effSk.agiBuffPct * 100)}%（持續${effSk.buffTurns}回合）${note('agiBuffPct', `+${Math.round(manifestBonus?.agiBuffPct?.delta * 100)}%`)}`);
+            if (effSk.healBuffPct != null) parts.push(`每回合持續回復 HP ${Math.round(effSk.healBuffPct * 100)}%，持續${effSk.buffTurns}回合`);
+            if (effSk.spRegenFlat != null) parts.push(`每回合持續回復 SP ${effSk.spRegenFlat} 點，持續${effSk.buffTurns}回合`);
+            if (effSk.critBuffChance != null) parts.push(`全體會心爆擊率+${Math.round(effSk.critBuffChance * 100)}%（爆擊時攻擊倍率×${effSk.critBuffMult}，持續${effSk.buffTurns}回合）${note('critBuffChance', `+${Math.round(manifestBonus?.critBuffChance?.delta * 100)}%`)}`);
+            if (effSk.defDebuffPct != null) parts.push(`使目標防禦${Math.round(effSk.defDebuffPct * 100)}%（持續${effSk.debuffTurns}回合）`);
+            if (effSk.atkDebuffPct != null) parts.push(`${effSk.debuffChance != null ? Math.round(effSk.debuffChance * 100) + '%機率' : ''}使目標攻擊力${Math.round(effSk.atkDebuffPct * 100)}%（持續${effSk.debuffTurns}回合）`);
+            if (effSk.critChance) parts.push(`${Math.round(effSk.critChance * 100)}%機率爆擊×${effSk.critMult}${note('critChance', `→${Math.round(effSk.critChance * 100)}%`)}`);
+            if (effSk.burnChance) parts.push(`附加灼傷（每回合扣1%HP，持續${effSk.burnTurns}回合）`);
+            if (effSk.inflictChance) parts.push(`${Math.round(effSk.inflictChance * 100)}%機率使目標${RPG_STATUS_INFO[effSk.inflictType].name}`);
+            if (effSk.instaKillChance) parts.push(`目標HP≤${Math.round(effSk.instaKillThreshold * 100)}%時有${Math.round(effSk.instaKillChance * 100)}%機率即死（含魔王）`);
+            if (effSk.allIndividualChance) parts.push(`每隻怪物各自有${Math.round(effSk.allIndividualChance * 100)}%機率陷入${effSk.allIndividualType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[effSk.allIndividualType].name}${note('allIndividualChance', `+${Math.round(manifestBonus?.allIndividualChance?.delta * 100)}%`)}`);
             if (sk.grantDodgeNext) parts.push('讓目標本回合免除一次攻擊（不會被算成受到攻擊）');
-            if (sk.grantSousVide) parts.push('目標沒被打的每回合攻擊力再疊加×1.1，被攻擊或戰鬥結束就重置');
-            if (sk.groupInflictChance) parts.push(`${Math.round(sk.groupInflictChance * 100)}%機率讓敵方全體一起陷入${sk.groupInflictType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[sk.groupInflictType].name}`);
-            if (sk.extraDropChance) parts.push(`${Math.round(sk.extraDropChance * 100)}%機率額外獲得食材`);
+            if (sk.grantSousVide) parts.push(`目標沒被打的每回合攻擊力再疊加×${effSk.sousVideGrowth || 1.1}，被攻擊或戰鬥結束就重置${note('sousVideGrowth', `成長率變成×${manifestBonus?.sousVideGrowth?.set}`)}`);
+            if (effSk.groupInflictChance) parts.push(`${Math.round(effSk.groupInflictChance * 100)}%機率讓敵方全體一起陷入${effSk.groupInflictType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[effSk.groupInflictType].name}${note('groupInflictChance', `+${Math.round(manifestBonus?.groupInflictChance?.delta * 100)}%`)}`);
+            if (effSk.extraDropChance) parts.push(`${Math.round(effSk.extraDropChance * 100)}%機率額外獲得食材${note('extraDropChance', `→${Math.round(effSk.extraDropChance * 100)}%`)}`);
             if (sk.isForgeUnlock) parts.push('解鎖「精煉鍛造」功能，可以用神祕金屬強化裝備');
             if (sk.oreSenseBonus) parts.push(`神祕金屬掉落率+${Math.round(sk.oreSenseBonus * 100)}%、每次獲得數量加倍，寶箱開到食材時也會一併掉落神祕金屬，不再是擇一`);
             if (sk.forgeRateBonus) parts.push(`精煉鍛造成功率+${Math.round(sk.forgeRateBonus * 100)}%`);
-            if (sk.goldGambleDamage) parts.push('隨機消耗1~999金幣，造成等值傷害（無視自己攻擊力與敵方防禦力）');
-            if (sk.rhythmForge) parts.push(`敲擊小遊戲，最多連段${sk.comboMax || 12}下，第一下基礎倍率×1.0，之後每下命中橘光+${sk.normalStep || 0.05}、完美（亮黃閃爍）+${sk.perfectStep || 0.1}倍率，沒接到就會中斷連段`);
+            if (sk.goldGambleDamage) parts.push(`隨機消耗1~999金幣，造成等值傷害（無視自己攻擊力與敵方防禦力）${note('goldCostHalved', '實際花費金幣減半，傷害不變')}`);
+            if (effSk.rhythmForge) parts.push(`敲擊小遊戲，最多連段${effSk.comboMax || 12}下${note('comboMax', `+${manifestBonus?.comboMax?.delta}段`)}，第一下基礎倍率×1.0，之後每下命中橘光+${effSk.normalStep || 0.05}、完美（亮黃閃爍）+${effSk.perfectStep || 0.1}倍率，沒接到就會中斷連段`);
             if (sk.isCatchupPassive) parts.push('隊伍等級落後主角時，經驗值取得倍率會自動提升，幫忙追上隊伍進度');
-            if (sk.stealGold) parts.push('對全場所有怪物各偷走一半金幣獎勵（整場戰鬥只有第一次使用才會真的偷到錢）');
-            if (sk.selfCritBuffChance) parts.push(`攻擊後自身會心率+${Math.round(sk.selfCritBuffChance * 100)}%（持續${sk.selfCritBuffTurns || 2}回合）`);
+            if (sk.stealGold) parts.push(`對全場所有怪物各偷走${Math.round((effSk.stealFraction || 0.5) * 100)}%金幣獎勵（整場戰鬥只有第一次使用才會真的偷到錢）${note('stealFraction', `→${Math.round(effSk.stealFraction * 100)}%`)}`);
+            if (effSk.selfCritBuffChance) parts.push(`攻擊後自身會心率+${Math.round(effSk.selfCritBuffChance * 100)}%（持續${effSk.selfCritBuffTurns || 2}回合）`);
             if (sk.guaranteedFlee) parts.push('輪到老麥行動時發動，100%直接脫離戰鬥（不看敵我強弱，一定成功，魔王戰也能用）');
             return parts.join('、') || '效果不明';
         }
@@ -3913,7 +3919,7 @@
                             ${obj.skills.map(id => {
                                 const sk = RPG_SKILLS[id];
                                 if (!sk) return '';
-                                return `<p class="text-xs mb-0.5" style="color:#B3A492">${sk.passive ? '🔸被動' : '🔹主動'}「${sk.name}」${sk.sp ? `（${sk.sp}SP）` : ''}：${rpgSkillPowerText(sk)}</p>`;
+                                return `<p class="text-xs mb-0.5" style="color:#B3A492">${sk.passive ? '🔸被動' : '🔹主動'}「${sk.name}」${sk.sp ? `（${sk.sp}SP）` : ''}：${rpgSkillPowerText(sk, id, obj)}</p>`;
                             }).join('')}
                         </div>` : ''}
                     ${!obj.isCompanion && obj.badTasteMarkCount ? `<p class="text-xs mt-1" style="color:#B3A492">🤮 敗者的難吃印 × ${obj.badTasteMarkCount}${obj.badTasteMarkCount >= 5 ? '（已集滿！）' : `（再集 ${5 - obj.badTasteMarkCount} 個解鎖稱號）`}</p>` : ''}
@@ -5553,7 +5559,7 @@
                         <div class="flex-1 min-w-0">
                             <p class="font-medium text-sm">${isBracelet ? '💍' : (slot === 'weapon' ? '🔪' : '👕')} ${itemName}<span class="text-xs ml-2" style="color:#B3A492">${ownerLabel}・目前 ⚒️+${lv}${isMax ? '（已滿等）' : `・${rateText}`}</span></p>
                             ${isBracelet ? `<p class="text-xs mt-0.5" style="color:#B3A492">${ownerLabel}的敏捷 +${1 + lv * 2}（基礎+1，每級再+2，每個人各自獨立）</p>` : ''}
-                            ${eligibleForManifest ? `<p class="text-xs mt-0.5 font-medium" style="color:#C77B3B">✨ 精煉${isPlayerOwner ? '' : '跟融合'}都已經滿等，可以幻化成全新的${slot === 'weapon' ? '武器' : '防具'}了！${slot === 'armor' ? `（幻化效果：${ownerLabel}最大HP+10%、最大SP+10%、DEF+5%）` : ''}</p>` : ''}
+                            ${eligibleForManifest ? `<p class="text-xs mt-0.5 font-medium" style="color:#C77B3B">✨ 精煉${isPlayerOwner ? '' : '跟融合'}都已經滿等，可以幻化成全新的${slot === 'weapon' ? '武器' : '防具'}了！${slot === 'armor' ? `（幻化效果：${ownerLabel}最大HP+10%、最大SP+10%、DEF+10%）` : ''}</p>` : ''}
                         </div>
                         <button onclick="rpgDoForge('${key}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${canForge ? '' : 'disabled style="opacity:.4"'}>${isMax ? '已滿等' : '❓×1 鍛造'}</button>
                         ${eligibleForManifest ? `<button onclick="rpgManifestEquip('${key}')" class="btn-secondary text-xs !px-3 !py-1.5 shrink-0">✨ 幻化</button>` : ''}
@@ -5577,7 +5583,7 @@
         // 幻化武器發光顏色：每個角色各自不同色調，戰鬥/地圖上顯示武器時用這個顏色取代原本的weaponHue
         const RPG_MANIFEST_GLOW_HUE = { player: 45, ako: 350, suisui: 320, alan: 10, laozhou: 45, ginhaku: 190, laomai: 25, kai: 130 };
         // 幻化：武器/防具精煉滿+10、融合也滿LV.10（玩家自己的裝備不用管融合，因為玩家裝備本來就沒有融合機制）之後，
-        // 可以變成全新名稱的幻化裝備。武器數值不變、解鎖專屬技能加成；防具則是裝備主人最大HP+10%、最大SP+10%、DEF+5%
+        // 可以變成全新名稱的幻化裝備。武器數值不變、解鎖專屬技能加成；防具則是裝備主人最大HP+10%、最大SP+10%、DEF+10%
         function rpgManifestEquip(key) {
             const state = rpgState;
             const p = state.player;
@@ -5624,14 +5630,14 @@
             if (isWeapon) {
                 effectMsg = '數值（含原本精煉練出來的強度）完全保留，而且解鎖了專屬的強化效果——再也不能精煉或融合了。';
             } else {
-                // 防具幻化：一次性把最大HP/SP各拉高10%（連帶把目前HP/SP也補上同樣的增量，不是只拉高上限卻沒補血），DEF+5%則是動態計算，不用在這裡改數值
+                // 防具幻化：一次性把最大HP/SP各拉高10%（連帶把目前HP/SP也補上同樣的增量，不是只拉高上限卻沒補血），DEF+10%則是動態計算，不用在這裡改數值
                 const hpBonus = Math.round(owner.maxHp * 0.1);
                 const spBonus = Math.round(owner.maxSp * 0.1);
                 owner.maxHp += hpBonus;
                 owner.hp += hpBonus;
                 owner.maxSp += spBonus;
                 owner.sp += spBonus;
-                effectMsg = `原本精煉練出來的強度完全保留，而且${owner.name}的最大HP+${hpBonus}、最大SP+${spBonus}，防禦力也再+5%，再也不能精煉或融合了。`;
+                effectMsg = `原本精煉練出來的強度完全保留，而且${owner.name}的最大HP+${hpBonus}、最大SP+${spBonus}，防禦力也再+10%，再也不能精煉或融合了。`;
             }
             const finalize = () => {
                 playSfx('success');
@@ -6342,7 +6348,7 @@
                     const sk = RPG_SKILLS[id];
                     const missingIngredient = sk.ingredientCost && !rpgHasIngredients(p, sk.ingredientCost);
                     const disabled = actor.sp < sk.sp || missingIngredient;
-                    const powerText = rpgSkillPowerText(sk);
+                    const powerText = rpgSkillPowerText(sk, id, actor);
                     const isAllyAll = sk.pattern === 'ally_all';
                     const needsAllyTarget = sk.pattern && sk.pattern.startsWith('ally_') && !isAllyAll;
                     const onclick = isAllyAll
