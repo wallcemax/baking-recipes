@@ -3655,7 +3655,7 @@
             alan: { id: 'alan', name: '阿藍', level: 1, exp: 0, expToNext: 20, hp: 22, maxHp: 22, atk: 5, def: 2, sp: 9, maxSp: 9, agi: 9, weaponName: '辛香研磨棒', skills: ['alan_single', 'alan_catchup'], isCompanion: true, spriteKey: 'hero_alan', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer' },
             ginhaku: { id: 'ginhaku', name: '銀白', level: 1, exp: 0, expToNext: 20, hp: 21, maxHp: 21, atk: 4, def: 2, sp: 14, maxSp: 14, agi: 8, weaponName: '藥草調味瓶', skills: ['ginhaku_passive'], isCompanion: true, spriteKey: 'hero_ginhaku', spriteSheet: 'dungeon', weaponSprite: 'weapon_potion', weaponHue: 200 },
             laomai: { id: 'laomai', name: '老麥', level: 1, exp: 0, expToNext: 20, hp: 34, maxHp: 34, atk: 8, def: 6, sp: 12, maxSp: 12, agi: 3, weaponName: '鍛造巨錘', weaponFusionLv: 1, skills: ['laomai_catchup', 'laomai_refine_basic', 'laomai_solo_pride'], isCompanion: true, spriteKey: 'hero_laomai', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer', weaponHue: 30 },
-            kai: { id: 'kai', name: '凱', level: 1, exp: 0, expToNext: 20, hp: 22, maxHp: 22, atk: 6, def: 1, sp: 10, maxSp: 10, agi: 8, weaponName: '神射手之弓', skills: ['kai_catchup'], isCompanion: true, spriteKey: 'hero_kai', spriteSheet: 'dungeon', weaponSprite: 'bow_kai', weaponSheet: 'town' },
+            kai: { id: 'kai', name: '凱', level: 1, exp: 0, expToNext: 20, hp: 22, maxHp: 22, atk: 6, def: 1, sp: 10, maxSp: 10, agi: 8, weaponName: '神射手之弓', weaponFusionLv: 1, skills: ['kai_catchup'], isCompanion: true, spriteKey: 'hero_kai', spriteSheet: 'dungeon', weaponSprite: 'bow_kai', weaponSheet: 'town' },
         };
         // 招募條件跟劇情台詞：require 是 null 代表直接加入；否則要交出對應的道具/食材才會加入
         const RPG_COMPANION_RECRUIT_INFO = {
@@ -4461,6 +4461,7 @@
             ako: { weapon: { name: '神之金屬鏟', atk: 17 }, armor: { name: '精鋼大背鍋', def: 15 } },
             ginhaku: { weapon: { name: '魔晶調料瓶', atk: 10 }, armor: { name: '神魔融合服', def: 8 } },
             laomai: { weapon: { name: '鍛造巨錘', atk: 14 }, armor: { name: '老麥的鍛冶重甲', def: 16 } },
+            kai: { weapon: { name: '神射手之弓', atk: 15 }, armor: { name: '神射手皮甲', def: 10 } },
         };
         // 從還沒拿到專屬裝備的「已加入」夥伴裡隨機抽一件，直接強制裝備上去（夥伴沒有裝備選擇畫面，數值直接套用）
         // 二周目以後（ngPlus > 0），已經拿過的專屬裝備還能再重複掉落，重複獲得會自動「融合」：等級 +1、武器 ATK+1／防具 DEF+1，融合到 LV.10 封頂就不會再掉落了
@@ -4700,7 +4701,7 @@
                         if (poi.found && Math.random() < 0.4) poi.found = false;
                     });
                     // 神射手・凱的招募任務：每次刷新進平原地圖算一天，還沒加入隊伍的話，今天想吃的食譜重新抽一次
-                    if (!state.companions.some(c => c.id === 'kai') && (state.player.ngPlus || 0) >= 3) {
+                    if (!state.companions.some(c => c.id === 'kai') && (state.player.ngPlus || 0) >= 4) {
                         state.player.kaiDay = (state.player.kaiDay || 0) + 1;
                         const recipeNames = Object.keys(RPG_RECIPES);
                         state.player.kaiRequestedDish = recipeNames[Math.floor(Math.random() * recipeNames.length)];
@@ -4869,7 +4870,7 @@
                 }
                 return;
             }
-            const unlocked = (state.player.ngPlus || 0) >= 3;
+            const unlocked = (state.player.ngPlus || 0) >= 4;
             if (unlocked) {
                 map.npcs[key] = 'kai';
                 delete RPG_PLAINS_DECOR[key]; // 拿掉原本站的那棵樹裝飾圖磚，不然人物會疊在樹上面
@@ -5167,7 +5168,7 @@
             }
             const dish = p.kaiRequestedDish;
             const dishInfo = RPG_ITEM_INFO[dish] || {};
-            const fullText = `神射手・凱：喔，是你啊。今天啊……我特別想吃${dishInfo.emoji || ''}「${dish}」，如果你能弄到手的話，麻煩你了。（已經照顧他 ${p.kaiFeedCount || 0}/7 天）`;
+            const fullText = `神射手・凱：喔，是你啊。今天啊……我特別想吃${dishInfo.emoji || ''}「${dish}」，如果你能弄到手的話，麻煩你了。`;
             box.textContent = '';
             let i = 0;
             const typer = setInterval(() => {
@@ -5221,7 +5222,7 @@
                 if (sp) rpgBurstParticle('star', { x: sp.x, y: sp.y, count: 5, size: 34, duration: 0.8 });
                 rpgSaveGame(true);
             } else {
-                if (box) box.textContent = `神射手・凱：喔喔，就是這個味道！謝啦，明天再麻煩你了。（已經照顧他 ${p.kaiFeedCount}/7 天）`;
+                if (box) box.textContent = '神射手・凱：喔喔，就是這個味道！謝啦，明天再麻煩你了。';
             }
             setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; rpgDraw(); rpgCheckNearby(); } }, 2500);
         }
