@@ -3522,46 +3522,47 @@
         // 並且用綠色字體額外標註「+多少，來自幻化武器『XXX』的效果」，讓玩家看得出來這個加成是哪裡來的
         function rpgSkillPowerText(sk, skillId, actorObj) {
             const manifestBonus = (actorObj && actorObj.weaponManifested && skillId) ? RPG_MANIFEST_SKILL_BONUS[skillId] : null;
-            const weaponName = actorObj ? actorObj.weaponName : '';
-            const note = (field, text) => (manifestBonus && manifestBonus[field]) ? ` <span style="color:#2E9E4F; font-weight:600;">${text}</span>` : '';
             const effSk = manifestBonus ? rpgApplyManifestBonus(actorObj, skillId, sk) : sk;
-            // 主角武器幻化的「全隊治療+10%」是全域效果、沒有綁在特定技能上（跟rpgHealMult吃的是同一個開關），
-            // 所以不透過上面那張表格，這裡另外判斷：只要主角武器幻化了，任何有治療效果的技能都要多標這一行
+            // has(field)：這個技能的這個欄位有沒有拿到幻化加成；g(field, text)：有加成的話把整串文字（已經是加總後的數字）包成綠色
+            const has = (field) => !!(manifestBonus && manifestBonus[field]);
+            const g = (field, text) => has(field) ? `<span style="color:#2E9E4F; font-weight:600;">${text}</span>` : text;
+            // 主角武器幻化的「全隊治療+10個百分點」是全域效果、沒有綁在特定技能上，這裡另外判斷：
+            // 只要主角武器幻化了，任何有治療效果的技能都要把百分比加10（是加法：35%+10%=45%，不是乘法）
             const playerWeaponManifested = !!(rpgState && rpgState.player && rpgState.player.weaponManifested);
-            const playerWeaponName = (rpgState && rpgState.player) ? rpgState.player.weaponName : '';
-            const healNote = playerWeaponManifested ? ` <span style="color:#2E9E4F; font-weight:600;">+10%</span>` : '';
-            const healMultForDisplay = playerWeaponManifested ? 1.1 : 1;
+            const healBonusAdd = playerWeaponManifested ? 0.1 : 0;
+            const gHeal = (text) => playerWeaponManifested ? `<span style="color:#2E9E4F; font-weight:600;">${text}</span>` : text;
             const parts = [];
-            if (effSk.mult) parts.push(`威力 ATK×${effSk.mult}${effSk.hits > 1 ? `（連續${effSk.hits}次）` : ''}${note('mult', `+${manifestBonus?.mult?.delta}倍`)}`);
-            if (effSk.healPct) parts.push(`回復 HP ${Math.round(effSk.healPct * 100 * healMultForDisplay)}%${effSk.revive ? '（可喚醒倒下夥伴）' : ''}${healNote}`);
+            if (effSk.mult) parts.push(`威力 ${g('mult', `ATK×${effSk.mult}`)}${effSk.hits > 1 ? `（連續${effSk.hits}次）` : ''}`);
+            if (effSk.healPct) parts.push(`回復 ${gHeal(`HP ${Math.round((effSk.healPct + healBonusAdd) * 100)}%`)}${effSk.revive ? '（可喚醒倒下夥伴）' : ''}`);
             if (sk.cureStatusType === 'all') parts.push('解除全部異常狀態（包含只有這招才能解的「味覺喪失」）');
             else if (sk.cureStatusType === 'multi' && sk.cureTypes) parts.push(`解除${sk.cureTypes.map(t => RPG_STATUS_INFO[t].name).join('／')}`);
             else if (sk.cureStatusType) parts.push(`解除${RPG_STATUS_INFO[sk.cureStatusType].name}`);
-            if (effSk.defBuffPct != null) parts.push(`防禦+${Math.round(effSk.defBuffPct * 100)}%（持續${effSk.buffTurns}回合）${note('defBuffPct', `+${Math.round(manifestBonus?.defBuffPct?.delta * 100)}%`)}`);
-            if (effSk.atkBuffMult != null) parts.push(`下次攻擊力×${effSk.atkBuffMult}${note('atkBuffMult', `+${manifestBonus?.atkBuffMult?.delta}倍`)}`);
-            if (effSk.atkBuffPct != null) parts.push(`全體攻擊+${Math.round(effSk.atkBuffPct * 100)}%（持續${effSk.buffTurns}回合）${note('atkBuffPct', `+${Math.round(manifestBonus?.atkBuffPct?.delta * 100)}%`)}`);
-            if (effSk.agiBuffPct != null) parts.push(`全體敏捷+${Math.round(effSk.agiBuffPct * 100)}%（持續${effSk.buffTurns}回合）${note('agiBuffPct', `+${Math.round(manifestBonus?.agiBuffPct?.delta * 100)}%`)}`);
-            if (effSk.healBuffPct != null) parts.push(`每回合持續回復 HP ${Math.round(effSk.healBuffPct * 100 * healMultForDisplay)}%，持續${effSk.buffTurns}回合${healNote}`);
+            if (effSk.defBuffPct != null) parts.push(`${g('defBuffPct', `防禦+${Math.round(effSk.defBuffPct * 100)}%`)}（持續${effSk.buffTurns}回合）`);
+            if (effSk.atkBuffMult != null) parts.push(`${g('atkBuffMult', `下次攻擊力×${effSk.atkBuffMult}`)}`);
+            if (effSk.atkBuffPct != null) parts.push(`${g('atkBuffPct', `全體攻擊+${Math.round(effSk.atkBuffPct * 100)}%`)}（持續${effSk.buffTurns}回合）`);
+            if (effSk.agiBuffPct != null) parts.push(`${g('agiBuffPct', `全體敏捷+${Math.round(effSk.agiBuffPct * 100)}%`)}（持續${effSk.buffTurns}回合）`);
+            if (effSk.healBuffPct != null) parts.push(`每回合持續回復 ${gHeal(`HP ${Math.round((effSk.healBuffPct + healBonusAdd) * 100)}%`)}，持續${effSk.buffTurns}回合`);
             if (effSk.spRegenFlat != null) parts.push(`每回合持續回復 SP ${effSk.spRegenFlat} 點，持續${effSk.buffTurns}回合`);
-            if (effSk.critBuffChance != null) parts.push(`全體會心爆擊率+${Math.round(effSk.critBuffChance * 100)}%（爆擊時攻擊倍率×${effSk.critBuffMult}，持續${effSk.buffTurns}回合）${note('critBuffChance', `+${Math.round(manifestBonus?.critBuffChance?.delta * 100)}%`)}`);
+            if (effSk.critBuffChance != null) parts.push(`${g('critBuffChance', `全體會心爆擊率+${Math.round(effSk.critBuffChance * 100)}%`)}（爆擊時攻擊倍率×${effSk.critBuffMult}，持續${effSk.buffTurns}回合）`);
             if (effSk.defDebuffPct != null) parts.push(`使目標防禦${Math.round(effSk.defDebuffPct * 100)}%（持續${effSk.debuffTurns}回合）`);
             if (effSk.atkDebuffPct != null) parts.push(`${effSk.debuffChance != null ? Math.round(effSk.debuffChance * 100) + '%機率' : ''}使目標攻擊力${Math.round(effSk.atkDebuffPct * 100)}%（持續${effSk.debuffTurns}回合）`);
-            if (effSk.critChance) parts.push(`${Math.round(effSk.critChance * 100)}%機率爆擊×${effSk.critMult}${note('critChance', `→${Math.round(effSk.critChance * 100)}%`)}`);
+            if (effSk.critChance) parts.push(`${g('critChance', `${Math.round(effSk.critChance * 100)}%機率爆擊`)}×${effSk.critMult}`);
             if (effSk.burnChance) parts.push(`附加灼傷（每回合扣1%HP，持續${effSk.burnTurns}回合）`);
             if (effSk.inflictChance) parts.push(`${Math.round(effSk.inflictChance * 100)}%機率使目標${RPG_STATUS_INFO[effSk.inflictType].name}`);
             if (effSk.instaKillChance) parts.push(`目標HP≤${Math.round(effSk.instaKillThreshold * 100)}%時有${Math.round(effSk.instaKillChance * 100)}%機率即死（含魔王）`);
-            if (effSk.allIndividualChance) parts.push(`每隻怪物各自有${Math.round(effSk.allIndividualChance * 100)}%機率陷入${effSk.allIndividualType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[effSk.allIndividualType].name}${note('allIndividualChance', `+${Math.round(manifestBonus?.allIndividualChance?.delta * 100)}%`)}`);
+            if (effSk.allIndividualChance) parts.push(`${g('allIndividualChance', `每隻怪物各自有${Math.round(effSk.allIndividualChance * 100)}%機率陷入${effSk.allIndividualType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[effSk.allIndividualType].name}`)}`);
             if (sk.grantDodgeNext) parts.push('讓目標本回合免除一次攻擊（不會被算成受到攻擊）');
-            if (sk.grantSousVide) parts.push(`目標沒被打的每回合攻擊力再疊加×${effSk.sousVideGrowth || 1.1}，被攻擊或戰鬥結束就重置${note('sousVideGrowth', `成長率變成×${manifestBonus?.sousVideGrowth?.set}`)}`);
-            if (effSk.groupInflictChance) parts.push(`${Math.round(effSk.groupInflictChance * 100)}%機率讓敵方全體一起陷入${effSk.groupInflictType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[effSk.groupInflictType].name}${note('groupInflictChance', `+${Math.round(manifestBonus?.groupInflictChance?.delta * 100)}%`)}`);
-            if (effSk.extraDropChance) parts.push(`${Math.round(effSk.extraDropChance * 100)}%機率額外獲得食材${note('extraDropChance', `→${Math.round(effSk.extraDropChance * 100)}%`)}`);
+            if (sk.grantSousVide) parts.push(`目標沒被打的每回合攻擊力再疊加${g('sousVideGrowth', `×${effSk.sousVideGrowth || 1.1}`)}，被攻擊或戰鬥結束就重置`);
+            if (sk.pattern === 'collide') parts.push(`隨機挑敵方兩個單位讓他們互撞${effSk.quadCollideChance ? `，${g('quadCollideChance', `${Math.round(effSk.quadCollideChance * 100)}%機率變成四體攻擊（四個一起互撞）`)}` : ''}`);
+            if (effSk.groupInflictChance) parts.push(`${g('groupInflictChance', `${Math.round(effSk.groupInflictChance * 100)}%機率讓敵方全體一起陷入${effSk.groupInflictType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[effSk.groupInflictType].name}`)}`);
+            if (effSk.extraDropChance) parts.push(`${g('extraDropChance', `${Math.round(effSk.extraDropChance * 100)}%機率額外獲得食材`)}`);
             if (sk.isForgeUnlock) parts.push('解鎖「精煉鍛造」功能，可以用神祕金屬強化裝備');
             if (sk.oreSenseBonus) parts.push(`神祕金屬掉落率+${Math.round(sk.oreSenseBonus * 100)}%、每次獲得數量加倍，寶箱開到食材時也會一併掉落神祕金屬，不再是擇一`);
             if (sk.forgeRateBonus) parts.push(`精煉鍛造成功率+${Math.round(sk.forgeRateBonus * 100)}%`);
-            if (sk.goldGambleDamage) parts.push(`隨機消耗1~999金幣，造成等值傷害（無視自己攻擊力與敵方防禦力）${note('goldCostHalved', '實際花費金幣減半，傷害不變')}`);
-            if (effSk.rhythmForge) parts.push(`敲擊小遊戲，最多連段${effSk.comboMax || 12}下${note('comboMax', `+${manifestBonus?.comboMax?.delta}段`)}，第一下基礎倍率×1.0，之後每下命中橘光+${effSk.normalStep || 0.05}、完美（亮黃閃爍）+${effSk.perfectStep || 0.1}倍率，沒接到就會中斷連段`);
+            if (sk.goldGambleDamage) parts.push(`隨機消耗1~999金幣，造成等值傷害（無視自己攻擊力與敵方防禦力）${has('goldCostHalved') ? `<span style="color:#2E9E4F; font-weight:600;">（實際花費金幣減半，傷害不變）</span>` : ''}`);
+            if (effSk.rhythmForge) parts.push(`敲擊小遊戲，最多連段${g('comboMax', `${effSk.comboMax || 12}下`)}，第一下基礎倍率×1.0，之後每下命中橘光+${effSk.normalStep || 0.05}、完美（亮黃閃爍）+${effSk.perfectStep || 0.1}倍率，沒接到就會中斷連段`);
             if (sk.isCatchupPassive) parts.push('隊伍等級落後主角時，經驗值取得倍率會自動提升，幫忙追上隊伍進度');
-            if (sk.stealGold) parts.push(`對全場所有怪物各偷走${Math.round((effSk.stealFraction || 0.5) * 100)}%金幣獎勵（整場戰鬥只有第一次使用才會真的偷到錢）${note('stealFraction', `→${Math.round(effSk.stealFraction * 100)}%`)}`);
+            if (sk.stealGold) parts.push(`對全場所有怪物各偷走${g('stealFraction', `${Math.round((effSk.stealFraction || 0.5) * 100)}%`)}金幣獎勵（整場戰鬥只有第一次使用才會真的偷到錢）`);
             if (effSk.selfCritBuffChance) parts.push(`攻擊後自身會心率+${Math.round(effSk.selfCritBuffChance * 100)}%（持續${effSk.selfCritBuffTurns || 2}回合）`);
             if (sk.guaranteedFlee) parts.push('輪到老麥行動時發動，100%直接脫離戰鬥（不看敵我強弱，一定成功，魔王戰也能用）');
             return parts.join('、') || '效果不明';
@@ -6718,10 +6719,13 @@
         // 治療倍率：中了「味覺喪失」的話，不管是治療道具還是技能的HP回復量、持續恢復每回合的回復量，都只剩一半
         // （吃再好的料理也吃不出味道，效果自然打折）；沒中的話維持原本100%
         function rpgHealMult(obj) {
-            let mult = (obj && obj.statuses && obj.statuses.tasteless > 0) ? 0.5 : 1;
-            // 龍鱗饗魂巨劍幻化效果：主角的武器幻化以後，全隊受到的HP治療（含持續恢復）都+10%
-            if (rpgState && rpgState.player && rpgState.player.weaponManifested) mult *= 1.1;
-            return mult;
+            // 只處理「味覺喪失」的折扣（這個是乘法：效果打對折），幻化加成改用rpgHealBonusAdd以加法處理，兩者分開
+            return (obj && obj.statuses && obj.statuses.tasteless > 0) ? 0.5 : 1;
+        }
+        // 龍鱗饗魂巨劍幻化效果：主角的武器幻化以後，全隊受到的HP治療（含持續恢復）的百分比直接+10個百分點
+        // （例如原本35%就變45%，是加法不是乘法）
+        function rpgHealBonusAdd() {
+            return (rpgState && rpgState.player && rpgState.player.weaponManifested) ? 0.1 : 0;
         }
         // 失明狀態：攻擊方（不分我方怪物）只要還有失明的回合數，這次攻擊/技能就有 30% 機率落空
         function rpgRollMiss(actorObj) {
@@ -6806,7 +6810,7 @@
                 const domId = `rpg-slot-party-${row}-${i}`;
                 // 持續回復（例如傳說持續盛宴）要在 rpgTickBuffs 把回合數砍完之前先結算，不然最後一回合會抓不到
                 if (obj.buffs && obj.buffs.regenPct && obj.hp > 0) {
-                    const healAmt = Math.max(1, Math.round(obj.maxHp * obj.buffs.regenPct.value * rpgHealMult(obj)));
+                    const healAmt = Math.max(1, Math.round(obj.maxHp * (obj.buffs.regenPct.value + rpgHealBonusAdd()) * rpgHealMult(obj)));
                     obj.hp = Math.min(obj.maxHp, obj.hp + healAmt);
                     rpgLogAppend(`✨ ${obj.name}持續恢復中，回復了 ${healAmt} 點 HP！${rpgHealMult(obj) < 1 ? '（味覺喪失中，效果打了折扣）' : ''}`);
                     const center = rpgElementCenter(domId);
@@ -7607,7 +7611,7 @@
                                     const wasFainted = obj.hp <= 0;
                                     if (wasFainted && !sk.revive) return;
                                     const isBuffEffect = sk.defBuffPct != null || sk.atkBuffMult != null || sk.atkBuffPct != null || sk.agiBuffPct != null || sk.healBuffPct != null || sk.spRegenFlat != null || sk.critBuffChance != null;
-                                    if (sk.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * sk.healPct * rpgHealMult(obj)));
+                                    if (sk.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * (sk.healPct + rpgHealBonusAdd()) * rpgHealMult(obj)));
                                     if (sk.cureStatusType && obj.statuses) {
                                         if (sk.cureStatusType === 'all') { obj.statuses.poison = 0; obj.statuses.paralysis = 0; obj.statuses.weaken = 0; obj.statuses.burn = 0; obj.statuses.bleed = 0; obj.statuses.fear = 0; obj.statuses.blind = 0; obj.statuses.tasteless = 0; }
                                         else if (sk.cureStatusType === 'multi' && sk.cureTypes) sk.cureTypes.forEach(t => { obj.statuses[t] = 0; });
@@ -7622,7 +7626,7 @@
                                     if (sk.grantSousVide) obj.buffs = Object.assign(obj.buffs || {}, { sousVide: { value: 1, wasHitThisRound: false, growth: sk.sousVideGrowth || 1.1 } }); // 舒肥：沒被打的每回合攻擊力再乘成長倍率(預設1.1)，被打到或戰鬥結束就重置
                                     if (sk.healBuffPct != null) {
                                         // 施放的當下就先補一次血，算第一回合；接下來的回合開始輪流結算，總共還是三回合份的回復
-                                        const immediateHeal = Math.max(1, Math.round(obj.maxHp * sk.healBuffPct * rpgHealMult(obj)));
+                                        const immediateHeal = Math.max(1, Math.round(obj.maxHp * (sk.healBuffPct + rpgHealBonusAdd()) * rpgHealMult(obj)));
                                         obj.hp = Math.min(obj.maxHp, obj.hp + immediateHeal);
                                         const remainingTurns = (sk.buffTurns || 3) - 1;
                                         if (remainingTurns > 0) rpgApplyBuff(obj, 'regenPct', sk.healBuffPct, remainingTurns);
@@ -7826,7 +7830,7 @@
                                 const targets = rpgFormationEntries(b.partyFormation).filter(e => info.revive || e.obj.hp > 0);
                                 targets.forEach(({ row, i, obj }) => {
                                     const wasFainted = obj.hp <= 0;
-                                    if (info.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * info.healPct * rpgHealMult(obj)));
+                                    if (info.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * (info.healPct + rpgHealBonusAdd()) * rpgHealMult(obj)));
                                     if (info.spRestorePct) obj.sp = Math.min(obj.maxSp, obj.sp + Math.round(obj.maxSp * info.spRestorePct));
                                     if (info.spRestoreFlat) obj.sp = Math.min(obj.maxSp, obj.sp + info.spRestoreFlat);
                                     if (info.cureStatusType && obj.statuses) {
@@ -7850,7 +7854,7 @@
                                 const wasFainted = recipient.hp <= 0;
                                 if (wasFainted && !info.revive) recipient = actorObj; // 保險：不能復活的道具不該套用在已倒下的人身上
                                 const recipientDomId = cmd.itemTarget ? `rpg-slot-party-${cmd.itemTarget.row}-${cmd.itemTarget.i}` : actorDomId;
-                                const healAmt = info.healPct ? Math.round(recipient.maxHp * info.healPct * rpgHealMult(recipient)) : 0;
+                                const healAmt = info.healPct ? Math.round(recipient.maxHp * (info.healPct + rpgHealBonusAdd()) * rpgHealMult(recipient)) : 0;
                                 if (healAmt) recipient.hp = Math.min(recipient.maxHp, recipient.hp + healAmt);
                                 if (info.spRestorePct) recipient.sp = Math.min(recipient.maxSp, recipient.sp + Math.round(recipient.maxSp * info.spRestorePct));
                                 if (info.spRestoreFlat) recipient.sp = Math.min(recipient.maxSp, recipient.sp + info.spRestoreFlat);
@@ -7862,7 +7866,7 @@
                                 if (healAmt) gains.push(`HP ${Math.round(info.healPct * 100)}%`);
                                 if (info.spRestorePct) gains.push(`SP ${Math.round(info.spRestorePct * 100)}%`);
                                 if (info.spRestoreFlat) gains.push(`SP ${info.spRestoreFlat}`);
-                                if (!gains.length && !wasFainted) { recipient.hp = Math.min(recipient.maxHp, recipient.hp + Math.round(recipient.maxHp * 0.3 * rpgHealMult(recipient))); gains.push('HP 30%'); }
+                                if (!gains.length && !wasFainted) { recipient.hp = Math.min(recipient.maxHp, recipient.hp + Math.round(recipient.maxHp * (0.3 + rpgHealBonusAdd()) * rpgHealMult(recipient))); gains.push('HP 30%'); }
                                 const gainText = gains.join('、');
                                 rpgLogAppend(wasFainted
                                     ? `${actorObj.name}餵${recipient.name}吃下${cmd.extra}，${recipient.name}奇蹟似地重新站起來了！`
