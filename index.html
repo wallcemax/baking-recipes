@@ -5584,6 +5584,10 @@
             if (!isPlayerOwner && (owner[fusionField] || 0) < 10) return;
             if (owner[manifestedField]) return;
             const newName = RPG_MANIFEST_NAMES[entry.itemName] || `${entry.itemName}・幻化`;
+            // 重點修正：精煉滿+10帶來的+50%加成原本是「查表得知目前是+幾級」動態算出來的，
+            // 改名字之後舊名稱的鍛造等級資料就查不到了，如果不在這裡把這筆加成永久烘焙進基礎數值，
+            // 幻化反而會讓玩家原本+10精煉練出來的+50%強度憑空消失——這樣就不是「數值不變」了
+            const forgeMultBefore = rpgForgeMult(entry.itemName); // 一定要在改名字、清掉舊鍛造等級資料之前先算出來
             if (isPlayerOwner) {
                 p[ownedKey] = p[ownedKey] || [];
                 const idx = p[ownedKey].indexOf(entry.itemName);
@@ -5591,14 +5595,22 @@
                 p[ownedKey].push(newName);
                 p[nameField] = newName;
                 p[manifestedField] = true;
+                // 玩家自己的裝備數值是即時查 RPG_WEAPONS/RPG_ARMORS 表算出來的，這裡直接把新名稱的數值
+                // 設成「原本數值 × 精煉倍率」，把+50%永久固定住，之後不管有沒有鍛造等級資料都不會再變動
+                const table = isWeapon ? RPG_WEAPONS : RPG_ARMORS;
+                const statKey = isWeapon ? 'atk' : 'def';
+                if (table[newName]) table[newName][statKey] = Math.round(table[newName][statKey] * forgeMultBefore);
             } else {
                 owner[nameField] = newName;
                 owner[manifestedField] = true;
+                // 夥伴的數值是直接寫死在 obj.atk/obj.def 上的，這裡把精煉的+50%永久疊乘進去，之後就算查不到舊名稱的鍛造等級也不會少這塊
+                const statKey = isWeapon ? 'atk' : 'def';
+                owner[statKey] = Math.round(owner[statKey] * forgeMultBefore);
             }
             if (p.forgeLevels) delete p.forgeLevels[entry.itemName]; // 舊名稱的鍛造等級資料清掉，新名稱不能再鍛造
             let effectMsg;
             if (isWeapon) {
-                effectMsg = '數值完全不變，但解鎖了專屬的強化效果——再也不能精煉或融合了。';
+                effectMsg = '數值（含原本精煉練出來的強度）完全保留，而且解鎖了專屬的強化效果——再也不能精煉或融合了。';
             } else {
                 // 防具幻化：一次性把最大HP/SP各拉高10%（連帶把目前HP/SP也補上同樣的增量，不是只拉高上限卻沒補血），DEF+5%則是動態計算，不用在這裡改數值
                 const hpBonus = Math.round(owner.maxHp * 0.1);
@@ -5607,7 +5619,7 @@
                 owner.hp += hpBonus;
                 owner.maxSp += spBonus;
                 owner.sp += spBonus;
-                effectMsg = `${owner.name}的最大HP+${hpBonus}、最大SP+${spBonus}，防禦力也再+5%，而且再也不能精煉或融合了。`;
+                effectMsg = `原本精煉練出來的強度完全保留，而且${owner.name}的最大HP+${hpBonus}、最大SP+${spBonus}，防禦力也再+5%，再也不能精煉或融合了。`;
             }
             playSfx('success');
             rpgAddScore(500, isWeapon ? '武器幻化' : '防具幻化');
