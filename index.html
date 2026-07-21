@@ -6491,6 +6491,13 @@
                 const sameSide = pick.side === actorSide;
                 if (pick.side === 'party') pick.obj.hp = Math.max(0, pick.obj.hp - dmg);
                 else pick.obj.curHp = Math.max(0, pick.obj.curHp - dmg);
+                if (pick.side === 'party') {
+                    if (pick.obj.buffs && pick.obj.buffs.atkBuffMult) {
+                        delete pick.obj.buffs.atkBuffMult;
+                        rpgLogAppend(`💢 ${pick.obj.name}的蓄力被這一下攻擊打斷了！`);
+                    }
+                    if (pick.obj.buffs && pick.obj.buffs.sousVide) pick.obj.buffs.sousVide.wasHitThisRound = true;
+                }
                 rpgFlashHit(targetDomId);
                 rpgFloatDamage(targetDomId, dmg, '#C4453F');
                 rpgLogAppend(`😱 ${actorObj.name}陷入恐懼，胡亂攻擊了${sameSide ? '自己人' : '敵方'}的${pick.obj.name}，造成 ${dmg} 點傷害！`);
@@ -7522,6 +7529,7 @@
                                 // 全體效果：對每一位還活著（或者這道料理可以喚醒）的隊友套用效果
                                 const targets = rpgFormationEntries(b.partyFormation).filter(e => info.revive || e.obj.hp > 0);
                                 targets.forEach(({ row, i, obj }) => {
+                                    const wasFainted = obj.hp <= 0;
                                     if (info.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * info.healPct * rpgHealMult(obj)));
                                     if (info.spRestorePct) obj.sp = Math.min(obj.maxSp, obj.sp + Math.round(obj.maxSp * info.spRestorePct));
                                     if (info.spRestoreFlat) obj.sp = Math.min(obj.maxSp, obj.sp + info.spRestoreFlat);
@@ -7530,6 +7538,12 @@
                                         else obj.statuses[info.cureStatusType] = 0;
                                     }
                                     const domId = `rpg-slot-party-${row}-${i}`;
+                                    // 重點修正：倒下時整個格子被套用了 opacity:0 的淡出樣式，喚醒之後如果不把這個樣式清掉，
+                                    // 血量其實已經救回來了，畫面卻還是維持倒地淡出的樣子，看起來就像完全沒有被喚醒
+                                    if (wasFainted && obj.hp > 0) {
+                                        const slotEl = document.getElementById(domId);
+                                        if (slotEl) { slotEl.style.opacity = ''; slotEl.style.transform = ''; }
+                                    }
                                     const center = rpgElementCenter(domId);
                                     if (center) rpgBurstParticle('light', { x: center.x, y: center.y, size: 28, count: 2, duration: 0.5, filter: 'sepia(1) hue-rotate(60deg) saturate(4.5) contrast(1.15)' });
                                 });
