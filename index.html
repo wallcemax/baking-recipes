@@ -5643,7 +5643,7 @@
                 playSfx('success');
                 rpgAddScore(500, isWeapon ? '武器幻化' : '防具幻化');
                 rpgSaveGame(true);
-                document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML(`✨「${entry.itemName}」幻化成了「${newName}」！${effectMsg}`);
+                document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML(`「${entry.itemName}」幻化成了「${newName}」！${effectMsg}`);
             };
             if (isWeapon) {
                 // 武器才有放大發光變色的幻化動畫；防具直接套用效果，不用特別播動畫
@@ -5655,30 +5655,54 @@
         }
         // 武器幻化動畫：武器圖示放大、發光、換色（每個角色各自不同顏色），演完才真的套用結果畫面
         function rpgPlayManifestAnimation(entry, glowHue, callback) {
+            const hue = glowHue != null ? glowHue : 45;
             const overlay = document.createElement('div');
             overlay.id = 'rpg-manifest-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(10,8,14,0.92); z-index:9999; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity .4s ease;';
+            overlay.style.cssText = `position:fixed !important; inset:0 !important; background:radial-gradient(circle at center, hsla(${hue},70%,18%,0.97) 0%, rgba(6,4,10,0.97) 65%, rgba(4,3,6,0.99) 100%) !important; z-index:2147483647 !important; display:flex !important; align-items:center !important; justify-content:center !important; opacity:0; transition:opacity .5s ease;`;
             overlay.innerHTML = `
                 <style>
-                    @keyframes rpgManifestGrow { 0%{transform:scale(0.6) rotate(0deg); filter:brightness(1);} 55%{transform:scale(1.5) rotate(8deg); filter:brightness(1.7);} 100%{transform:scale(1.2) rotate(0deg); filter:brightness(1.35);} }
-                    #rpg-manifest-icon { animation: rpgManifestGrow 1.4s cubic-bezier(.34,1.56,.64,1) forwards; }
+                    @keyframes rpgManifestRingSpin { from{transform:translate(-50%,-50%) rotate(0deg);} to{transform:translate(-50%,-50%) rotate(360deg);} }
+                    @keyframes rpgManifestRingSpin2 { from{transform:translate(-50%,-50%) rotate(360deg);} to{transform:translate(-50%,-50%) rotate(0deg);} }
+                    @keyframes rpgManifestIconGrow {
+                        0%   { transform:scale(0.3) rotate(0deg);   filter:brightness(1) saturate(1); opacity:0; }
+                        30%  { transform:scale(1.0) rotate(180deg); filter:brightness(1.4) saturate(1.6); opacity:1; }
+                        60%  { transform:scale(1.9) rotate(370deg); filter:brightness(2.1) saturate(2.4); opacity:1; }
+                        80%  { transform:scale(1.5) rotate(360deg); filter:brightness(1.9) saturate(2.2); }
+                        100% { transform:scale(1.65) rotate(360deg); filter:brightness(1.7) saturate(2); }
+                    }
+                    @keyframes rpgManifestPulseGlow {
+                        0%,100% { box-shadow:0 0 40px 12px hsla(${hue},95%,60%,0.55), 0 0 90px 30px hsla(${hue},95%,55%,0.25); }
+                        50%     { box-shadow:0 0 65px 22px hsla(${hue},95%,65%,0.8), 0 0 130px 46px hsla(${hue},95%,55%,0.4); }
+                    }
+                    @keyframes rpgManifestTextGlow {
+                        0%,100% { text-shadow:0 0 10px hsla(${hue},95%,65%,0.6), 0 2px 6px rgba(0,0,0,0.8); }
+                        50%     { text-shadow:0 0 22px hsla(${hue},95%,70%,0.95), 0 2px 6px rgba(0,0,0,0.8); }
+                    }
+                    #rpg-manifest-ring-a { position:absolute; top:50%; left:50%; width:230px; height:230px; margin:-115px 0 0 -115px; border-radius:50%; border:3px dashed hsla(${hue},90%,65%,0.55); animation: rpgManifestRingSpin 5s linear infinite; }
+                    #rpg-manifest-ring-b { position:absolute; top:50%; left:50%; width:290px; height:290px; margin:-145px 0 0 -145px; border-radius:50%; border:2px dotted hsla(${hue},90%,70%,0.35); animation: rpgManifestRingSpin2 8s linear infinite; }
+                    #rpg-manifest-glow-orb { width:120px; height:120px; border-radius:50%; background:radial-gradient(circle, hsla(${hue},95%,70%,0.5) 0%, transparent 70%); position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); animation: rpgManifestPulseGlow 1.3s ease-in-out infinite; }
+                    #rpg-manifest-icon { position:relative; z-index:2; animation: rpgManifestIconGrow 2.1s cubic-bezier(.2,1.1,.4,1) forwards; }
+                    #rpg-manifest-text { animation: rpgManifestTextGlow 1.1s ease-in-out infinite; letter-spacing:0.15em; }
                 </style>
-                <div style="display:flex; flex-direction:column; align-items:center; gap:18px;">
-                    <p style="color:#F4E4CE; font-size:1.1rem; font-weight:700; text-shadow:0 2px 6px rgba(0,0,0,0.7);">✨ 裝備幻化中……</p>
-                    <div id="rpg-manifest-icon">${rpgForgeItemVisualHTML(entry, 90, glowHue)}</div>
+                <div style="position:relative; width:300px; height:300px; display:flex; align-items:center; justify-content:center;">
+                    <div id="rpg-manifest-ring-b"></div>
+                    <div id="rpg-manifest-ring-a"></div>
+                    <div id="rpg-manifest-glow-orb"></div>
+                    <div id="rpg-manifest-icon">${rpgForgeItemVisualHTML(entry, 100, hue)}</div>
                 </div>
+                <p id="rpg-manifest-text" style="position:absolute; bottom:18%; left:0; right:0; text-align:center; color:#FDF3DC; font-size:1.3rem; font-weight:800;">裝備幻化中</p>
             `;
             document.body.appendChild(overlay);
             requestAnimationFrame(() => { overlay.style.opacity = '1'; });
             playSfx('success');
-            setTimeout(() => {
-                const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-                rpgBurstParticle('star', { x: cx, y: cy, count: 8, size: 40, duration: 1 });
-            }, 350);
+            const cx = () => window.innerWidth / 2, cy = () => window.innerHeight / 2;
+            setTimeout(() => rpgBurstParticle('star', { x: cx(), y: cy(), count: 6, size: 30, duration: 0.9 }), 250);
+            setTimeout(() => rpgBurstParticle('star', { x: cx(), y: cy(), count: 10, size: 50, duration: 1.1 }), 900);
+            setTimeout(() => rpgBurstParticle('light', { x: cx(), y: cy(), count: 12, size: 60, duration: 1.2 }), 1200);
             setTimeout(() => {
                 overlay.style.opacity = '0';
-                setTimeout(() => { overlay.remove(); callback(); }, 400);
-            }, 1900);
+                setTimeout(() => { overlay.remove(); callback(); }, 500);
+            }, 2300);
         }
         function rpgManifestWeapon(key) { rpgManifestEquip(key); } // 保留舊名稱呼叫，避免之前的呼叫點漏改
         function rpgDoForge(key) {
