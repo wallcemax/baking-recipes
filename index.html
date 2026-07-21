@@ -6231,6 +6231,8 @@
             '綜合野菜烤串': { need: { '菇傘': 1, '哥布林辛香料': 1, '蒜': 1, '胡椒': 1 }, cost: 125 },
             '胡蘿蔔炒蛋': { need: { '雞蛋': 2, '胡蘿蔔': 1 }, cost: 45, ngRequired: 1 },
             '燒酒雞': { need: { '米酒': 2, '雞肉': 2, '胡椒': 1 }, cost: 80 },
+            // 五周目限定：團圓飯，食材故意湊得五花八門一點，吃起來就像一大桌合菜；效果不是治療，而是吃完直接送回旅館
+            '團圓飯': { need: { '雞肉': 2, '起司': 1, '米酒': 1, '蜂蜜': 1, '胡蘿蔔': 1, '蔥': 1 }, cost: 60, ngRequired: 4 },
             // 限定食譜：不會從一般調查點拿到，只能來食譜商店花大錢買，或是打贏強敵/魔王小機率直接掉落已學會
             '傳說主廚全餐': { need: Object.fromEntries(RPG_ALL_INGREDIENTS.filter(ing => !RPG_INGREDIENT_NG_REQUIRED[ing]).map(ing => [ing, 5])), cost: 50000, restricted: true },
             '黃金蜜汁烤串': { need: { '蜂蜜': 4, '起司': 4, '哥布林辛香料': 4, '菇傘': 4 }, cost: 20000, restricted: true },
@@ -6255,6 +6257,7 @@
             '綜合野菜烤串': { healPct: 0.18, selfOnly: false, revive: true, emoji: '🍢' },
             '胡蘿蔔炒蛋': { healPct: 0.15, cureStatusType: 'blind', selfOnly: false, emoji: '🥕' },
             '燒酒雞': { healPct: 0.15, cureStatusType: 'fear', selfOnly: false, emoji: '🍗' },
+            '團圓飯': { aoe: true, teleportToInn: true, emoji: '🍚' },
             '傳說主廚全餐': { healPct: 0.6, spRestorePct: 0.6, selfOnly: false, aoe: true, revive: true, emoji: '🍱' },
             '黃金蜜汁烤串': { healPct: 0.5, spRestorePct: 0.4, selfOnly: false, revive: true, emoji: '🍡' },
         };
@@ -6269,6 +6272,7 @@
             if (info.revive) parts.push('可以喚醒已經倒下的夥伴');
             if (info.cureStatusType === 'all') parts.push('解除中毒／麻痺／衰弱／灼傷／流血／恐懼／失明等全部異常狀態');
             else if (info.cureStatusType) parts.push(`解除${RPG_STATUS_INFO[info.cureStatusType].name}`);
+            if (info.teleportToInn) parts.push('吃下去直接把全隊送回旅館門口（只能在地圖上使用，戰鬥中不能用）');
             return parts.join('、') || '效果不明';
         }
 
@@ -6336,6 +6340,14 @@
             const p = state.player;
             const info = RPG_ITEM_INFO[name] || {};
             if (!(p.items[name] > 0)) return;
+            if (info.teleportToInn) {
+                // 團圓飯：不是治療效果，吃下去就直接把全隊送回旅館門口，跟魔王戰後回村共用同一個座標
+                p.items[name]--;
+                if (p.items[name] <= 0) delete p.items[name];
+                playSfx('success');
+                rpgBackToVillage();
+                return;
+            }
             if (kind === 'aoe') {
                 p.items[name]--;
                 const targets = [p, ...state.companions].filter(m => info.revive || m.hp > 0);
@@ -6462,7 +6474,7 @@
                 // 顯示的可用數量要扣掉「這一輪已經有其他人排隊要用」的份數，不然明明只剩 1 個，
                 // 卻還是會顯示成可以選、點下去才發現被卡住，體驗很奇怪
                 const reservedCount = (itemName) => Object.values(b.commands).filter(c => c && c.action === 'item' && c.extra === itemName).length;
-                const entries = Object.entries(p.items).map(([name, qty]) => [name, qty - reservedCount(name)]).filter(([, qty]) => qty > 0);
+                const entries = Object.entries(p.items).map(([name, qty]) => [name, qty - reservedCount(name)]).filter(([name, qty]) => qty > 0 && !(RPG_ITEM_INFO[name] || {}).teleportToInn);
                 const rows = entries.length
                     ? entries.map(([name, qty]) => `
                         <button onclick="rpgOpenItemTarget('${name}')" class="btn-secondary w-full" style="margin-bottom:2px;">${rpgDishIconHTML(name)} ${name}（${qty}）</button>
