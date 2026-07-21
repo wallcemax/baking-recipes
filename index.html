@@ -3544,12 +3544,12 @@
             if (effSk.healBuffPct != null) parts.push(`每回合持續回復 ${gHeal(`HP ${Math.round((effSk.healBuffPct + healBonusAdd) * 100)}%`)}，持續${effSk.buffTurns}回合`);
             if (effSk.spRegenFlat != null) parts.push(`每回合持續回復 SP ${effSk.spRegenFlat} 點，持續${effSk.buffTurns}回合`);
             if (effSk.critBuffChance != null) parts.push(`${g('critBuffChance', `全體會心爆擊率+${Math.round(effSk.critBuffChance * 100)}%`)}（爆擊時攻擊倍率×${effSk.critBuffMult}，持續${effSk.buffTurns}回合）`);
-            if (effSk.defDebuffPct != null) parts.push(`使目標防禦${Math.round(effSk.defDebuffPct * 100)}%（持續${effSk.debuffTurns}回合）`);
-            if (effSk.atkDebuffPct != null) parts.push(`${effSk.debuffChance != null ? Math.round(effSk.debuffChance * 100) + '%機率' : ''}使目標攻擊力${Math.round(effSk.atkDebuffPct * 100)}%（持續${effSk.debuffTurns}回合）`);
+            if (effSk.defDebuffPct != null) parts.push(`${g('defDebuffPct', `使目標防禦${Math.round(effSk.defDebuffPct * 100)}%`)}（持續${effSk.debuffTurns}回合）`);
+            if (effSk.atkDebuffPct != null) parts.push(`${effSk.debuffChance != null ? g('debuffChance', `${Math.round(effSk.debuffChance * 100)}%機率`) : ''}使目標攻擊力${Math.round(effSk.atkDebuffPct * 100)}%（持續${effSk.debuffTurns}回合）`);
             if (effSk.critChance) parts.push(`${g('critChance', `${Math.round(effSk.critChance * 100)}%機率爆擊`)}×${effSk.critMult}`);
             if (effSk.burnChance) parts.push(`附加灼傷（每回合扣1%HP，持續${effSk.burnTurns}回合）`);
-            if (effSk.inflictChance) parts.push(`${Math.round(effSk.inflictChance * 100)}%機率使目標${RPG_STATUS_INFO[effSk.inflictType].name}`);
-            if (effSk.instaKillChance) parts.push(`目標HP≤${Math.round(effSk.instaKillThreshold * 100)}%時有${Math.round(effSk.instaKillChance * 100)}%機率即死（含魔王）`);
+            if (effSk.inflictChance) parts.push(`${g('inflictChance', `${Math.round(effSk.inflictChance * 100)}%機率`)}使目標${RPG_STATUS_INFO[effSk.inflictType].name}`);
+            if (effSk.instaKillChance) parts.push(`目標HP≤${g('instaKillThreshold', `${Math.round(effSk.instaKillThreshold * 100)}%`)}時有${g('instaKillChance', `${Math.round(effSk.instaKillChance * 100)}%`)}機率即死（含魔王）`);
             if (effSk.allIndividualChance) parts.push(`${g('allIndividualChance', `每隻怪物各自有${Math.round(effSk.allIndividualChance * 100)}%機率陷入${effSk.allIndividualType === 'random' ? '隨機異常狀態' : RPG_STATUS_INFO[effSk.allIndividualType].name}`)}`);
             if (sk.grantDodgeNext) parts.push('讓目標本回合免除一次攻擊（不會被算成受到攻擊）');
             if (sk.grantSousVide) parts.push(`目標沒被打的每回合攻擊力再疊加${g('sousVideGrowth', `×${effSk.sousVideGrowth || 1.1}`)}，被攻擊或戰鬥結束就重置`);
@@ -3907,7 +3907,7 @@
                 return `<p class="text-xs mt-1" style="color:#7A6A58">✨ 幻化，${obj.weaponName}：全治療類效果<span style="color:#2E9E4F; font-weight:600;">+10%</span></p>`;
             }
             // 夥伴：列出這把武器對應的每一項技能加成
-            const pctFields = ['defBuffPct', 'atkBuffPct', 'agiBuffPct', 'critBuffChance', 'allIndividualChance', 'groupInflictChance'];
+            const pctFields = ['defBuffPct', 'atkBuffPct', 'agiBuffPct', 'critBuffChance', 'allIndividualChance', 'groupInflictChance', 'critChance', 'inflictChance', 'debuffChance', 'defDebuffPct', 'instaKillThreshold', 'instaKillChance'];
             const lines = [];
             (obj.skills || []).forEach(skillId => {
                 const bonus = RPG_MANIFEST_SKILL_BONUS[skillId];
@@ -4539,28 +4539,45 @@
         };
         // 每個技能各自的幻化加成：delta是在原本數值上累加、set是直接覆蓋成指定值
         const RPG_MANIFEST_SKILL_BONUS = {
+            // 阿柯 - 焰刃・炊神鏟
             ako_def_buff: { defBuffPct: { delta: 0.02 } },
+            ako_cross: { mult: { delta: 0.2 } },
+            ako_column: { mult: { delta: 0.2 } },
             ako_burn: { mult: { delta: 0.2 } },
             ako_atk_buff: { atkBuffMult: { delta: 0.2 } },
+            ako_ultimate: { mult: { delta: 0.2 } },
+            // 小穗 - 雙月・嗜甜刃
             suisui_material: { extraDropChance: { set: 1 } },
             suisui_double: { mult: { delta: 0.1 }, extraDropChance: { set: 0.5 } },
             suisui_crit_bleed: { mult: { delta: 0.2 } },
             suisui_agi_buff: { agiBuffPct: { delta: 0.02 }, critBuffChance: { delta: 0.1 } },
-            suisui_crit_weaken: { mult: { delta: 0.2 }, critChance: { set: 0.7 } },
+            suisui_crit_weaken: { mult: { delta: 0.2 }, critChance: { delta: 0.2 } },
             suisui_paralyze_all: { allIndividualChance: { delta: 0.05 } },
-            suisui_execute: { mult: { delta: 0.5 } },
+            suisui_execute: { mult: { delta: 0.5 }, instaKillThreshold: { delta: 0.1 }, instaKillChance: { delta: 0.04 } },
+            // 阿藍 - 破嵐・金剛槌
             alan_single: { mult: { delta: 0.1 } },
             alan_atk_buff_all: { atkBuffPct: { delta: 0.03 } },
+            alan_single2: { mult: { delta: 0.1 } },
+            alan_all_weak: { mult: { delta: 0.1 } },
+            alan_crush: { mult: { delta: 0.1 } },
             alan_ultimate_all: { groupInflictChance: { delta: 0.05 } },
-            laozhou_single: { mult: { delta: 0.2 } },
+            // 老周 - 雷炎・聖火杖
+            laozhou_all_weak: { mult: { delta: 0.2 } },
+            laozhou_single: { mult: { delta: 0.2 }, inflictChance: { delta: 0.05 } },
             laozhou_column: { mult: { delta: 0.2 } },
-            laozhou_cross: { mult: { delta: 0.2 } },
+            laozhou_row_pierce: { mult: { delta: 0.2 }, defDebuffPct: { delta: -0.05 } },
+            laozhou_cross: { mult: { delta: 0.2 }, debuffChance: { delta: 0.9 } },
+            laozhou_column2: { mult: { delta: 0.2 } },
+            laozhou_ultimate_all: { mult: { delta: 0.2 } },
+            // 銀白 - 魔晶・調和瓶
+            ginhaku_blend: { quadCollideChance: { set: 0.2 } },
             ginhaku_sousvide: { sousVideGrowth: { set: 1.15 } },
             ginhaku_tech: { mult: { delta: 0.2 } },
-            ginhaku_blend: { quadCollideChance: { set: 0.2 } },
+            // 老麥 - 鍛神・巨錘
             laomai_thunder_hammer: { mult: { delta: 0.2 } },
             laomai_gold_gamble: { goldCostHalved: { set: true } },
             laomai_hot_anvil: { comboMax: { delta: 3 } },
+            // 凱 - 追魂・獵弓
             kai_steal_gold: { stealFraction: { set: 1 } },
             kai_snipe: { mult: { delta: 0.5 } },
             kai_meteor: { mult: { delta: 0.1 }, sp: { delta: -5 } },
@@ -4576,7 +4593,8 @@
             const out = { ...sk };
             Object.entries(bonus).forEach(([field, rule]) => {
                 if (rule.set !== undefined) out[field] = rule.set;
-                else if (rule.delta !== undefined) out[field] = (sk[field] || 0) + rule.delta;
+                // 加法要四捨五入到小數點後3位，不然像 1.3+0.1 這種在JS浮點數運算下會變成 1.4000000000000001 這種難看的數字
+                else if (rule.delta !== undefined) out[field] = Math.round(((sk[field] || 0) + rule.delta) * 1000) / 1000;
             });
             return out;
         }
