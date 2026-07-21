@@ -3523,11 +3523,17 @@
         function rpgSkillPowerText(sk, skillId, actorObj) {
             const manifestBonus = (actorObj && actorObj.weaponManifested && skillId) ? RPG_MANIFEST_SKILL_BONUS[skillId] : null;
             const weaponName = actorObj ? actorObj.weaponName : '';
-            const note = (field, text) => (manifestBonus && manifestBonus[field]) ? ` <span style="color:#2E9E4F; font-weight:600;">(${text}，來自幻化武器「${weaponName}」的效果)</span>` : '';
+            const note = (field, text) => (manifestBonus && manifestBonus[field]) ? ` <span style="color:#2E9E4F; font-weight:600;">${text}</span>` : '';
             const effSk = manifestBonus ? rpgApplyManifestBonus(actorObj, skillId, sk) : sk;
+            // 主角武器幻化的「全隊治療+10%」是全域效果、沒有綁在特定技能上（跟rpgHealMult吃的是同一個開關），
+            // 所以不透過上面那張表格，這裡另外判斷：只要主角武器幻化了，任何有治療效果的技能都要多標這一行
+            const playerWeaponManifested = !!(rpgState && rpgState.player && rpgState.player.weaponManifested);
+            const playerWeaponName = (rpgState && rpgState.player) ? rpgState.player.weaponName : '';
+            const healNote = playerWeaponManifested ? ` <span style="color:#2E9E4F; font-weight:600;">+10%</span>` : '';
+            const healMultForDisplay = playerWeaponManifested ? 1.1 : 1;
             const parts = [];
             if (effSk.mult) parts.push(`威力 ATK×${effSk.mult}${effSk.hits > 1 ? `（連續${effSk.hits}次）` : ''}${note('mult', `+${manifestBonus?.mult?.delta}倍`)}`);
-            if (effSk.healPct) parts.push(`回復 HP ${Math.round(effSk.healPct * 100)}%${effSk.revive ? '（可喚醒倒下夥伴）' : ''}`);
+            if (effSk.healPct) parts.push(`回復 HP ${Math.round(effSk.healPct * 100 * healMultForDisplay)}%${effSk.revive ? '（可喚醒倒下夥伴）' : ''}${healNote}`);
             if (sk.cureStatusType === 'all') parts.push('解除全部異常狀態（包含只有這招才能解的「味覺喪失」）');
             else if (sk.cureStatusType === 'multi' && sk.cureTypes) parts.push(`解除${sk.cureTypes.map(t => RPG_STATUS_INFO[t].name).join('／')}`);
             else if (sk.cureStatusType) parts.push(`解除${RPG_STATUS_INFO[sk.cureStatusType].name}`);
@@ -3535,7 +3541,7 @@
             if (effSk.atkBuffMult != null) parts.push(`下次攻擊力×${effSk.atkBuffMult}${note('atkBuffMult', `+${manifestBonus?.atkBuffMult?.delta}倍`)}`);
             if (effSk.atkBuffPct != null) parts.push(`全體攻擊+${Math.round(effSk.atkBuffPct * 100)}%（持續${effSk.buffTurns}回合）${note('atkBuffPct', `+${Math.round(manifestBonus?.atkBuffPct?.delta * 100)}%`)}`);
             if (effSk.agiBuffPct != null) parts.push(`全體敏捷+${Math.round(effSk.agiBuffPct * 100)}%（持續${effSk.buffTurns}回合）${note('agiBuffPct', `+${Math.round(manifestBonus?.agiBuffPct?.delta * 100)}%`)}`);
-            if (effSk.healBuffPct != null) parts.push(`每回合持續回復 HP ${Math.round(effSk.healBuffPct * 100)}%，持續${effSk.buffTurns}回合`);
+            if (effSk.healBuffPct != null) parts.push(`每回合持續回復 HP ${Math.round(effSk.healBuffPct * 100 * healMultForDisplay)}%，持續${effSk.buffTurns}回合${healNote}`);
             if (effSk.spRegenFlat != null) parts.push(`每回合持續回復 SP ${effSk.spRegenFlat} 點，持續${effSk.buffTurns}回合`);
             if (effSk.critBuffChance != null) parts.push(`全體會心爆擊率+${Math.round(effSk.critBuffChance * 100)}%（爆擊時攻擊倍率×${effSk.critBuffMult}，持續${effSk.buffTurns}回合）${note('critBuffChance', `+${Math.round(manifestBonus?.critBuffChance?.delta * 100)}%`)}`);
             if (effSk.defDebuffPct != null) parts.push(`使目標防禦${Math.round(effSk.defDebuffPct * 100)}%（持續${effSk.debuffTurns}回合）`);
@@ -3892,6 +3898,37 @@
             document.getElementById('game-modal-body').innerHTML = rpgStatusScreenHTML();
         }
 
+        // 幻化摘要行：狀態畫面裡武器/防具那行下方，額外顯示一行「幻化，武器名：效果」，數值用綠色標註
+        function rpgManifestSummaryHTML(obj) {
+            if (!obj || !obj.weaponManifested) return '';
+            if (!obj.isCompanion) {
+                // 主角的幻化效果是全域治療加成，不綁定在特定技能上
+                return `<p class="text-xs mt-1" style="color:#7A6A58">✨ 幻化，${obj.weaponName}：全治療類效果<span style="color:#2E9E4F; font-weight:600;">+10%</span></p>`;
+            }
+            // 夥伴：列出這把武器對應的每一項技能加成
+            const pctFields = ['defBuffPct', 'atkBuffPct', 'agiBuffPct', 'critBuffChance', 'allIndividualChance', 'groupInflictChance'];
+            const lines = [];
+            (obj.skills || []).forEach(skillId => {
+                const bonus = RPG_MANIFEST_SKILL_BONUS[skillId];
+                const sk = RPG_SKILLS[skillId];
+                if (!bonus || !sk) return;
+                Object.entries(bonus).forEach(([field, rule]) => {
+                    let text;
+                    if (rule.set !== undefined) {
+                        text = (typeof rule.set === 'number' && rule.set <= 1) ? `→${Math.round(rule.set * 100)}%` : `→${rule.set}`;
+                    } else if (pctFields.includes(field)) {
+                        text = `+${Math.round(rule.delta * 100)}%`;
+                    } else if (field === 'sp') {
+                        text = `${rule.delta}SP`;
+                    } else {
+                        text = `+${rule.delta}`;
+                    }
+                    lines.push(`${sk.name}<span style="color:#2E9E4F; font-weight:600;">${text}</span>`);
+                });
+            });
+            if (!lines.length) return '';
+            return `<p class="text-xs mt-1" style="color:#7A6A58">✨ 幻化，${obj.weaponName}：${lines.join('、')}</p>`;
+        }
         function rpgStatusCardHTML(obj, idx, total) {
             const atk = rpgEffectiveAtk(obj), def = rpgEffectiveDef(obj);
             const atkBonus = atk - obj.atk, defBonus = def - obj.def;
@@ -3912,6 +3949,7 @@
                         <p>✨ 經驗　${obj.exp}/${obj.expToNext}</p>
                     </div>
                     ${obj.weaponName ? `<p class="text-xs mt-2" style="color:#B3A492">🔪 武器：${obj.weaponName}${obj.weaponFusionLv ? ` <span style="color:var(--sage)">LV.${obj.weaponFusionLv}${obj.weaponFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}${(rpgState.player.forgeLevels && rpgState.player.forgeLevels[obj.weaponName]) ? ` <span style="color:#C77B3B">⚒️+${rpgState.player.forgeLevels[obj.weaponName]}</span>` : ''}${obj.armorName ? `　👕 防具：${obj.armorName}${obj.armorFusionLv ? ` <span style="color:var(--sage)">LV.${obj.armorFusionLv}${obj.armorFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}${(rpgState.player.forgeLevels && rpgState.player.forgeLevels[obj.armorName]) ? ` <span style="color:#C77B3B">⚒️+${rpgState.player.forgeLevels[obj.armorName]}</span>` : ''}` : ''}</p>` : ''}
+                    ${rpgManifestSummaryHTML(obj)}
                     ${(obj.skills && obj.skills.length) ? `
                         <div class="mt-2 pt-2" style="border-top:1px solid var(--line);">
                             <p class="text-xs font-medium mb-1" style="color:#7A6A58">📖 技能</p>
