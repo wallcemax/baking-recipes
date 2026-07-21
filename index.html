@@ -3285,7 +3285,9 @@
         }
         function rpgRollEncounter(playerLevel) {
             // 魔王機率＝隊伍總等級÷100 的百分比（例如總等級200＝2%），跟原本的等級級距系統分開獨立判定
-            const bossChance = rpgTotalPartyLevel() / 10000;
+            // 四周目起（ngPlus >= 3）暫時還沒有對應的魔王戰內容，先跳過魔王判定，只會遇到一般怪物
+            const ngPlusNow = (rpgState && rpgState.player && rpgState.player.ngPlus) || 0;
+            const bossChance = ngPlusNow >= 3 ? 0 : rpgTotalPartyLevel() / 10000;
             if (Math.random() < bossChance) {
                 const monsterLevel = playerLevel + 20 + Math.floor(Math.random() * 11);
                 const stats = rpgMonsterStatsAtLevel(monsterLevel, true);
@@ -5949,7 +5951,21 @@
             }
             if (b.uiMode === 'skillAllyTarget') {
                 const sk = RPG_SKILLS[b.pendingSkill] || {};
-                const pool = sk.revive ? rpgFormationEntries(b.partyFormation) : rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
+                let pool = sk.revive ? rpgFormationEntries(b.partyFormation) : rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
+                // 純粹解除異常狀態、沒有附帶回血/增益效果的技能（例如暖心濃湯、山珍海味），目標清單只列出「現在真的中著這個技能能解的異常狀態」的人，
+                // 沒中就不需要出現在清單裡（不然選了也是白選，對方根本沒有異常狀態可以解）
+                const isPureCureSkill = !!sk.cureStatusType && sk.healPct == null && sk.defBuffPct == null && sk.atkBuffMult == null
+                    && sk.atkBuffPct == null && sk.agiBuffPct == null && sk.healBuffPct == null && sk.spRegenFlat == null
+                    && sk.critBuffChance == null && !sk.grantDodgeNext && !sk.grantSousVide;
+                if (isPureCureSkill) {
+                    const cureTypesForSkill = sk.cureStatusType === 'all' ? Object.keys(RPG_STATUS_INFO)
+                        : sk.cureStatusType === 'multi' ? (sk.cureTypes || [])
+                        : [sk.cureStatusType];
+                    pool = pool.filter(e => e.obj.statuses && cureTypesForSkill.some(t => (e.obj.statuses[t] || 0) > 0));
+                }
+                if (isPureCureSkill && !pool.length) {
+                    return `<p class="text-xs text-center mb-2" style="color:#B3A492">目前隊伍裡沒有人有「${sk.name}」能解除的異常狀態，先收回這個技能吧。</p><button onclick="rpgBackToMenuFrom('skill')" class="btn-secondary w-full">← 返回</button>`;
+                }
                 const rows = pool.map(e => {
                     const fainted = e.obj.hp <= 0;
                     const isSelf = e.obj.name === actor.name && e.row === b.actor.row && e.i === b.actor.i;
@@ -6423,9 +6439,10 @@
                     #rpg-anvil-hammer.swing { animation: rpgHammerSwing .3s ease; }
                     #rpg-anvil-monster.shake { animation: rpgAnvilShake .3s ease; }
                     #rpg-anvil-countdown { animation: rpgCountdownPop .5s ease; }
+                    #rpg-anvil-container.glow { filter: brightness(1.5) drop-shadow(0 0 10px #F4C55E); }
                 </style>
-                <p style="color:#F4E4CE; font-size:1.05rem; font-weight:600; text-align:center;">🔨 火熱鐵砧！趁鐵還熱，跟著節奏用力槌打！</p>
-                <div id="rpg-anvil-container" style="position:relative; width:${anvilSize}px; height:${Math.round(anvilSize * 1.1)}px; display:flex; align-items:flex-end; justify-content:center; cursor:pointer; -webkit-tap-highlight-color:transparent;">
+                <p style="color:#F4E4CE; font-size:1.05rem; font-weight:600; text-align:center;">🔨 火熱鐵砧！鐵塊發光的瞬間才點得到，跟著節奏出手！</p>
+                <div id="rpg-anvil-container" style="position:relative; width:${anvilSize}px; height:${Math.round(anvilSize * 1.1)}px; display:flex; align-items:flex-end; justify-content:center; cursor:pointer; transition:filter .1s ease; -webkit-tap-highlight-color:transparent;">
                     <div id="rpg-anvil-monster" style="position:absolute; bottom:${Math.round(anvilSize * 0.52)}px; left:50%; transform:translateX(-50%); z-index:2;">${rpgMonsterVisualHTML(targetObj, monsterSize)}</div>
                     <div style="width:${anvilSize}px; height:${anvilSize}px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${aCol * RPG_DUNGEON_STRIDE * anvilZ}px -${aRow * RPG_DUNGEON_STRIDE * anvilZ}px; background-size:${RPG_DUNGEON_W * anvilZ}px ${RPG_DUNGEON_H * anvilZ}px; image-rendering:pixelated; z-index:1;"></div>
                     <div id="rpg-anvil-hammer" style="position:absolute; top:-18px; right:-6px; width:44px; height:44px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${hCol * RPG_DUNGEON_STRIDE * (44 / 16)}px -${hRow * RPG_DUNGEON_STRIDE * (44 / 16)}px; background-size:${RPG_DUNGEON_W * (44 / 16)}px ${RPG_DUNGEON_H * (44 / 16)}px; image-rendering:pixelated; cursor:pointer; transform-origin:80% 20%; z-index:3; -webkit-tap-highlight-color:transparent;"></div>
@@ -6435,13 +6452,21 @@
                 <div style="width:220px; height:12px; border-radius:6px; background:#3A2E22; overflow:hidden; visibility:hidden;" id="rpg-anvil-timer-wrap">
                     <div id="rpg-anvil-timer-bar" style="height:100%; width:100%; background:#E0763B;"></div>
                 </div>
-                <p style="color:#B3A492; font-size:.8rem; text-align:center;">在鐵塊發光的瞬間點鐵鎚！沒接到就會中斷連段</p>
+                <p style="color:#B3A492; font-size:.8rem; text-align:center;">鐵砧亮起來的那一瞬間點下去才算數，太早點沒有用，慢了就會中斷連段</p>
             `;
             document.body.appendChild(overlay);
             requestAnimationFrame(() => { overlay.style.opacity = '1'; }); // 先讓整個畫面淡入，不要一開始就閃現
             const prevBgmMood = rpgBgmMood; // 記住原本在放的BGM（通常是battle/boss），小遊戲結束後要換回去
             rpgStartBgm('forge'); // 換成鍛造敲擊節奏的專屬BGM，倒數的時候就先讓玩家聽節奏、抓拍子
             playSfx('click');
+            // 拍子排程改成固定的絕對時間軸，不會被玩家點擊的快慢牽著走：每拍固定間隔 beatIntervalMs（跟BGM tempo一致），
+            // 只有最後 hitWindowMs 這一小段（鐵砧發光的時候）點擊才算數，其餘時間點了完全沒有反應——
+            // 這樣才是真的「等節奏」，狂點沒有用，一定要抓準發光的瞬間
+            const beatIntervalMs = Math.round(RPG_BGM_PATTERNS.forge.tempo * 1000);
+            const hitWindowMs = Math.min(240, Math.round(beatIntervalMs * 0.55));
+            let windowOpen = false;
+            let hitRegisteredThisBeat = false;
+            let openTimeoutId = null;
             let beatTimeoutId = null;
             const comboEl = () => document.getElementById('rpg-anvil-combo');
             const timerBarEl = () => document.getElementById('rpg-anvil-timer-bar');
@@ -6454,12 +6479,16 @@
                 if (resolved) return;
                 resolved = true;
                 if (beatTimeoutId) clearTimeout(beatTimeoutId);
+                if (openTimeoutId) clearTimeout(openTimeoutId);
                 rpgStartBgm(prevBgmMood || 'battle'); // 小遊戲結束，換回原本的戰鬥BGM
                 overlay.remove();
                 onComplete(combo, totalDmg);
             }
             function missBeat() {
                 if (resolved) return;
+                windowOpen = false;
+                const container = anvilContainerEl();
+                if (container) container.classList.remove('glow');
                 playSfx('fail');
                 const cEl = comboEl();
                 if (cEl) cEl.textContent = `連段中斷！最終 ${combo} 段`;
@@ -6467,11 +6496,13 @@
             }
             function doHit() {
                 if (resolved || targetObj.curHp <= 0) return;
-                // 重點修正：點下去的當下就立刻解除這個容器的點擊，不然同一拍之內狂點會被當成好幾次連段
-                // （原本的bug：onclick一直綁著doHit，直到下一拍nextBeat()才會重新指定，這段空窗期多點幾下就會多算好幾段）
-                const container = anvilContainerEl();
-                if (container) container.onclick = null;
+                // 核心判定：不在發光窗口內點擊，直接無效（不算浪費也不算命中），逼玩家真的要等節奏，不能狂點
+                if (!windowOpen || hitRegisteredThisBeat) return;
+                hitRegisteredThisBeat = true;
+                windowOpen = false;
                 if (beatTimeoutId) clearTimeout(beatTimeoutId);
+                const container = anvilContainerEl();
+                if (container) container.classList.remove('glow');
                 combo++;
                 const dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * (sk.comboMult || 1.4) - rpgEffectiveDef(targetObj) + (Math.random() * 3 - 1)));
                 totalDmg += dmg;
@@ -6500,25 +6531,36 @@
                 const cEl = comboEl();
                 if (cEl) cEl.textContent = `連段 ${combo} / ${maxCombo}`;
                 if (targetObj.curHp <= 0 || combo >= maxCombo) { setTimeout(finish, 350); return; }
-                nextBeat();
+                scheduleBeat();
             }
-            function nextBeat() {
+            // 排下一拍：計時條照固定的beatIntervalMs跑滿一輪，最後hitWindowMs那一段鐵砧會發光、才是真正能點的窗口，
+            // 這個排程不受玩家點擊快慢影響——就算提早狂點也不會提早進入下一拍，一定要等這一拍真正走完
+            function scheduleBeat() {
+                if (resolved) return;
+                windowOpen = false;
+                hitRegisteredThisBeat = false;
                 const bar = timerBarEl();
-                // 接拍窗口直接對齊 forge BGM 的拍子長度（tempo 秒），不是隨便設定的倒數條——
-                // 玩家聽到的鼓點跟畫面上的計時條會是同一個節奏，才算真的「跟著節奏打」
-                const beatWindowMs = Math.round(RPG_BGM_PATTERNS.forge.tempo * 1000);
                 if (bar) {
                     bar.style.transition = 'none';
                     bar.style.width = '100%';
                     void bar.offsetWidth; // 強制 reflow，讓下面的 transition 重新生效
-                    bar.style.transition = `width ${beatWindowMs}ms linear`;
+                    bar.style.transition = `width ${beatIntervalMs}ms linear`;
                     bar.style.width = '0%';
                 }
-                beatTimeoutId = setTimeout(missBeat, beatWindowMs);
-                const container = anvilContainerEl();
-                if (container) container.onclick = doHit;
+                const openDelay = Math.max(0, beatIntervalMs - hitWindowMs);
+                openTimeoutId = setTimeout(() => {
+                    if (resolved) return;
+                    windowOpen = true;
+                    const container = anvilContainerEl();
+                    if (container) container.classList.add('glow');
+                }, openDelay);
+                beatTimeoutId = setTimeout(() => {
+                    if (!hitRegisteredThisBeat) missBeat();
+                }, beatIntervalMs);
             }
-            // 淡入動畫播完之後，先跑一段 3、2、1、開始！的倒數，倒數期間鐵鎚可以看但點了沒有作用，
+            const containerForClick = anvilContainerEl();
+            if (containerForClick) containerForClick.onclick = doHit; // 整場只要綁定一次即可，doHit內部自己判斷現在是不是窗口內
+            // 淡入動畫播完之後，先跑一段 3、2、1、開始！的倒數，倒數期間點擊完全沒有反應（windowOpen預設false），
             // 讓玩家看得到畫面、聽得到節奏音樂之後再正式開始接拍，不會一開場就馬上考驗反應
             function runCountdown() {
                 const steps = ['3', '2', '1', '開始！'];
@@ -6543,7 +6585,7 @@
                             if (comboLabel) comboLabel.style.visibility = 'visible';
                             const timerWrap = timerWrapEl();
                             if (timerWrap) timerWrap.style.visibility = 'visible';
-                            nextBeat();
+                            scheduleBeat();
                         }, 500);
                     }
                 }
