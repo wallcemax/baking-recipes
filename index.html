@@ -3526,7 +3526,7 @@
             if (sk.goldGambleDamage) parts.push('隨機消耗1~999金幣，造成等值傷害（無視自己攻擊力與敵方防禦力）');
             if (sk.rhythmForge) parts.push(`敲擊小遊戲，最多連段${sk.comboMax || 12}下，每下威力ATK×${sk.comboMult || 1.4}，沒接到就會中斷連段`);
             if (sk.isCatchupPassive) parts.push('隊伍等級落後主角時，經驗值取得倍率會自動提升，幫忙追上隊伍進度');
-            if (sk.guaranteedFlee) parts.push('點下去立刻100%脫離戰鬥（不用等行動順序、不看敵我強弱，一定成功，魔王戰也能用）');
+            if (sk.guaranteedFlee) parts.push('輪到老麥行動時發動，100%直接脫離戰鬥（不看敵我強弱，一定成功，魔王戰也能用）');
             return parts.join('、') || '效果不明';
         }
         function rpgSkillRangeGridHTML(pattern) {
@@ -6126,19 +6126,6 @@
             const actor = rpgGetActorObj();
             if (!b || b.phase !== 'command' || !actor || b.commands[`${b.actor.row}-${b.actor.i}`]) return;
 
-            if (action === 'skill' && RPG_SKILLS[extra] && RPG_SKILLS[extra].guaranteedFlee) {
-                // 獨自旅行的驕傲：不像一般技能要排隊等行動順序，點了馬上生效，100%直接脫離戰鬥（不看敵我強弱、不會失敗）
-                const sk = RPG_SKILLS[extra];
-                if (actor.sp < sk.sp) return; // SP 不夠不能用
-                actor.sp -= sk.sp;
-                rpgLogAppend(`${actor.name}使出「${sk.name}」，帶著大家直接脫離了戰鬥！`);
-                playSfx('click');
-                state.mode = 'map';
-                state.battle = null; // 一定要清掉，不然下次骰到遭遇時 rpgStartBattle 的防重複呼叫檢查會誤判成「戰鬥還沒結束」
-                setTimeout(renderRpgMap, 500);
-                return;
-            }
-
             if (action === 'flee') {
                 // 逃跑機率依照對手強度調整：怪物比你強越多，逃跑越難成功；比你弱就很容易跑掉；魔王戰特別難逃
                 const monsterEntries = rpgFormationEntries(b.monsterFormation);
@@ -6709,6 +6696,16 @@
                             actorObj.sp = Math.max(0, actorObj.sp - sk.sp);
                             if (sk.ingredientCost) rpgDeductIngredients(p, sk.ingredientCost);
                             multiHandled = true;
+                            if (sk.guaranteedFlee) {
+                                // 獨自旅行的驕傲：排隊等到真正輪到老麥行動時才會發動，發動當下100%直接脫離戰鬥（不看敵我強弱、不會失敗）
+                                rpgLogAppend(`${actorObj.name}使出「${sk.name}」，帶著大家直接脫離了戰鬥！`);
+                                playSfx('click');
+                                rpgStopBgm();
+                                state.mode = 'map';
+                                state.battle = null; // 一定要清掉，不然下次骰到遭遇時 rpgStartBattle 的防重複呼叫檢查會誤判成「戰鬥還沒結束」
+                                setTimeout(renderRpgMap, 600);
+                                return;
+                            }
                             if (sk.rhythmForge) {
                                 // 火熱鐵砧：跳出敲擊小遊戲，最多連續 comboMax 段，每段命中都用 comboMult 當威力倍率打同一個目標；
                                 // 沒接到就直接中斷連段，小遊戲結束後才把結果整合回戰鬥紀錄、繼續往下一位行動者
