@@ -3417,6 +3417,7 @@
             // ---- 老麥專屬技能（三周目加入）----
             laomai_catchup: { name: '加速學習追趕', passive: true, pattern: 'passive', isCatchupPassive: true },
             laomai_refine_basic: { name: '初級精煉鍛造', passive: true, pattern: 'passive', isForgeUnlock: true },
+            laomai_solo_pride: { name: '獨自旅行的驕傲', sp: 5, pattern: 'self', guaranteedFlee: true, particle: 'smoke_10', sfx: 'click' },
             laomai_ore_sense: { name: '礦石嗅覺', passive: true, pattern: 'passive', oreSenseBonus: 0.05 },
             laomai_thunder_hammer: { name: '雷神之槌', sp: 30, mult: 2, pattern: 'column_4', particle: 'spark_06', effectStyle: 'drop', filter: 'sepia(1) hue-rotate(35deg) saturate(6.5) brightness(1.45) contrast(1.15)', sfx: 'thunder' },
             laomai_refine_ultimate: { name: '究極精煉鍛造', passive: true, pattern: 'passive', forgeRateBonus: 0.1 },
@@ -3518,6 +3519,7 @@
             if (sk.goldGambleDamage) parts.push('隨機消耗1~999金幣，造成等值傷害（無視自己攻擊力與敵方防禦力）');
             if (sk.rhythmForge) parts.push(`敲擊小遊戲，最多連段${sk.comboMax || 12}下，每下威力ATK×${sk.comboMult || 1.4}，沒接到就會中斷連段`);
             if (sk.isCatchupPassive) parts.push('隊伍等級落後主角時，經驗值取得倍率會自動提升，幫忙追上隊伍進度');
+            if (sk.guaranteedFlee) parts.push('點下去立刻100%脫離戰鬥（不用等行動順序、不看敵我強弱，一定成功，魔王戰也能用）');
             return parts.join('、') || '效果不明';
         }
         function rpgSkillRangeGridHTML(pattern) {
@@ -3623,7 +3625,7 @@
             laozhou: { id: 'laozhou', name: '老周', level: 1, exp: 0, expToNext: 20, hp: 32, maxHp: 32, atk: 6, def: 4, sp: 6, maxSp: 6, agi: 3, weaponName: '燒烤鐵叉', skills: ['laozhou_all_weak', 'laozhou_catchup'], isCompanion: true, spriteKey: 'hero_laozhou', spriteSheet: 'dungeon', weaponSprite: 'weapon_wand', weaponHue: 270 },
             alan: { id: 'alan', name: '阿藍', level: 1, exp: 0, expToNext: 20, hp: 22, maxHp: 22, atk: 5, def: 2, sp: 9, maxSp: 9, agi: 9, weaponName: '辛香研磨棒', skills: ['alan_single', 'alan_catchup'], isCompanion: true, spriteKey: 'hero_alan', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer' },
             ginhaku: { id: 'ginhaku', name: '銀白', level: 1, exp: 0, expToNext: 20, hp: 21, maxHp: 21, atk: 4, def: 2, sp: 14, maxSp: 14, agi: 8, weaponName: '藥草調味瓶', skills: ['ginhaku_passive'], isCompanion: true, spriteKey: 'hero_ginhaku', spriteSheet: 'dungeon', weaponSprite: 'weapon_potion', weaponHue: 200 },
-            laomai: { id: 'laomai', name: '老麥', level: 1, exp: 0, expToNext: 20, hp: 34, maxHp: 34, atk: 8, def: 6, sp: 12, maxSp: 12, agi: 3, weaponName: '鍛造巨錘', weaponFusionLv: 1, skills: ['laomai_catchup', 'laomai_refine_basic'], isCompanion: true, spriteKey: 'hero_laomai', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer', weaponHue: 30 },
+            laomai: { id: 'laomai', name: '老麥', level: 1, exp: 0, expToNext: 20, hp: 34, maxHp: 34, atk: 8, def: 6, sp: 12, maxSp: 12, agi: 3, weaponName: '鍛造巨錘', weaponFusionLv: 1, skills: ['laomai_catchup', 'laomai_refine_basic', 'laomai_solo_pride'], isCompanion: true, spriteKey: 'hero_laomai', spriteSheet: 'dungeon', weaponSprite: 'weapon_hammer', weaponHue: 30 },
         };
         // 招募條件跟劇情台詞：require 是 null 代表直接加入；否則要交出對應的道具/食材才會加入
         const RPG_COMPANION_RECRUIT_INFO = {
@@ -6061,6 +6063,19 @@
             const p = state.player;
             const actor = rpgGetActorObj();
             if (!b || b.phase !== 'command' || !actor || b.commands[`${b.actor.row}-${b.actor.i}`]) return;
+
+            if (action === 'skill' && RPG_SKILLS[extra] && RPG_SKILLS[extra].guaranteedFlee) {
+                // 獨自旅行的驕傲：不像一般技能要排隊等行動順序，點了馬上生效，100%直接脫離戰鬥（不看敵我強弱、不會失敗）
+                const sk = RPG_SKILLS[extra];
+                if (actor.sp < sk.sp) return; // SP 不夠不能用
+                actor.sp -= sk.sp;
+                rpgLogAppend(`${actor.name}使出「${sk.name}」，帶著大家直接脫離了戰鬥！`);
+                playSfx('click');
+                state.mode = 'map';
+                state.battle = null; // 一定要清掉，不然下次骰到遭遇時 rpgStartBattle 的防重複呼叫檢查會誤判成「戰鬥還沒結束」
+                setTimeout(renderRpgMap, 500);
+                return;
+            }
 
             if (action === 'flee') {
                 // 逃跑機率依照對手強度調整：怪物比你強越多，逃跑越難成功；比你弱就很容易跑掉；魔王戰特別難逃
