@@ -4020,8 +4020,10 @@
 
         function rpgEquipScreenHTML(message) {
             const p = rpgState.player;
-            const weaponRows = Object.entries(RPG_WEAPONS).filter(([, item]) => !item.ngRequired || (p.ngPlus || 0) >= item.ngRequired).map(([name, item]) => rpgEquipRowHTML('weapon', name, item, p)).join('');
-            const armorRows = Object.entries(RPG_ARMORS).filter(([, item]) => !item.ngRequired || (p.ngPlus || 0) >= item.ngRequired).map(([name, item]) => rpgEquipRowHTML('armor', name, item, p)).join('');
+            // 幻化限定的裝備（isManifest:true）平常完全不列在商店清單裡，避免還沒真的幻化就能看到、甚至0元買到；
+            // 只有玩家已經真的幻化過（ownedWeapons/ownedArmors裡有這個名字）才會出現，讓玩家之後還能切換裝備回來
+            const weaponRows = Object.entries(RPG_WEAPONS).filter(([name, item]) => (!item.isManifest || (p.ownedWeapons || []).includes(name)) && (!item.ngRequired || (p.ngPlus || 0) >= item.ngRequired)).map(([name, item]) => rpgEquipRowHTML('weapon', name, item, p)).join('');
+            const armorRows = Object.entries(RPG_ARMORS).filter(([name, item]) => (!item.isManifest || (p.ownedArmors || []).includes(name)) && (!item.ngRequired || (p.ngPlus || 0) >= item.ngRequired)).map(([name, item]) => rpgEquipRowHTML('armor', name, item, p)).join('');
             return `
                 <div style="max-width:520px; margin-left:auto; margin-right:auto;">
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
