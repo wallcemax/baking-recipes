@@ -3441,7 +3441,7 @@
             laomai_hot_anvil: { name: '火熱鐵砧', sp: 50, pattern: 'single', rhythmForge: true, comboMax: 12, perfectStep: 0.1, normalStep: 0.05, particle: 'muzzle_02', sfx: 'fireHit' },
             // ---- 凱專屬技能（四周目魔王真身被擊敗後，麥穗平原可招募）----
             kai_catchup: { name: '加速學習追趕', passive: true, pattern: 'passive', isCatchupPassive: true },
-            kai_steal_gold: { name: '劫富濟貧', sp: 10, mult: 1, pattern: 'single', stealGold: true, particle: 'star_01', effectStyle: 'rise', filter: 'sepia(1) hue-rotate(45deg) saturate(5) brightness(1.3) contrast(1.1)', sfx: 'coin' },
+            kai_steal_gold: { name: '劫富濟貧', sp: 10, mult: 1, pattern: 'all', stealGold: true, particle: 'star_01', effectStyle: 'rise', filter: 'sepia(1) hue-rotate(45deg) saturate(5) brightness(1.3) contrast(1.1)', sfx: 'coin' },
             kai_snipe: { name: '狙擊', sp: 15, mult: 2, pattern: 'single', selfCritBuffChance: 0.3, selfCritBuffMult: 1.5, selfCritBuffTurns: 2, particle: 'slash_01', effectStyle: 'slash', filter: 'brightness(1.1)', sfx: 'secretSlash' },
             kai_meteor: { name: '流星雨', sp: 35, mult: 1.5, pattern: 'all', burnChance: 1, burnTurns: 3, particle: 'fire_02', effectStyle: 'drop', filter: 'sepia(1) hue-rotate(0deg) saturate(6.5) brightness(1.35) contrast(1.15)', sfx: 'fireHit' },
             kai_poison_rain: { name: '毒之箭雨', sp: 35, mult: 1.5, pattern: 'all', inflictChance: 1, inflictType: 'poison', particle: 'poison', effectStyle: 'drop', filter: 'sepia(1) hue-rotate(90deg) saturate(6.5) brightness(1.1) contrast(1.15)', sfx: 'waterSplash' },
@@ -3544,7 +3544,7 @@
             if (sk.goldGambleDamage) parts.push('隨機消耗1~999金幣，造成等值傷害（無視自己攻擊力與敵方防禦力）');
             if (sk.rhythmForge) parts.push(`敲擊小遊戲，最多連段${sk.comboMax || 12}下，第一下基礎倍率×1.0，之後每下命中橘光+${sk.normalStep || 0.05}、完美（亮黃閃爍）+${sk.perfectStep || 0.1}倍率，沒接到就會中斷連段`);
             if (sk.isCatchupPassive) parts.push('隊伍等級落後主角時，經驗值取得倍率會自動提升，幫忙追上隊伍進度');
-            if (sk.stealGold) parts.push('額外從目標身上偷走一半金幣獎勵（同一隻怪只能偷一次）');
+            if (sk.stealGold) parts.push('對全場所有怪物各偷走一半金幣獎勵（整場戰鬥只有第一次使用才會真的偷到錢）');
             if (sk.selfCritBuffChance) parts.push(`攻擊後自身會心率+${Math.round(sk.selfCritBuffChance * 100)}%（持續${sk.selfCritBuffTurns || 2}回合）`);
             if (sk.guaranteedFlee) parts.push('輪到老麥行動時發動，100%直接脫離戰鬥（不看敵我強弱，一定成功，魔王戰也能用）');
             return parts.join('、') || '效果不明';
@@ -4700,7 +4700,7 @@
                         if (poi.found && Math.random() < 0.4) poi.found = false;
                     });
                     // 神射手・凱的招募任務：每次刷新進平原地圖算一天，還沒加入隊伍的話，今天想吃的食譜重新抽一次
-                    if (!state.companions.some(c => c.id === 'kai') && (state.player.ngPlus || 0) >= 4) {
+                    if (!state.companions.some(c => c.id === 'kai') && (state.player.ngPlus || 0) >= 3) {
                         state.player.kaiDay = (state.player.kaiDay || 0) + 1;
                         const recipeNames = Object.keys(RPG_RECIPES);
                         state.player.kaiRequestedDish = recipeNames[Math.floor(Math.random() * recipeNames.length)];
@@ -4869,7 +4869,7 @@
                 }
                 return;
             }
-            const unlocked = (state.player.ngPlus || 0) >= 4;
+            const unlocked = (state.player.ngPlus || 0) >= 3;
             if (unlocked) {
                 map.npcs[key] = 'kai';
                 delete RPG_PLAINS_DECOR[key]; // 拿掉原本站的那棵樹裝飾圖磚，不然人物會疊在樹上面
@@ -7473,8 +7473,9 @@
                                         rpgMarkIngredientDiscovered(p, ing);
                                         logBits.push(`意外拿到了${RPG_INGREDIENT_EMOJI[ing] || ''}「${ing}」`);
                                     }
-                                    if (sk.stealGold) {
-                                        // 劫富濟貧：從這隻怪身上偷走一半的金幣獎勵，直接進主角口袋；偷過一次的怪物之後就沒得偷了
+                                    if (sk.stealGold && !b.kaiGoldStolen) {
+                                        // 劫富濟貧：一次對全場所有怪物偷走各自一半的金幣獎勵，直接進主角口袋；
+                                        // 整場戰鬥只有第一次使用才會真的偷到錢，之後再用這招就只剩攻擊效果、不會再偷
                                         const stolen = Math.max(1, Math.round((tObj.gold || 0) * 0.5));
                                         p.gold += stolen;
                                         tObj.gold = Math.max(0, (tObj.gold || 0) - stolen);
@@ -7488,6 +7489,7 @@
                                         if (slot) { slot.style.opacity = '0'; slot.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; }
                                     }
                                 });
+                                if (sk.stealGold && !b.kaiGoldStolen) b.kaiGoldStolen = true; // 整場戰鬥標記過一次就好，之後這招只剩攻擊效果
                                 if (sk.selfCritBuffChance) {
                                     // 狙擊：攻擊結算完後，自己疊上一段時間的會心率加成
                                     rpgApplyBuff(actorObj, 'critBuff', { chance: sk.selfCritBuffChance, mult: sk.selfCritBuffMult || 1.5 }, sk.selfCritBuffTurns || 2);
@@ -7694,6 +7696,10 @@
                                 }
                                 const dmg = Math.max(1, Math.round(rpgEffectiveAtk(monsterObj) - rpgEffectiveDef(obj) + (Math.random() * 3 - 1)));
                                 obj.hp = Math.max(0, obj.hp - dmg);
+                                if (obj.buffs && obj.buffs.atkBuffMult) {
+                                    delete obj.buffs.atkBuffMult;
+                                    rpgLogAppend(`💢 ${obj.name}的蓄力被這一下攻擊打斷了！`);
+                                }
                                 if (obj.buffs && obj.buffs.sousVide) obj.buffs.sousVide.wasHitThisRound = true;
                                 totalDmg += dmg;
                                 rpgInflictStatus(obj, 'softened', 3);
@@ -7773,6 +7779,10 @@
                                 }
                                 const dmg = Math.max(1, Math.round(monsterObj.atk * multiSkill.mult - rpgEffectiveDef(tObj) + (Math.random() * 3 - 1)));
                                 tObj.hp = Math.max(0, tObj.hp - dmg);
+                                if (tObj.buffs && tObj.buffs.atkBuffMult) {
+                                    delete tObj.buffs.atkBuffMult;
+                                    rpgLogAppend(`💢 ${tObj.name}的蓄力被這一下攻擊打斷了！`);
+                                }
                                 if (tObj.buffs && tObj.buffs.sousVide) tObj.buffs.sousVide.wasHitThisRound = true;
                                 totalDmg += dmg;
                                 rpgFlashHit(domId);
@@ -7818,6 +7828,11 @@
                             return;
                         }
                         victim.obj.hp = Math.max(0, victim.obj.hp - dmg);
+                        if (victim.obj.buffs && victim.obj.buffs.atkBuffMult) {
+                            // 全集中蓄力：放出來以後被打到（沒被醃漬擋掉的話）就會取消蓄力效果，下一擊不再有加成
+                            delete victim.obj.buffs.atkBuffMult;
+                            rpgLogAppend(`💢 ${victim.obj.name}的蓄力被這一下攻擊打斷了！`);
+                        }
                         if (victim.obj.buffs && victim.obj.buffs.sousVide) victim.obj.buffs.sousVide.wasHitThisRound = true;
                         rpgFlashHit(victimDomId);
                         rpgFloatDamage(victimDomId, dmg, '#C4453F');
