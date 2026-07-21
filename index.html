@@ -2766,7 +2766,9 @@
         // 敏捷有暫時性 buff 的話，排行動順序要算進去
         function rpgEffectiveAgi(obj) {
             const pct = obj.buffs && obj.buffs.agiBuffPct ? obj.buffs.agiBuffPct.value : 0;
-            return obj.agi * (1 + pct);
+            // 風之加護手環：三周目二階段魔王掉落，隊上每個人各自拿到一只、各自獨立精煉，只看這個角色自己的 braceletLv
+            const braceletBonus = (obj.braceletLv != null) ? (1 + obj.braceletLv * 2) : 0;
+            return (obj.agi + braceletBonus) * (1 + pct);
         }
 
         // 特效粒子（Kenney Particle Pack，CC0）：升級/回復/施法/撞牆各用一種效果
@@ -3247,10 +3249,13 @@
             // 周目倍率：魔王跟他的隨從（同一場魔王戰的護衛）用 1.3 的 N 次方；一般遭遇的小怪用比較溫和的 1.1 的 N 次方
             const ngPlus = (rpgState && rpgState.player && rpgState.player.ngPlus) || 0;
             const ngMult = Math.pow(ngTier === 'weak' ? 1.1 : 1.3, ngPlus);
-            const hp = Math.round((10 + lvl * 7) * (isBoss ? 11 : 1) * ngMult);
-            const atk = Math.round((2 + lvl * 1.6) * (isBoss ? 1.25 : 1) * ngMult);
-            const def = Math.round(lvl * 0.9 * (isBoss ? 1.3 : 1) * ngMult);
-            const agi = Math.round(3 + lvl * 0.7);
+            // 四周目起（ngPlus >= 3），所有怪物的HP/攻擊/防禦再額外疊乘一次 1.2 倍（跟原本的周目倍率疊在一起）
+            const ngExtraMult = ngPlus >= 3 ? 1.2 : 1;
+            const hp = Math.round((10 + lvl * 7) * (isBoss ? 11 : 1) * ngMult * ngExtraMult);
+            const atk = Math.round((2 + lvl * 1.6) * (isBoss ? 1.25 : 1) * ngMult * ngExtraMult);
+            const def = Math.round(lvl * 0.9 * (isBoss ? 1.3 : 1) * ngMult * ngExtraMult);
+            // 四周目起（ngPlus >= 3），所有怪物（小怪、隨從、魔王）敏捷額外 +20，一到三周目維持原本公式不變
+            const agi = Math.round(3 + lvl * 0.7) + (ngPlus >= 3 ? 20 : 0);
             const sp = Math.round((6 + lvl * 1.2) * (isBoss ? 3 : 1));
             const baseExp = lvl <= 9 ? 10 : lvl; // 1~9 等的小怪經驗值固定 10，超過 9 等才照原本「等級 x1」的公式計算
             const exp = Math.round(baseExp * (isBoss ? 5 : 1));
@@ -3492,7 +3497,7 @@
             const parts = [];
             if (sk.mult) parts.push(`威力 ATK×${sk.mult}${sk.hits > 1 ? `（連續${sk.hits}次）` : ''}`);
             if (sk.healPct) parts.push(`回復 HP ${Math.round(sk.healPct * 100)}%${sk.revive ? '（可喚醒倒下夥伴）' : ''}`);
-            if (sk.cureStatusType === 'all') parts.push('解除全部異常狀態');
+            if (sk.cureStatusType === 'all') parts.push('解除全部異常狀態（包含只有這招才能解的「味覺喪失」）');
             else if (sk.cureStatusType === 'multi' && sk.cureTypes) parts.push(`解除${sk.cureTypes.map(t => RPG_STATUS_INFO[t].name).join('／')}`);
             else if (sk.cureStatusType) parts.push(`解除${RPG_STATUS_INFO[sk.cureStatusType].name}`);
             if (sk.defBuffPct != null) parts.push(`防禦+${Math.round(sk.defBuffPct * 100)}%（持續${sk.buffTurns}回合）`);
@@ -3854,6 +3859,7 @@
         function rpgStatusCardHTML(obj, idx, total) {
             const atk = rpgEffectiveAtk(obj), def = rpgEffectiveDef(obj);
             const atkBonus = atk - obj.atk, defBonus = def - obj.def;
+            const agi = Math.round(rpgEffectiveAgi(obj)), agiBonus = agi - obj.agi;
             const isCompanion = obj.isCompanion && idx != null;
             return `
                 <div class="px-4 py-3 rounded-2xl mb-3" style="background:var(--cream)">
@@ -3866,7 +3872,7 @@
                         <p>💠 SP　${obj.sp}/${obj.maxSp}</p>
                         <p>⚔️ 攻擊　${atk}${atkBonus ? `<span style="color:var(--sage)">（+${atkBonus}）</span>` : ''}</p>
                         <p>🛡️ 防禦　${def}${defBonus ? `<span style="color:var(--sage)">（+${defBonus}）</span>` : ''}</p>
-                        <p>💨 敏捷　${obj.agi}</p>
+                        <p>💨 敏捷　${agi}${agiBonus ? `<span style="color:var(--sage)">（+${agiBonus}）</span>` : ''}</p>
                         <p>✨ 經驗　${obj.exp}/${obj.expToNext}</p>
                     </div>
                     ${obj.weaponName ? `<p class="text-xs mt-2" style="color:#B3A492">🔪 武器：${obj.weaponName}${obj.weaponFusionLv ? ` <span style="color:var(--sage)">LV.${obj.weaponFusionLv}${obj.weaponFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}${(rpgState.player.forgeLevels && rpgState.player.forgeLevels[obj.weaponName]) ? ` <span style="color:#C77B3B">⚒️+${rpgState.player.forgeLevels[obj.weaponName]}</span>` : ''}${obj.armorName ? `　👕 防具：${obj.armorName}${obj.armorFusionLv ? ` <span style="color:var(--sage)">LV.${obj.armorFusionLv}${obj.armorFusionLv >= 10 ? ' MAX' : ''}</span>` : ''}${(rpgState.player.forgeLevels && rpgState.player.forgeLevels[obj.armorName]) ? ` <span style="color:#C77B3B">⚒️+${rpgState.player.forgeLevels[obj.armorName]}</span>` : ''}` : ''}</p>` : ''}
@@ -4495,19 +4501,21 @@
             // 老麥的「礦石嗅覺」被動（LV15）：機率額外 +5%，而且開到食材的寶箱不會再跟金屬擇一，兩種都會拿到
             const hasOreSense = (state.companions || []).some(c => c.id === 'laomai' && c.skills && c.skills.includes('laomai_ore_sense'));
             const metalChance = 0.03 + (hasOreSense ? 0.05 : 0);
+            // 數量倍率：礦石嗅覺讓數量翻倍，四周目起（ngPlus>=3）數量再翻一次倍，兩個效果可以疊在一起
+            const metalMult = (hasOreSense ? 2 : 1) * ((state.player.ngPlus || 0) >= 3 ? 2 : 1);
             let metalMsgPrefix = '';
             if (isWild && state.player.fusionUnlocked && Math.random() < metalChance) {
                 state.player.materials = state.player.materials || {};
-                const metalGain = hasOreSense ? 2 : 1; // 礦石嗅覺：除了掉落率+5%，每次拿到的數量也直接加倍
+                const metalGain = metalMult;
                 state.player.materials['神祕金屬'] = (state.player.materials['神祕金屬'] || 0) + metalGain;
-                if (!hasOreSense) {
+                if (!hasOreSense && metalMult <= 1) {
                     if (box) box.textContent = `❓ 寶箱裡有一塊冰冷、散發微光的「神祕金屬」，用途不明……先收進背包裡吧。（目前累計 ${state.player.materials['神祕金屬']} 個）`;
                     playSfx('news');
                     if (sp) rpgBurstParticle('light', { x: sp.x, y: sp.y, count: 4, size: 34, duration: 0.8, filter: 'grayscale(1) brightness(1.1) contrast(1.2)' });
                     return;
                 }
-                // 有礦石嗅覺的話不 return，繼續往下讓寶箱照常開出食材/金幣/食譜等一般獎勵，最後把神祕金屬的訊息一起附上
-                metalMsgPrefix = `❓ 順手多挖到了 ${metalGain} 塊「神祕金屬」（礦石嗅覺加成，目前累計 ${state.player.materials['神祕金屬']} 個）！　`;
+                // 有礦石嗅覺或已經四周目的話不 return，繼續往下讓寶箱照常開出食材/金幣/食譜等一般獎勵，最後把神祕金屬的訊息一起附上
+                metalMsgPrefix = `❓ 順手多挖到了 ${metalGain} 塊「神祕金屬」（目前累計 ${state.player.materials['神祕金屬']} 個）！　`;
             }
             // 每個寶箱打開前才隨機決定這次會開到什麼，不是固定在某個位置放某樣東西——同一個寶箱重複刷新，開到的內容也不會一樣
             const roll = Math.random() * 100;
@@ -4515,11 +4523,11 @@
             const rewardType = isWild
                 ? (roll < 52 ? 'ingredient' : roll < 74 ? 'gold' : roll < 88 ? 'recipe' : 'dish')
                 : (roll < 55 ? 'ingredient' : roll < 85 ? 'gold' : 'recipe');
-            // 礦石嗅覺：即使這次沒觸發前面獨立的金屬掉落判定，只要這次寶箱開到的是食材，也額外有礦石嗅覺的加成機率再多掉神祕金屬（一樣是雙倍數量）
+            // 礦石嗅覺：即使這次沒觸發前面獨立的金屬掉落判定，只要這次寶箱開到的是食材，也額外有礦石嗅覺的加成機率再多掉神祕金屬（數量一樣套用metalMult）
             if (!metalMsgPrefix && hasOreSense && isWild && state.player.fusionUnlocked && rewardType === 'ingredient' && Math.random() < metalChance) {
                 state.player.materials = state.player.materials || {};
-                state.player.materials['神祕金屬'] = (state.player.materials['神祕金屬'] || 0) + 2;
-                metalMsgPrefix = `❓ 順手多挖到了 2 塊「神祕金屬」（礦石嗅覺加成，目前累計 ${state.player.materials['神祕金屬']} 個）！　`;
+                state.player.materials['神祕金屬'] = (state.player.materials['神祕金屬'] || 0) + metalMult;
+                metalMsgPrefix = `❓ 順手多挖到了 ${metalMult} 塊「神祕金屬」（目前累計 ${state.player.materials['神祕金屬']} 個）！　`;
             }
 
             if (rewardType === 'ingredient') {
@@ -4652,14 +4660,29 @@
         // 隊形表因為索引全部作廢，直接重建再讓 rpgSyncBattleFormation 重新分配
         // 防呆：舊存檔裡已經加入隊伍的夥伴，這次新增被動之前就已經在隊伍裡了，技能欄不會自動有這個被動，
         // 這裡幫每個已加入的夥伴補上對應的加速學習追趕（沒有的話才補，避免重複塞兩次）
+        // 老麥另外需要補「初級精煉鍛造」跟「獨自旅行的驕傲」——這兩個是他一入隊就該有的技能，
+        // 但如果玩家的存檔是在這些技能加進遊戲之前就已經招募過老麥，技能欄同樣不會自動更新，要在這裡手動補上
         function rpgSyncCompanionPassives() {
             const state = rpgState;
             if (!state || !state.companions) return;
             const passiveByCompanionId = { ako: 'ako_catchup', suisui: 'suisui_catchup', laozhou: 'laozhou_catchup', alan: 'alan_catchup', ginhaku: 'ginhaku_passive', laomai: 'laomai_catchup' };
+            // 每個夥伴「一入隊就該有」的技能清單（跟 RPG_COMPANION_TEMPLATES 裡的起始 skills 對齊），
+            // 只有老麥目前有額外的起始技能需要防呆補齊，其他夥伴的起始技能都只有上面那顆追趕被動
+            const startingSkillsByCompanionId = { laomai: ['laomai_refine_basic', 'laomai_solo_pride'] };
             state.companions.forEach(c => {
                 const passiveId = passiveByCompanionId[c.id];
                 if (passiveId && c.skills && !c.skills.includes(passiveId)) c.skills.push(passiveId);
+                const startingSkills = startingSkillsByCompanionId[c.id];
+                if (startingSkills && c.skills) {
+                    startingSkills.forEach(skillId => { if (!c.skills.includes(skillId)) c.skills.push(skillId); });
+                }
             });
+            // 防呆：風之加護手環曾經有一版是「全隊共用一個數值」，如果存檔剛好是那個版本存下的
+            // （p.windBraceletObtained 是 true，但個別角色身上還沒有 braceletLv 欄位），這裡補成現在的「每人各自一只」版本
+            if (state.player && state.player.windBraceletObtained) {
+                if (state.player.braceletLv == null) state.player.braceletLv = 0;
+                state.companions.forEach(c => { if (c.braceletLv == null) c.braceletLv = 0; });
+            }
         }
         function rpgDedupeCompanions() {
             const state = rpgState;
@@ -5186,26 +5209,41 @@
         }
         // 列出目前可以拿去鍛造的裝備：①主角自己買下的、三周目才開賣的兩件新裝備 ②已加入隊伍的夥伴，
         // 而且已經拿到「真正的專屬武器/防具」（不是一開始就有的初始裝備）③老麥自己的武器（他一入隊就直接算專屬裝備）
+        // 每個可鍛造項目統一用 { key, itemName, ownerLabel, slot, getLv, setLv } 描述：
+        // key 是給按鈕 onclick 用的唯一識別碼（風之加護手環每個人都同名，所以不能拿itemName當key，要另外分開），
+        // getLv/setLv 決定「這一級到底存在哪裡」——武器防具沿用原本共用的 p.forgeLevels（用裝備名稱當key，因為裝備名稱本來就不會重複），
+        // 風之加護手環則是存在每個角色物件自己的 braceletLv 欄位上，每個人各自獨立、互不影響
         function rpgForgeTargetList() {
             const state = rpgState;
             const p = state.player;
+            p.forgeLevels = p.forgeLevels || {};
             const list = [];
+            if (p.braceletLv != null) {
+                list.push({ key: 'bracelet:player', itemName: '風之加護手環', ownerLabel: '你自己', slot: 'accessory', getLv: () => p.braceletLv || 0, setLv: (v) => { p.braceletLv = v; } });
+            }
+            (state.companions || []).forEach(c => {
+                if (c.braceletLv != null) {
+                    list.push({ key: `bracelet:${c.id}`, itemName: '風之加護手環', ownerLabel: c.name, slot: 'accessory', getLv: () => c.braceletLv || 0, setLv: (v) => { c.braceletLv = v; } });
+                }
+            });
             ['老麥的龍鱗巨劍', '老麥的龍鱗鍛造鎧'].forEach(name => {
                 const isWeapon = !!RPG_WEAPONS[name];
                 const ownedKey = isWeapon ? 'ownedWeapons' : 'ownedArmors';
-                if ((p[ownedKey] || []).includes(name)) list.push({ itemName: name, ownerLabel: '你自己', slot: isWeapon ? 'weapon' : 'armor' });
+                if ((p[ownedKey] || []).includes(name)) list.push({ key: name, itemName: name, ownerLabel: '你自己', slot: isWeapon ? 'weapon' : 'armor', getLv: () => p.forgeLevels[name] || 0, setLv: (v) => { p.forgeLevels[name] = v; } });
             });
             (state.companions || []).forEach(c => {
                 const gear = RPG_COMPANION_EQUIPMENT[c.id];
                 if (!gear) return;
-                if (c.weaponName === gear.weapon.name) list.push({ itemName: c.weaponName, ownerLabel: c.name, slot: 'weapon' });
-                if (c.armorName === gear.armor.name) list.push({ itemName: c.armorName, ownerLabel: c.name, slot: 'armor' });
+                if (c.weaponName === gear.weapon.name) list.push({ key: c.weaponName, itemName: c.weaponName, ownerLabel: c.name, slot: 'weapon', getLv: () => p.forgeLevels[c.weaponName] || 0, setLv: (v) => { p.forgeLevels[c.weaponName] = v; } });
+                if (c.armorName === gear.armor.name) list.push({ key: c.armorName, itemName: c.armorName, ownerLabel: c.name, slot: 'armor', getLv: () => p.forgeLevels[c.armorName] || 0, setLv: (v) => { p.forgeLevels[c.armorName] = v; } });
             });
             return list;
         }
         // 成功率規則：+1 是 100%、+2 是 95%……每級遞減 5%，最高 +10（55%）；
         // 老麥的「究極精煉鍛造」被動（LV35）再疊加 +10%（上限封頂 100%）
-        function rpgForgeSuccessRate(currentLv) {
+        // 風之加護手環比較特殊：不管目前+幾級，成功率固定100%，不會隨等級遞減
+        function rpgForgeSuccessRate(currentLv, itemName) {
+            if (itemName === '風之加護手環') return 100;
             const state = rpgState;
             const hasUltimate = (state.companions || []).some(c => c.id === 'laomai' && c.skills && c.skills.includes('laomai_refine_ultimate'));
             const base = Math.max(55, 100 - currentLv * 5);
@@ -5224,17 +5262,20 @@
             const metalCount = (p.materials && p.materials['神祕金屬']) || 0;
             const hasUltimate = (rpgState.companions || []).some(c => c.id === 'laomai' && c.skills && c.skills.includes('laomai_refine_ultimate'));
             const targets = rpgForgeTargetList();
-            const rows = targets.map(({ itemName, ownerLabel, slot }) => {
-                const lv = p.forgeLevels[itemName] || 0;
+            const rows = targets.map(({ key, itemName, ownerLabel, slot, getLv }) => {
+                const lv = getLv();
                 const isMax = lv >= 10;
-                const rate = isMax ? 0 : rpgForgeSuccessRate(lv);
+                const isBracelet = itemName === '風之加護手環';
+                const rate = isMax ? 0 : rpgForgeSuccessRate(lv, itemName);
                 const canForge = !isMax && metalCount >= 1;
+                const rateText = isBracelet ? '成功率 100%（固定，不會隨等級遞減）' : `成功率 ${rate}%${hasUltimate ? '（已含究極精煉鍛造+10%）' : ''}`;
                 return `
                     <div class="flex items-center gap-3 px-3 py-2 rounded-2xl mb-2" style="background:var(--cream)">
                         <div class="flex-1 min-w-0">
-                            <p class="font-medium text-sm">${slot === 'weapon' ? '🔪' : '👕'} ${itemName}<span class="text-xs ml-2" style="color:#B3A492">${ownerLabel}・目前 ⚒️+${lv}${isMax ? '（已滿等）' : `・成功率 ${rate}%${hasUltimate ? '（已含究極精煉鍛造+10%）' : ''}`}</span></p>
+                            <p class="font-medium text-sm">${isBracelet ? '💍' : (slot === 'weapon' ? '🔪' : '👕')} ${itemName}<span class="text-xs ml-2" style="color:#B3A492">${ownerLabel}・目前 ⚒️+${lv}${isMax ? '（已滿等）' : `・${rateText}`}</span></p>
+                            ${isBracelet ? `<p class="text-xs mt-0.5" style="color:#B3A492">${ownerLabel}的敏捷 +${1 + lv * 2}（基礎+1，每級再+2，每個人各自獨立）</p>` : ''}
                         </div>
-                        <button onclick="rpgDoForge('${itemName}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${canForge ? '' : 'disabled style="opacity:.4"'}>${isMax ? '已滿等' : '❓×1 鍛造'}</button>
+                        <button onclick="rpgDoForge('${key}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${canForge ? '' : 'disabled style="opacity:.4"'}>${isMax ? '已滿等' : '❓×1 鍛造'}</button>
                     </div>`;
             }).join('');
             const emptyHint = !targets.length ? `<p class="text-xs mb-3" style="color:#B3A492">目前還沒有可以鍛造的裝備。夥伴要先拿到真正的專屬武器/防具（不是一開始就有的初始裝備），或是你自己買下三周目才開賣的新裝備，才能拿來這裡鍛造。</p>` : '';
@@ -5251,26 +5292,31 @@
                 </div>
             `;
         }
-        function rpgDoForge(itemName) {
+        function rpgDoForge(key) {
             const state = rpgState;
             if (!rpgLaomaiInParty()) return;
             const p = state.player;
             p.forgeLevels = p.forgeLevels || {};
+            const entry = rpgForgeTargetList().find(e => e.key === key);
+            if (!entry) return;
             const metalCount = (p.materials && p.materials['神祕金屬']) || 0;
-            const lv = p.forgeLevels[itemName] || 0;
+            const lv = entry.getLv();
             if (lv >= 10 || metalCount < 1) return;
             p.materials['神祕金屬'] -= 1;
             if (p.materials['神祕金屬'] <= 0) delete p.materials['神祕金屬'];
-            const rate = rpgForgeSuccessRate(lv);
+            const rate = rpgForgeSuccessRate(lv, entry.itemName);
             const success = Math.random() * 100 < rate;
+            const isBracelet = entry.itemName === '風之加護手環';
             let message;
             if (success) {
-                p.forgeLevels[itemName] = lv + 1;
-                message = `⚒️ 鍛造成功！「${itemName}」強度提升到 +${lv + 1}！`;
+                entry.setLv(lv + 1);
+                message = isBracelet
+                    ? `⚒️ 鍛造成功！${entry.ownerLabel}的「${entry.itemName}」強度提升到 +${lv + 1}（敏捷 +${1 + (lv + 1) * 2}）！`
+                    : `⚒️ 鍛造成功！「${entry.itemName}」強度提升到 +${lv + 1}！`;
                 playSfx('success');
             } else {
-                p.forgeLevels[itemName] = 0;
-                message = `💢 鍛造失敗了……「${itemName}」沒有損壞，但強度被打回 +0，只能重新來過。`;
+                entry.setLv(0);
+                message = `💢 鍛造失敗了……「${entry.itemName}」沒有損壞，但強度被打回 +0，只能重新來過。`;
                 playSfx('fail');
             }
             document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML(message);
@@ -5408,8 +5454,8 @@
                         partyFormation[row][i] = character;
                     });
                     // 異常狀態每場戰鬥開始都重新歸零，不會沿用到下一場；怪物也補上 curSp（能不能用技能靠這個）
-                    [state.player, ...aliveCompanions].forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0 }; m.buffs = {}; });
-                    monsterObjs.forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0 }; m.curSp = m.sp || 0; });
+                    [state.player, ...aliveCompanions].forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0 }; m.buffs = {}; });
+                    monsterObjs.forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0 }; m.curSp = m.sp || 0; });
                     const bossObj = monsterObjs.find(m => m.isBoss);
                     // 第一個下指令的人不再預設是主角，改成陣型裡第一個找得到、還活著的人
                     const firstAlly = rpgFormationEntries(partyFormation)[0];
@@ -6140,13 +6186,18 @@
         // 執行這一輪：把我方已下指令的角色跟所有還活著的怪物，依敏捷（agi）由高到低排成一串，
         // 逐一輪流執行——敏捷高的怪物有可能插在我方角色中間、甚至搶在所有我方角色行動前先出手
         // 異常狀態：poison 每回合開始扣 5% 上限 HP／weaken 每回合開始扣 5% 上限 SP／paralysis 這次跟下一次輪到行動時都會被跳過／fear（恐懼）會讓角色接下來兩回合陷入混亂，自動對我方或敵方隨機目標使用一般攻擊
-        const RPG_STATUS_INFO = { poison: { name: '中毒', emoji: '☠️' }, paralysis: { name: '麻痺', emoji: '⚡' }, weaken: { name: '衰弱', emoji: '💫' }, burn: { name: '灼傷', emoji: '🔥' }, bleed: { name: '流血', emoji: '🩸' }, fear: { name: '恐懼', emoji: '😱' }, blind: { name: '失明', emoji: '😵' } };
+        const RPG_STATUS_INFO = { poison: { name: '中毒', emoji: '☠️' }, paralysis: { name: '麻痺', emoji: '⚡' }, weaken: { name: '衰弱', emoji: '💫' }, burn: { name: '灼傷', emoji: '🔥' }, bleed: { name: '流血', emoji: '🩸' }, fear: { name: '恐懼', emoji: '😱' }, blind: { name: '失明', emoji: '😵' }, tasteless: { name: '味覺喪失', emoji: '👅' } };
+        // 治療倍率：中了「味覺喪失」的話，不管是治療道具還是技能的HP回復量、持續恢復每回合的回復量，都只剩一半
+        // （吃再好的料理也吃不出味道，效果自然打折）；沒中的話維持原本100%
+        function rpgHealMult(obj) {
+            return (obj && obj.statuses && obj.statuses.tasteless > 0) ? 0.5 : 1;
+        }
         // 失明狀態：攻擊方（不分我方怪物）只要還有失明的回合數，這次攻擊/技能就有 30% 機率落空
         function rpgRollMiss(actorObj) {
             return !!(actorObj && actorObj.statuses && actorObj.statuses.blind > 0 && Math.random() < 0.3);
         }
         function rpgInflictStatus(obj, type, turns) {
-            if (!obj.statuses) obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0 };
+            if (!obj.statuses) obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0 };
             obj.statuses[type] = Math.max(obj.statuses[type] || 0, turns);
         }
         // 恐懼（混亂）發作：這名角色本回合不能自己選擇行動，改成對「我方或敵方任一還活著的目標」隨機使出一般攻擊，可能誤傷自己人
@@ -6212,9 +6263,9 @@
                 const domId = `rpg-slot-party-${row}-${i}`;
                 // 持續回復（例如傳說持續盛宴）要在 rpgTickBuffs 把回合數砍完之前先結算，不然最後一回合會抓不到
                 if (obj.buffs && obj.buffs.regenPct && obj.hp > 0) {
-                    const healAmt = Math.max(1, Math.round(obj.maxHp * obj.buffs.regenPct.value));
+                    const healAmt = Math.max(1, Math.round(obj.maxHp * obj.buffs.regenPct.value * rpgHealMult(obj)));
                     obj.hp = Math.min(obj.maxHp, obj.hp + healAmt);
-                    rpgLogAppend(`✨ ${obj.name}持續恢復中，回復了 ${healAmt} 點 HP！`);
+                    rpgLogAppend(`✨ ${obj.name}持續恢復中，回復了 ${healAmt} 點 HP！${rpgHealMult(obj) < 1 ? '（味覺喪失中，效果打了折扣）' : ''}`);
                     const center = rpgElementCenter(domId);
                     if (center) rpgBurstParticle('buff', { x: center.x, y: center.y, size: 32, count: 2, duration: 0.5 });
                 }
@@ -6260,6 +6311,7 @@
                     obj.statuses.weaken--;
                 }
                 if (obj.statuses.blind > 0) obj.statuses.blind--;
+                if (obj.statuses.tasteless > 0) obj.statuses.tasteless--;
             });
             rpgFormationEntries(b.monsterFormation).forEach(({ row, i, obj }) => {
                 rpgTickBuffs(obj);
@@ -6415,6 +6467,10 @@
             }
             function doHit() {
                 if (resolved || targetObj.curHp <= 0) return;
+                // 重點修正：點下去的當下就立刻解除這個容器的點擊，不然同一拍之內狂點會被當成好幾次連段
+                // （原本的bug：onclick一直綁著doHit，直到下一拍nextBeat()才會重新指定，這段空窗期多點幾下就會多算好幾段）
+                const container = anvilContainerEl();
+                if (container) container.onclick = null;
                 if (beatTimeoutId) clearTimeout(beatTimeoutId);
                 combo++;
                 const dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * (sk.comboMult || 1.4) - rpgEffectiveDef(targetObj) + (Math.random() * 3 - 1)));
@@ -6702,9 +6758,9 @@
                                     const wasFainted = obj.hp <= 0;
                                     if (wasFainted && !sk.revive) return;
                                     const isBuffEffect = sk.defBuffPct != null || sk.atkBuffMult != null || sk.atkBuffPct != null || sk.agiBuffPct != null || sk.healBuffPct != null || sk.spRegenFlat != null || sk.critBuffChance != null;
-                                    if (sk.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * sk.healPct));
+                                    if (sk.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * sk.healPct * rpgHealMult(obj)));
                                     if (sk.cureStatusType && obj.statuses) {
-                                        if (sk.cureStatusType === 'all') { obj.statuses.poison = 0; obj.statuses.paralysis = 0; obj.statuses.weaken = 0; obj.statuses.burn = 0; obj.statuses.bleed = 0; obj.statuses.fear = 0; obj.statuses.blind = 0; }
+                                        if (sk.cureStatusType === 'all') { obj.statuses.poison = 0; obj.statuses.paralysis = 0; obj.statuses.weaken = 0; obj.statuses.burn = 0; obj.statuses.bleed = 0; obj.statuses.fear = 0; obj.statuses.blind = 0; obj.statuses.tasteless = 0; }
                                         else if (sk.cureStatusType === 'multi' && sk.cureTypes) sk.cureTypes.forEach(t => { obj.statuses[t] = 0; });
                                         else obj.statuses[sk.cureStatusType] = 0;
                                     }
@@ -6717,7 +6773,7 @@
                                     if (sk.grantSousVide) obj.buffs = Object.assign(obj.buffs || {}, { sousVide: { value: 1, wasHitThisRound: false } }); // 舒肥：沒被打的每回合攻擊力再乘1.1倍，被打到或戰鬥結束就重置
                                     if (sk.healBuffPct != null) {
                                         // 施放的當下就先補一次血，算第一回合；接下來的回合開始輪流結算，總共還是三回合份的回復
-                                        const immediateHeal = Math.max(1, Math.round(obj.maxHp * sk.healBuffPct));
+                                        const immediateHeal = Math.max(1, Math.round(obj.maxHp * sk.healBuffPct * rpgHealMult(obj)));
                                         obj.hp = Math.min(obj.maxHp, obj.hp + immediateHeal);
                                         const remainingTurns = (sk.buffTurns || 3) - 1;
                                         if (remainingTurns > 0) rpgApplyBuff(obj, 'regenPct', sk.healBuffPct, remainingTurns);
@@ -6904,7 +6960,7 @@
                                 // 全體效果：對每一位還活著（或者這道料理可以喚醒）的隊友套用效果
                                 const targets = rpgFormationEntries(b.partyFormation).filter(e => info.revive || e.obj.hp > 0);
                                 targets.forEach(({ row, i, obj }) => {
-                                    if (info.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * info.healPct));
+                                    if (info.healPct) obj.hp = Math.min(obj.maxHp, obj.hp + Math.round(obj.maxHp * info.healPct * rpgHealMult(obj)));
                                     if (info.spRestorePct) obj.sp = Math.min(obj.maxSp, obj.sp + Math.round(obj.maxSp * info.spRestorePct));
                                     if (info.spRestoreFlat) obj.sp = Math.min(obj.maxSp, obj.sp + info.spRestoreFlat);
                                     if (info.cureStatusType && obj.statuses) {
@@ -6922,7 +6978,7 @@
                                 const wasFainted = recipient.hp <= 0;
                                 if (wasFainted && !info.revive) recipient = actorObj; // 保險：不能復活的道具不該套用在已倒下的人身上
                                 const recipientDomId = cmd.itemTarget ? `rpg-slot-party-${cmd.itemTarget.row}-${cmd.itemTarget.i}` : actorDomId;
-                                const healAmt = info.healPct ? Math.round(recipient.maxHp * info.healPct) : 0;
+                                const healAmt = info.healPct ? Math.round(recipient.maxHp * info.healPct * rpgHealMult(recipient)) : 0;
                                 if (healAmt) recipient.hp = Math.min(recipient.maxHp, recipient.hp + healAmt);
                                 if (info.spRestorePct) recipient.sp = Math.min(recipient.maxSp, recipient.sp + Math.round(recipient.maxSp * info.spRestorePct));
                                 if (info.spRestoreFlat) recipient.sp = Math.min(recipient.maxSp, recipient.sp + info.spRestoreFlat);
@@ -6934,7 +6990,7 @@
                                 if (healAmt) gains.push(`HP ${Math.round(info.healPct * 100)}%`);
                                 if (info.spRestorePct) gains.push(`SP ${Math.round(info.spRestorePct * 100)}%`);
                                 if (info.spRestoreFlat) gains.push(`SP ${info.spRestoreFlat}`);
-                                if (!gains.length && !wasFainted) { recipient.hp = Math.min(recipient.maxHp, recipient.hp + Math.round(recipient.maxHp * 0.3)); gains.push('HP 30%'); }
+                                if (!gains.length && !wasFainted) { recipient.hp = Math.min(recipient.maxHp, recipient.hp + Math.round(recipient.maxHp * 0.3 * rpgHealMult(recipient))); gains.push('HP 30%'); }
                                 const gainText = gains.join('、');
                                 rpgLogAppend(wasFainted
                                     ? `${actorObj.name}餵${recipient.name}吃下${cmd.extra}，${recipient.name}奇蹟似地重新站起來了！`
@@ -7046,7 +7102,8 @@
                             return;
                         }
                         if (actionKind === 'groupStatus') {
-                            const types = ['poison', 'bleed', 'burn'];
+                            // 三周目二階段的魔王（真身）額外多一種「味覺喪失」的選項，其他魔王維持原本三選一
+                            const types = (monsterObj.isBoss && b.bossPhase2) ? ['poison', 'bleed', 'burn', 'tasteless'] : ['poison', 'bleed', 'burn'];
                             const type = types[Math.floor(Math.random() * types.length)];
                             const info = RPG_STATUS_INFO[type];
                             const aliveParty = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
@@ -7054,9 +7111,9 @@
                                 rpgInflictStatus(obj, type, 3);
                                 const domId = `rpg-slot-party-${row}-${i}`;
                                 const center = rpgElementCenter(domId);
-                                if (center) rpgBurstParticle(type === 'bleed' ? 'poison' : type, { x: center.x, y: center.y, size: 40, count: 2, duration: 0.6 });
+                                if (center) rpgBurstParticle(type === 'bleed' ? 'poison' : (type === 'tasteless' ? 'debuff' : type), { x: center.x, y: center.y, size: 40, count: 2, duration: 0.6 });
                             });
-                            rpgLogAppend(`${info.emoji} ${monsterObj.name}使出必中的全體攻擊，讓大家都陷入「${info.name}」！`);
+                            rpgLogAppend(`${info.emoji} ${monsterObj.name}使出必中的全體攻擊，讓大家都陷入「${info.name}」！${type === 'tasteless' ? '（接下來治療道具跟持續恢復的效果都會打對折，只有「蔥薑蒜也是菜」能解除）' : ''}`);
                             playSfx('status');
                             if (navigator.vibrate) navigator.vibrate([120, 60, 120, 60, 120]);
                             updateBattleUI();
@@ -7211,6 +7268,15 @@
                 if (!isThirdPlaythroughFirstKill) {
                     p.ngPlus = (p.ngPlus || 0) + 1;
                     rpgLogAppend(`🌟 恭喜通過最終魔王的試煉！即將進入第 ${p.ngPlus + 1} 周目，之後遇到的怪物與魔王強度都會提升為原本的 ${Math.round(Math.pow(1.3, p.ngPlus) * 100)}%！`);
+                    if (b.bossPhase2 && !p.windBraceletObtained) {
+                        // 真正打倒二階段的魔王（真身）才會掉這個：主角+每一位已加入的夥伴都各自拿到一只，
+                        // 每個人的強化等級（braceletLv）各自獨立記錄在自己身上，不是共用同一個數值
+                        p.windBraceletObtained = true; // 只當一次性的「有沒有掉過」保險旗標，避免重複觸發
+                        p.braceletLv = 0;
+                        (state.companions || []).forEach(c => { c.braceletLv = 0; });
+                        rpgAddScore(500, '獲得風之加護手環');
+                        rpgLogAppend('💍 你們在真身型態的黑暗料理王殘骸裡，發現了一箱「風之加護手環」，數量剛好夠全隊每個人一只！每個人的敏捷都提升了，而且可以各自拿去找老麥用神祕金屬繼續精煉鍛造（成功率固定100%）！');
+                    }
                 }
             }
             // 食材掉落：每隻怪物各自獨立骰一次機率，掉的食材種類依牠的強度分級而定
@@ -7429,7 +7495,7 @@
                 obj.atk = Math.round(obj.atk * 1.1);
                 obj.def = Math.round(obj.def * 1.1);
                 obj.curHp = obj.hp; // 魔王跟所有隨從全部重新滿血復活
-                obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0 };
+                obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0 };
                 obj.curSp = obj.sp || 0;
                 if (obj.isBoss) {
                     if (!obj.name.includes('・真身')) obj.name = `${obj.name}・真身`;
