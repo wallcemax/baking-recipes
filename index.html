@@ -2704,7 +2704,7 @@
             // 主角/夥伴的人物造型，跟武器圖示，都是使用者新提供的 tilemap_packed 素材
             hero_player: [2, 8], hero_ako: [3, 7], hero_suisui: [3, 8], hero_laozhou: [0, 7], hero_alan: [1, 8], hero_ginhaku: [0, 11], hero_laomai: [2, 11],
             weapon_sword: [7, 8], weapon_axe: [10, 9], weapon_dagger: [11, 10], weapon_hammer: [9, 9], weapon_wand: [9, 10], weapon_potion: [1, 11],
-            chest_closed: [5, 7], chest_open: [7, 7], anvil: [2, 6],
+            chest_closed: [5, 7], chest_open: [7, 7], anvil: [2, 6], armor_placeholder: [5, 8],
         };
         let rpgTerrainImg = null, rpgCharImg = null, rpgDungeonImg = null, rpgMonsterImg = null, rpgAssetsReady = false;
         // 額外一份怪物/生物總表（使用者提供的素材，直接內嵌成 base64，不用另外連網下載），
@@ -5224,23 +5224,23 @@
             p.forgeLevels = p.forgeLevels || {};
             const list = [];
             if (p.braceletLv != null) {
-                list.push({ key: 'bracelet:player', itemName: '風之加護手環', ownerLabel: '你自己', slot: 'accessory', getLv: () => p.braceletLv || 0, setLv: (v) => { p.braceletLv = v; } });
+                list.push({ key: 'bracelet:player', itemName: '風之加護手環', ownerLabel: '你自己', slot: 'accessory', ownerObj: p, getLv: () => p.braceletLv || 0, setLv: (v) => { p.braceletLv = v; } });
             }
             (state.companions || []).forEach(c => {
                 if (c.braceletLv != null) {
-                    list.push({ key: `bracelet:${c.id}`, itemName: '風之加護手環', ownerLabel: c.name, slot: 'accessory', getLv: () => c.braceletLv || 0, setLv: (v) => { c.braceletLv = v; } });
+                    list.push({ key: `bracelet:${c.id}`, itemName: '風之加護手環', ownerLabel: c.name, slot: 'accessory', ownerObj: c, getLv: () => c.braceletLv || 0, setLv: (v) => { c.braceletLv = v; } });
                 }
             });
             ['老麥的龍鱗巨劍', '老麥的龍鱗鍛造鎧'].forEach(name => {
                 const isWeapon = !!RPG_WEAPONS[name];
                 const ownedKey = isWeapon ? 'ownedWeapons' : 'ownedArmors';
-                if ((p[ownedKey] || []).includes(name)) list.push({ key: name, itemName: name, ownerLabel: '你自己', slot: isWeapon ? 'weapon' : 'armor', getLv: () => p.forgeLevels[name] || 0, setLv: (v) => { p.forgeLevels[name] = v; } });
+                if ((p[ownedKey] || []).includes(name)) list.push({ key: name, itemName: name, ownerLabel: '你自己', slot: isWeapon ? 'weapon' : 'armor', ownerObj: p, getLv: () => p.forgeLevels[name] || 0, setLv: (v) => { p.forgeLevels[name] = v; } });
             });
             (state.companions || []).forEach(c => {
                 const gear = RPG_COMPANION_EQUIPMENT[c.id];
                 if (!gear) return;
-                if (c.weaponName === gear.weapon.name) list.push({ key: c.weaponName, itemName: c.weaponName, ownerLabel: c.name, slot: 'weapon', getLv: () => p.forgeLevels[c.weaponName] || 0, setLv: (v) => { p.forgeLevels[c.weaponName] = v; } });
-                if (c.armorName === gear.armor.name) list.push({ key: c.armorName, itemName: c.armorName, ownerLabel: c.name, slot: 'armor', getLv: () => p.forgeLevels[c.armorName] || 0, setLv: (v) => { p.forgeLevels[c.armorName] = v; } });
+                if (c.weaponName === gear.weapon.name) list.push({ key: c.weaponName, itemName: c.weaponName, ownerLabel: c.name, slot: 'weapon', ownerObj: c, getLv: () => p.forgeLevels[c.weaponName] || 0, setLv: (v) => { p.forgeLevels[c.weaponName] = v; } });
+                if (c.armorName === gear.armor.name) list.push({ key: c.armorName, itemName: c.armorName, ownerLabel: c.name, slot: 'armor', ownerObj: c, getLv: () => p.forgeLevels[c.armorName] || 0, setLv: (v) => { p.forgeLevels[c.armorName] = v; } });
             });
             return list;
         }
@@ -5307,9 +5307,46 @@
             const metalCount = (p.materials && p.materials['神祕金屬']) || 0;
             const lv = entry.getLv();
             if (lv >= 10 || metalCount < 1) return;
+            if (lv === 9) {
+                // 最後一級（+9→+10）是決定性的一擊，改成先問玩家要不要一起幫忙，而不是直接套用機率
+                rpgOpenForgeHelpPrompt(key);
+                return;
+            }
+            rpgExecuteForge(key, 0, '');
+        }
+        // +9→+10 的詢問畫面：是否要跟老麥一起完成這件裝備的最後一哩路
+        function rpgOpenForgeHelpPrompt(key) {
+            const entry = rpgForgeTargetList().find(e => e.key === key);
+            if (!entry) return;
+            playSfx('click');
+            document.getElementById('game-modal-body').innerHTML = `
+                <div style="max-width:520px; margin-left:auto; margin-right:auto; text-align:center;">
+                    <p class="text-sm mb-4" style="color:#5C4A3A;">老麥停下手邊的鎚子，抬頭看向你：</p>
+                    <p class="font-medium mb-5">「『${entry.itemName}』只差最後一鎚就要大功告成了……這一下非常關鍵，你要幫忙老麥一起完成這件裝備嗎？」</p>
+                    <button onclick="rpgOpenForgeHelpMinigame('${key}')" class="btn-amber w-full mb-2">✅ 是，我想幫老麥</button>
+                    <button onclick="rpgExecuteForge('${key}', 0, '')" class="btn-secondary w-full mb-2">🚪 不要，讓老麥自己來</button>
+                    <button onclick="rpgForgeScreenReturn()" class="btn-secondary w-full">🤔 我再想想...</button>
+                </div>
+            `;
+        }
+        function rpgForgeScreenReturn() {
+            document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML();
+        }
+        // 真正執行一次鍛造：rateAdjust 是小遊戲結果帶來的成功率加減（百分點），resultPrefix 是要加在結果訊息前面的一句話
+        function rpgExecuteForge(key, rateAdjust, resultPrefix) {
+            const state = rpgState;
+            if (!rpgLaomaiInParty()) return;
+            const p = state.player;
+            p.forgeLevels = p.forgeLevels || {};
+            const entry = rpgForgeTargetList().find(e => e.key === key);
+            if (!entry) return;
+            const metalCount = (p.materials && p.materials['神祕金屬']) || 0;
+            const lv = entry.getLv();
+            if (lv >= 10 || metalCount < 1) return;
             p.materials['神祕金屬'] -= 1;
             if (p.materials['神祕金屬'] <= 0) delete p.materials['神祕金屬'];
-            const rate = rpgForgeSuccessRate(lv, entry.itemName);
+            const baseRate = rpgForgeSuccessRate(lv, entry.itemName);
+            const rate = Math.max(0, Math.min(100, baseRate + (rateAdjust || 0)));
             const success = Math.random() * 100 < rate;
             const isBracelet = entry.itemName === '風之加護手環';
             let message;
@@ -5324,7 +5361,7 @@
                 message = `💢 鍛造失敗了……「${entry.itemName}」沒有損壞，但強度被打回 +0，只能重新來過。`;
                 playSfx('fail');
             }
-            document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML(message);
+            document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML((resultPrefix || '') + message);
         }
 
         // ---------- 回合制戰鬥 ----------
@@ -6403,6 +6440,20 @@
             const z = size / 16;
             return `<div style="width:${size}px; height:${size}px; background-image:url('${sheetInfo.url}'); background-position:-${col * sheetInfo.stride * z}px -${r2 * sheetInfo.stride * z}px; background-size:${sheetInfo.w * z}px ${sheetInfo.h * z}px; image-rendering:pixelated; ${tint}"></div>`;
         }
+        // 精煉鍛造小遊戲用：防具一律用圖1(5,8)代替；武器則盡量顯示擁有者本身的武器圖磚(夥伴身上有weaponSprite/weaponHue)，
+        // 找不到對應圖磚（例如主角自己買的新武器沒有weaponSprite欄位）就退回用一般劍的圖磚代替
+        function rpgForgeItemVisualHTML(entry, size) {
+            const z = size / 16;
+            if (entry.slot === 'armor' || entry.slot === 'accessory') {
+                const [col, row] = RPG_DUNGEON_TILES.armor_placeholder;
+                return `<div style="width:${size}px; height:${size}px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${col * RPG_DUNGEON_STRIDE * z}px -${row * RPG_DUNGEON_STRIDE * z}px; background-size:${RPG_DUNGEON_W * z}px ${RPG_DUNGEON_H * z}px; image-rendering:pixelated;"></div>`;
+            }
+            const owner = entry.ownerObj;
+            const spriteKey = (owner && owner.weaponSprite && RPG_DUNGEON_TILES[owner.weaponSprite]) ? owner.weaponSprite : 'weapon_sword';
+            const hue = (owner && owner.weaponHue) || 0;
+            const [col, row] = RPG_DUNGEON_TILES[spriteKey];
+            return `<div style="width:${size}px; height:${size}px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${col * RPG_DUNGEON_STRIDE * z}px -${row * RPG_DUNGEON_STRIDE * z}px; background-size:${RPG_DUNGEON_W * z}px ${RPG_DUNGEON_H * z}px; image-rendering:pixelated; filter:hue-rotate(${hue}deg);"></div>`;
+        }
         // 火熱鐵砧的敲擊小遊戲：怪物被放上放大的鐵砧（圖1(2,6)），旁邊擺著鐵鎚（圖1(9,9)）；
         // 趁鐵塊發光（計時條還沒歸零）之前點鐵鎚，鐵鎚會往下揮打一次動畫，怪物跟著震動、扣血、旁邊顯示連段數，
         // 每接到一段都用 comboMult 當威力倍率打一次目標；只要有一段沒接到（逾時沒點，或目標已經被打死）就會中斷，
@@ -6498,7 +6549,7 @@
                 setTimeout(finish, 500);
             }
             function doHit() {
-                if (resolved || targetObj.curHp <= 0) return;
+                if (resolved) return;
                 // 核心判定：完全不在任何窗口內點擊，直接無效（不算浪費也不算命中），逼玩家真的要看光效出手，不能狂點
                 if ((!normalOpen && !perfectOpen) || hitRegisteredThisBeat) return;
                 hitRegisteredThisBeat = true;
@@ -6536,7 +6587,7 @@
                 playSfx(isPerfect ? 'crit' : 'hit');
                 const cEl = comboEl();
                 if (cEl) cEl.textContent = `${isPerfect ? '💥完美' : '👍命中'}！連段 ${combo} / ${maxCombo}　倍率×${currentMult.toFixed(2)}`;
-                if (targetObj.curHp <= 0 || combo >= maxCombo) { setTimeout(finish, 350); return; }
+                if (combo >= maxCombo) { setTimeout(finish, 350); return; }
                 scheduleBeat();
             }
             // 排下一拍：計時條照固定的beatIntervalMs跑滿一輪，普通窗口（橘光）先開、完美窗口（亮黃閃爍）藏在尾端後開，
@@ -6573,8 +6624,8 @@
                     if (!hitRegisteredThisBeat) missBeat();
                 }, beatIntervalMs);
             }
-            const containerForClick = anvilContainerEl();
-            if (containerForClick) containerForClick.onclick = doHit; // 整場只要綁定一次即可，doHit內部自己判斷現在是不是窗口內
+            overlay.style.cursor = 'pointer';
+            overlay.onclick = doHit; // 整場只要綁定一次即可，doHit內部自己判斷現在是不是窗口內；點擊範圍是整個畫面，不是只有鐵砧那一小塊
             // 淡入動畫播完之後，先跑一段 3、2、1、開始！的倒數，倒數期間點擊完全沒有反應（兩個窗口都預設false），
             // 讓玩家看得到畫面、聽得到節奏音樂之後再正式開始接拍，不會一開場就馬上考驗反應
             function runCountdown() {
@@ -6607,6 +6658,193 @@
                 showStep();
             }
             setTimeout(runCountdown, 450); // 等淡入動畫（0.35s）播完再開始倒數
+        }
+        function rpgOpenForgeHelpMinigame(key) {
+            const entry = rpgForgeTargetList().find(e => e.key === key);
+            if (!entry) return;
+            rpgRunForgeHelpMinigame(entry, (finalCombo) => {
+                let rateAdjust, resultPrefix;
+                if (finalCombo < 5) {
+                    rateAdjust = -10;
+                    resultPrefix = `💢 你幫了個倒忙……成功率 -10%！　`;
+                } else {
+                    // 第5段開始+5%，之後每一下再+1%，最多12段封頂+12%
+                    rateAdjust = 5 + (Math.min(finalCombo, 12) - 5);
+                    resultPrefix = `✨ 你跟老麥完美搭配了 ${finalCombo} 段！成功率 +${rateAdjust}%！　`;
+                }
+                rpgExecuteForge(key, rateAdjust, resultPrefix);
+            });
+        }
+        // 精煉鍛造+9→+10的敲擊小遊戲：規則跟火熱鐵砧一樣（固定節奏排程、橘光算命中、亮黃閃爍是完美），
+        // 但這裡不算傷害，只在乎「最終連段數」，連段結果會回傳給呼叫者去換算成功率加減
+        function rpgRunForgeHelpMinigame(entry, onComplete) {
+            const maxCombo = 12;
+            let combo = 0;
+            let resolved = false;
+            const anvilSize = 120;
+            const anvilZ = anvilSize / 16;
+            const [aCol, aRow] = RPG_DUNGEON_TILES.anvil;
+            const [hCol, hRow] = RPG_DUNGEON_TILES.weapon_hammer;
+            const itemSize = 56;
+            const overlay = document.createElement('div');
+            overlay.id = 'rpg-forge-anvil-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(13,10,20,0.88); z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; opacity:0; transition:opacity .35s ease;';
+            overlay.innerHTML = `
+                <style>
+                    @keyframes rpgHammerSwing2 { 0%{transform:rotate(0deg) translate(0,0);} 35%{transform:rotate(-55deg) translate(-6px,-10px);} 60%{transform:rotate(35deg) translate(4px,8px);} 100%{transform:rotate(0deg) translate(0,0);} }
+                    @keyframes rpgItemShake { 0%,100%{transform:translate(-50%,0);} 25%{transform:translate(calc(-50% - 3px),1px);} 50%{transform:translate(calc(-50% + 3px),-1px);} 75%{transform:translate(calc(-50% - 2px),1px);} }
+                    @keyframes rpgCountdownPop2 { 0%{transform:scale(0.4); opacity:0;} 40%{transform:scale(1.15); opacity:1;} 100%{transform:scale(1); opacity:1;} }
+                    @keyframes rpgPerfectPulse2 { 0%,100%{filter:brightness(1.9) drop-shadow(0 0 16px #FFF3B0);} 50%{filter:brightness(2.3) drop-shadow(0 0 22px #FFF3B0);} }
+                    #rpg-forge-anvil-hammer.swing { animation: rpgHammerSwing2 .3s ease; }
+                    #rpg-forge-anvil-item.shake { animation: rpgItemShake .3s ease; }
+                    #rpg-forge-anvil-countdown { animation: rpgCountdownPop2 .5s ease; }
+                    #rpg-forge-anvil-container.glow-normal { filter: brightness(1.35) drop-shadow(0 0 8px #E0763B); }
+                    #rpg-forge-anvil-container.glow-perfect { animation: rpgPerfectPulse2 .35s ease infinite; }
+                </style>
+                <p style="color:#F4E4CE; font-size:1.05rem; font-weight:600; text-align:center;">🔨 一起幫老麥完成最後一鎚！橘光時點下去、亮黃閃爍是完美一擊！</p>
+                <div id="rpg-forge-anvil-container" style="position:relative; width:${anvilSize}px; height:${Math.round(anvilSize * 1.1)}px; display:flex; align-items:flex-end; justify-content:center; cursor:pointer; transition:filter .12s ease; -webkit-tap-highlight-color:transparent;">
+                    <div id="rpg-forge-anvil-item" style="position:absolute; bottom:${Math.round(anvilSize * 0.55)}px; left:50%; transform:translateX(-50%); z-index:2;">${rpgForgeItemVisualHTML(entry, itemSize)}</div>
+                    <div style="width:${anvilSize}px; height:${anvilSize}px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${aCol * RPG_DUNGEON_STRIDE * anvilZ}px -${aRow * RPG_DUNGEON_STRIDE * anvilZ}px; background-size:${RPG_DUNGEON_W * anvilZ}px ${RPG_DUNGEON_H * anvilZ}px; image-rendering:pixelated; z-index:1;"></div>
+                    <div id="rpg-forge-anvil-hammer" style="position:absolute; top:-18px; right:-6px; width:44px; height:44px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${hCol * RPG_DUNGEON_STRIDE * (44 / 16)}px -${hRow * RPG_DUNGEON_STRIDE * (44 / 16)}px; background-size:${RPG_DUNGEON_W * (44 / 16)}px ${RPG_DUNGEON_H * (44 / 16)}px; image-rendering:pixelated; z-index:3;"></div>
+                    <div id="rpg-forge-anvil-countdown" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:3rem; font-weight:800; color:#F4C55E; text-shadow:0 2px 6px rgba(0,0,0,0.6); z-index:4;">🔥</div>
+                </div>
+                <p id="rpg-forge-anvil-combo" style="color:#F4C55E; font-size:1.3rem; font-weight:800; visibility:hidden; text-align:center;">連段 0 / ${maxCombo}</p>
+                <div style="width:220px; height:12px; border-radius:6px; background:#3A2E22; overflow:hidden; visibility:hidden;" id="rpg-forge-anvil-timer-wrap">
+                    <div id="rpg-forge-anvil-timer-bar" style="height:100%; width:100%; background:#E0763B;"></div>
+                </div>
+                <p style="color:#B3A492; font-size:.8rem; text-align:center;">連段沒接到5段就會幫倒忙（成功率-10%），5段以上開始每多接一下成功率再+1%（最多+12%）</p>
+            `;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => { overlay.style.opacity = '1'; });
+            const prevBgmMood = rpgBgmMood;
+            rpgStartBgm('forge');
+            playSfx('click');
+            const beatIntervalMs = Math.round(RPG_BGM_PATTERNS.forge.tempo * 1000);
+            const normalOpenDelay = Math.round(beatIntervalMs * 0.36);
+            const perfectOpenDelay = Math.round(beatIntervalMs * 0.72);
+            const perfectCloseDelay = Math.round(beatIntervalMs * 0.94);
+            let normalOpen = false;
+            let perfectOpen = false;
+            let hitRegisteredThisBeat = false;
+            let normalOpenTimeoutId = null;
+            let perfectOpenTimeoutId = null;
+            let perfectCloseTimeoutId = null;
+            let beatTimeoutId = null;
+            const comboEl = () => document.getElementById('rpg-forge-anvil-combo');
+            const timerBarEl = () => document.getElementById('rpg-forge-anvil-timer-bar');
+            const timerWrapEl = () => document.getElementById('rpg-forge-anvil-timer-wrap');
+            const hammerEl = () => document.getElementById('rpg-forge-anvil-hammer');
+            const containerEl = () => document.getElementById('rpg-forge-anvil-container');
+            const itemEl = () => document.getElementById('rpg-forge-anvil-item');
+            const countdownEl = () => document.getElementById('rpg-forge-anvil-countdown');
+            function clearAllTimeouts() {
+                if (beatTimeoutId) clearTimeout(beatTimeoutId);
+                if (normalOpenTimeoutId) clearTimeout(normalOpenTimeoutId);
+                if (perfectOpenTimeoutId) clearTimeout(perfectOpenTimeoutId);
+                if (perfectCloseTimeoutId) clearTimeout(perfectCloseTimeoutId);
+            }
+            function finish() {
+                if (resolved) return;
+                resolved = true;
+                clearAllTimeouts();
+                rpgStartBgm(prevBgmMood || 'battle');
+                overlay.remove();
+                onComplete(combo);
+            }
+            function missBeat() {
+                if (resolved) return;
+                normalOpen = false; perfectOpen = false;
+                const container = containerEl();
+                if (container) container.classList.remove('glow-normal', 'glow-perfect');
+                playSfx('fail');
+                const cEl = comboEl();
+                if (cEl) cEl.textContent = `連段中斷！最終 ${combo} 段`;
+                setTimeout(finish, 500);
+            }
+            function doHit() {
+                if (resolved) return;
+                if ((!normalOpen && !perfectOpen) || hitRegisteredThisBeat) return;
+                hitRegisteredThisBeat = true;
+                const isPerfect = perfectOpen;
+                normalOpen = false; perfectOpen = false;
+                clearAllTimeouts();
+                const container = containerEl();
+                if (container) container.classList.remove('glow-normal', 'glow-perfect');
+                combo++;
+                const hEl = hammerEl();
+                if (hEl) { hEl.classList.remove('swing'); void hEl.offsetWidth; hEl.classList.add('swing'); }
+                const iEl = itemEl();
+                if (iEl) { iEl.classList.remove('shake'); void iEl.offsetWidth; iEl.classList.add('shake'); }
+                playSfx(isPerfect ? 'crit' : 'hit');
+                const cEl = comboEl();
+                if (cEl) cEl.textContent = `${isPerfect ? '💥完美' : '👍命中'}！連段 ${combo} / ${maxCombo}`;
+                if (combo >= maxCombo) { setTimeout(finish, 350); return; }
+                scheduleBeat();
+            }
+            function scheduleBeat() {
+                if (resolved) return;
+                normalOpen = false; perfectOpen = false;
+                hitRegisteredThisBeat = false;
+                const bar = timerBarEl();
+                if (bar) {
+                    bar.style.transition = 'none';
+                    bar.style.width = '100%';
+                    void bar.offsetWidth;
+                    bar.style.transition = `width ${beatIntervalMs}ms linear`;
+                    bar.style.width = '0%';
+                }
+                const container = containerEl();
+                normalOpenTimeoutId = setTimeout(() => {
+                    if (resolved) return;
+                    normalOpen = true;
+                    if (container) container.classList.add('glow-normal');
+                }, normalOpenDelay);
+                perfectOpenTimeoutId = setTimeout(() => {
+                    if (resolved) return;
+                    perfectOpen = true;
+                    if (container) container.classList.add('glow-perfect');
+                }, perfectOpenDelay);
+                perfectCloseTimeoutId = setTimeout(() => {
+                    if (resolved) return;
+                    perfectOpen = false;
+                    if (container) container.classList.remove('glow-perfect');
+                }, perfectCloseDelay);
+                beatTimeoutId = setTimeout(() => {
+                    if (!hitRegisteredThisBeat) missBeat();
+                }, beatIntervalMs);
+            }
+            overlay.style.cursor = 'pointer';
+            overlay.onclick = doHit; // 點擊範圍是整個畫面，不是只有鐵砧那一小塊
+            function runCountdown() {
+                const steps = ['3', '2', '1', '開始！'];
+                let stepIdx = 0;
+                function showStep() {
+                    const cEl = countdownEl();
+                    if (cEl) {
+                        cEl.style.animation = 'none';
+                        void cEl.offsetWidth;
+                        cEl.style.animation = 'rpgCountdownPop2 .5s ease';
+                        cEl.textContent = steps[stepIdx];
+                    }
+                    playSfx(stepIdx < steps.length - 1 ? 'blip' : 'success');
+                    stepIdx++;
+                    if (stepIdx < steps.length) {
+                        setTimeout(showStep, 700);
+                    } else {
+                        setTimeout(() => {
+                            const cEl2 = countdownEl();
+                            if (cEl2) cEl2.remove();
+                            const comboLabel = comboEl();
+                            if (comboLabel) comboLabel.style.visibility = 'visible';
+                            const timerWrap = timerWrapEl();
+                            if (timerWrap) timerWrap.style.visibility = 'visible';
+                            scheduleBeat();
+                        }, 500);
+                    }
+                }
+                showStep();
+            }
+            setTimeout(runCountdown, 450);
         }
         function rpgExecuteRound(monstersOnly) {
             const state = rpgState;
