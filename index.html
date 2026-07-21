@@ -4296,14 +4296,20 @@
                 const drewC = useReal && rpgDrawSprite(ctx, rpgDungeonImg, RPG_DUNGEON_TILES[spriteKey] || RPG_DUNGEON_TILES.hero_ako, (trailPos.x - cam.x) * T, (trailPos.y - cam.y) * T, T, RPG_DUNGEON_STRIDE);
                 if (drewC) {
                     // 每位夥伴拿自己對應的武器造型（不是大家都拿同一把劍）；凱的弓是圖2(town圖磚表)，其他人都是圖1(dungeon圖磚表)
+                    // 武器幻化後：圖示放大、換成專屬的發光顏色，一眼就看得出來這把是幻化過的
                     const wKey = comp.weaponSprite || 'weapon_sword';
                     const useTownSheet = comp.weaponSheet === 'town';
                     const wImg = useTownSheet ? rpgTownImg : rpgDungeonImg;
                     const wTiles = useTownSheet ? RPG_TOWN_TILES : RPG_DUNGEON_TILES;
                     const wStride = useTownSheet ? RPG_TOWN_STRIDE : RPG_DUNGEON_STRIDE;
-                    if (comp.weaponHue) { ctx.save(); ctx.filter = `hue-rotate(${comp.weaponHue}deg) saturate(1.5)`; }
-                    rpgDrawSprite(ctx, wImg, wTiles[wKey] || RPG_DUNGEON_TILES.weapon_sword, (trailPos.x - cam.x) * T + T * 0.42, (trailPos.y - cam.y) * T + T * 0.3, T * 0.62, wStride);
-                    if (comp.weaponHue) ctx.restore();
+                    const wManifested = !!comp.weaponManifested;
+                    const wGlowHue = wManifested ? (RPG_MANIFEST_GLOW_HUE[comp.id] ?? comp.weaponHue ?? 0) : comp.weaponHue;
+                    const wSize = wManifested ? T * 0.8 : T * 0.62;
+                    ctx.save();
+                    if (wManifested) { ctx.shadowColor = `hsl(${wGlowHue},90%,60%)`; ctx.shadowBlur = 10; }
+                    if (wGlowHue) ctx.filter = `hue-rotate(${wGlowHue}deg) saturate(${wManifested ? 2.2 : 1.5}) brightness(${wManifested ? 1.3 : 1})`;
+                    rpgDrawSprite(ctx, wImg, wTiles[wKey] || RPG_DUNGEON_TILES.weapon_sword, (trailPos.x - cam.x) * T + T * 0.42, (trailPos.y - cam.y) * T + T * (wManifested ? 0.24 : 0.3), wSize, wStride);
+                    ctx.restore();
                 }
                 if (!drewC) {
                     ctx.font = `${T - 4}px sans-serif`;
@@ -4323,12 +4329,16 @@
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                 ctx.fillText('🧑‍🍳', cx, cy - 2);
             } else {
-                // 手上疊一把武器小圖示，依照裝備的武器套上對應色相，看起來像拿著不同武器
+                // 手上疊一把武器小圖示，依照裝備的武器套上對應色相，看起來像拿著不同武器；幻化後放大+換成專屬發光顏色
                 const weaponInfo = RPG_WEAPONS[state.player.weaponName];
                 if (weaponInfo) {
+                    const pManifested = !!state.player.weaponManifested;
+                    const pGlowHue = pManifested ? RPG_MANIFEST_GLOW_HUE.player : weaponInfo.hue;
+                    const pWSize = pManifested ? T * 0.8 : T * 0.62;
                     ctx.save();
-                    ctx.filter = weaponInfo.hue ? `hue-rotate(${weaponInfo.hue}deg) saturate(1.5)` : 'none';
-                    rpgDrawSprite(ctx, rpgDungeonImg, RPG_DUNGEON_TILES.weapon_sword, (renderPos.x - cam.x) * T + T * 0.42, (renderPos.y - cam.y) * T + T * 0.3, T * 0.62, RPG_DUNGEON_STRIDE);
+                    if (pManifested) { ctx.shadowColor = `hsl(${pGlowHue},90%,60%)`; ctx.shadowBlur = 10; }
+                    ctx.filter = pGlowHue ? `hue-rotate(${pGlowHue}deg) saturate(${pManifested ? 2.2 : 1.5}) brightness(${pManifested ? 1.3 : 1})` : 'none';
+                    rpgDrawSprite(ctx, rpgDungeonImg, RPG_DUNGEON_TILES.weapon_sword, (renderPos.x - cam.x) * T + T * 0.42, (renderPos.y - cam.y) * T + T * (pManifested ? 0.24 : 0.3), pWSize, RPG_DUNGEON_STRIDE);
                     ctx.restore();
                 }
             }
@@ -5564,6 +5574,8 @@
                 </div>
             `;
         }
+        // 幻化武器發光顏色：每個角色各自不同色調，戰鬥/地圖上顯示武器時用這個顏色取代原本的weaponHue
+        const RPG_MANIFEST_GLOW_HUE = { player: 45, ako: 350, suisui: 320, alan: 10, laozhou: 45, ginhaku: 190, laomai: 25, kai: 130 };
         // 幻化：武器/防具精煉滿+10、融合也滿LV.10（玩家自己的裝備不用管融合，因為玩家裝備本來就沒有融合機制）之後，
         // 可以變成全新名稱的幻化裝備。武器數值不變、解鎖專屬技能加成；防具則是裝備主人最大HP+10%、最大SP+10%、DEF+5%
         function rpgManifestEquip(key) {
@@ -5621,10 +5633,46 @@
                 owner.sp += spBonus;
                 effectMsg = `原本精煉練出來的強度完全保留，而且${owner.name}的最大HP+${hpBonus}、最大SP+${spBonus}，防禦力也再+5%，再也不能精煉或融合了。`;
             }
+            const finalize = () => {
+                playSfx('success');
+                rpgAddScore(500, isWeapon ? '武器幻化' : '防具幻化');
+                rpgSaveGame(true);
+                document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML(`✨「${entry.itemName}」幻化成了「${newName}」！${effectMsg}`);
+            };
+            if (isWeapon) {
+                // 武器才有放大發光變色的幻化動畫；防具直接套用效果，不用特別播動畫
+                const glowHue = RPG_MANIFEST_GLOW_HUE[isPlayerOwner ? 'player' : owner.id];
+                rpgPlayManifestAnimation(entry, glowHue, finalize);
+            } else {
+                finalize();
+            }
+        }
+        // 武器幻化動畫：武器圖示放大、發光、換色（每個角色各自不同顏色），演完才真的套用結果畫面
+        function rpgPlayManifestAnimation(entry, glowHue, callback) {
+            const overlay = document.createElement('div');
+            overlay.id = 'rpg-manifest-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(10,8,14,0.92); z-index:9999; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity .4s ease;';
+            overlay.innerHTML = `
+                <style>
+                    @keyframes rpgManifestGrow { 0%{transform:scale(0.6) rotate(0deg); filter:brightness(1);} 55%{transform:scale(1.5) rotate(8deg); filter:brightness(1.7);} 100%{transform:scale(1.2) rotate(0deg); filter:brightness(1.35);} }
+                    #rpg-manifest-icon { animation: rpgManifestGrow 1.4s cubic-bezier(.34,1.56,.64,1) forwards; }
+                </style>
+                <div style="display:flex; flex-direction:column; align-items:center; gap:18px;">
+                    <p style="color:#F4E4CE; font-size:1.1rem; font-weight:700; text-shadow:0 2px 6px rgba(0,0,0,0.7);">✨ 裝備幻化中……</p>
+                    <div id="rpg-manifest-icon">${rpgForgeItemVisualHTML(entry, 90, glowHue)}</div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => { overlay.style.opacity = '1'; });
             playSfx('success');
-            rpgAddScore(500, isWeapon ? '武器幻化' : '防具幻化');
-            rpgSaveGame(true);
-            document.getElementById('game-modal-body').innerHTML = rpgForgeScreenHTML(`✨「${entry.itemName}」幻化成了「${newName}」！${effectMsg}`);
+            setTimeout(() => {
+                const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+                rpgBurstParticle('star', { x: cx, y: cy, count: 8, size: 40, duration: 1 });
+            }, 350);
+            setTimeout(() => {
+                overlay.style.opacity = '0';
+                setTimeout(() => { overlay.remove(); callback(); }, 400);
+            }, 1900);
         }
         function rpgManifestWeapon(key) { rpgManifestEquip(key); } // 保留舊名稱呼叫，避免之前的呼叫點漏改
         function rpgDoForge(key) {
@@ -5904,8 +5952,11 @@
                 const z = RPG_SLOT / 16;
                 // 每位夥伴拿自己對應的武器造型（不是大家都拿同一把劍）；主角則依照裝備的武器套對應色相
                 const wKey = obj.isCompanion ? (obj.weaponSprite || 'weapon_sword') : 'weapon_sword';
-                const weaponHue = obj.isCompanion ? (obj.weaponHue || 0) : ((RPG_WEAPONS[obj.weaponName] || {}).hue || 0);
-                const weaponHueStyle = weaponHue ? `filter:hue-rotate(${weaponHue}deg) saturate(1.5);` : '';
+                const wManifested = !!obj.weaponManifested;
+                const baseWeaponHue = obj.isCompanion ? (obj.weaponHue || 0) : ((RPG_WEAPONS[obj.weaponName] || {}).hue || 0);
+                const weaponHue = wManifested ? (RPG_MANIFEST_GLOW_HUE[obj.isCompanion ? obj.id : 'player'] ?? baseWeaponHue) : baseWeaponHue;
+                const weaponSize = wManifested ? Math.round(RPG_SLOT * 0.82) : Math.round(RPG_SLOT * 0.62);
+                const weaponHueStyle = `filter:${weaponHue ? `hue-rotate(${weaponHue}deg) saturate(${wManifested ? 2.2 : 1.5}) brightness(${wManifested ? 1.3 : 1})` : 'none'}${wManifested ? ` drop-shadow(0 0 5px hsl(${weaponHue},90%,60%))` : ''};`;
                 // 凱的弓是圖2(town圖磚表)，其他人的武器都是圖1(dungeon圖磚表)
                 const useTownWeaponSheet = obj.isCompanion && obj.weaponSheet === 'town';
                 const wSheetUrl = useTownWeaponSheet ? RPG_TOWN_URL : RPG_DUNGEON_URL;
@@ -5917,7 +5968,7 @@
                 visual = useReal
                     ? `<div style="position:relative; width:${RPG_SLOT}px; height:${RPG_SLOT}px;">
                             <div style="width:100%; height:100%; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${col * RPG_DUNGEON_STRIDE * z}px -${r2 * RPG_DUNGEON_STRIDE * z}px; background-size:${RPG_DUNGEON_W * z}px ${RPG_DUNGEON_H * z}px; image-rendering:pixelated;"></div>
-                            <div style="position:absolute; right:-3px; bottom:${Math.round(RPG_SLOT * 0.26)}px; width:${Math.round(RPG_SLOT * 0.62)}px; height:${Math.round(RPG_SLOT * 0.62)}px; background-image:url('${wSheetUrl}'); background-position:-${wcol * wSheetStride * z}px -${wrow * wSheetStride * z}px; background-size:${wSheetW * z}px ${wSheetH * z}px; image-rendering:pixelated; ${weaponHueStyle}"></div>
+                            <div style="position:absolute; right:-3px; bottom:${Math.round(RPG_SLOT * 0.26)}px; width:${weaponSize}px; height:${weaponSize}px; background-image:url('${wSheetUrl}'); background-position:-${wcol * wSheetStride * z}px -${wrow * wSheetStride * z}px; background-size:${wSheetW * z}px ${wSheetH * z}px; image-rendering:pixelated; ${weaponHueStyle}"></div>
                        </div>`
                     : `<div class="text-xl">${obj.isCompanion ? '🧑‍🌾' : '🧑‍🍳'}</div>`;
             } else {
@@ -6825,17 +6876,24 @@
         }
         // 精煉鍛造小遊戲用：防具一律用圖1(5,8)代替；武器則盡量顯示擁有者本身的武器圖磚(夥伴身上有weaponSprite/weaponHue)，
         // 找不到對應圖磚（例如主角自己買的新武器沒有weaponSprite欄位）就退回用一般劍的圖磚代替
-        function rpgForgeItemVisualHTML(entry, size) {
+        function rpgForgeItemVisualHTML(entry, size, glowHue) {
             const z = size / 16;
+            const glowStyle = glowHue != null ? ` filter:hue-rotate(${glowHue}deg) saturate(2.2) brightness(1.3) drop-shadow(0 0 8px hsl(${glowHue},90%,60%));` : '';
             if (entry.slot === 'armor' || entry.slot === 'accessory') {
                 const [col, row] = RPG_DUNGEON_TILES.armor_placeholder;
-                return `<div style="width:${size}px; height:${size}px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${col * RPG_DUNGEON_STRIDE * z}px -${row * RPG_DUNGEON_STRIDE * z}px; background-size:${RPG_DUNGEON_W * z}px ${RPG_DUNGEON_H * z}px; image-rendering:pixelated;"></div>`;
+                return `<div style="width:${size}px; height:${size}px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${col * RPG_DUNGEON_STRIDE * z}px -${row * RPG_DUNGEON_STRIDE * z}px; background-size:${RPG_DUNGEON_W * z}px ${RPG_DUNGEON_H * z}px; image-rendering:pixelated;${glowStyle}"></div>`;
             }
             const owner = entry.ownerObj;
-            const spriteKey = (owner && owner.weaponSprite && RPG_DUNGEON_TILES[owner.weaponSprite]) ? owner.weaponSprite : 'weapon_sword';
+            const useTownSheet = owner && owner.weaponSheet === 'town';
+            const wTiles = useTownSheet ? RPG_TOWN_TILES : RPG_DUNGEON_TILES;
+            const spriteKey = (owner && owner.weaponSprite && wTiles[owner.weaponSprite]) ? owner.weaponSprite : 'weapon_sword';
             const hue = (owner && owner.weaponHue) || 0;
-            const [col, row] = RPG_DUNGEON_TILES[spriteKey];
-            return `<div style="width:${size}px; height:${size}px; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${col * RPG_DUNGEON_STRIDE * z}px -${row * RPG_DUNGEON_STRIDE * z}px; background-size:${RPG_DUNGEON_W * z}px ${RPG_DUNGEON_H * z}px; image-rendering:pixelated; filter:hue-rotate(${hue}deg);"></div>`;
+            const [col, row] = wTiles[spriteKey] || RPG_DUNGEON_TILES.weapon_sword;
+            const sheetUrl = useTownSheet ? RPG_TOWN_URL : RPG_DUNGEON_URL;
+            const sheetStride = useTownSheet ? RPG_TOWN_STRIDE : RPG_DUNGEON_STRIDE;
+            const sheetW = useTownSheet ? RPG_TOWN_W : RPG_DUNGEON_W;
+            const sheetH = useTownSheet ? RPG_TOWN_H : RPG_DUNGEON_H;
+            return `<div style="width:${size}px; height:${size}px; background-image:url('${sheetUrl}'); background-position:-${col * sheetStride * z}px -${row * sheetStride * z}px; background-size:${sheetW * z}px ${sheetH * z}px; image-rendering:pixelated; filter:${glowHue != null ? '' : `hue-rotate(${hue}deg)`};${glowStyle}"></div>`;
         }
         // 火熱鐵砧的敲擊小遊戲：怪物被放上放大的鐵砧（圖1(2,6)），旁邊擺著鐵鎚（圖1(9,9)）；
         // 趁鐵塊發光（計時條還沒歸零）之前點鐵鎚，鐵鎚會往下揮打一次動畫，怪物跟著震動、扣血、旁邊顯示連段數，
