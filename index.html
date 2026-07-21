@@ -7202,11 +7202,16 @@
             const names = monsters.map(m => m.name).join('、');
             rpgLogAppend(`戰鬥勝利！擊敗了 ${names}！`);
             rpgLogAppend(`獲得了 ${totalGold} 金幣`);
+            // 三周目的魔王有一個隱藏的二階段：第一次被打倒時先不要真的觸發周目切換，
+            // 讓玩家以為已經打完了（經驗值/掉寶/升級都正常跑一輪），全部結算完才會在過場動畫裡甦醒、進入真正的二階段戰鬥
+            const isThirdPlaythroughFirstKill = monsters.some(m => m.isBoss) && (p.ngPlus || 0) === 2 && !b.bossPhase2;
             if (monsters.some(m => m.isBoss)) {
                 rpgAddScore(10000, '擊敗魔王');
                 rpgLogAppend('👑 擊敗魔王，積分大量增加！');
-                p.ngPlus = (p.ngPlus || 0) + 1;
-                rpgLogAppend(`🌟 恭喜通過最終魔王的試煉！即將進入第 ${p.ngPlus + 1} 周目，之後遇到的怪物與魔王強度都會提升為原本的 ${Math.round(Math.pow(1.3, p.ngPlus) * 100)}%！`);
+                if (!isThirdPlaythroughFirstKill) {
+                    p.ngPlus = (p.ngPlus || 0) + 1;
+                    rpgLogAppend(`🌟 恭喜通過最終魔王的試煉！即將進入第 ${p.ngPlus + 1} 周目，之後遇到的怪物與魔王強度都會提升為原本的 ${Math.round(Math.pow(1.3, p.ngPlus) * 100)}%！`);
+                }
             }
             // 食材掉落：每隻怪物各自獨立骰一次機率，掉的食材種類依牠的強度分級而定
             const droppedNames = [];
@@ -7289,9 +7294,11 @@
             // 打贏魔王則是先進過場動畫跟台詞，看完才會回地圖
             const actionsEl = document.getElementById('rpg-battle-actions');
             if (actionsEl) {
-                actionsEl.innerHTML = isBossKill
-                    ? `<button onclick="rpgBossVictoryCutscene()" class="btn-primary w-full">🎉 繼續</button>`
-                    : `<button onclick="rpgBackToMap()" class="btn-primary w-full">🎉 繼續</button>`;
+                actionsEl.innerHTML = isThirdPlaythroughFirstKill
+                    ? `<button onclick="rpgBossPhase2Awaken()" class="btn-primary w-full">🎉 繼續</button>`
+                    : isBossKill
+                        ? `<button onclick="rpgBossVictoryCutscene()" class="btn-primary w-full">🎉 繼續</button>`
+                        : `<button onclick="rpgBackToMap()" class="btn-primary w-full">🎉 繼續</button>`;
             }
         }
         // 魔王戰勝利過場：黑暗料理王不甘心地撂下「東山再起」式的台詞，畫面淡出後強制送回村莊旅館並且睡一覺、強制存檔
@@ -7362,6 +7369,88 @@
             playNextLine();
         }
         // 打完魔王強制送回旅館後，補一句說明訊息（跟一般睡一覺的訊息分開寫，才知道是被魔王戰結尾強制送回來的）
+        // 三周目魔王的隱藏二階段：玩家以為打完了（經驗值/掉寶都正常結算完），按下「繼續」才會觸發這段黑暗台詞，
+        // 演完之後魔王「復活」變身、隨從全部滿血歸隊，能力再疊乘一次 1.1 倍，直接無縫接回同一場戰鬥
+        function rpgBossPhase2Awaken() {
+            const state = rpgState;
+            if (!state || !state.battle) return;
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed; inset:0; background:#050208; opacity:0; z-index:9999; transition:opacity 1s ease-in-out; display:flex; align-items:center; justify-content:center; padding:24px;';
+            const textBox = document.createElement('p');
+            textBox.style.cssText = 'color:#F0AFAF; font-size:1.05rem; line-height:1.9; max-width:520px; text-align:center; text-shadow:0 2px 6px rgba(0,0,0,0.8);';
+            overlay.appendChild(textBox);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => { overlay.style.opacity = '1'; });
+            playSfx('bossAlert');
+            const lines = [
+                '就在大家鬆一口氣、準備收拾戰場的時候……',
+                '倒在地上的黑暗料理王，身體忽然劇烈抽動了一下。',
+                '黑暗料理王：呵……呵呵呵……你們以為，這樣就結束了嗎？',
+                '黑暗料理王：這道菜，才剛要上桌而已——！',
+                '他的身軀開始扭曲、膨脹，一股更加濃烈的黑暗氣息瞬間籠罩了整個戰場！',
+                '黑暗料理王・真身　覺醒了！倒下的隨從們也重新站了起來，殺氣比剛才更加強烈！',
+            ];
+            let lineIdx = 0;
+            const playNextLine = () => {
+                if (lineIdx >= lines.length) {
+                    setTimeout(() => {
+                        overlay.style.opacity = '0';
+                        setTimeout(() => {
+                            overlay.remove();
+                            rpgActivateBossPhase2();
+                        }, 1000);
+                    }, 1000);
+                    return;
+                }
+                const fullText = lines[lineIdx];
+                textBox.textContent = '';
+                let i = 0;
+                const typer = setInterval(() => {
+                    i++;
+                    textBox.textContent = fullText.slice(0, i);
+                    if (i % 2 === 0 && fullText[i - 1] && fullText[i - 1].trim()) playSfx('blip');
+                    if (i >= fullText.length) {
+                        clearInterval(typer);
+                        lineIdx++;
+                        setTimeout(playNextLine, 1400);
+                    }
+                }, 32);
+            };
+            playNextLine();
+        }
+        // 真正把二階段套用到戰鬥狀態上：魔王＋所有隨從整批滿血復活、能力再疊乘1.1倍，直接接回同一場戰鬥重新開始下指令
+        function rpgActivateBossPhase2() {
+            const state = rpgState;
+            const b = state.battle;
+            if (!b) return;
+            b.bossPhase2 = true; // 標記已經進入二階段，避免二階段的魔王被打倒時又誤觸發一次覺醒（那次才是真正的通關）
+            rpgFormationEntries(b.monsterFormation).forEach(({ obj }) => {
+                obj.hp = Math.round(obj.hp * 1.1);
+                obj.atk = Math.round(obj.atk * 1.1);
+                obj.def = Math.round(obj.def * 1.1);
+                obj.curHp = obj.hp; // 魔王跟所有隨從全部重新滿血復活
+                obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0 };
+                obj.curSp = obj.sp || 0;
+                if (obj.isBoss) {
+                    if (!obj.name.includes('・真身')) obj.name = `${obj.name}・真身`;
+                    obj.spriteKey = 'troll'; // 圖1(3,9)，真身型態換一個更兇猛的色調來呈現變身感，圖磚本身不變
+                    obj.sheet = 'dungeon';
+                    obj.hue = 0;
+                }
+            });
+            b.commands = {};
+            b.phase = 'command';
+            b.uiMode = 'main';
+            const firstAlly = rpgFormationEntries(b.partyFormation)[0];
+            b.actor = firstAlly ? { row: firstAlly.row, i: firstAlly.i } : { row: 'front', i: 0 };
+            const firstMonster = rpgFormationEntries(b.monsterFormation)[0];
+            b.target = firstMonster ? { row: firstMonster.row, i: firstMonster.i } : null;
+            rpgStartBgm('boss');
+            playSfx('bossAlert');
+            rpgLogAppend('👑 黑暗料理王・真身覺醒！隨從全數重新加入戰場，能力比剛才更強了！');
+            document.querySelectorAll('#rpg-battle-actions button').forEach(btn => btn.disabled = false);
+            renderRpgBattle();
+        }
         function rpgLogAppendVillageArrival() {
             const box = document.getElementById('rpg-dialogue-box');
             const state = rpgState;
