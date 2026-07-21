@@ -2761,7 +2761,9 @@
             const a = RPG_ARMORS[obj.armorName];
             const base = obj.def + (a ? a.def : 0);
             const pct = obj.buffs && obj.buffs.defBuffPct ? obj.buffs.defBuffPct.value : 0;
-            return Math.round(base * (1 + pct) * rpgForgeMult(obj.armorName));
+            // 軟化：防禦力再打 92 折（-8%），只有「甩鍋熱炒」能解除抵銷，其他解除異常狀態的手段都對這個沒有用
+            const softenedMult = (obj.statuses && obj.statuses.softened > 0) ? 0.92 : 1;
+            return Math.round(base * (1 + pct) * rpgForgeMult(obj.armorName) * softenedMult);
         }
         // 敏捷有暫時性 buff 的話，排行動順序要算進去
         function rpgEffectiveAgi(obj) {
@@ -3285,18 +3287,22 @@
         }
         function rpgRollEncounter(playerLevel) {
             // 魔王機率＝隊伍總等級÷100 的百分比（例如總等級200＝2%），跟原本的等級級距系統分開獨立判定
-            // 四周目起（ngPlus >= 3）暫時還沒有對應的魔王戰內容，先跳過魔王判定，只會遇到一般怪物
-            const ngPlusNow = (rpgState && rpgState.player && rpgState.player.ngPlus) || 0;
-            const bossChance = ngPlusNow >= 3 ? 0 : rpgTotalPartyLevel() / 10000;
+            // 五周目起（ngPlus >= 4）目前還沒有對應的魔王戰內容，先關閉魔王判定，只會遇到一般怪物，
+            // 之後做好五周目的魔王內容，把這裡的判斷拿掉就能重新開啟
+            const ngPlusForBossGate = (rpgState && rpgState.player && rpgState.player.ngPlus) || 0;
+            const bossChance = ngPlusForBossGate >= 4 ? 0 : rpgTotalPartyLevel() / 10000;
             if (Math.random() < bossChance) {
                 const monsterLevel = playerLevel + 20 + Math.floor(Math.random() * 11);
                 const stats = rpgMonsterStatsAtLevel(monsterLevel, true);
                 const species = RPG_MONSTER_SPECIES.dark_cuisine_king;
+                // 四周目起（ngPlus >= 3），魔王從一開始遇到就已經是「真身」型態了，不用再等二階段才變身
+                const isFourthTier = ((rpgState && rpgState.player && rpgState.player.ngPlus) || 0) >= 3;
+                const bossVisual = isFourthTier ? { name: '黑暗料理王・真身', hue: 0 } : {};
                 const escortStats = rpgMonsterStatsAtLevel(playerLevel + 10, false);
                 const monsters = [];
                 for (let slotIdx = 0; slotIdx < 8; slotIdx++) {
                     if (slotIdx === 5) { // back row index 1 = 後排 2 號位（front 4 格 + back 4 格排列時，第 6 個位置）
-                        monsters.push({ id: 'dark_cuisine_king', ...species, ...stats, curHp: stats.hp, isBoss: true, aiType: 'low_hp' });
+                        monsters.push({ id: 'dark_cuisine_king', ...species, ...stats, ...bossVisual, curHp: stats.hp, isBoss: true, aiType: 'low_hp' });
                     } else {
                         const escortId = RPG_MONSTER_POOL[Math.floor(Math.random() * RPG_MONSTER_POOL.length)];
                         const escortSpecies = RPG_MONSTER_SPECIES[escortId];
@@ -3377,7 +3383,7 @@
             legendary_ongoing_feast: { name: '傳說持續盛宴', sp: 30, healBuffPct: 0.35, spRegenFlat: 8, buffTurns: 3, pattern: 'ally_all', ingredientCost: { '雞蛋': 1, '起司': 1, '蜂蜜': 1, '史萊姆凝膠': 1, '菇傘': 1, '小麥': 1 }, particle: 'magic_05', effectStyle: 'pulse', filter: 'sepia(1) hue-rotate(90deg) saturate(4.5) brightness(1.25) contrast(1.15)' , sfx: 'feast' },
 
             // ================= 阿柯（火炒系，防禦BUFF/範圍/灼傷/攻擊BUFF）=================
-            ako_def_buff: { name: '甩鍋熱炒', sp: 5, defBuffPct: 0.08, buffTurns: 3, pattern: 'ally_all', ingredientCost: { '雞蛋': 1 }, particle: 'twirl_01', effectStyle: 'spin', filter: 'sepia(1) hue-rotate(350deg) saturate(6.5) brightness(1.3) contrast(1.15)' , sfx: 'sizzle' },
+            ako_def_buff: { name: '甩鍋熱炒', sp: 5, defBuffPct: 0.08, cureStatusType: 'softened', buffTurns: 3, pattern: 'ally_all', ingredientCost: { '雞蛋': 1 }, particle: 'twirl_01', effectStyle: 'spin', filter: 'sepia(1) hue-rotate(350deg) saturate(6.5) brightness(1.3) contrast(1.15)' , sfx: 'sizzle' },
             ako_cross: { name: '烈焰十字炒', sp: 10, mult: 1.2, pattern: 'column_adjacent_pierce', particle: 'star_01', filter: 'sepia(1) hue-rotate(0deg) saturate(6.5) brightness(1.35) contrast(1.15)' , sfx: 'fireHit' },
             ako_column: { name: '炒鍋爆擊', sp: 15, mult: 1.5, pattern: 'column_adjacent', particle: 'fire_02', filter: 'sepia(1) hue-rotate(0deg) saturate(6.5) brightness(1.35) contrast(1.15)' , sfx: 'fireHit' },
             ako_burn: { name: '烈焰炙燒', sp: 20, mult: 2.0, pattern: 'single', burnChance: 1, burnTurns: 3, particle: 'muzzle_05', filter: 'sepia(1) hue-rotate(0deg) saturate(6.5) brightness(1.35) contrast(1.15)' , sfx: 'fireHit' },
@@ -3609,11 +3615,13 @@
             const monsterLevel = playerLevel + 20 + Math.floor(Math.random() * 11);
             const stats = rpgMonsterStatsAtLevel(monsterLevel, true);
             const species = RPG_MONSTER_SPECIES.dark_cuisine_king;
+            const isFourthTierDebug = (rpgState.player.ngPlus || 0) >= 3;
+            const bossVisualDebug = isFourthTierDebug ? { name: '黑暗料理王・真身', hue: 0 } : {};
             const escortStats = rpgMonsterStatsAtLevel(playerLevel + 10, false);
             const monsters = [];
             for (let slotIdx = 0; slotIdx < 8; slotIdx++) {
                 if (slotIdx === 5) {
-                    monsters.push({ id: 'dark_cuisine_king', ...species, ...stats, curHp: stats.hp, isBoss: true, aiType: 'low_hp' });
+                    monsters.push({ id: 'dark_cuisine_king', ...species, ...stats, ...bossVisualDebug, curHp: stats.hp, isBoss: true, aiType: 'low_hp' });
                 } else {
                     const escortId = RPG_MONSTER_POOL[Math.floor(Math.random() * RPG_MONSTER_POOL.length)];
                     const escortSpecies = RPG_MONSTER_SPECIES[escortId];
@@ -4436,6 +4444,33 @@
         };
         // 從還沒拿到專屬裝備的「已加入」夥伴裡隨機抽一件，直接強制裝備上去（夥伴沒有裝備選擇畫面，數值直接套用）
         // 二周目以後（ngPlus > 0），已經拿過的專屬裝備還能再重複掉落，重複獲得會自動「融合」：等級 +1、武器 ATK+1／防具 DEF+1，融合到 LV.10 封頂就不會再掉落了
+        // 四周目魔王寶箱專用：不像一般的機率式單一掉落，這個是「全體夥伴（不含主角）武器+防具各補一份」，
+        // 邏輯完全比照 rpgTryDropCompanionEquipment 的融合規則（沒有真正專屬裝備的先補齊，有的話就融合升級），
+        // 只是這裡不用隨機抽，是全部一次到位；已經融合到 LV.10 滿等的那件會直接跳過，不會再重複出現
+        function rpgGrantAllCompanionGearBossChest() {
+            const state = rpgState;
+            const lines = [];
+            (state.companions || []).forEach(c => {
+                const gear = RPG_COMPANION_EQUIPMENT[c.id];
+                if (!gear) return;
+                [['weapon', 'weaponName', 'weaponFusionLv', 'atk'], ['armor', 'armorName', 'armorFusionLv', 'def']].forEach(([slot, nameField, fusionField, statField]) => {
+                    const item = gear[slot];
+                    const has = c[nameField] === item.name;
+                    if (!has) {
+                        c[statField] += item[statField];
+                        c[nameField] = item.name;
+                        c[fusionField] = 1;
+                        lines.push(`${c.name}的專屬${slot === 'weapon' ? '武器' : '防具'}「${item.name}」`);
+                    } else if ((c[fusionField] || 1) < 10) {
+                        c[fusionField] = (c[fusionField] || 1) + 1;
+                        c[statField] += 1;
+                        lines.push(`${c.name}的「${item.name}」融合到 LV.${c[fusionField]}`);
+                    }
+                    // 已經 LV.10 滿等的話，這裡什麼都不做，直接跳過
+                });
+            });
+            return lines;
+        }
         function rpgTryDropCompanionEquipment() {
             const state = rpgState;
             const ngPlus = (state.player && state.player.ngPlus) || 0;
@@ -5453,6 +5488,16 @@
             ['front', 'back'].forEach(row => formation[row].forEach((obj, i) => { if (obj) list.push({ row, i, obj }); }));
             return list;
         }
+        // 判斷這場戰鬥的怪物是不是已經清空、可以觸發勝利：一般情況要全部死光，
+        // 但四周目分身術二階段比較特殊——只要唯一的真身死了就算過關，其餘3個分身死活都不重要
+        function rpgMonstersCleared(b) {
+            if (!b) return false;
+            if (b.bossClonePhase2) {
+                const realEntry = rpgFormationEntries(b.monsterFormation).find(e => e.obj.isRealBoss);
+                if (realEntry) return realEntry.obj.curHp <= 0;
+            }
+            return rpgFormationEntries(b.monsterFormation).every(e => e.obj.curHp <= 0);
+        }
 
         // 把怪物「依序」塞進陣型（前排0~3再後排0~3），魔王戰要用這個而不是隨機擺放，
         // 這樣才能保證魔王一定站在 rpgRollEncounter 排好的「後排第 2 位」
@@ -5498,8 +5543,8 @@
                         partyFormation[row][i] = character;
                     });
                     // 異常狀態每場戰鬥開始都重新歸零，不會沿用到下一場；怪物也補上 curSp（能不能用技能靠這個）
-                    [state.player, ...aliveCompanions].forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0 }; m.buffs = {}; });
-                    monsterObjs.forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0 }; m.curSp = m.sp || 0; });
+                    [state.player, ...aliveCompanions].forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 }; m.buffs = {}; });
+                    monsterObjs.forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 }; m.curSp = m.sp || 0; });
                     const bossObj = monsterObjs.find(m => m.isBoss);
                     // 第一個下指令的人不再預設是主角，改成陣型裡第一個找得到、還活著的人
                     const firstAlly = rpgFormationEntries(partyFormation)[0];
@@ -6231,7 +6276,7 @@
         // 執行這一輪：把我方已下指令的角色跟所有還活著的怪物，依敏捷（agi）由高到低排成一串，
         // 逐一輪流執行——敏捷高的怪物有可能插在我方角色中間、甚至搶在所有我方角色行動前先出手
         // 異常狀態：poison 每回合開始扣 5% 上限 HP／weaken 每回合開始扣 5% 上限 SP／paralysis 這次跟下一次輪到行動時都會被跳過／fear（恐懼）會讓角色接下來兩回合陷入混亂，自動對我方或敵方隨機目標使用一般攻擊
-        const RPG_STATUS_INFO = { poison: { name: '中毒', emoji: '☠️' }, paralysis: { name: '麻痺', emoji: '⚡' }, weaken: { name: '衰弱', emoji: '💫' }, burn: { name: '灼傷', emoji: '🔥' }, bleed: { name: '流血', emoji: '🩸' }, fear: { name: '恐懼', emoji: '😱' }, blind: { name: '失明', emoji: '😵' }, tasteless: { name: '味覺喪失', emoji: '👅' } };
+        const RPG_STATUS_INFO = { poison: { name: '中毒', emoji: '☠️' }, paralysis: { name: '麻痺', emoji: '⚡' }, weaken: { name: '衰弱', emoji: '💫' }, burn: { name: '灼傷', emoji: '🔥' }, bleed: { name: '流血', emoji: '🩸' }, fear: { name: '恐懼', emoji: '😱' }, blind: { name: '失明', emoji: '😵' }, tasteless: { name: '味覺喪失', emoji: '👅' }, softened: { name: '軟化', emoji: '💧' } };
         // 治療倍率：中了「味覺喪失」的話，不管是治療道具還是技能的HP回復量、持續恢復每回合的回復量，都只剩一半
         // （吃再好的料理也吃不出味道，效果自然打折）；沒中的話維持原本100%
         function rpgHealMult(obj) {
@@ -6242,8 +6287,13 @@
             return !!(actorObj && actorObj.statuses && actorObj.statuses.blind > 0 && Math.random() < 0.3);
         }
         function rpgInflictStatus(obj, type, turns) {
-            if (!obj.statuses) obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0 };
+            if (!obj.statuses) obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 };
             obj.statuses[type] = Math.max(obj.statuses[type] || 0, turns);
+        }
+        // 四周目起的魔王對玩家這邊放出的異常狀態多10%抗性，直接從機率扣掉（不會扣成負的）；
+        // 不影響爆擊、即死等其他判定，單純只是異常狀態比較難上
+        function rpgBossStatusResistPenalty(tObj) {
+            return (tObj && tObj.isBoss && rpgState && rpgState.player && (rpgState.player.ngPlus || 0) >= 3) ? 0.1 : 0;
         }
         // 恐懼（混亂）發作：這名角色本回合不能自己選擇行動，改成對「我方或敵方任一還活著的目標」隨機使出一般攻擊，可能誤傷自己人
         function rpgFearRandomAttack(b, actorSide, row, i, actorObj, actorDomId, andThen) {
@@ -6282,7 +6332,7 @@
                     if (el) { el.style.opacity = '0'; el.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; }
                     const remaining = rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0);
                     b.target = remaining.length ? { row: remaining[0].row, i: remaining[0].i } : null;
-                    if (rpgFormationEntries(b.monsterFormation).every(e => e.obj.curHp <= 0)) {
+                    if (rpgMonstersCleared(b)) {
                         battleEnded = true;
                         updateBattleUI();
                         setTimeout(() => rpgBattleWin(), 550);
@@ -6357,6 +6407,7 @@
                 }
                 if (obj.statuses.blind > 0) obj.statuses.blind--;
                 if (obj.statuses.tasteless > 0) obj.statuses.tasteless--;
+                if (obj.statuses.softened > 0) obj.statuses.softened--;
             });
             rpgFormationEntries(b.monsterFormation).forEach(({ row, i, obj }) => {
                 rpgTickBuffs(obj);
@@ -6390,6 +6441,7 @@
                     obj.statuses.weaken--;
                 }
                 if (obj.statuses.blind > 0) obj.statuses.blind--;
+                if (obj.statuses.softened > 0) obj.statuses.softened--;
             });
         }
         function rpgTickBuffs(obj) {
@@ -6869,7 +6921,7 @@
             // 中毒/灼傷/流血這類持續傷害有可能在這裡就把最後一隻怪或最後一位夥伴打死，
             // 如果不在這裡立刻判斷勝敗，遊戲會照常跑完這一輪剩下的行動，
             // 導致玩家後面選不到目標、卡住無法繼續（這裡先攔下來，直接結算勝負）
-            if (rpgFormationEntries(b.monsterFormation).every(e => e.obj.curHp <= 0)) {
+            if (rpgMonstersCleared(b)) {
                 updateBattleUI();
                 setTimeout(() => rpgBattleWin(), 200);
                 return;
@@ -6989,7 +7041,7 @@
                                         if (el) { el.style.opacity = '0'; el.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; }
                                         const remaining = rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0);
                                         b.target = remaining.length ? { row: remaining[0].row, i: remaining[0].i } : null;
-                                        if (!remaining.length) { setTimeout(() => rpgBattleWin(), 550); return; }
+                                        if (rpgMonstersCleared(b)) { setTimeout(() => rpgBattleWin(), 550); return; }
                                     }
                                     setTimeout(runNext, 500);
                                 });
@@ -7023,7 +7075,7 @@
                                     if (pickB.obj.curHp <= 0) { const el = document.getElementById(domIdB); if (el) { el.style.opacity = '0'; el.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; } }
                                     const remaining = rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0);
                                     b.target = remaining.length ? { row: remaining[0].row, i: remaining[0].i } : null;
-                                    if (!remaining.length) {
+                                    if (rpgMonstersCleared(b)) {
                                         updateBattleUI();
                                         setTimeout(() => rpgBattleWin(), 700);
                                         return;
@@ -7219,12 +7271,12 @@
                                     const tCenter = rpgElementCenter(tDomId);
                                     if (isCrit && tCenter) rpgBurstParticle('crit', { x: tCenter.x, y: tCenter.y, size: 50, count: 1, duration: 0.4, scale: 1.1, dist: 0, distVar: 0 });
                                     if (isInstaKill && tCenter) rpgBurstParticle('instakill', { x: tCenter.x, y: tCenter.y, size: 58, count: 1, duration: 0.5, scale: 1.15, dist: 0, distVar: 0 });
-                                    if (sk.burnChance && Math.random() < sk.burnChance) {
+                                    if (sk.burnChance && Math.random() < Math.max(0, sk.burnChance - rpgBossStatusResistPenalty(tObj))) {
                                         rpgInflictStatus(tObj, 'burn', sk.burnTurns || 3);
                                         logBits.push(`${tObj.name}被燒傷了`);
                                         if (tCenter) rpgBurstParticle('burn', { x: tCenter.x, y: tCenter.y, size: 40, count: 2, duration: 0.6 });
                                     }
-                                    if (sk.inflictChance && Math.random() < sk.inflictChance) {
+                                    if (sk.inflictChance && Math.random() < Math.max(0, sk.inflictChance - rpgBossStatusResistPenalty(tObj))) {
                                         rpgInflictStatus(tObj, sk.inflictType, 3);
                                         logBits.push(`${tObj.name}陷入${RPG_STATUS_INFO[sk.inflictType].name}`);
                                         if (tCenter) rpgBurstParticle(sk.inflictType, { x: tCenter.x, y: tCenter.y, size: 40, count: 2, duration: 0.6 });
@@ -7234,7 +7286,7 @@
                                         logBits.push(`${tObj.name}防禦力下降了`);
                                         if (tCenter) rpgBurstParticle('debuff', { x: tCenter.x, y: tCenter.y, size: 40, count: 2, duration: 0.6 });
                                     }
-                                    if (sk.atkDebuffPct != null && Math.random() < (sk.debuffChance != null ? sk.debuffChance : 1)) {
+                                    if (sk.atkDebuffPct != null && Math.random() < Math.max(0, (sk.debuffChance != null ? sk.debuffChance : 1) - rpgBossStatusResistPenalty(tObj))) {
                                         rpgApplyBuff(tObj, 'atkBuffPct', sk.atkDebuffPct, sk.debuffTurns || 2);
                                         logBits.push(`${tObj.name}攻擊力下降了`);
                                         if (tCenter) rpgBurstParticle('debuff', { x: tCenter.x, y: tCenter.y, size: 40, count: 2, duration: 0.6 });
@@ -7325,13 +7377,13 @@
                                 const remaining = rpgFormationEntries(b.monsterFormation).filter(e => e.obj.curHp > 0);
                                 b.target = remaining.length ? { row: remaining[0].row, i: remaining[0].i } : null;
                             }
-                            if (rpgFormationEntries(b.monsterFormation).every(e => e.obj.curHp <= 0)) {
+                            if (rpgMonstersCleared(b)) {
                                 setTimeout(() => rpgBattleWin(), monsterDied ? 550 : 200);
                                 return;
                             }
                             setTimeout(runNext, monsterDied ? 650 : 500);
                         } else {
-                            if (rpgFormationEntries(b.monsterFormation).every(e => e.obj.curHp <= 0)) {
+                            if (rpgMonstersCleared(b)) {
                                 setTimeout(() => rpgBattleWin(), 550);
                                 return;
                             }
@@ -7370,8 +7422,15 @@
                     const isBossHealerSlot = bossEntryForHeal && !monsterObj.isBoss && bossEntryForHeal.row === entry.row && Math.abs(bossEntryForHeal.i - entry.i) === 1;
                     let actionKind = 'attack';
                     let multiSkill = null;
+                    const isFourthPlaythroughBoss = monsterObj.isBoss && (p.ngPlus || 0) >= 3;
                     if (isBossHealerSlot && bossEntryForHeal.obj.curHp < bossEntryForHeal.obj.hp && Math.random() < 0.1) {
                         actionKind = 'healBoss';
+                    } else if (isFourthPlaythroughBoss && Math.random() < 0.22) {
+                        // 四周目起的真身魔王：全體異常狀態的機率比其他魔王高很多（原本魔王只有10%），而且幾乎都會挑到味覺喪失
+                        actionKind = 'groupStatus';
+                    } else if (isFourthPlaythroughBoss && Math.random() < 0.18) {
+                        // 四周目真身魔王專屬：8體一般攻擊，全隊每個人都會吃到一次普通傷害，並附加軟化（防禦力-8%）
+                        actionKind = 'groupAttack';
                     } else if (monsterObj.isBoss && Math.random() < 0.1) {
                         actionKind = 'groupStatus';
                     } else if (monsterObj.isBoss && Math.random() < 0.1) {
@@ -7409,9 +7468,16 @@
                             return;
                         }
                         if (actionKind === 'groupStatus') {
-                            // 三周目二階段的魔王（真身）額外多一種「味覺喪失」的選項，其他魔王維持原本三選一
-                            const types = (monsterObj.isBoss && b.bossPhase2) ? ['poison', 'bleed', 'burn', 'tasteless'] : ['poison', 'bleed', 'burn'];
-                            const type = types[Math.floor(Math.random() * types.length)];
+                            // 三周目二階段的魔王（真身）額外多一種「味覺喪失」的選項，其他魔王維持原本三選一；
+                            // 四周目起的真身魔王幾乎都會挑到味覺喪失（高權重70%），這是牠的招牌技
+                            const isFourthPlaythroughBoss = monsterObj.isBoss && (p.ngPlus || 0) >= 3;
+                            let type;
+                            if (isFourthPlaythroughBoss) {
+                                type = Math.random() < 0.7 ? 'tasteless' : ['poison', 'bleed', 'burn'][Math.floor(Math.random() * 3)];
+                            } else {
+                                const types = (monsterObj.isBoss && b.bossPhase2) ? ['poison', 'bleed', 'burn', 'tasteless'] : ['poison', 'bleed', 'burn'];
+                                type = types[Math.floor(Math.random() * types.length)];
+                            }
                             const info = RPG_STATUS_INFO[type];
                             const aliveParty = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
                             aliveParty.forEach(({ row, i, obj }) => {
@@ -7424,6 +7490,42 @@
                             playSfx('status');
                             if (navigator.vibrate) navigator.vibrate([120, 60, 120, 60, 120]);
                             updateBattleUI();
+                            setTimeout(runNext, 600);
+                            return;
+                        }
+                        if (actionKind === 'groupAttack') {
+                            // 四周目真身魔王專屬：對全隊使出8體一般攻擊，每個人都吃到一次普通傷害，並附加軟化（防禦力-8%，只有甩鍋熱炒能解除抵銷）
+                            const aliveParty = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
+                            let totalDmg = 0;
+                            aliveParty.forEach(({ row, i, obj }) => {
+                                const domId = `rpg-slot-party-${row}-${i}`;
+                                if (obj.buffs && obj.buffs.dodgeNext) {
+                                    delete obj.buffs.dodgeNext;
+                                    rpgLogAppend(`🛡️ ${obj.name}靠著醃漬的效果，完全免除了這次攻擊！`);
+                                    return;
+                                }
+                                const dmg = Math.max(1, Math.round(rpgEffectiveAtk(monsterObj) - rpgEffectiveDef(obj) + (Math.random() * 3 - 1)));
+                                obj.hp = Math.max(0, obj.hp - dmg);
+                                if (obj.buffs && obj.buffs.sousVide) obj.buffs.sousVide.wasHitThisRound = true;
+                                totalDmg += dmg;
+                                rpgInflictStatus(obj, 'softened', 3);
+                                rpgFlashHit(domId);
+                                rpgFloatDamage(domId, dmg, '#C4453F');
+                                const center = rpgElementCenter(domId);
+                                if (center) rpgBurstParticle('debuff', { x: center.x, y: center.y, size: 40, count: 2, duration: 0.6 });
+                                if (obj.hp <= 0) {
+                                    const slotEl = document.getElementById(domId);
+                                    if (slotEl) { slotEl.style.opacity = '0'; slotEl.style.transform = 'scale(0.4) rotate(25deg) translateY(10px)'; }
+                                }
+                            });
+                            rpgLogAppend(`💥 ${monsterObj.name}使出毀滅性的橫掃攻擊，對全隊造成了共 ${totalDmg} 點傷害，大家的鍋具都被打得軟化變形（防禦力-8%，只有「甩鍋熱炒」能解除）！`);
+                            if (navigator.vibrate) navigator.vibrate([150, 60, 150]);
+                            playSfx('enemyHit');
+                            updateBattleUI();
+                            if (rpgFormationEntries(b.partyFormation).every(e => e.obj.hp <= 0)) {
+                                setTimeout(() => rpgBattleLose(), 550);
+                                return;
+                            }
                             setTimeout(runNext, 600);
                             return;
                         }
@@ -7569,10 +7671,14 @@
             // 三周目的魔王有一個隱藏的二階段：第一次被打倒時先不要真的觸發周目切換，
             // 讓玩家以為已經打完了（經驗值/掉寶/升級都正常跑一輪），全部結算完才會在過場動畫裡甦醒、進入真正的二階段戰鬥
             const isThirdPlaythroughFirstKill = monsters.some(m => m.isBoss) && (p.ngPlus || 0) === 2 && !b.bossPhase2;
+            // 四周目起的魔王也有隱藏二階段，但不是變身，是分身術：一樣先讓玩家以為打完了，結算完才觸發
+            const isFourthPlaythroughFirstKill = monsters.some(m => m.isBoss) && (p.ngPlus || 0) >= 3 && !b.bossClonePhase2;
+            // 記住「這次是不是真正打倒四周目魔王真身」——要在 ngPlus 增加之前先記錄，不然等一下判斷就會錯過
+            const wasFourthTierBossRealKill = monsters.some(m => m.isBoss) && b.bossClonePhase2 && (p.ngPlus || 0) === 3;
             if (monsters.some(m => m.isBoss)) {
                 rpgAddScore(10000, '擊敗魔王');
                 rpgLogAppend('👑 擊敗魔王，積分大量增加！');
-                if (!isThirdPlaythroughFirstKill) {
+                if (!isThirdPlaythroughFirstKill && !isFourthPlaythroughFirstKill) {
                     p.ngPlus = (p.ngPlus || 0) + 1;
                     rpgLogAppend(`🌟 恭喜通過最終魔王的試煉！即將進入第 ${p.ngPlus + 1} 周目，之後遇到的怪物與魔王強度都會提升為原本的 ${Math.round(Math.pow(1.3, p.ngPlus) * 100)}%！`);
                     if (b.bossPhase2 && !p.windBraceletObtained) {
@@ -7583,6 +7689,17 @@
                         (state.companions || []).forEach(c => { c.braceletLv = 0; });
                         rpgAddScore(500, '獲得風之加護手環');
                         rpgLogAppend('💍 你們在真身型態的黑暗料理王殘骸裡，發現了一箱「風之加護手環」，數量剛好夠全隊每個人一只！每個人的敏捷都提升了，而且可以各自拿去找老麥用神祕金屬繼續精煉鍛造（成功率固定100%）！');
+                    }
+                    if (wasFourthTierBossRealKill) {
+                        // 四周目真身魔王殘骸裡的魔王寶箱：全體夥伴（不含主角）各補一份專屬武器/防具，
+                        // 沒拿過的直接補齊、拿過的觸發融合升級，已經融合滿LV.10的那件就跳過不會再出現
+                        const gearLines = rpgGrantAllCompanionGearBossChest();
+                        if (gearLines.length) {
+                            rpgAddScore(300, '開啟魔王寶箱');
+                            rpgLogAppend(`📦 你們在戰場的角落發現了一個魔王寶箱！打開後，裡面裝著：${gearLines.join('、')}！`);
+                        } else {
+                            rpgLogAppend('📦 你們在戰場的角落發現了一個魔王寶箱，可惜打開一看，裡面的裝備大家都已經融合到最高等級了，這次沒有收穫。');
+                        }
                     }
                 }
             }
@@ -7669,9 +7786,11 @@
             if (actionsEl) {
                 actionsEl.innerHTML = isThirdPlaythroughFirstKill
                     ? `<button onclick="rpgBossPhase2Awaken()" class="btn-primary w-full">🎉 繼續</button>`
-                    : isBossKill
-                        ? `<button onclick="rpgBossVictoryCutscene()" class="btn-primary w-full">🎉 繼續</button>`
-                        : `<button onclick="rpgBackToMap()" class="btn-primary w-full">🎉 繼續</button>`;
+                    : isFourthPlaythroughFirstKill
+                        ? `<button onclick="rpgBossClonePhase2Awaken()" class="btn-primary w-full">🎉 繼續</button>`
+                        : isBossKill
+                            ? `<button onclick="rpgBossVictoryCutscene()" class="btn-primary w-full">🎉 繼續</button>`
+                            : `<button onclick="rpgBackToMap()" class="btn-primary w-full">🎉 繼續</button>`;
             }
         }
         // 魔王戰勝利過場：黑暗料理王不甘心地撂下「東山再起」式的台詞，畫面淡出後強制送回村莊旅館並且睡一覺、強制存檔
@@ -7802,7 +7921,7 @@
                 obj.atk = Math.round(obj.atk * 1.1);
                 obj.def = Math.round(obj.def * 1.1);
                 obj.curHp = obj.hp; // 魔王跟所有隨從全部重新滿血復活
-                obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0 };
+                obj.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 };
                 obj.curSp = obj.sp || 0;
                 if (obj.isBoss) {
                     if (!obj.name.includes('・真身')) obj.name = `${obj.name}・真身`;
@@ -7821,6 +7940,88 @@
             rpgStartBgm('boss');
             playSfx('bossAlert');
             rpgLogAppend('👑 黑暗料理王・真身覺醒！隨從全數重新加入戰場，能力比剛才更強了！');
+            document.querySelectorAll('#rpg-battle-actions button').forEach(btn => btn.disabled = false);
+            renderRpgBattle();
+        }
+        // 四周目起的魔王隱藏二階段：分身術。跟三周目的變身不一樣，這次魔王直接分裂成4個一模一樣的分身站上後排，
+        // 前排完全空著（這階段不會有隨從），玩家要自己找出唯一的真身打倒才能結束戰鬥，另外3個是陪襯用的分身
+        function rpgBossClonePhase2Awaken() {
+            const state = rpgState;
+            if (!state || !state.battle) return;
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed; inset:0; background:#050208; opacity:0; z-index:9999; transition:opacity 1s ease-in-out; display:flex; align-items:center; justify-content:center; padding:24px;';
+            const textBox = document.createElement('p');
+            textBox.style.cssText = 'color:#C9AFF0; font-size:1.05rem; line-height:1.9; max-width:520px; text-align:center; text-shadow:0 2px 6px rgba(0,0,0,0.8);';
+            overlay.appendChild(textBox);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => { overlay.style.opacity = '1'; });
+            playSfx('bossAlert');
+            const lines = [
+                '就在大家鬆一口氣、準備收拾戰場的時候……',
+                '倒在地上的黑暗料理王・真身，身影忽然像鏡面上的倒影一樣搖曳、扭曲了起來。',
+                '黑暗料理王・真身：呵……呵呵呵……真身豈是那麼容易被找到的？',
+                '他的身影一分為四，四道一模一樣的黑暗料理王・真身分散站到了你們面前！',
+                '黑暗料理王・真身：猜猜看，哪一個才是真正的我？',
+            ];
+            let lineIdx = 0;
+            const playNextLine = () => {
+                if (lineIdx >= lines.length) {
+                    setTimeout(() => {
+                        overlay.style.opacity = '0';
+                        setTimeout(() => {
+                            overlay.remove();
+                            rpgActivateBossClonePhase2();
+                        }, 1000);
+                    }, 1000);
+                    return;
+                }
+                const fullText = lines[lineIdx];
+                textBox.textContent = '';
+                let i = 0;
+                const typer = setInterval(() => {
+                    i++;
+                    textBox.textContent = fullText.slice(0, i);
+                    if (i % 2 === 0 && fullText[i - 1] && fullText[i - 1].trim()) playSfx('blip');
+                    if (i >= fullText.length) {
+                        clearInterval(typer);
+                        lineIdx++;
+                        setTimeout(playNextLine, 1400);
+                    }
+                }, 32);
+            };
+            playNextLine();
+        }
+        // 真正套用分身術二階段：清空整個怪物陣型，後排4格各放一個外觀完全相同的黑暗料理王・真身，
+        // 隨機一格是真的（isRealBoss:true，正常魔王數值），其餘3格是分身（isDecoy:true，隨從等級數值），前排不放隨從
+        function rpgActivateBossClonePhase2() {
+            const state = rpgState;
+            const b = state.battle;
+            const p = state.player;
+            if (!b) return;
+            b.bossClonePhase2 = true; // 標記已經進入分身術二階段，避免打倒真身時又誤觸發一次覺醒（那次才是真正的通關）
+            const species = RPG_MONSTER_SPECIES.dark_cuisine_king;
+            const realStats = rpgMonsterStatsAtLevel(p.level + 20 + Math.floor(Math.random() * 11), true);
+            const decoyStats = rpgMonsterStatsAtLevel(p.level + 10, false);
+            const realIdx = Math.floor(Math.random() * 4); // 0~3，對應 back0~back3 哪一格是真身，每次觸發都重新抽
+            const freshStatuses = () => ({ poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 });
+            const formation = rpgEmptyFormation();
+            for (let i = 0; i < 4; i++) {
+                if (i === realIdx) {
+                    formation.back[i] = { id: 'dark_cuisine_king', ...species, ...realStats, name: '黑暗料理王・真身', hue: 0, curHp: realStats.hp, curSp: realStats.sp || 0, isBoss: true, isRealBoss: true, aiType: 'low_hp', statuses: freshStatuses() };
+                } else {
+                    formation.back[i] = { id: 'dark_cuisine_king', ...species, ...decoyStats, name: '黑暗料理王・真身', hue: 0, curHp: decoyStats.hp, curSp: decoyStats.sp || 0, isBoss: false, isDecoy: true, aiType: rpgRandomMonsterAI(), statuses: freshStatuses() };
+                }
+            }
+            b.monsterFormation = formation; // 前排完全清空，這個階段不會有隨從
+            b.commands = {};
+            b.phase = 'command';
+            b.uiMode = 'main';
+            const firstAlly = rpgFormationEntries(b.partyFormation)[0];
+            b.actor = firstAlly ? { row: firstAlly.row, i: firstAlly.i } : { row: 'front', i: 0 };
+            b.target = { row: 'back', i: 0 };
+            rpgStartBgm('boss');
+            playSfx('bossAlert');
+            rpgLogAppend('👑 黑暗料理王・真身使出分身術！四個一模一樣的分身站上了戰場，只有一個是真的——打倒真正的那一個才能結束這場戰鬥！');
             document.querySelectorAll('#rpg-battle-actions button').forEach(btn => btn.disabled = false);
             renderRpgBattle();
         }
