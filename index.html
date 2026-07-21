@@ -2703,7 +2703,7 @@
             slime: [0, 9], mushroom: [3, 10], humanoid: [1, 9], imp: [2, 9], troll: [3, 9],
             archer: [4, 9], spider: [0, 10], ghost: [1, 10], dwarf: [2, 10], golem: [4, 10],
             // 主角/夥伴的人物造型，跟武器圖示，都是使用者新提供的 tilemap_packed 素材
-            hero_player: [2, 8], hero_ako: [3, 7], hero_suisui: [3, 8], hero_laozhou: [0, 7], hero_alan: [1, 8], hero_ginhaku: [0, 11], hero_laomai: [2, 11], hero_kai: [4, 9],
+            hero_player: [2, 8], hero_ako: [3, 7], hero_suisui: [3, 8], hero_laozhou: [0, 7], hero_alan: [1, 8], hero_ginhaku: [0, 11], hero_laomai: [2, 11], hero_kai: [4, 9], hero_metalMerchant: [4, 7],
             weapon_sword: [7, 8], weapon_axe: [10, 9], weapon_dagger: [11, 10], weapon_hammer: [9, 9], weapon_wand: [9, 10], weapon_potion: [1, 11],
             chest_closed: [5, 7], chest_open: [7, 7], anvil: [2, 6], armor_placeholder: [5, 8],
         };
@@ -3338,6 +3338,7 @@
             innkeeper: { name: '旅館老闆', icon: '🛏️', lines: ['要不要在這裡休息一下？（幫全隊，包含倒下的夥伴，免費全回復！）'], heal: true },
             ingredientShop: { name: '食材商店', icon: '🧺', lines: ['歡迎光臨食材行！買入 2 塊錢一份，賣出算你 1 塊錢一份，公道價！'], ingredientShop: true },
             laomai: { name: '老麥', icon: '🔨' },
+            metalMerchant: { name: '神秘金屬商人', icon: '❓', lines: ['嘿，運氣不錯被你遇上了！要不要看看我這裡的神祕金屬？限量供應，賣完就沒了，明天請早。'], metalShop: true },
         };
         // 這幾個 NPC 設定上是站在廣場/門口的石板地，腳下要畫石板路而不是草地
         const RPG_NPC_STANDS_ON_PATH = { innkeeper: true, ingredientShop: true, ginhaku: true };
@@ -4252,7 +4253,7 @@
                         if (decorDungeonTile) rpgDrawSprite(ctx, rpgDungeonImg, decorDungeonTile, px, py, T, RPG_DUNGEON_STRIDE);
                         if (ch === 'H') {
                             const npcId = map.npcs[`${x},${y}`];
-                            const companionSpriteKey = { ako: 'hero_ako', suisui: 'hero_suisui', laozhou: 'hero_laozhou', alan: 'hero_alan', ginhaku: 'hero_ginhaku', laomai: 'hero_laomai', kai: 'hero_kai' }[npcId];
+                            const companionSpriteKey = { ako: 'hero_ako', suisui: 'hero_suisui', laozhou: 'hero_laozhou', alan: 'hero_alan', ginhaku: 'hero_ginhaku', laomai: 'hero_laomai', kai: 'hero_kai', metalMerchant: 'hero_metalMerchant' }[npcId];
                             if (companionSpriteKey) {
                                 rpgDrawSprite(ctx, rpgDungeonImg, RPG_DUNGEON_TILES[companionSpriteKey], px, py, T, RPG_DUNGEON_STRIDE);
                             } else {
@@ -4862,6 +4863,29 @@
                         state.player.kaiRequestedDish = recipeNames[Math.floor(Math.random() * recipeNames.length)];
                     }
                 }
+                if (exit.to === 'village') {
+                    // 神秘金屬商人：五周目起，每次刷新進村莊都重新骰一次20%機率；
+                    // 骰到就出現在(9,11)並補滿10顆限量庫存，沒骰到（或本來就沒骰到過）這格就是普通空地
+                    const vMap = RPG_MAPS.village;
+                    const mKey = '9,11';
+                    const mx = 9, my = 11;
+                    if ((state.player.ngPlus || 0) >= 4 && Math.random() < 0.2) {
+                        vMap.npcs[mKey] = 'metalMerchant';
+                        state.player.metalMerchantStock = 10;
+                        if (vMap.rows[my] && vMap.rows[my][mx] !== 'H') {
+                            const rowChars = vMap.rows[my].split('');
+                            rowChars[mx] = 'H';
+                            vMap.rows[my] = rowChars.join('');
+                        }
+                    } else {
+                        if (vMap.npcs[mKey] === 'metalMerchant') delete vMap.npcs[mKey];
+                        if (vMap.rows[my] && vMap.rows[my][mx] === 'H') {
+                            const rowChars = vMap.rows[my].split('');
+                            rowChars[mx] = '.';
+                            vMap.rows[my] = rowChars.join('');
+                        }
+                    }
+                }
                 rpgRefreshGatherPoints(); // 每次切換地圖，還沒刷新的採集點各自獨立有 40% 機率重新開放
                 renderRpgMap();
                 setTimeout(() => {
@@ -5171,6 +5195,8 @@
                 setTimeout(() => { if (rpgState) rpgOpenRecipeShop(); }, fullText.length * 28 + 250);
             } else if (info.ingredientShop) {
                 setTimeout(() => { if (rpgState) rpgOpenIngredientShop(); }, fullText.length * 28 + 250);
+            } else if (info.metalShop) {
+                setTimeout(() => { if (rpgState) rpgOpenMetalShop(); }, fullText.length * 28 + 250);
             } else {
                 // 非治療型 NPC 不會再重新整個渲染地圖畫面，打字機跑完後要自己解鎖，不然會卡住動不了
                 setTimeout(() => { if (rpgState) rpgState.locked = false; }, fullText.length * 28 + 150);
@@ -5494,6 +5520,56 @@
             p.gold += 1;
             playSfx('click');
             document.getElementById('game-modal-body').innerHTML = rpgIngredientShopHTML(`賣了 1 份「${name}」！`);
+        }
+        // 神秘金屬商人：五周目起，暖廚村(9,11)每次刷新進村都有20%機率出現，每次出現限量賣10顆，賣完就是賣完，
+        // 要等下次再刷出來才會重新補貨；同時也收購玩家身上的神祕金屬
+        function rpgOpenMetalShop() {
+            const state = rpgState;
+            if (!state) return;
+            state.locked = false;
+            playSfx('click');
+            document.getElementById('game-modal-title').textContent = '❓ 神秘金屬商人';
+            document.getElementById('game-modal-body').innerHTML = rpgMetalShopHTML();
+        }
+        function rpgMetalShopHTML(message) {
+            const p = rpgState.player;
+            const stock = p.metalMerchantStock || 0;
+            const owned = (p.materials && p.materials['神祕金屬']) || 0;
+            return `
+                <div style="max-width:520px; margin-left:auto; margin-right:auto;">
+                ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
+                <p class="text-xs mb-3" style="color:#B3A492">💰 目前金幣：${p.gold}　・　你身上有 ${owned} 顆神祕金屬</p>
+                <div class="flex items-center gap-3 px-3 py-2 rounded-2xl mb-2" style="background:var(--cream)">
+                    <div class="flex-1 min-w-0">
+                        <p class="font-medium text-sm"><img src="${RPG_MYSTERY_METAL_ICON}" style="width:16px;height:16px;image-rendering:pixelated;vertical-align:middle;"> 神祕金屬<span class="text-xs ml-2" style="color:#B3A492">這次限量剩 ${stock} 顆</span></p>
+                    </div>
+                    <button onclick="rpgBuyMetal()" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${(stock < 1 || p.gold < 100) ? 'disabled style="opacity:.4"' : ''}>💰100 買入</button>
+                    <button onclick="rpgSellMetal()" class="btn-secondary text-xs !px-3 !py-1.5 shrink-0" ${owned < 1 ? 'disabled style="opacity:.4"' : ''}>💰50 賣出</button>
+                </div>
+                ${stock < 1 ? `<p class="text-xs mb-3" style="color:#B3A492">今天帶來的貨都賣完了，下次再遇到我可能又會有新貨。</p>` : ''}
+                <div style="height:8px;"></div>
+                <button onclick="renderRpgMap()" class="btn-secondary w-full">← 返回地圖</button>
+                </div>
+            `;
+        }
+        function rpgBuyMetal() {
+            const p = rpgState.player;
+            if ((p.metalMerchantStock || 0) < 1 || p.gold < 100) return;
+            p.gold -= 100;
+            p.metalMerchantStock -= 1;
+            p.materials = p.materials || {};
+            p.materials['神祕金屬'] = (p.materials['神祕金屬'] || 0) + 1;
+            playSfx('buy');
+            document.getElementById('game-modal-body').innerHTML = rpgMetalShopHTML('買到了一顆神祕金屬！');
+        }
+        function rpgSellMetal() {
+            const p = rpgState.player;
+            if (!((p.materials && p.materials['神祕金屬']) > 0)) return;
+            p.materials['神祕金屬']--;
+            if (p.materials['神祕金屬'] <= 0) delete p.materials['神祕金屬'];
+            p.gold += 50;
+            playSfx('sell');
+            document.getElementById('game-modal-body').innerHTML = rpgMetalShopHTML('賣掉了一顆神祕金屬，拿到 50 金幣！');
         }
 
         // ---------- 食譜商店：花金幣直接學會食譜（某些強力食譜只有這裡買得到，或是打強敵稀有掉落）----------
