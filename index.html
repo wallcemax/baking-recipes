@@ -4561,7 +4561,10 @@
             // 效果未知、不是食材（不進 p.ingredients，不會出現在食材商店），另外開一個 p.materials 分類收著
             // 老麥的「礦石嗅覺」被動（LV15）：機率額外 +5%，而且開到食材的寶箱不會再跟金屬擇一，兩種都會拿到
             const hasOreSense = (state.companions || []).some(c => c.id === 'laomai' && c.skills && c.skills.includes('laomai_ore_sense'));
-            const metalChance = 0.03 + (hasOreSense ? 0.05 : 0);
+            // 掉落率倍率：四周目起（ngPlus>=3）機率×1.5，五周目起（ngPlus>=4）再額外×1.5（兩層可以疊在一起，最高×2.25）
+            const ngPlusForMetal = (state.player.ngPlus || 0);
+            const metalRateMult = (ngPlusForMetal >= 3 ? 1.5 : 1) * (ngPlusForMetal >= 4 ? 1.5 : 1);
+            const metalChance = (0.03 + (hasOreSense ? 0.05 : 0)) * metalRateMult;
             // 數量倍率：礦石嗅覺讓數量翻倍，四周目起（ngPlus>=3）數量再翻一次倍，兩個效果可以疊在一起
             const metalMult = (hasOreSense ? 2 : 1) * ((state.player.ngPlus || 0) >= 3 ? 2 : 1);
             let metalMsgPrefix = '';
@@ -6370,7 +6373,7 @@
             const [col, row] = RPG_TOWN_TILES.arrow_kai;
             const size = 20;
             const z = size / 16;
-            const angle = Math.atan2(to.y - from.y, to.x - from.x) * 180 / Math.PI;
+            const angle = Math.atan2(to.y - from.y, to.x - from.x) * 180 / Math.PI + 45; // 箭矢圖磚本身的預設朝向要順時針補45度才會對準飛行方向
             const arrow = document.createElement('div');
             arrow.style.cssText = `position:fixed; left:${from.x - size / 2}px; top:${from.y - size / 2}px; width:${size}px; height:${size}px; background-image:url('${RPG_TOWN_URL}'); background-position:-${col * RPG_TOWN_STRIDE * z}px -${row * RPG_TOWN_STRIDE * z}px; background-size:${RPG_TOWN_W * z}px ${RPG_TOWN_H * z}px; image-rendering:pixelated; transform:rotate(${angle}deg); transition:left .22s linear, top .22s linear; z-index:9998; pointer-events:none;`;
             document.body.appendChild(arrow);
@@ -7133,7 +7136,16 @@
                     b.phase = 'command';
                     b.commands = {};
                     b.uiMode = 'main';
-                    rpgAdvanceToNextCommander();
+                    const hasNext = rpgAdvanceToNextCommander();
+                    if (!hasNext) {
+                        // 嚴重bug修正：如果全場還活著的角色都因為麻痺/恐懼被自動跳過（例如只剩一個人、還中著麻痺），
+                        // 這裡會沒有任何人可以下指令，卡在「下指令」畫面動彈不得——這時候大家的指令其實都已經是
+                        // 「skip」了，應該直接進入執行階段，而不是傻等一個永遠不會出現的操作者
+                        b.phase = 'execute';
+                        renderRpgBattle();
+                        setTimeout(() => rpgExecuteRound(false), 400);
+                        return;
+                    }
                     renderRpgBattle();
                     return;
                 }
