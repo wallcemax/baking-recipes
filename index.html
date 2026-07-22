@@ -4153,11 +4153,18 @@
         function rpgEquipRowHTML(slot, name, item, p) {
             const ownedKey = slot === 'weapon' ? 'ownedWeapons' : 'ownedArmors';
             const nameKey = slot === 'weapon' ? 'weaponName' : 'armorName';
+            const manifestedKey = slot === 'weapon' ? 'weaponManifested' : 'armorManifested';
             const owned = (p[ownedKey] || []).includes(name);
             const equipped = p[nameKey] === name;
+            // 重點修正：只要主角現在裝備的是幻化狀態，而且這件裝備的幻化去向剛好就是主角目前裝備的名稱，
+            // 就直接鎖死這個按鈕（不管ownedWeapons/ownedArmors清單裡的資料對不對），永遠不能再買/切換回這件原始裝備，
+            // 避免因為存檔資料的各種邊界情況（例如舊資料殘留）又讓玩家買到已經幻化過的原始裝備
+            const manifestDestination = RPG_MANIFEST_NAMES[name];
+            const lockedByManifest = !!(p[manifestedKey] && manifestDestination && manifestDestination === p[nameKey]);
             const statText = slot === 'weapon' ? (item.atk ? `ATK+${item.atk}` : '') : (item.def ? `DEF+${item.def}` : '');
             let action;
-            if (equipped) action = `<span class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:#fff;">已裝備</span>`;
+            if (lockedByManifest) action = `<span class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:#B3A492; color:#fff;">已幻化</span>`;
+            else if (equipped) action = `<span class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:#fff;">已裝備</span>`;
             else if (owned) action = `<button onclick="rpgEquip('${slot}','${name}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0">裝備</button>`;
             else action = `<button onclick="rpgEquip('${slot}','${name}')" class="btn-secondary text-xs !px-3 !py-1.5 shrink-0" ${p.gold < item.cost ? 'disabled style="opacity:.4"' : ''}>💰${item.cost} 購買</button>`;
             return `
@@ -4173,9 +4180,17 @@
         function rpgEquipScreenHTML(message) {
             const p = rpgState.player;
             // 幻化限定的裝備（isManifest:true）平常完全不列在商店清單裡，避免還沒真的幻化就能看到、甚至0元買到；
-            // 只有玩家已經真的幻化過（ownedWeapons/ownedArmors裡有這個名字）才會出現，讓玩家之後還能切換裝備回來
-            const weaponRows = Object.entries(RPG_WEAPONS).filter(([name, item]) => (!item.isManifest || (p.ownedWeapons || []).includes(name)) && (!item.ngRequired || (p.ngPlus || 0) >= item.ngRequired)).map(([name, item]) => rpgEquipRowHTML('weapon', name, item, p)).join('');
-            const armorRows = Object.entries(RPG_ARMORS).filter(([name, item]) => (!item.isManifest || (p.ownedArmors || []).includes(name)) && (!item.ngRequired || (p.ngPlus || 0) >= item.ngRequired)).map(([name, item]) => rpgEquipRowHTML('armor', name, item, p)).join('');
+            // 只有玩家已經真的幻化過（ownedWeapons/ownedArmors裡有這個名字）才會出現，讓玩家之後還能切換裝備回來。
+            // 原始裝備幻化之後不從清單裡隱藏，而是照樣列出來、但按鈕會被rpgEquipRowHTML鎖住顯示「已幻化」，
+            // 這樣比隱藏更清楚讓玩家知道這件裝備發生了什麼事，也比較不怕清單資料本身有邊界情況
+            const weaponRows = Object.entries(RPG_WEAPONS).filter(([name, item]) => {
+                if (item.isManifest) return (p.ownedWeapons || []).includes(name);
+                return !item.ngRequired || (p.ngPlus || 0) >= item.ngRequired;
+            }).map(([name, item]) => rpgEquipRowHTML('weapon', name, item, p)).join('');
+            const armorRows = Object.entries(RPG_ARMORS).filter(([name, item]) => {
+                if (item.isManifest) return (p.ownedArmors || []).includes(name);
+                return !item.ngRequired || (p.ngPlus || 0) >= item.ngRequired;
+            }).map(([name, item]) => rpgEquipRowHTML('armor', name, item, p)).join('');
             return `
                 <div style="max-width:520px; margin-left:auto; margin-right:auto;">
                 ${message ? `<p class="text-xs text-center mb-3 font-medium" style="color:var(--sage)">${message}</p>` : ''}
@@ -4195,8 +4210,13 @@
             const catalog = slot === 'weapon' ? RPG_WEAPONS : RPG_ARMORS;
             const ownedKey = slot === 'weapon' ? 'ownedWeapons' : 'ownedArmors';
             const nameKey = slot === 'weapon' ? 'weaponName' : 'armorName';
+            const manifestedKey = slot === 'weapon' ? 'weaponManifested' : 'armorManifested';
             const item = catalog[name];
             if (!item) return;
+            // 防呆：這件裝備的幻化去向如果剛好就是主角現在裝備的名稱，代表它已經被幻化掉了，
+            // 不管清單有沒有顯示、有沒有其他地方呼叫到這個函式，都絕對不能再買/裝備回這件原始裝備
+            const manifestDestination = RPG_MANIFEST_NAMES[name];
+            if (p[manifestedKey] && manifestDestination && manifestDestination === p[nameKey]) return;
             if (item.ngRequired && (p.ngPlus || 0) < item.ngRequired) return; // 防呆：還沒到對應周目就不能購買/裝備
             const owned = (p[ownedKey] || []).includes(name);
             let message = `已裝備「${name}」！`;
