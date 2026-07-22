@@ -3200,6 +3200,8 @@
                     '14,5': { to: 'village_tomb', x: 11, y: 0 }, // 往地下古墓
                     '14,6': { to: 'village_tomb', x: 10, y: 0 }, // 往地下古墓
                     '13,6': { to: 'village_tomb', x: 10, y: 0 }, // 往地下古墓
+                    '0,3': { to: 'castle_passage', x: 19, y: 9 }, // 往魔王城通道
+                    '0,4': { to: 'castle_passage', x: 19, y: 10 }, // 往魔王城通道
                 },
                 wild: false,
                 viewport: { w: 12, h: 7 },
@@ -3256,8 +3258,8 @@
                         t[`${x},${y}`] = [0, 4];
                     }
                 }
-                // (2,18)~(7,18)：改用圖1(2,4)順時針180度
-                for (let x = 2; x <= 7; x++) t[`${x},18`] = { tile: [2, 4], rotate: 180 };
+                // (2,18)~(17,18)：改用圖1(2,4)順時針180度
+                for (let x = 2; x <= 17; x++) t[`${x},18`] = { tile: [2, 4], rotate: 180 };
                 // 墓碑：每3格排一個（整齊排列），墓碑正上方疊一個土堆；墓碑不能走、土堆可以走
                 // 墓碑圖磚修正為(4,5)跟(5,5)交替使用
                 const tombVariants = [[4, 5], [5, 5]];
@@ -3298,6 +3300,108 @@
                     exits: { '11,0': { to: 'village_dungeon2', x: 14, y: 5 }, '10,0': { to: 'village_dungeon2', x: 13, y: 6 } },
                     wild: false,
                     viewport: { w: 12, h: 10 }, // 房間夠大了，比照村莊用一樣的鏡頭大小
+                };
+            })(),
+            // 魔王城通道：20x20，十字型走道，四個角落是厚實岩壁，中央(9,9)(9,10)(10,9)(10,10)是十字路口，
+            // 右側(19,9)/(19,10)跟暖廚村地下密道二層(0,3)/(0,4)雙向互通
+            // 注意：使用者給的座標範圍有些地方沒有覆蓋到全部格子（例如第11欄靠上/靠下那段、第12欄大部分、
+            // 右下角(19,19)~(13,13)跟左下角(0,19)~(7,12)的行數對不齊，中間差一行），這些沒被指定到的格子
+            // 目前先預設當成跟四個角落一樣的厚岩壁（圖1(0,0)，不可通行），如果不對請再跟我確認
+            castle_passage: (() => {
+                const t = {};
+                const rowsArr = [];
+                for (let y = 0; y < 20; y++) rowsArr.push(Array(20).fill('#'));
+                const setWalkable = (x, y) => { rowsArr[y][x] = '.'; };
+                const setTile = (x, y, tile) => { t[`${x},${y}`] = tile; };
+                const fillRect = (x0, x1, y0, y1, tile) => {
+                    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) setTile(x, y, tile);
+                };
+                const fillRow = (y, ranges, tile) => {
+                    ranges.forEach(([x0, x1]) => { for (let x = x0; x <= x1; x++) setTile(x, y, tile); });
+                };
+                const fillCol = (x, ranges, tile) => {
+                    ranges.forEach(([y0, y1]) => { for (let y = y0; y <= y1; y++) setTile(x, y, tile); });
+                };
+                // ---- 底圖先整張鋪滿圖1(0,0)，避免任何一格漏畫 ----
+                fillRect(0, 19, 0, 19, [0, 0]);
+                // ---- 四個角落厚岩壁，隨機點綴圖1(0,1)/圖1(0,2)，可任意旋轉 ----
+                const decorRotations = [0, 90, 180, 270];
+                const decorTiles = [[0, 1], [0, 2]];
+                [
+                    [0, 8, 0, 8],    // (0,0)~(8,8)
+                    [0, 7, 12, 19],  // (0,19)~(7,12)
+                    [13, 19, 0, 8],  // (19,0)~(13,8)
+                    [13, 19, 13, 19],// (19,19)~(13,13)
+                ].forEach(([x0, x1, y0, y1]) => {
+                    for (let y = y0; y <= y1; y++) {
+                        for (let x = x0; x <= x1; x++) {
+                            if (Math.random() < 0.18) {
+                                const dt = decorTiles[Math.floor(Math.random() * decorTiles.length)];
+                                const rot = decorRotations[Math.floor(Math.random() * decorRotations.length)];
+                                setTile(x, y, rot ? { tile: dt, rotate: rot } : dt);
+                            }
+                        }
+                    }
+                });
+                // ---- row8 / row11 兩側橫向牆面 ----
+                fillRow(8, [[0, 7], [12, 19]], [2, 0]);
+                fillRow(11, [[0, 7], [12, 19]], [2, 2]);
+                // ---- col8 縱向牆面（上下兩段）----
+                fillCol(8, [[1, 7], [12, 18]], [1, 1]);
+                // ---- row0 / row19 中央兩格 ----
+                setTile(9, 0, [2, 0]); setTile(10, 0, [2, 0]);
+                setTile(9, 19, [2, 2]); setTile(10, 19, [2, 2]);
+                // ---- 中央通道左右兩側的邊角/門框裝飾 ----
+                setTile(8, 0, [1, 0]);
+                setTile(11, 0, [3, 0]);
+                setTile(8, 19, [1, 2]);
+                setTile(11, 19, [3, 2]);
+                setTile(8, 8, [5, 1]);
+                setTile(11, 8, [4, 1]);
+                setTile(8, 11, [5, 0]);
+                setTile(11, 11, [4, 0]);
+                // ---- row9 / row10 橫向走道（可通行）----
+                fillRow(9, [[0, 8], [11, 19]], [2, 4]);
+                fillRow(10, [[0, 8], [11, 19]], { tile: [2, 4], rotate: 180 });
+                // row9 隨機點綴圖1(3,4)，不可旋轉
+                [[0, 8], [11, 19]].forEach(([x0, x1]) => {
+                    for (let x = x0; x <= x1; x++) {
+                        if (Math.random() < 0.15) setTile(x, 9, [3, 4]);
+                    }
+                });
+                // ---- col9 / col10 縱向走道（可通行）----
+                fillCol(9, [[2, 8], [11, 17]], { tile: [2, 4], rotate: 270 });
+                fillCol(10, [[2, 8], [11, 17]], { tile: [2, 4], rotate: 90 });
+                // ---- 通道頂端/底端的門框裝飾（可通行）----
+                setTile(10, 1, [4, 4]);
+                setTile(9, 1, { tile: [4, 4], rotate: 270 });
+                setTile(9, 18, { tile: [4, 4], rotate: 180 });
+                setTile(10, 18, { tile: [4, 4], rotate: 90 });
+                // ---- 正中央十字路口 ----
+                setTile(9, 9, [5, 4]);
+                setTile(10, 9, { tile: [5, 4], rotate: 90 });
+                setTile(9, 10, { tile: [5, 4], rotate: 270 });
+                setTile(10, 10, { tile: [5, 4], rotate: 180 });
+                // ---- 統一設定可通行的格子 ----
+                for (let x = 0; x <= 8; x++) { setWalkable(x, 9); setWalkable(x, 10); }
+                for (let x = 11; x <= 19; x++) { setWalkable(x, 9); setWalkable(x, 10); }
+                for (let y = 2; y <= 8; y++) { setWalkable(9, y); setWalkable(10, y); }
+                for (let y = 11; y <= 17; y++) { setWalkable(9, y); setWalkable(10, y); }
+                setWalkable(9, 1); setWalkable(10, 1); setWalkable(9, 18); setWalkable(10, 18);
+                setWalkable(9, 9); setWalkable(10, 9); setWalkable(9, 10); setWalkable(10, 10);
+                return {
+                    name: '魔王城通道',
+                    tileMap: t,
+                    rows: rowsArr.map(r => r.join('')),
+                    start: { x: 19, y: 9 },
+                    npcs: {},
+                    pois: {},
+                    exits: {
+                        '19,9': { to: 'village_dungeon2', x: 0, y: 3 },
+                        '19,10': { to: 'village_dungeon2', x: 0, y: 4 },
+                    },
+                    wild: false,
+                    viewport: { w: 12, h: 10 },
                 };
             })(),
         };
