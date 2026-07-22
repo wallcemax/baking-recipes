@@ -2707,7 +2707,7 @@
             weapon_sword: [7, 8], weapon_axe: [10, 9], weapon_dagger: [11, 10], weapon_hammer: [9, 9], weapon_wand: [9, 10], weapon_potion: [1, 11],
             chest_closed: [5, 7], chest_open: [7, 7], anvil: [2, 6], armor_placeholder: [5, 8],
         };
-        let rpgTerrainImg = null, rpgCharImg = null, rpgDungeonImg = null, rpgMonsterImg = null, rpgAssetsReady = false;
+        let rpgTerrainImg = null, rpgCharImg = null, rpgDungeonImg = null, rpgMonsterImg = null, rpgAssetsReady = false, rpgMetalIconImg = null;
         // 額外一份怪物/生物總表（使用者提供的素材，直接內嵌成 base64，不用另外連網下載），
         // 每格 16x16、緊密排列無間距，跟 Tiny Dungeon 那份同規格
         const RPG_MONSTER_SHEET_W = 160, RPG_MONSTER_SHEET_H = 288;
@@ -2998,6 +2998,9 @@
                 rpgTownImg.onload = done;
                 rpgTownImg.onerror = done;
                 rpgTownImg.src = RPG_TOWN_URL;
+                // 暖廚村地下密道入口鎖定狀態要用的圖示，這張本來就已經預先裁切好了（圖3(5,7)），獨立載入，不用等它才算資源就緒
+                rpgMetalIconImg = new Image();
+                rpgMetalIconImg.src = RPG_MYSTERY_METAL_ICON;
             });
         }
         // 把素材總表裡的某個圖磚，畫到畫面上指定位置（放大成 RPG_TILE 顯示，維持像素銳利不模糊）
@@ -3032,7 +3035,7 @@
                     '#..#.###...PP#H###..#..#',
                     '#...#.#....PP........#.#',
                     '#..........PP..........#',
-                    '#..........PP..........#',
+                    '#..........PP.........##',
                     '###########EE###########',
                 ],
                 start: { x: 12, y: 10 },
@@ -3085,6 +3088,38 @@
                 exits: { '6,10': { to: 'village', x: 11, y: 16 }, '7,10': { to: 'village', x: 12, y: 16 } },
                 wild: true,
                 encounterRate: 0.14,
+            },
+            // 暖廚村地下密道一層：五周目起才能從村莊(22,16)進來，每一格都用圖1(dungeon圖磚表)指定好的圖磚，
+            // 不是走一般的草地/石板路系統。只有第3、4列（列index 3、4）是真正可以走的地板，
+            // 其餘幾列都是牆壁/牆緣裝飾（不能走），暫時沒有任何怪物遭遇
+            village_dungeon: {
+                name: '暖廚村地下密道一層',
+                tileMap: (() => {
+                    const t = {};
+                    const fill = (y, x0, x1, tile) => { for (let x = x0; x <= x1; x++) t[`${x},${y}`] = tile; };
+                    fill(0, 1, 23, [0, 0]); t['0,0'] = [3, 1]; t['24,0'] = [1, 1];
+                    fill(1, 1, 23, [2, 0]); t['0,1'] = [4, 1]; t['24,1'] = [5, 1];
+                    fill(2, 1, 23, [4, 3]); t['0,2'] = [9, 4]; t['24,2'] = { tile: [9, 4], flipH: true };
+                    fill(3, 0, 24, [2, 4]);
+                    fill(4, 0, 24, [0, 4]);
+                    fill(5, 1, 23, [2, 2]); t['0,5'] = [4, 0]; t['24,5'] = [5, 0];
+                    fill(6, 1, 23, [0, 0]); t['0,6'] = [3, 1]; t['24,6'] = [1, 1];
+                    return t;
+                })(),
+                rows: [
+                    '#########################', // 0 牆
+                    '#########################', // 1 牆
+                    '#########################', // 2 牆緣裝飾（暫時不能走）
+                    '.........................', // 3 地板（可以走）
+                    '.........................', // 4 地板（可以走）
+                    '#########################', // 5 牆緣裝飾（暫時不能走）
+                    '#########################', // 6 牆
+                ],
+                start: { x: 12, y: 3 },
+                npcs: {},
+                pois: {},
+                exits: { '12,3': { to: 'village', x: 21, y: 16 } },
+                wild: false, // 暫時先不會遇到怪物
             },
         };
 
@@ -4119,6 +4154,7 @@
             rpgSyncGinhakuAvailability(); // 銀白只有二周目以後才會出現在村莊廣場，每次回地圖畫面都檢查一次
             rpgSyncLaomaiAvailability(); // 老麥：一周目留言板、二周目起變成可對話的本人
             rpgSyncKaiAvailability(); // 凱：四周目魔王真身被擊敗後才會出現在麥穗平原
+            rpgSyncDungeonEntranceAvailability(); // 地下密道入口：五周目起解鎖
             rpgSyncBattleFormation(); // 防呆：確保每個已加入的夥伴都有排進隊形
             rpgStartBgm('explore');
             const map = RPG_MAPS[state.region];
@@ -4227,6 +4263,35 @@
                     const px = (x - cam.x) * T, py = (y - cam.y) * T;
 
                     if (useReal) {
+                        // 暖廚村地下密道：每一格都用自己的圖磚對照表指定，不走一般村莊/平原的草地/石板邏輯
+                        if (state.region === 'village_dungeon') {
+                            const tileEntry = map.tileMap && map.tileMap[`${x},${y}`];
+                            if (tileEntry) {
+                                if (tileEntry.flipH) {
+                                    ctx.save();
+                                    ctx.translate(px + T, py);
+                                    ctx.scale(-1, 1);
+                                    rpgDrawSprite(ctx, rpgDungeonImg, tileEntry.tile, 0, 0, T, RPG_DUNGEON_STRIDE);
+                                    ctx.restore();
+                                } else {
+                                    rpgDrawSprite(ctx, rpgDungeonImg, tileEntry, px, py, T, RPG_DUNGEON_STRIDE);
+                                }
+                            }
+                            continue;
+                        }
+                        // 村莊(22,16)地下密道入口：五周目前顯示圖3(5,7)（鎖定，不可穿越），
+                        // 五周目起顯示圖2(7,8)（解鎖，可以走進去），不需要傳送點發光特效
+                        if (state.region === 'village' && x === 22 && y === 16) {
+                            rpgDrawSprite(ctx, rpgTownImg, RPG_TOWN_TILES.grass, px, py, T, RPG_TOWN_STRIDE);
+                            const unlocked = (state.player.ngPlus || 0) >= 4;
+                            if (unlocked) {
+                                rpgDrawSprite(ctx, rpgTownImg, [7, 8], px, py, T, RPG_TOWN_STRIDE);
+                            } else if (rpgMetalIconImg && rpgMetalIconImg.complete && rpgMetalIconImg.naturalWidth > 0) {
+                                ctx.imageSmoothingEnabled = false;
+                                ctx.drawImage(rpgMetalIconImg, px, py, T, T);
+                            }
+                            continue;
+                        }
                         // 底層地形：水 / 泥土路 / 草地（樹木跟大部分 NPC 都是站在草地上；
                         // 但旅館老闆、食材商店、銀白這幾個本來就設定站在廣場/門口的石板上，所以他們腳下要畫石板路，不是草地）
                         // 村莊的出口（E）底下也是石板路，跟北邊那條路銜接起來，不要突然變草地；平原的出口本來就沒有路，維持草地
@@ -5054,6 +5119,31 @@
                 }
             } else {
                 if (map.npcs[key] === 'kai') delete map.npcs[key];
+            }
+        }
+        // 暖廚村地下密道入口：五周目起（ngPlus>=4）才會解鎖，(22,16)從不可穿越變成可以走進去，
+        // 鎖定時顯示圖3(5,7)，解鎖後顯示圖2(7,8)，不需要傳送點特效，純粹只是換一張圖磚
+        function rpgSyncDungeonEntranceAvailability() {
+            const state = rpgState;
+            if (!state || !state.player) return;
+            const map = RPG_MAPS.village;
+            const key = '22,16';
+            const x = 22, y = 16;
+            const unlocked = (state.player.ngPlus || 0) >= 4;
+            if (unlocked) {
+                map.exits[key] = { to: 'village_dungeon', x: 12, y: 3 };
+                if (map.rows[y] && map.rows[y][x] === '#') {
+                    const rowChars = map.rows[y].split('');
+                    rowChars[x] = '.';
+                    map.rows[y] = rowChars.join('');
+                }
+            } else {
+                if (map.exits[key]) delete map.exits[key];
+                if (map.rows[y] && map.rows[y][x] !== '#') {
+                    const rowChars = map.rows[y].split('');
+                    rowChars[x] = '#';
+                    map.rows[y] = rowChars.join('');
+                }
             }
         }
         function rpgRemoveNpcFromMap(map, npcId) {
