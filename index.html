@@ -3370,6 +3370,9 @@
                 setTile(8, 8, { tile: [9, 4], rotate: 180 });
                 // ---- row7 統一裝飾點綴：圖1(6,0) ----
                 [1, 3, 5, 7].forEach(x => setTile(x, 7, [6, 0]));
+                // ---- (8,7)/(11,7) 改成門框裝飾 ----
+                setTile(8, 7, [5, 1]);
+                setTile(11, 7, [4, 1]);
                 // ---- row8 統一裝飾點綴：圖1(6,1)（會蓋掉剛剛(1,8)(3,8)(5,8)(7,8)設的圖1(4,3)）----
                 [1, 3, 5, 7].forEach(x => setTile(x, 8, [6, 1]));
                 // ---- row11 統一裝飾點綴：圖1(6,0)順時針轉180度 ----
@@ -3389,10 +3392,13 @@
                 fillCol(9, [[2, 8], [11, 17]], { tile: [2, 4], rotate: 270 });
                 fillCol(10, [[2, 8], [11, 17]], { tile: [2, 4], rotate: 90 });
                 // ---- 通道頂端/底端的門框裝飾（可通行）----
-                setTile(10, 1, [4, 4]);
-                setTile(9, 1, { tile: [4, 4], rotate: 270 });
+                setTile(10, 1, [4, 3]);
+                setTile(9, 1, [4, 3]);
                 setTile(9, 18, { tile: [4, 4], rotate: 180 });
                 setTile(10, 18, { tile: [4, 4], rotate: 90 });
+                // ---- (9,2)/(10,2) 改成門框裝飾（往下移一格的新入口，維持可通行）----
+                setTile(9, 2, { tile: [4, 4], rotate: 270 });
+                setTile(10, 2, [4, 4]);
                 // ---- 正中央十字路口 ----
                 setTile(9, 9, [5, 4]);
                 setTile(10, 9, { tile: [5, 4], rotate: 90 });
@@ -3403,7 +3409,7 @@
                 for (let x = 11; x <= 19; x++) { setWalkable(x, 9); setWalkable(x, 10); }
                 for (let y = 2; y <= 8; y++) { setWalkable(9, y); setWalkable(10, y); }
                 for (let y = 11; y <= 17; y++) { setWalkable(9, y); setWalkable(10, y); }
-                setWalkable(9, 1); setWalkable(10, 1); setWalkable(9, 18); setWalkable(10, 18);
+                setWalkable(9, 18); setWalkable(10, 18);
                 setWalkable(9, 9); setWalkable(10, 9); setWalkable(9, 10); setWalkable(10, 10);
                 return {
                     name: '魔王城通道',
@@ -3415,6 +3421,129 @@
                     exits: {
                         '19,9': { to: 'village_dungeon2', x: 0, y: 3 },
                         '19,10': { to: 'village_dungeon2', x: 0, y: 4 },
+                        '0,9': { to: 'castle_hall', x: 19, y: 9 }, // 往魔王城主殿
+                        '0,10': { to: 'castle_hall', x: 19, y: 10 }, // 往魔王城主殿
+                    },
+                    wild: false,
+                    viewport: { w: 12, h: 10 },
+                };
+            })(),
+            // 魔王城主殿：跟魔王城通道完全複製同一份地圖產生邏輯（同樣的十字型走道+四角厚岩壁），
+            // 只有地圖名稱、進場位置、傳送點不一樣——右側(19,9)/(19,10)改成回魔王城通道的(0,9)/(0,10)
+            castle_hall: (() => {
+                const t = {};
+                const rowsArr = [];
+                for (let y = 0; y < 20; y++) rowsArr.push(Array(20).fill('#'));
+                const setWalkable = (x, y) => { rowsArr[y][x] = '.'; };
+                const setTile = (x, y, tile) => { t[`${x},${y}`] = tile; };
+                const fillRect = (x0, x1, y0, y1, tile) => {
+                    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) setTile(x, y, tile);
+                };
+                const fillRow = (y, ranges, tile) => {
+                    ranges.forEach(([x0, x1]) => { for (let x = x0; x <= x1; x++) setTile(x, y, tile); });
+                };
+                const fillCol = (x, ranges, tile) => {
+                    ranges.forEach(([y0, y1]) => { for (let y = y0; y <= y1; y++) setTile(x, y, tile); });
+                };
+                // ---- 底圖先整張鋪滿圖1(0,0)，避免任何一格漏畫 ----
+                fillRect(0, 19, 0, 19, [0, 0]);
+                // ---- 四個角落厚岩壁，隨機點綴圖1(0,1)/圖1(0,2)，可任意旋轉 ----
+                const decorRotations = [0, 90, 180, 270];
+                const decorTiles = [[0, 1], [0, 2]];
+                [
+                    [0, 8, 0, 8],    // (0,0)~(8,8)
+                    [0, 7, 12, 19],  // (0,19)~(7,12)
+                    [13, 19, 0, 8],  // (19,0)~(13,8)
+                    [13, 19, 13, 19],// (19,19)~(13,13)
+                ].forEach(([x0, x1, y0, y1]) => {
+                    for (let y = y0; y <= y1; y++) {
+                        for (let x = x0; x <= x1; x++) {
+                            if (Math.random() < 0.18) {
+                                const dt = decorTiles[Math.floor(Math.random() * decorTiles.length)];
+                                const rot = decorRotations[Math.floor(Math.random() * decorRotations.length)];
+                                setTile(x, y, rot ? { tile: dt, rotate: rot } : dt);
+                            }
+                        }
+                    }
+                });
+                // ---- row8 / row11 兩側橫向牆面 ----
+                fillRow(8, [[0, 7], [12, 19]], [2, 0]);
+                fillRow(11, [[0, 7], [12, 19]], [2, 2]);
+                // ---- col8 縱向牆面（上下兩段）----
+                fillCol(8, [[1, 7], [12, 18]], [1, 1]);
+                // ---- row0 / row19 中央兩格 ----
+                setTile(9, 0, [2, 0]); setTile(10, 0, [2, 0]);
+                setTile(9, 19, [2, 2]); setTile(10, 19, [2, 2]);
+                // ---- 中央通道左右兩側的邊角/門框裝飾 ----
+                setTile(8, 0, [1, 0]);
+                setTile(11, 0, [3, 0]);
+                setTile(8, 19, [1, 2]);
+                setTile(11, 19, [3, 2]);
+                setTile(8, 8, [5, 1]);
+                setTile(11, 8, [4, 1]);
+                setTile(8, 11, [5, 0]);
+                setTile(11, 11, [4, 0]);
+                // ---- col11 縱向牆面（上下兩段，跟col8對稱）----
+                fillCol(11, [[1, 7], [12, 18]], [3, 1]);
+                // ---- row7 兩側橫向牆面 ----
+                fillRow(7, [[0, 7], [12, 19]], [2, 0]);
+                // ---- (11,8)/(8,8)/(12,8)~(19,8)/(0,8)~(7,8) 重新指定圖磚 ----
+                setTile(11, 8, [9, 4]);
+                fillRow(8, [[0, 7], [12, 19]], [4, 3]);
+                setTile(8, 8, { tile: [9, 4], rotate: 180 });
+                // ---- row7 統一裝飾點綴：圖1(6,0) ----
+                [1, 3, 5, 7].forEach(x => setTile(x, 7, [6, 0]));
+                // ---- (8,7)/(11,7) 改成門框裝飾 ----
+                setTile(8, 7, [5, 1]);
+                setTile(11, 7, [4, 1]);
+                // ---- row8 統一裝飾點綴：圖1(6,1)（會蓋掉剛剛(1,8)(3,8)(5,8)(7,8)設的圖1(4,3)）----
+                [1, 3, 5, 7].forEach(x => setTile(x, 8, [6, 1]));
+                // ---- row11 統一裝飾點綴：圖1(6,0)順時針轉180度 ----
+                [1, 3, 5, 7].forEach(x => setTile(x, 11, { tile: [6, 0], rotate: 180 }));
+                // ---- row9 / row10 橫向走道（可通行）----
+                fillRow(9, [[0, 8], [11, 19]], [2, 4]);
+                fillRow(10, [[0, 8], [11, 19]], { tile: [2, 4], rotate: 180 });
+                // row9 隨機點綴圖1(3,4)，不可旋轉
+                [[0, 8], [11, 19]].forEach(([x0, x1]) => {
+                    for (let x = x0; x <= x1; x++) {
+                        if (Math.random() < 0.15) setTile(x, 9, [3, 4]);
+                    }
+                });
+                // ---- row9 統一裝飾點綴：圖1(6,2)（沿用原本走道，維持可通行）----
+                [1, 3, 5, 7].forEach(x => setTile(x, 9, [6, 2]));
+                // ---- col9 / col10 縱向走道（可通行）----
+                fillCol(9, [[2, 8], [11, 17]], { tile: [2, 4], rotate: 270 });
+                fillCol(10, [[2, 8], [11, 17]], { tile: [2, 4], rotate: 90 });
+                // ---- 通道頂端/底端的門框裝飾（可通行）----
+                setTile(10, 1, [4, 3]);
+                setTile(9, 1, [4, 3]);
+                setTile(9, 18, { tile: [4, 4], rotate: 180 });
+                setTile(10, 18, { tile: [4, 4], rotate: 90 });
+                // ---- (9,2)/(10,2) 改成門框裝飾（往下移一格的新入口，維持可通行）----
+                setTile(9, 2, { tile: [4, 4], rotate: 270 });
+                setTile(10, 2, [4, 4]);
+                // ---- 正中央十字路口 ----
+                setTile(9, 9, [5, 4]);
+                setTile(10, 9, { tile: [5, 4], rotate: 90 });
+                setTile(9, 10, { tile: [5, 4], rotate: 270 });
+                setTile(10, 10, { tile: [5, 4], rotate: 180 });
+                // ---- 統一設定可通行的格子 ----
+                for (let x = 0; x <= 8; x++) { setWalkable(x, 9); setWalkable(x, 10); }
+                for (let x = 11; x <= 19; x++) { setWalkable(x, 9); setWalkable(x, 10); }
+                for (let y = 2; y <= 8; y++) { setWalkable(9, y); setWalkable(10, y); }
+                for (let y = 11; y <= 17; y++) { setWalkable(9, y); setWalkable(10, y); }
+                setWalkable(9, 18); setWalkable(10, 18);
+                setWalkable(9, 9); setWalkable(10, 9); setWalkable(9, 10); setWalkable(10, 10);
+                return {
+                    name: '魔王城主殿',
+                    tileMap: t,
+                    rows: rowsArr.map(r => r.join('')),
+                    start: { x: 19, y: 9 },
+                    npcs: {},
+                    pois: {},
+                    exits: {
+                        '19,9': { to: 'castle_passage', x: 0, y: 9 }, // 回魔王城通道
+                        '19,10': { to: 'castle_passage', x: 0, y: 10 }, // 回魔王城通道
                     },
                     wild: false,
                     viewport: { w: 12, h: 10 },
