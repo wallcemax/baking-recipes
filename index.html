@@ -3902,34 +3902,42 @@
 
         // 幻化摘要行：狀態畫面裡武器/防具那行下方，額外顯示一行「幻化，武器名：效果」，數值用綠色標註
         function rpgManifestSummaryHTML(obj) {
-            if (!obj || !obj.weaponManifested) return '';
-            if (!obj.isCompanion) {
-                // 主角的幻化效果是全域治療加成，不綁定在特定技能上
-                return `<p class="text-xs mt-1" style="color:#7A6A58">✨ 幻化，${obj.weaponName}：全治療類效果<span style="color:#2E9E4F; font-weight:600;">+10%</span></p>`;
+            if (!obj) return '';
+            let out = '';
+            if (obj.weaponManifested) {
+                if (!obj.isCompanion) {
+                    // 主角的幻化效果是全域治療加成，不綁定在特定技能上
+                    out += `<p class="text-xs mt-1" style="color:#7A6A58">✨ 幻化，${obj.weaponName}：全治療類效果<span style="color:#2E9E4F; font-weight:600;">+10%</span></p>`;
+                } else {
+                    // 夥伴：列出這把武器對應的每一項技能加成
+                    const pctFields = ['defBuffPct', 'atkBuffPct', 'agiBuffPct', 'critBuffChance', 'allIndividualChance', 'groupInflictChance', 'critChance', 'inflictChance', 'debuffChance', 'defDebuffPct', 'instaKillThreshold', 'instaKillChance'];
+                    const lines = [];
+                    (obj.skills || []).forEach(skillId => {
+                        const bonus = RPG_MANIFEST_SKILL_BONUS[skillId];
+                        const sk = RPG_SKILLS[skillId];
+                        if (!bonus || !sk) return;
+                        Object.entries(bonus).forEach(([field, rule]) => {
+                            let text;
+                            if (rule.set !== undefined) {
+                                text = (typeof rule.set === 'number' && rule.set <= 1) ? `→${Math.round(rule.set * 100)}%` : `→${rule.set}`;
+                            } else if (pctFields.includes(field)) {
+                                text = `+${Math.round(rule.delta * 100)}%`;
+                            } else if (field === 'sp') {
+                                text = `${rule.delta}SP`;
+                            } else {
+                                text = `+${rule.delta}`;
+                            }
+                            lines.push(`${sk.name}<span style="color:#2E9E4F; font-weight:600;">${text}</span>`);
+                        });
+                    });
+                    if (lines.length) out += `<p class="text-xs mt-1" style="color:#7A6A58">✨ 幻化，${obj.weaponName}：${lines.join('、')}</p>`;
+                }
             }
-            // 夥伴：列出這把武器對應的每一項技能加成
-            const pctFields = ['defBuffPct', 'atkBuffPct', 'agiBuffPct', 'critBuffChance', 'allIndividualChance', 'groupInflictChance', 'critChance', 'inflictChance', 'debuffChance', 'defDebuffPct', 'instaKillThreshold', 'instaKillChance'];
-            const lines = [];
-            (obj.skills || []).forEach(skillId => {
-                const bonus = RPG_MANIFEST_SKILL_BONUS[skillId];
-                const sk = RPG_SKILLS[skillId];
-                if (!bonus || !sk) return;
-                Object.entries(bonus).forEach(([field, rule]) => {
-                    let text;
-                    if (rule.set !== undefined) {
-                        text = (typeof rule.set === 'number' && rule.set <= 1) ? `→${Math.round(rule.set * 100)}%` : `→${rule.set}`;
-                    } else if (pctFields.includes(field)) {
-                        text = `+${Math.round(rule.delta * 100)}%`;
-                    } else if (field === 'sp') {
-                        text = `${rule.delta}SP`;
-                    } else {
-                        text = `+${rule.delta}`;
-                    }
-                    lines.push(`${sk.name}<span style="color:#2E9E4F; font-weight:600;">${text}</span>`);
-                });
-            });
-            if (!lines.length) return '';
-            return `<p class="text-xs mt-1" style="color:#7A6A58">✨ 幻化，${obj.weaponName}：${lines.join('、')}</p>`;
+            if (obj.armorManifested) {
+                // 防具幻化效果固定是這三項，不綁定在特定技能上，跟武器的摘要行分開獨立顯示
+                out += `<p class="text-xs mt-1" style="color:#7A6A58">✨ 幻化，${obj.armorName}：最大HP<span style="color:#2E9E4F; font-weight:600;">+10%</span>、最大SP<span style="color:#2E9E4F; font-weight:600;">+10%</span>、防禦力<span style="color:#2E9E4F; font-weight:600;">+10%</span></p>`;
+            }
+            return out;
         }
         function rpgStatusCardHTML(obj, idx, total) {
             const atk = rpgEffectiveAtk(obj), def = rpgEffectiveDef(obj);
