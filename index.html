@@ -3199,6 +3199,7 @@
                     '23,4': { to: 'village_dungeon', x: 0, y: 4 }, // 回一層
                     '14,5': { to: 'village_tomb', x: 11, y: 0 }, // 往地下古墓
                     '14,6': { to: 'village_tomb', x: 10, y: 0 }, // 往地下古墓
+                    '13,6': { to: 'village_tomb', x: 10, y: 0 }, // 往地下古墓
                 },
                 wild: false,
                 viewport: { w: 12, h: 7 },
@@ -3263,8 +3264,8 @@
                     for (let tx = 5; tx <= 14; tx += 3) {
                         const variant = tombVariants[variantIdx % 2];
                         variantIdx++;
-                        t[`${tx},${ty}`] = variant;
-                        t[`${tx},${ty - 1}`] = [6, 5];
+                        t[`${tx},${ty}`] = { tile: variant, base: [0, 4] };
+                        t[`${tx},${ty - 1}`] = { tile: [6, 5], base: [0, 4] };
                         setBlocked(tx, ty);
                         setWalkable(tx, ty - 1);
                     }
@@ -3276,7 +3277,7 @@
                     start: { x: 10, y: 1 },
                     npcs: {},
                     pois: {},
-                    exits: { '11,0': { to: 'village_dungeon2', x: 14, y: 5 } },
+                    exits: { '11,0': { to: 'village_dungeon2', x: 14, y: 5 }, '10,0': { to: 'village_dungeon2', x: 13, y: 6 } },
                     wild: false,
                     viewport: { w: 12, h: 10 }, // 房間夠大了，比照村莊用一樣的鏡頭大小
                 };
@@ -4354,7 +4355,7 @@
                     <span class="flex items-center gap-2">💰${state.player.gold} ・ 🏆${state.player.score || 0} ・ 🔁第${(state.player.ngPlus || 0) + 1}周目 <button id="rpg-bgm-toggle" onclick="rpgToggleBgmMute()" style="border:none; background:none; cursor:pointer; font-size:1rem; line-height:1;">${rpgBgmMuted ? '🔇' : '🎵'}</button></span>
                 </div>
                 <div style="position:relative; max-width:100%; width:${width}px; margin:0 auto;">
-                    <canvas id="rpg-canvas" width="${width}" height="${height}" style="display:block; border-radius:1rem; border:1px solid var(--line); max-width:100%;"></canvas>
+                    <canvas id="rpg-canvas" width="${width}" height="${height}" style="display:block; border-radius:1rem; border:1px solid var(--line); max-width:100%; background:var(--espresso-soft);"></canvas>
                     ${map.viewport ? `<canvas id="rpg-minimap" width="70" height="${Math.round(70 * map.rows.length / map.rows[0].length)}" style="position:absolute; top:6px; right:6px; border-radius:0.5rem; border:2px solid rgba(255,255,255,0.85); box-shadow:0 2px 6px rgba(0,0,0,0.35); background:rgba(0,0,0,0.2);"></canvas>` : ''}
                 </div>
                 <p id="rpg-dialogue-box" class="text-xs text-center mt-2" style="color:#B3A492; min-height:1.2rem;"></p>
@@ -4379,6 +4380,7 @@
             // 這裡主動多補畫兩次（下一個影格 + 稍微延遲一點），確保圖片真的完全就緒後至少會再重畫一次，不用等玩家自己移動才修正
             requestAnimationFrame(() => { if (rpgState) rpgDraw(); });
             setTimeout(() => { if (rpgState) rpgDraw(); }, 120);
+            setTimeout(() => { if (rpgState) rpgDraw(); }, 450);
             rpgCheckNearby();
         }
 
@@ -4463,6 +4465,11 @@
                                 const useTown = tileEntry.sheet === 'town';
                                 const sheetImg = useTown ? rpgTownImg : rpgDungeonImg;
                                 const sheetStride = useTown ? RPG_TOWN_STRIDE : RPG_DUNGEON_STRIDE;
+                                // 圖磚本身邊緣透明（例如墓碑、土堆）時，要先在底下補畫一層不透明的地板，
+                                // 不然透明部分會直接透出畫布底色，看起來像圖磚背景還留著一圈白色沒清乾淨
+                                if (tileEntry.base) {
+                                    rpgDrawSprite(ctx, sheetImg, tileEntry.base, px, py, T, sheetStride);
+                                }
                                 if (rotate || flipH) {
                                     ctx.save();
                                     ctx.translate(px + T / 2, py + T / 2);
