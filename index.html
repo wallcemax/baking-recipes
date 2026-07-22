@@ -4864,27 +4864,7 @@
                     }
                 }
                 if (exit.to === 'village') {
-                    // 神秘金屬商人：五周目起，每次刷新進村莊都重新骰一次20%機率；
-                    // 骰到就出現在(9,11)並補滿10顆限量庫存，沒骰到（或本來就沒骰到過）這格就是普通空地
-                    const vMap = RPG_MAPS.village;
-                    const mKey = '9,11';
-                    const mx = 9, my = 11;
-                    if ((state.player.ngPlus || 0) >= 4 && Math.random() < 0.2) {
-                        vMap.npcs[mKey] = 'metalMerchant';
-                        state.player.metalMerchantStock = 10;
-                        if (vMap.rows[my] && vMap.rows[my][mx] !== 'H') {
-                            const rowChars = vMap.rows[my].split('');
-                            rowChars[mx] = 'H';
-                            vMap.rows[my] = rowChars.join('');
-                        }
-                    } else {
-                        if (vMap.npcs[mKey] === 'metalMerchant') delete vMap.npcs[mKey];
-                        if (vMap.rows[my] && vMap.rows[my][mx] === 'H') {
-                            const rowChars = vMap.rows[my].split('');
-                            rowChars[mx] = '.';
-                            vMap.rows[my] = rowChars.join('');
-                        }
-                    }
+                    rpgRollMetalMerchant();
                 }
                 rpgRefreshGatherPoints(); // 每次切換地圖，還沒刷新的採集點各自獨立有 40% 機率重新開放
                 renderRpgMap();
@@ -8476,6 +8456,7 @@
                             state.battle = null;
                             state.battleBusy = false;
                             state.region = 'village';
+                            rpgRollMetalMerchant();
                             state.pos = { x: 14, y: 14 }; // 旅館附近的復活點
                             state.trail = [1, 2, 3, 4].map(() => ({ ...state.pos }));
                             state.player.hp = state.player.maxHp;
@@ -8715,12 +8696,38 @@
             renderRpgMap();
         }
 
+        // 神秘金屬商人：五周目起，每次回到村莊（不管是走路穿過出口、團圓飯傳送、還是戰鬥結束回村）都重新骰一次20%機率；
+        // 骰到就出現在(9,11)並補滿10顆限量庫存，沒骰到（或本來就沒骰到過）這格就是普通空地
+        function rpgRollMetalMerchant() {
+            const state = rpgState;
+            if (!state || !state.player) return;
+            const vMap = RPG_MAPS.village;
+            const mKey = '9,11';
+            const mx = 9, my = 11;
+            if ((state.player.ngPlus || 0) >= 4 && Math.random() < 0.2) {
+                vMap.npcs[mKey] = 'metalMerchant';
+                state.player.metalMerchantStock = 10;
+                if (vMap.rows[my] && vMap.rows[my][mx] !== 'H') {
+                    const rowChars = vMap.rows[my].split('');
+                    rowChars[mx] = 'H';
+                    vMap.rows[my] = rowChars.join('');
+                }
+            } else {
+                if (vMap.npcs[mKey] === 'metalMerchant') delete vMap.npcs[mKey];
+                if (vMap.rows[my] && vMap.rows[my][mx] === 'H') {
+                    const rowChars = vMap.rows[my].split('');
+                    rowChars[mx] = '.';
+                    vMap.rows[my] = rowChars.join('');
+                }
+            }
+        }
         function rpgBackToVillage() {
             const state = rpgState;
             state.mode = 'map';
             state.battle = null;
             state.battleBusy = false;
             state.region = 'village';
+            rpgRollMetalMerchant();
             const revivePos = { x: 14, y: 14 }; // 復活點：旅館附近，跟魔王戰勝利回村的位置共用同一個點
             state.pos = { ...revivePos };
             state.trail = [1, 2, 3, 4].map(() => ({ ...revivePos }));
