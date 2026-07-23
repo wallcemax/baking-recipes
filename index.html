@@ -3200,7 +3200,7 @@
                     '0,3': { to: 'village_dungeon2', x: 23, y: 3 }, // 往二層
                     '0,4': { to: 'village_dungeon2', x: 23, y: 4 }, // 往二層
                 },
-                wild: true, encounterRate: 0.14, // 密道系列地圖現在也會遇到一般怪物了（不會遇到魔王）
+                wild: true, encounterRate: 0.112, // 密道系列地圖現在也會遇到一般怪物了（不會遇到魔王），機率比原本再降20%
                 viewport: { w: 12, h: 7 }, // 鏡頭放大＋右上小地圖，跟村莊同一套機制；高度直接用整張地圖的高度，這張地圖本來就不高，不用縮
             },
             // 暖廚村地下密道二層：目前先完全比照一層的設定（同樣的圖磚配置、同樣的牆面裝飾），
@@ -3262,7 +3262,7 @@
                     '0,3': { to: 'castle_passage', x: 19, y: 9 }, // 往魔王城通道
                     '0,4': { to: 'castle_passage', x: 19, y: 10 }, // 往魔王城通道
                 },
-                wild: true, encounterRate: 0.14, // 密道系列地圖現在也會遇到一般怪物了（不會遇到魔王）
+                wild: true, encounterRate: 0.112, // 密道系列地圖現在也會遇到一般怪物了（不會遇到魔王），機率比原本再降20%
                 viewport: { w: 12, h: 7 },
             },
             // 地下古墓：20x20，跟密道一二層一樣逐格指定圖磚，這裡用tileMap+rows一起用同一段程式算出來，
@@ -3365,7 +3365,7 @@
                     pois: {},
                     digPoints,
                     exits: { '11,0': { to: 'village_dungeon2', x: 14, y: 5 }, '10,0': { to: 'village_dungeon2', x: 13, y: 6 } },
-                    wild: true, encounterRate: 0.14, // 密道系列地圖現在也會遇到一般怪物了（不會遇到魔王）
+                    wild: true, encounterRate: 0.112, // 密道系列地圖現在也會遇到一般怪物了（不會遇到魔王），機率比原本再降20%
                     viewport: { w: 12, h: 10 }, // 房間夠大了，比照村莊用一樣的鏡頭大小
                 };
             })(),
@@ -3495,7 +3495,7 @@
                         '0,9': { to: 'castle_hall', x: 19, y: 18 }, // 往魔王城主殿
                         '0,10': { to: 'castle_hall', x: 19, y: 19 }, // 往魔王城主殿
                     },
-                    wild: true, encounterRate: 0.14, // 密道系列地圖現在也會遇到一般怪物了（不會遇到魔王）
+                    wild: true, encounterRate: 0.112, // 密道系列地圖現在也會遇到一般怪物了（不會遇到魔王），機率比原本再降20%
                     viewport: { w: 12, h: 10 },
                 };
             })(),
@@ -3830,7 +3830,7 @@
                         '19,17': { to: 'castle_passage', x: 0, y: 9 }, // 往魔王城通道
                         '19,18': { to: 'castle_passage', x: 0, y: 9 }, // 往魔王城通道
                     },
-                    wild: true, encounterRate: 0.14, // 密道系列地圖現在也會遇到一般怪物了（不會遇到魔王）
+                    wild: true, encounterRate: 0.112, // 密道系列地圖現在也會遇到一般怪物了（不會遇到魔王），機率比原本再降20%
                     viewport: { w: 12, h: 10 },
                 };
             })(),
@@ -6076,6 +6076,9 @@
             const key = '22,16';
             const x = 22, y = 16;
             const unlocked = !!state.player.villageStoneMoved;
+            // 石頭調查點的found狀態直接跟這個持久化旗標同步，不要單獨依賴poi.found本身
+            // （poi.found只是執行期記憶體資料，沒有存進存檔，重新整理網頁後會重置回false，調查按鈕就會跑出來）
+            if (map.pois && map.pois[key]) map.pois[key].found = unlocked;
             if (unlocked) {
                 map.exits[key] = { to: 'village_dungeon', x: 23, y: 3 };
                 if (map.rows[y] && map.rows[y][x] === '#') {
@@ -7177,21 +7180,22 @@
                     state.battleBusy = false;
                     if (!state.battleFormation) state.battleFormation = rpgDefaultBattleFormation();
                     const partyFormation = rpgEmptyFormation();
-                    const aliveCompanions = (state.companions || []).filter(c => c.hp > 0);
-                    // 依照玩家自訂的站位表把人放進陣型（死亡的人這場戰鬥不會出現，但站位設定還是保留著，復活後會回到原位）
+                    // 依照玩家自訂的站位表把人放進陣型——注意：倒下但還沒被治療復活的人也要放進陣型裡
+                    // （只是畫面上會用跟戰鬥中途倒下時一樣的透明樣式），不能直接排除掉，不然道具/技能的復活邏輯
+                    // 是從陣型裡找目標，根本不在陣型裡的人就永遠不可能被復活到
                     Object.entries(state.battleFormation).forEach(([slotKey, occ]) => {
                         if (occ == null) return;
                         const character = occ === 'player' ? state.player : state.companions[occ];
-                        if (!character || character.hp <= 0) return;
+                        if (!character) return;
                         const [row, i] = RPG_FORMATION_SLOT_MAP[slotKey];
                         partyFormation[row][i] = character;
                     });
-                    // 異常狀態每場戰鬥開始都重新歸零，不會沿用到下一場；怪物也補上 curSp（能不能用技能靠這個）
-                    [state.player, ...aliveCompanions].forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 }; m.buffs = {}; });
+                    // 異常狀態每場戰鬥開始都重新歸零，不會沿用到下一場（不管上一場倒下與否都要重置）；怪物也補上 curSp（能不能用技能靠這個）
+                    [state.player, ...(state.companions || [])].forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 }; m.buffs = {}; });
                     monsterObjs.forEach(m => { m.statuses = { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 }; m.curSp = m.sp || 0; });
                     const bossObj = monsterObjs.find(m => m.isBoss);
                     // 第一個下指令的人不再預設是主角，改成陣型裡第一個找得到、還活著的人
-                    const firstAlly = rpgFormationEntries(partyFormation)[0];
+                    const firstAlly = rpgFormationEntries(partyFormation).find(e => e.obj.hp > 0);
                     state.battle = {
                         monsterFormation: isBossFight ? rpgPlaceMonstersOrdered(monsterObjs) : rpgPlaceMonstersRandom(monsterObjs),
                         partyFormation,
@@ -9802,7 +9806,7 @@
             b.commands = {};
             b.phase = 'command';
             b.uiMode = 'main';
-            const firstAlly = rpgFormationEntries(b.partyFormation)[0];
+            const firstAlly = rpgFormationEntries(b.partyFormation).find(e => e.obj.hp > 0);
             b.actor = firstAlly ? { row: firstAlly.row, i: firstAlly.i } : { row: 'front', i: 0 };
             const firstMonster = rpgFormationEntries(b.monsterFormation)[0];
             b.target = firstMonster ? { row: firstMonster.row, i: firstMonster.i } : null;
@@ -9885,7 +9889,7 @@
             b.commands = {};
             b.phase = 'command';
             b.uiMode = 'main';
-            const firstAlly = rpgFormationEntries(b.partyFormation)[0];
+            const firstAlly = rpgFormationEntries(b.partyFormation).find(e => e.obj.hp > 0);
             b.actor = firstAlly ? { row: firstAlly.row, i: firstAlly.i } : { row: 'front', i: 0 };
             b.target = { row: 'back', i: 0 };
             rpgStartBgm('boss');
