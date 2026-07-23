@@ -4914,7 +4914,7 @@
             rpgSyncKaiAvailability(); // 凱：四周目魔王真身被擊敗後才會出現在麥穗平原
             rpgSyncDungeonEntranceAvailability(); // 地下密道入口：五周目起解鎖
             rpgSyncBattleFormation(); // 防呆：確保每個已加入的夥伴都有排進隊形
-            rpgStartBgm('explore');
+            rpgStartBgm(RPG_REGION_BGM[state.region] || 'explore');
             const map = RPG_MAPS[state.region];
             const viewCols = map.viewport ? map.viewport.w : map.rows[0].length;
             const viewRows = map.viewport ? map.viewport.h : map.rows.length;
@@ -11065,9 +11065,26 @@
             explore: { tempo: 0.42, wave: 'triangle', gain: 0.095, notes: [392, 440, 494, 440, 523, 494, 440, 392, 349, 392, 440, 392, 330, 349, 392, 349] },
             battle: { tempo: 0.22, wave: 'square', gain: 0.085, notes: [220, 220, 262, 220, 247, 247, 294, 247, 220, 262, 294, 330, 294, 262, 220, 196] },
             boss: { tempo: 0.19, wave: 'sawtooth', gain: 0.09, notes: [174, 174, 207, 174, 196, 196, 233, 196, 174, 207, 233, 261, 233, 196, 174, 146] },
+            // 麥穗平原專屬：明亮開闊的野外主題，節奏比暖廚村的explore稍快一點，三角波保持輕快的感覺
+            plains: { tempo: 0.38, wave: 'triangle', gain: 0.095, notes: [392, 440, 494, 523, 494, 440, 392, 440, 349, 392, 440, 494, 440, 392, 349, 330] },
+            // 密道系列共用（暖廚村地下密道一層/二層、魔王城通道）：小調、略帶警戒感的地下通道主題
+            dungeonPassage: { tempo: 0.34, wave: 'triangle', gain: 0.09, notes: [220, 262, 294, 262, 247, 220, 196, 220, 262, 294, 330, 294, 262, 247, 220, 196] },
+            // 地下古墓專屬：慢速、半音游移的詭異氣氛，用sine波讓聲音比較陰森、不刺耳
+            tomb: { tempo: 0.55, wave: 'sine', gain: 0.075, notes: [220, 208, 220, 233, 220, 196, 208, 220, 185, 196, 208, 196, 174, 185, 196, 174] },
+            // 魔王城主殿專屬：莊嚴、有分量的城堡主題，鋸齒波增加一點威嚴感
+            castleHall: { tempo: 0.30, wave: 'sawtooth', gain: 0.095, notes: [294, 349, 440, 523, 440, 349, 294, 349, 440, 587, 523, 440, 349, 294, 262, 294] },
             // 火熱鐵砧專用：固定拍子的鍛造敲擊感旋律，节奏小遊戲的「接拍窗口」直接對齊這裡的 tempo，
             // 讓玩家是真的跟著這段 BGM 的節奏點下鎚，而不是純粹看計時條
             forge: { tempo: 0.5, wave: 'square', gain: 0.1, notes: [220, 220, 165, 220, 262, 262, 196, 262, 294, 294, 220, 294, 220, 196, 165, 147] },
+        };
+        // 各地圖對應的專屬BGM情境；沒有列在這裡的地圖（暖廚村、平原以外的其他地方）維持原本的explore
+        const RPG_REGION_BGM = {
+            plains: 'plains',
+            village_dungeon: 'dungeonPassage',
+            village_dungeon2: 'dungeonPassage',
+            castle_passage: 'dungeonPassage',
+            village_tomb: 'tomb',
+            castle_hall: 'castleHall',
         };
         function rpgStopBgm() {
             if (rpgBgmTimer) { clearTimeout(rpgBgmTimer); rpgBgmTimer = null; }
@@ -11092,7 +11109,7 @@
         function rpgToggleBgmMute() {
             rpgBgmMuted = !rpgBgmMuted;
             localStorage.setItem('rpgBgmMuted', rpgBgmMuted ? '1' : '0');
-            if (rpgBgmMuted) { rpgStopBgm(); } else if (rpgState) { rpgStartBgm(rpgState.mode === 'battle' ? 'battle' : 'explore'); }
+            if (rpgBgmMuted) { rpgStopBgm(); } else if (rpgState) { rpgStartBgm(rpgState.mode === 'battle' ? 'battle' : (RPG_REGION_BGM[rpgState.region] || 'explore')); }
             const btn = document.getElementById('rpg-bgm-toggle');
             if (btn) btn.textContent = rpgBgmMuted ? '🔇' : '🎵';
             return rpgBgmMuted;
