@@ -7815,6 +7815,13 @@
                 if (spBar && obj.sp) spBar.style.width = Math.max(0, Math.round((obj.curSp || 0) / obj.sp * 100)) + '%';
                 const icons = document.getElementById(`${domId}-icons`);
                 if (icons) icons.innerHTML = rpgStatusBuffIconsInner(obj);
+                // HP歸零也不會倒下的怪物（目前只有黑暗料理王・母后）：血量被壓到1的時候提示一次她還有強大的精神力
+                if (obj.unkillableByHp && obj.curHp <= 1 && !obj.hpFloorAnnounced) {
+                    obj.hpFloorAnnounced = true;
+                    rpgLogAppend(`💢 ${obj.name}的HP已經見底，但她還有強大的精神力撐著，遠遠沒有倒下！`);
+                } else if (obj.unkillableByHp && obj.curHp > 1) {
+                    obj.hpFloorAnnounced = false; // HP回升到1以上（例如被治療）就重置，下次再見底還會再提示一次
+                }
             });
             rpgFormationEntries(b.partyFormation).forEach(({ row, i, obj }) => {
                 const domId = `rpg-slot-party-${row}-${i}`;
@@ -8010,7 +8017,7 @@
             rpgLungeAttack(actorDomId, actorSide === 'party' ? 60 : -60, () => {
                 const sameSide = pick.side === actorSide;
                 if (pick.side === 'party') pick.obj.hp = Math.max(0, pick.obj.hp - dmg);
-                else pick.obj.curHp = Math.max(0, pick.obj.curHp - dmg);
+                else pick.obj.curHp = Math.max(pick.obj.unkillableByHp ? 1 : 0, pick.obj.curHp - dmg);
                 if (pick.side === 'party') {
                     if (pick.obj.buffs && pick.obj.buffs.atkBuffMult) {
                         delete pick.obj.buffs.atkBuffMult;
@@ -8120,21 +8127,21 @@
                 const domId = `rpg-slot-monster-${row}-${i}`;
                 if (obj.statuses.poison > 0) {
                     const dmg = Math.max(1, Math.round(obj.hp * dotPct));
-                    obj.curHp = Math.max(0, obj.curHp - dmg);
+                    obj.curHp = Math.max(obj.unkillableByHp ? 1 : 0, obj.curHp - dmg);
                     rpgLogAppend(`☠️ ${obj.name}中毒發作，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#7A3FA0');
                     obj.statuses.poison--;
                 }
                 if (obj.statuses.burn > 0) {
                     const dmg = Math.max(1, Math.round(obj.hp * dotPct));
-                    obj.curHp = Math.max(0, obj.curHp - dmg);
+                    obj.curHp = Math.max(obj.unkillableByHp ? 1 : 0, obj.curHp - dmg);
                     rpgLogAppend(`🔥 ${obj.name}灼傷發作，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#C4453F');
                     obj.statuses.burn--;
                 }
                 if (obj.statuses.bleed > 0) {
                     const dmg = Math.max(1, Math.round(obj.hp * dotPct));
-                    obj.curHp = Math.max(0, obj.curHp - dmg);
+                    obj.curHp = Math.max(obj.unkillableByHp ? 1 : 0, obj.curHp - dmg);
                     rpgLogAppend(`🩸 ${obj.name}流血中，扣了 ${dmg} 點 HP！`);
                     rpgFloatDamage(domId, dmg, '#A8324A');
                     obj.statuses.bleed--;
@@ -8329,7 +8336,7 @@
                 combo++;
                 const dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * currentMult - rpgEffectiveDef(targetObj) + (Math.random() * 3 - 1)));
                 totalDmg += dmg;
-                targetObj.curHp = Math.max(0, targetObj.curHp - dmg);
+                targetObj.curHp = Math.max(targetObj.unkillableByHp ? 1 : 0, targetObj.curHp - dmg);
                 // 鐵鎚往下揮一下的動畫、怪物跟著震一下，順便在小遊戲畫面裡自己飄一個傷害數字（真正的戰鬥格子被遮住看不到）
                 const hEl = hammerEl();
                 if (hEl) { hEl.classList.remove('swing'); void hEl.offsetWidth; hEl.classList.add('swing'); }
@@ -8650,7 +8657,8 @@
                 return;
             }
             // 魔王的「隨從召喚」：場上還有隨從死亡的話，每回合開始都有 5% 機率把死掉的隨從全部復活（滿血復活）
-            const bossEntryForSummon = rpgFormationEntries(b.monsterFormation).find(e => e.obj.isBoss && e.obj.curHp > 0);
+            // 最終六連戰不會觸發這個（每一場都是一次性的固定陣容，隨從死了就是死了）
+            const bossEntryForSummon = (state.gauntlet && state.gauntlet.active) ? null : rpgFormationEntries(b.monsterFormation).find(e => e.obj.isBoss && e.obj.curHp > 0);
             if (bossEntryForSummon) {
                 const deadEscorts = rpgFormationEntries(b.monsterFormation).filter(e => !e.obj.isBoss && e.obj.curHp <= 0);
                 if (deadEscorts.length && Math.random() < 0.05) {
@@ -8736,7 +8744,7 @@
                             const critBuffMult = rpgRollCritBuff(actorObj);
                             const isCritBuff = critBuffMult > 1;
                             if (isCritBuff) dmg = Math.round(dmg * critBuffMult);
-                            targetObj.curHp = Math.max(0, targetObj.curHp - dmg);
+                            targetObj.curHp = Math.max(targetObj.unkillableByHp ? 1 : 0, targetObj.curHp - dmg);
                             rpgLogAppend(`${actorObj.name}用${actorObj.weaponName}攻擊${targetObj.name}，造成 ${dmg} 點傷害！${isCritBuff ? '（會心一擊！）' : ''}`);
                             rpgFlashHit(targetDomId);
                             rpgFloatDamage(targetDomId, dmg, '#C4453F');
@@ -8792,7 +8800,7 @@
                                         const attacker = shuffled4[(idx + 3) % 4]; // 前一個人打這一個
                                         return Math.max(1, Math.round(attacker.obj.atk * (sk.collideMult || 2) - rpgEffectiveDef(pick.obj) + (Math.random() * 3 - 1)));
                                     });
-                                    shuffled4.forEach((pick, idx) => { pick.obj.curHp = Math.max(0, pick.obj.curHp - dmgTaken[idx]); });
+                                    shuffled4.forEach((pick, idx) => { pick.obj.curHp = Math.max(pick.obj.unkillableByHp ? 1 : 0, pick.obj.curHp - dmgTaken[idx]); });
                                     shuffled4.forEach((pick, idx) => {
                                         const domId = `rpg-slot-monster-${pick.row}-${pick.i}`;
                                         rpgFlashHit(domId);
@@ -8815,8 +8823,8 @@
                                     const [pickA, pickB] = shuffled;
                                     const dmgToB = Math.max(1, Math.round(pickA.obj.atk * (sk.collideMult || 2) - rpgEffectiveDef(pickB.obj) + (Math.random() * 3 - 1)));
                                     const dmgToA = Math.max(1, Math.round(pickB.obj.atk * (sk.collideMult || 2) - rpgEffectiveDef(pickA.obj) + (Math.random() * 3 - 1)));
-                                    pickB.obj.curHp = Math.max(0, pickB.obj.curHp - dmgToB);
-                                    pickA.obj.curHp = Math.max(0, pickA.obj.curHp - dmgToA);
+                                    pickB.obj.curHp = Math.max(pickB.obj.unkillableByHp ? 1 : 0, pickB.obj.curHp - dmgToB);
+                                    pickA.obj.curHp = Math.max(pickA.obj.unkillableByHp ? 1 : 0, pickA.obj.curHp - dmgToA);
                                     const domIdA = `rpg-slot-monster-${pickA.row}-${pickA.i}`;
                                     const domIdB = `rpg-slot-monster-${pickB.row}-${pickB.i}`;
                                     rpgFlashHit(domIdA); rpgFlashHit(domIdB);
@@ -8989,7 +8997,7 @@
                                                 logBits.push(`對${tObj.name}的攻擊因為失明而落空`);
                                             } else {
                                                 const dmg = Math.max(1, Math.round(rpgEffectiveAtk(actorObj) * sk.mult - rpgEffectiveDef(tObj) + (Math.random() * 3 - 1)));
-                                                tObj.curHp = Math.max(0, tObj.curHp - dmg);
+                                                tObj.curHp = Math.max(tObj.unkillableByHp ? 1 : 0, tObj.curHp - dmg);
                                                 totalDmg += dmg;
                                                 rpgFlashHit(tDomId);
                                                 rpgFloatDamage(tDomId, dmg, '#C4453F');
@@ -9021,7 +9029,7 @@
                                     const hitsCount = sk.hits || 1;
                                     for (let h = 0; h < hitsCount && tObj.curHp > 0; h++) {
                                         const hitDmg = isInstaKill ? tObj.curHp : dmg;
-                                        tObj.curHp = Math.max(0, tObj.curHp - hitDmg);
+                                        tObj.curHp = Math.max(tObj.unkillableByHp ? 1 : 0, tObj.curHp - hitDmg);
                                         totalDmg += hitDmg;
                                         rpgFlashHit(tDomId);
                                         rpgFloatDamage(tDomId, hitDmg, isCrit ? '#F4C55E' : '#C4453F');
@@ -9194,7 +9202,7 @@
                     if (monsterObj.isOrderDishBoss && monsterObj.curHp > 0 && Math.random() < 0.2) {
                         const recipeNames = Object.keys(RPG_RECIPES);
                         const dishName = recipeNames[Math.floor(Math.random() * recipeNames.length)];
-                        const qty = 1 + Math.floor(Math.random() * 5);
+                        const qty = 5 + Math.floor(Math.random() * 6);
                         const emoji = (RPG_ITEM_INFO[dishName] || {}).emoji || '';
                         state.gauntlet = state.gauntlet || {};
                         state.gauntlet.pendingOrder = { dishName, qty };
@@ -9940,15 +9948,17 @@
             const species = RPG_MONSTER_SPECIES.dark_cuisine_king;
             const stats = rpgMonsterStatsAtLevel(p.level + 20 + Math.floor(Math.random() * 11), true);
             const hp = Math.round(stats.hp * (opts.hpMult || 1));
+            const sp = Math.round((stats.sp || 0) * (opts.spMult || 1));
             const monster = {
-                id: 'dark_cuisine_king', ...species, ...stats, hp, curHp: hp, curSp: stats.sp || 0,
+                id: 'dark_cuisine_king', ...species, ...stats, hp, curHp: hp, sp, curSp: sp,
                 isBoss: true, aiType: 'low_hp',
                 statuses: { poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 },
             };
             if (opts.phase2Visual) { monster.name = '黑暗料理王・真身'; monster.hue = 0; }
             if (opts.nameOverride) monster.name = opts.nameOverride;
             if (opts.orderDishBoss) monster.isOrderDishBoss = true;
-            if (opts.motherQueen) { monster.isMotherQueen = true; monster.statusImmune = ['burn', 'poison', 'bleed']; }
+            // 母后：SP再x10、HP歸零不會倒下(只有SP歸零才算擊敗她)、恢復對異常狀態的正常感受性(不再免疫灼傷/中毒/流血)
+            if (opts.motherQueen) { monster.isMotherQueen = true; monster.unkillableByHp = true; }
             return monster;
         }
         // 第四場專用：4個一模一樣的分身站後排，只有一個真身
@@ -9958,10 +9968,18 @@
             const species = RPG_MONSTER_SPECIES.dark_cuisine_king;
             const realStats = rpgMonsterStatsAtLevel(p.level + 20 + Math.floor(Math.random() * 11), true);
             const decoyStats = rpgMonsterStatsAtLevel(p.level + 10, false);
+            const escortStats = rpgMonsterStatsAtLevel(p.level + 10, false);
             const realIdx = Math.floor(Math.random() * 4);
             const cloneName = nameOverride || '黑暗料理王・真身';
             const freshStatuses = () => ({ poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 });
             const monsters = [];
+            // 前排（索引0~3）：4隻隨從
+            for (let i = 0; i < 4; i++) {
+                const escortId = RPG_MONSTER_POOL[Math.floor(Math.random() * RPG_MONSTER_POOL.length)];
+                const escortSpecies = RPG_MONSTER_SPECIES[escortId];
+                monsters.push({ id: escortId, ...escortSpecies, ...escortStats, curHp: escortStats.hp, aiType: rpgRandomMonsterAI() });
+            }
+            // 後排（索引4~7）：4個分身，其中一個是真身
             for (let i = 0; i < 4; i++) {
                 if (i === realIdx) {
                     monsters.push({ id: 'dark_cuisine_king', ...species, ...realStats, name: cloneName, hue: 0, curHp: realStats.hp, curSp: realStats.sp || 0, isBoss: true, isRealBoss: true, aiType: 'low_hp', statuses: freshStatuses() });
@@ -10010,8 +10028,8 @@
             else if (stage === 2) { p.ngPlus = 1; monsters = rpgGauntletBossWithEscorts({ nameOverride }); }
             else if (stage === 3) { p.ngPlus = 2; monsters = rpgGauntletBossWithEscorts({ phase2Visual: true, nameOverride }); extraBattleFields.bossPhase2 = true; }
             else if (stage === 4) { p.ngPlus = 3; monsters = rpgGauntletCloneMonsters(nameOverride); extraBattleFields.bossClonePhase2 = true; }
-            else if (stage === 5) { p.ngPlus = 4; monsters = [rpgGauntletBossMonster({ hpMult: 100, orderDishBoss: true, nameOverride })]; }
-            else if (stage === 6) { p.ngPlus = 4; monsters = [rpgGauntletBossMonster({ hpMult: 100, nameOverride: RPG_GAUNTLET_BOSS_NAMES[6], motherQueen: true })]; }
+            else if (stage === 5) { p.ngPlus = 4; monsters = rpgGauntletBossWithEscorts({ hpMult: 100, orderDishBoss: true, nameOverride }); }
+            else if (stage === 6) { p.ngPlus = 4; monsters = rpgGauntletBossWithEscorts({ hpMult: 100, spMult: 10, nameOverride: RPG_GAUNTLET_BOSS_NAMES[6], motherQueen: true }); }
             rpgStartBattle({ monsters, isBossFight: true, extraBattleFields });
         }
         // 每一場打贏後的處理：不增加積分（第六場除外），顯示台詞，按繼續才進下一場
@@ -10047,20 +10065,27 @@
             if (!b || !state.gauntlet || !state.gauntlet.pendingOrder) return;
             const order = state.gauntlet.pendingOrder;
             const bossEntry = rpgFormationEntries(b.monsterFormation).find(e => e.obj.isOrderDishBoss);
-            const have = (p.items[order.dishName] || 0) >= order.qty;
+            const owned = p.items[order.dishName] || 0;
+            const have = owned >= order.qty;
             const emoji = (RPG_ITEM_INFO[order.dishName] || {}).emoji || '';
             if (deliver && have) {
                 p.items[order.dishName] -= order.qty;
                 if (p.items[order.dishName] <= 0) delete p.items[order.dishName];
                 if (bossEntry) {
                     const dmg = Math.round(bossEntry.obj.hp * 0.2);
-                    bossEntry.obj.curHp = Math.max(0, bossEntry.obj.curHp - dmg);
+                    bossEntry.obj.curHp = Math.max(bossEntry.obj.unkillableByHp ? 1 : 0, bossEntry.obj.curHp - dmg);
                     rpgLogAppend(`🍽️ 你交出了${emoji}${order.dishName}×${order.qty}！${bossEntry.obj.name}心滿意足地吃了下去，損失了 ${dmg} 點HP！`);
                 }
             } else {
+                // 缺多少份就扣多少比例的血：不交付當作全部都拿不出來（缺qty份）；交付但不夠的話，只算真正缺少的份數
+                const shortfall = deliver ? Math.max(1, order.qty - owned) : order.qty;
+                const penaltyPct = Math.min(100, shortfall * 10);
                 const aliveParty = rpgFormationEntries(b.partyFormation).filter(e => e.obj.hp > 0);
-                aliveParty.forEach(({ obj }) => { obj.hp = Math.max(0, Math.round(obj.hp * 0.5)); });
-                rpgLogAppend(deliver ? `😡 你手上的份量不夠，交付失敗！${bossEntry ? bossEntry.obj.name : '魔王'}大發雷霆，全隊損失一半HP！` : `😡 你拒絕了點餐！${bossEntry ? bossEntry.obj.name : '魔王'}大發雷霆，全隊損失一半HP！`);
+                aliveParty.forEach(({ obj }) => { obj.hp = Math.max(0, Math.round(obj.hp * (1 - penaltyPct / 100))); });
+                const reason = deliver
+                    ? `你手上的${emoji}${order.dishName}不夠，缺了 ${shortfall} 份，交付失敗！`
+                    : `你拒絕了點餐！`;
+                rpgLogAppend(`😡 ${reason}${bossEntry ? bossEntry.obj.name : '魔王'}大發雷霆，全隊損失 ${penaltyPct}% HP！`);
             }
             state.gauntlet.pendingOrder = null;
             document.querySelectorAll('#rpg-battle-actions button').forEach(btn => btn.disabled = false);
