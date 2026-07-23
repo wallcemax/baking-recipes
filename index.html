@@ -3421,8 +3421,8 @@
                     exits: {
                         '19,9': { to: 'village_dungeon2', x: 0, y: 3 },
                         '19,10': { to: 'village_dungeon2', x: 0, y: 4 },
-                        '0,9': { to: 'castle_hall', x: 19, y: 16 }, // 往魔王城主殿
-                        '0,10': { to: 'castle_hall', x: 19, y: 17 }, // 往魔王城主殿
+                        '0,9': { to: 'castle_hall', x: 19, y: 19 }, // 往魔王城主殿
+                        '0,10': { to: 'castle_hall', x: 19, y: 19 }, // 往魔王城主殿
                     },
                     wild: false,
                     viewport: { w: 12, h: 10 },
@@ -3548,16 +3548,62 @@
                         shiftedRows[y + 7][x] = rowsArr[y][x];
                     }
                 }
+                // ---- row17/row18 內容再往下移一格：新row18=舊row17，新row19=舊row18（捨棄舊row19），
+                // 空出來的row17補圖1(0,4)（可通行的地板）----
+                const shiftRow17_18Down = () => {
+                    const row17Tile = [], row17Walk = [], row18Tile = [], row18Walk = [];
+                    for (let x = 0; x < 20; x++) {
+                        row17Tile.push(shiftedT[`${x},17`]);
+                        row17Walk.push(shiftedRows[17][x]);
+                        row18Tile.push(shiftedT[`${x},18`]);
+                        row18Walk.push(shiftedRows[18][x]);
+                    }
+                    for (let x = 0; x < 20; x++) {
+                        shiftedT[`${x},18`] = row17Tile[x];
+                        shiftedRows[18][x] = row17Walk[x];
+                        shiftedT[`${x},19`] = row18Tile[x];
+                        shiftedRows[19][x] = row18Walk[x];
+                        shiftedT[`${x},17`] = [0, 4];
+                        shiftedRows[17][x] = '.';
+                    }
+                };
+                shiftRow17_18Down();
+                const setTileFinal = (x, y, tile) => { shiftedT[`${x},${y}`] = tile; };
+                const setBlockedFinal = (x, y) => { shiftedRows[y][x] = '#'; };
+                // ---- (9,19)/(10,19) 改成不可通行 ----
+                setTileFinal(9, 19, [2, 2]); setBlockedFinal(9, 19);
+                setTileFinal(10, 19, [2, 2]); setBlockedFinal(10, 19);
+                // ---- row14/15/16 石柱裝飾（圖1(6,0)/(6,1)/(6,2)三段疊起來） ----
+                [14, 16, 18].forEach(x => setTileFinal(x, 14, [6, 0]));
+                [14, 16, 18].forEach(x => setTileFinal(x, 15, [6, 1]));
+                [14, 16, 18].forEach(x => setTileFinal(x, 16, [6, 2]));
+                // ---- row19 裝飾：圖1(6,0)順時針180度 ----
+                [12, 14, 16, 18].forEach(x => setTileFinal(x, 19, { tile: [6, 0], rotate: 180 }));
+                // ---- row15 火把類裝飾 ----
+                setTileFinal(0, 15, [8, 0]);
+                setTileFinal(2, 15, [5, 2]);
+                setTileFinal(4, 15, [8, 1]);
+                setTileFinal(19, 15, [8, 0]);
+                setTileFinal(17, 15, [5, 2]);
+                setTileFinal(15, 15, [8, 1]);
+                // ---- row16 火把底座裝飾（不可通行）----
+                setTileFinal(0, 16, [8, 2]); setBlockedFinal(0, 16);
+                setTileFinal(4, 16, [8, 2]); setBlockedFinal(4, 16);
+                setTileFinal(19, 16, [8, 2]); setBlockedFinal(19, 16);
+                setTileFinal(15, 16, [8, 2]); setBlockedFinal(15, 16);
+                // ---- 使用者要求「再做一次」：row17/row18再往下移一格 ----
+                // 注意：這會把剛剛設定的row19內容（(9,19)/(10,19)不可通行、四根石柱裝飾）整批捨棄掉，
+                // 換成原本row18的走道內容；可通行的傳送點也因此往下變成(19,19)
+                shiftRow17_18Down();
                 return {
                     name: '魔王城主殿',
                     tileMap: shiftedT,
                     rows: shiftedRows.map(r => r.join('')),
-                    start: { x: 19, y: 16 },
+                    start: { x: 19, y: 19 },
                     npcs: {},
                     pois: {},
                     exits: {
-                        '19,16': { to: 'castle_passage', x: 0, y: 9 }, // 回魔王城通道
-                        '19,17': { to: 'castle_passage', x: 0, y: 10 }, // 回魔王城通道
+                        '19,19': { to: 'castle_passage', x: 0, y: 10 }, // 回魔王城通道
                     },
                     wild: false,
                     viewport: { w: 12, h: 10 },
