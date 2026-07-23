@@ -2759,12 +2759,52 @@
             const lv = (rpgState && rpgState.player && rpgState.player.forgeLevels && rpgState.player.forgeLevels[itemName]) || 0;
             return 1 + lv * 0.05;
         }
+        // ---------- 新增八件飾品（地下古墓挖土堆機率掉落）：每件各自綁定一個角色，精煉存在角色自己身上的
+        // 獨立欄位（lvField），跟風之加護手環同一種模式，但這批的精煉除了消耗神秘金屬，還要額外付100金幣；
+        // 每級疊加的量＝基礎值本身（不是遞減的百分比），例如魔力防禦項鍊基礎DEF+1%/SP+1%，
+        // +1級變成DEF+2%/SP+2%，一路疊到+10級是DEF+11%/SP+11%（滿等，10等封頂）----------
+        const RPG_ACCESSORIES = {
+            '魔力防禦項鍊': { ownerId: 'player', lvField: 'necklaceLv', pct: { def: 0.01, sp: 0.01 } },
+            '體力腰帶': { ownerId: 'ako', lvField: 'beltLv', pct: { hp: 0.02 } },
+            '致命耳環': { ownerId: 'suisui', lvField: 'earringLv', pct: { crit: 0.01 } },
+            '野蠻鼻環': { ownerId: 'alan', lvField: 'noseRingLv', pct: { atk: 0.01, def: 0.01 } },
+            '魔銀戒指': { ownerId: 'laozhou', lvField: 'ringLv', pct: { sp: 0.02, def: 0.005 } },
+            '融合之眼髮簪': { ownerId: 'ginhaku', lvField: 'hairpinLv', pct: { hp: 0.01, sp: 0.01 } },
+            '鋼鐵護腰': { ownerId: 'laomai', lvField: 'waistLv', pct: { def: 0.01, hp: 0.01 } },
+            '射玉護手': { ownerId: 'kai', lvField: 'gauntletLv', pct: { sp: 0.01 }, flat: { agi: 1 } },
+        };
+        // 這個角色身上，指定百分比類型加成（def/atk/sp/hp/crit）的加總（通常只會有一件，但寫成加總比較保險）
+        function rpgAccessoryPct(obj, statKey) {
+            let total = 0;
+            for (const info of Object.values(RPG_ACCESSORIES)) {
+                if (!obj || obj[info.lvField] == null || !info.pct || !info.pct[statKey]) continue;
+                total += info.pct[statKey] * (obj[info.lvField] + 1);
+            }
+            return total;
+        }
+        // 固定數值類型的加成（目前只有凱的射玉護手：敏捷+1，每級再+1）
+        function rpgAccessoryFlat(obj, statKey) {
+            let total = 0;
+            for (const info of Object.values(RPG_ACCESSORIES)) {
+                if (!obj || obj[info.lvField] == null || !info.flat || !info.flat[statKey]) continue;
+                total += info.flat[statKey] * (obj[info.lvField] + 1);
+            }
+            return total;
+        }
+        // 找這個ownerId目前對應的角色物件（'player'是主角，其餘是已加入隊伍的夥伴id；還沒加入就回傳null）
+        function rpgAccessoryOwnerObj(ownerId) {
+            const state = rpgState;
+            if (!state) return null;
+            if (ownerId === 'player') return state.player;
+            return (state.companions || []).find(c => c.id === ownerId) || null;
+        }
         function rpgEffectiveAtk(obj) {
             const w = RPG_WEAPONS[obj.weaponName];
             const base = obj.atk + (w ? w.atk : 0);
             const pct = obj.buffs && obj.buffs.atkBuffPct ? obj.buffs.atkBuffPct.value : 0;
             const sousVideMult = obj.buffs && obj.buffs.sousVide ? obj.buffs.sousVide.value : 1;
-            return Math.round(base * (1 + pct) * sousVideMult * rpgForgeMult(obj.weaponName));
+            const accessoryPct = rpgAccessoryPct(obj, 'atk');
+            return Math.round(base * (1 + pct + accessoryPct) * sousVideMult * rpgForgeMult(obj.weaponName));
         }
         function rpgEffectiveDef(obj) {
             const a = RPG_ARMORS[obj.armorName];
@@ -2774,14 +2814,17 @@
             const softenedMult = (obj.statuses && obj.statuses.softened > 0) ? 0.92 : 1;
             // 防具幻化：DEF額外+5%
             const armorManifestMult = obj.armorManifested ? 1.1 : 1;
-            return Math.round(base * (1 + pct) * rpgForgeMult(obj.armorName) * softenedMult * armorManifestMult);
+            const accessoryPct = rpgAccessoryPct(obj, 'def');
+            return Math.round(base * (1 + pct + accessoryPct) * rpgForgeMult(obj.armorName) * softenedMult * armorManifestMult);
         }
         // 敏捷有暫時性 buff 的話，排行動順序要算進去
         function rpgEffectiveAgi(obj) {
             const pct = obj.buffs && obj.buffs.agiBuffPct ? obj.buffs.agiBuffPct.value : 0;
             // 風之加護手環：三周目二階段魔王掉落，隊上每個人各自拿到一只、各自獨立精煉，只看這個角色自己的 braceletLv
             const braceletBonus = (obj.braceletLv != null) ? (1 + obj.braceletLv * 2) : 0;
-            return (obj.agi + braceletBonus) * (1 + pct);
+            // 凱的射玉護手：敏捷固定值加成
+            const accessoryFlat = rpgAccessoryFlat(obj, 'agi');
+            return (obj.agi + braceletBonus + accessoryFlat) * (1 + pct);
         }
 
         // 特效粒子（Kenney Particle Pack，CC0）：升級/回復/施法/撞牆各用一種效果
@@ -3298,6 +3341,13 @@
                         }
                     }
                 }
+                // 所有土堆的座標都可以用鏟子挖掘（跟墓碑正上方那16個土堆是同一批位置）
+                const digPoints = {};
+                for (let ty2 = 6; ty2 <= 15; ty2 += 3) {
+                    for (let tx2 = 5; tx2 <= 14; tx2 += 3) {
+                        digPoints[`${tx2},${ty2 - 1}`] = { available: true };
+                    }
+                }
                 return {
                     name: '地下古墓',
                     tileMap: t,
@@ -3305,6 +3355,7 @@
                     start: { x: 10, y: 1 },
                     npcs: {},
                     pois: {},
+                    digPoints,
                     exits: { '11,0': { to: 'village_dungeon2', x: 14, y: 5 }, '10,0': { to: 'village_dungeon2', x: 13, y: 6 } },
                     wild: false,
                     viewport: { w: 12, h: 10 }, // 房間夠大了，比照村莊用一樣的鏡頭大小
@@ -3765,6 +3816,7 @@
         // 怪物種類資料庫：每一種都是獨立的圖案（不是同一張圖換色階），一部分沿用 Tiny Dungeon 的地城生物，
         // 大部分是另一份角色/生物總表（Kenney 素材，使用者提供）裡實際不同的畫面，用圖案本身的樣子去取名
         const RPG_MONSTER_SPECIES = {
+            chest_monster: { name: '寶箱怪', emoji: '📦', sheet: 'dungeon', pos: [8, 7] },
             bread_slime: { name: '麵包史萊姆', emoji: '🍞', spriteKey: 'slime', sheet: 'dungeon' },
             ferment_goblin: { name: '發酵哥布林', emoji: '👺', spriteKey: 'goblin', sheet: 'char' },
             forest_mushroom: { name: '野菇怪', emoji: '🍄', spriteKey: 'mushroom', sheet: 'dungeon' },
@@ -3922,7 +3974,7 @@
             // 最終魔王（極稀有，遇到必定是 8 隻的大陣仗、魔王站後排 2 號位）
             dark_cuisine_king: { name: '黑暗料理王', emoji: '👑', spriteKey: 'troll', sheet: 'dungeon', hue: 300 },
         };
-        const RPG_MONSTER_POOL = Object.keys(RPG_MONSTER_SPECIES).filter(k => k !== 'dark_cuisine_king');
+        const RPG_MONSTER_POOL = Object.keys(RPG_MONSTER_SPECIES).filter(k => k !== 'dark_cuisine_king' && k !== 'chest_monster');
         // 依照「這次要出現的等級」算出怪物數值（魔王額外再乘一次加成，血更厚、打起來更有王者架式）
         function rpgMonsterStatsAtLevel(level, isBoss, ngTier) {
             const lvl = Math.max(1, level);
@@ -4268,6 +4320,7 @@
                 items: { '家常蛋花湯': 2 },
                 ingredients: {}, // 食材背包：{ 食材名稱: 數量 }
                 materials: {}, // 特殊材料背包：跟食材分開放，不是食材（例如神祕金屬），{ 材料名稱: 數量 }
+                shovelCount: 0, // 鏟子：魔王城通道撿到/開寶箱拿到，地下古墓挖土堆要消耗
                 forgeLevels: {}, // 精煉鍛造：{ 裝備名稱: 目前強化等級(0~10) }，跟裝備融合系統各自獨立、互不干擾
                 discoveredIngredients: {}, // 食材商店解鎖紀錄：{ 食材名稱: true }，必須第一次實際得到過該食材才會開放商店買賣
                 knownRecipes: ['家常蛋花湯'], // 已經學會、可以在烹飪背包裡製作的料理
@@ -4293,6 +4346,9 @@
             if (actorObj.buffs && actorObj.buffs.critBuff && Math.random() < actorObj.buffs.critBuff.value.chance) {
                 return actorObj.buffs.critBuff.value.mult;
             }
+            // 飾品被動會心率（目前只有小穗的致命耳環），一般攻擊也算，固定x2倍率，跟buff判定各自獨立骰
+            const passiveCrit = rpgAccessoryPct(actorObj, 'crit');
+            if (passiveCrit > 0 && Math.random() < passiveCrit) return 2;
             return 1;
         }
         // 測試/除錯用（僅限管理者）：把主角練到指定等級、金幣調到指定數值，方便直接測試魔王戰之類的高等內容，
@@ -4395,6 +4451,7 @@
                 villagePoisFound: Object.fromEntries(Object.entries(RPG_MAPS.village.pois || {}).map(([k, v]) => [k, !!v.found])),
                 plainsPoisFound: Object.fromEntries(Object.entries(RPG_MAPS.plains.pois || {}).map(([k, v]) => [k, !!v.found])),
                 villageGatherAvailable: Object.fromEntries(Object.entries(RPG_MAPS.village.gatherPoints || {}).map(([k, v]) => [k, !!v.available])),
+                tombDigAvailable: Object.fromEntries(Object.entries(RPG_MAPS.village_tomb.digPoints || {}).map(([k, v]) => [k, !!v.available])),
                 savedAt: firebase.firestore.FieldValue.serverTimestamp(),
             };
             try {
@@ -4446,6 +4503,7 @@
                 if (saved.villagePoisFound) Object.entries(saved.villagePoisFound).forEach(([k, v]) => { if (RPG_MAPS.village.pois[k]) RPG_MAPS.village.pois[k].found = v; });
                 if (saved.plainsPoisFound) Object.entries(saved.plainsPoisFound).forEach(([k, v]) => { if (RPG_MAPS.plains.pois[k]) RPG_MAPS.plains.pois[k].found = v; });
                 if (saved.villageGatherAvailable) Object.entries(saved.villageGatherAvailable).forEach(([k, v]) => { if (RPG_MAPS.village.gatherPoints[k]) RPG_MAPS.village.gatherPoints[k].available = v; });
+                if (saved.tombDigAvailable) Object.entries(saved.tombDigAvailable).forEach(([k, v]) => { if (RPG_MAPS.village_tomb.digPoints[k]) RPG_MAPS.village_tomb.digPoints[k].available = v; });
                 // 已經招募過的夥伴，村莊裡對應的 NPC 要拿掉，不然重新整理網頁又會冒出來
                 (saved.companions || []).forEach(c => { if (c.id) rpgRemoveNpcFromMap(RPG_MAPS.village, c.id); });
             } else {
@@ -5235,7 +5293,7 @@
             const map = RPG_MAPS[state.region];
             const { x, y } = state.pos;
             const neighbors = [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y], [x, y]]; // 最後加自己站的那一格，寶箱現在站上去也能調查
-            let npcButton = '', poiButton = '', gatherButton = '';
+            let npcButton = '', poiButton = '', gatherButton = '', digButton = '';
             for (const [nx, ny] of neighbors) {
                 const key = `${nx},${ny}`;
                 if (!npcButton && map.npcs && map.npcs[key]) {
@@ -5249,9 +5307,12 @@
                     const gp = map.gatherPoints[key];
                     gatherButton = `<button onclick="rpgGatherIngredient('${state.region}','${key}')" class="btn-amber text-sm">🌿 採集${gp.name}</button>`;
                 }
+                if (!digButton && map.digPoints && map.digPoints[key] && map.digPoints[key].available) {
+                    digButton = `<button onclick="rpgDigMound('${state.region}','${key}')" class="btn-amber text-sm">⛏️ 挖掘土堆</button>`;
+                }
             }
             const box = document.getElementById('rpg-nearby-actions');
-            if (box) box.innerHTML = npcButton + poiButton + gatherButton;
+            if (box) box.innerHTML = npcButton + poiButton + gatherButton + digButton;
         }
         // 採集點：跟寶箱不一樣，固定給某種食材、採過會標記不可用，但每次玩家切換地圖時，還沒刷新的採集點各自獨立有 40% 機率重新開放
         function rpgGatherIngredient(regionKey, key) {
@@ -5267,6 +5328,50 @@
             const box = document.getElementById('rpg-dialogue-box');
             if (box) box.textContent = `🌿 從${gp.name}採集到了${RPG_INGREDIENT_EMOJI[gp.ingredient] || ''}「${gp.ingredient}」！這個採集點要等之後刷新才能再採。`;
             document.getElementById('rpg-nearby-actions').innerHTML = '';
+        }
+        // 地下古墓・挖掘土堆：消耗1把鏟子，90%機率掉落金幣、10%機率掉落八件新飾品其中一件（只會挖到「還沒有人拿到」的那件，
+        // 而且該角色要已經存在——主角一定存在，夥伴要已經加入隊伍才算；如果八件都已經拿完了，就退而求其次改給金幣）
+        // 每個土堆只能挖一次，沒有刷新機制
+        function rpgDigMound(regionKey, key) {
+            const state = rpgState;
+            if (!state || state.locked || state.animating) return;
+            const map = RPG_MAPS[regionKey];
+            const dp = map && map.digPoints && map.digPoints[key];
+            if (!dp || !dp.available) return;
+            const p = state.player;
+            const box = document.getElementById('rpg-dialogue-box');
+            if ((p.shovelCount || 0) < 1) {
+                playSfx('fail');
+                if (box) box.textContent = '⛏️ 這個土堆看起來可以挖，但你身上沒有鏟子。';
+                return;
+            }
+            dp.available = false;
+            p.shovelCount -= 1;
+            playSfx('click');
+            document.getElementById('rpg-nearby-actions').innerHTML = '';
+            const goldGain = () => 20 + Math.floor(Math.random() * 30) + p.level * 2;
+            if (Math.random() < 0.9) {
+                const gain = goldGain();
+                p.gold += gain;
+                if (box) box.textContent = `⛏️ 挖開土堆，找到 💰${gain} 金幣！（剩下 ${p.shovelCount} 把鏟子）`;
+            } else {
+                const candidates = Object.entries(RPG_ACCESSORIES).filter(([name, info]) => {
+                    const owner = rpgAccessoryOwnerObj(info.ownerId);
+                    return owner && owner[info.lvField] == null;
+                });
+                if (candidates.length > 0) {
+                    const [itemName, info] = candidates[Math.floor(Math.random() * candidates.length)];
+                    const owner = rpgAccessoryOwnerObj(info.ownerId);
+                    owner[info.lvField] = 0;
+                    if (box) box.textContent = `⛏️ 挖開土堆，竟然挖到一件飾品「${itemName}」！已經自動裝備在${info.ownerId === 'player' ? '你自己' : owner.name}身上，可以去找老麥精煉強化。`;
+                    playSfx('rareGear');
+                } else {
+                    const gain = goldGain();
+                    p.gold += gain;
+                    if (box) box.textContent = `⛏️ 挖開土堆，找到 💰${gain} 金幣！（剩下 ${p.shovelCount} 把鏟子）`;
+                }
+            }
+            rpgSaveGame(true);
         }
         // 每次玩家切換地圖（走出口到別的地區）時呼叫：所有地圖裡「還沒刷新」的採集點，各自獨立有 40% 機率重新開放
         function rpgRefreshGatherPoints() {
@@ -5453,6 +5558,36 @@
                 if (box) box.textContent = `📋 ${poi.text}`;
                 return;
             }
+            // 魔王城通道・牆上的鏟子：撿完消失，下次重新進來這張地圖才會重新骰是否刷新
+            if (poi.type === 'wallShovel') {
+                poi.found = true;
+                delete map.pois[key];
+                if (map.tileMap) map.tileMap[key] = [4, 3]; // 牆面恢復成沒有鏟子的樣子
+                document.getElementById('rpg-nearby-actions').innerHTML = '';
+                state.player.shovelCount = (state.player.shovelCount || 0) + 1;
+                if (box) box.textContent = `🔧 從牆上取下一把鏟子！（目前持有 ${state.player.shovelCount} 把）`;
+                rpgSaveGame(true);
+                return;
+            }
+            // 魔王城通道・寶箱：70%開到鏟子、30%跳出寶箱怪戰鬥（強度跟一般小怪一樣，但一定優先行動）
+            if (poi.type === 'shovelChest') {
+                poi.found = true;
+                delete map.pois[key];
+                if (map.tileMap) map.tileMap[key] = { tile: [7, 7], base: [2, 4] }; // 換成開啟後的寶箱圖磚
+                document.getElementById('rpg-nearby-actions').innerHTML = '';
+                if (Math.random() < 0.7) {
+                    state.player.shovelCount = (state.player.shovelCount || 0) + 1;
+                    if (box) box.textContent = `📦 打開寶箱，找到一把鏟子！（目前持有 ${state.player.shovelCount} 把）`;
+                    playSfx('rareGear');
+                    rpgSaveGame(true);
+                } else {
+                    if (box) box.textContent = `📦 才剛打開，寶箱竟然長出牙齒動了起來——是隻寶箱怪！`;
+                    const stats = rpgMonsterStatsAtLevel(state.player.level, false, 'weak'); // 強度比照一般小怪
+                    const monster = { id: 'chest_monster', ...RPG_MONSTER_SPECIES.chest_monster, ...stats, curHp: stats.hp, aiType: 'random', alwaysFirst: true };
+                    setTimeout(() => { rpgStartBattle({ monsters: [monster], isBossFight: false }); }, 500);
+                }
+                return;
+            }
             poi.found = true;
             document.getElementById('rpg-nearby-actions').innerHTML = '';
             const sp = rpgPlayerScreenPos();
@@ -5628,6 +5763,9 @@
                 }
                 if (exit.to === 'village') {
                     rpgRollMetalMerchant();
+                }
+                if (exit.to === 'castle_passage') {
+                    rpgRollCastlePassageSpawns();
                 }
                 rpgRefreshGatherPoints(); // 每次切換地圖，還沒刷新的採集點各自獨立有 40% 機率重新開放
                 renderRpgMap();
@@ -6426,6 +6564,17 @@
                 if (c.weaponName === gear.weapon.name) list.push({ key: c.weaponName, itemName: c.weaponName, ownerLabel: c.name, slot: 'weapon', ownerObj: c, getLv: () => p.forgeLevels[c.weaponName] || 0, setLv: (v) => { p.forgeLevels[c.weaponName] = v; } });
                 if (c.armorName === gear.armor.name) list.push({ key: c.armorName, itemName: c.armorName, ownerLabel: c.name, slot: 'armor', ownerObj: c, getLv: () => p.forgeLevels[c.armorName] || 0, setLv: (v) => { p.forgeLevels[c.armorName] = v; } });
             });
+            // 八件新飾品（地下古墓挖土堆掉落）：跟風之加護手環一樣，等級存在owner自己身上的獨立欄位
+            Object.entries(RPG_ACCESSORIES).forEach(([itemName, info]) => {
+                const ownerObj = rpgAccessoryOwnerObj(info.ownerId);
+                if (!ownerObj || ownerObj[info.lvField] == null) return;
+                const label = info.ownerId === 'player' ? '你自己' : ownerObj.name;
+                list.push({
+                    key: `acc:${info.ownerId}`, itemName, ownerLabel: label, slot: 'accessory', ownerObj,
+                    getLv: () => ownerObj[info.lvField] || 0,
+                    setLv: (v) => { ownerObj[info.lvField] = v; },
+                });
+            });
             return list;
         }
         // 成功率規則：+1 是 100%、+2 是 95%……每級遞減 5%，最高 +10（55%）；
@@ -6455,22 +6604,33 @@
                 const lv = getLv();
                 const isMax = lv >= 10;
                 const isBracelet = itemName === '風之加護手環';
+                const newAccInfo = RPG_ACCESSORIES[itemName]; // 八件新飾品才有這個資料，風之加護手環/武器/防具都是undefined
                 const rate = isMax ? 0 : rpgForgeSuccessRate(lv, itemName);
-                const canForge = !isMax && metalCount >= 1;
+                const canForge = !isMax && metalCount >= 1 && (!newAccInfo || p.gold >= 100);
                 const rateText = isBracelet ? '成功率 100%（固定，不會隨等級遞減）' : `成功率 ${rate}%${hasUltimate ? '（已含究極精煉鍛造+10%）' : ''}`;
                 const isPlayerOwner = ownerObj === p;
                 const fusionField = slot === 'weapon' ? 'weaponFusionLv' : 'armorFusionLv';
                 const manifestedField = slot === 'weapon' ? 'weaponManifested' : 'armorManifested';
                 const fusionOk = isPlayerOwner || (ownerObj[fusionField] || 0) >= 10;
                 const eligibleForManifest = (slot === 'weapon' || slot === 'armor') && isMax && fusionOk && !ownerObj[manifestedField];
+                const statLabel = { def: '防禦力', atk: '攻擊力', sp: '最大SP', hp: '最大HP', crit: '會心率', agi: '敏捷' };
+                let newAccDesc = '';
+                if (newAccInfo) {
+                    const parts = [];
+                    if (newAccInfo.pct) Object.entries(newAccInfo.pct).forEach(([k, v]) => parts.push(`${statLabel[k] || k}+${(Math.round(v * (lv + 1) * 1000) / 10)}%`));
+                    if (newAccInfo.flat) Object.entries(newAccInfo.flat).forEach(([k, v]) => parts.push(`${statLabel[k] || k}+${v * (lv + 1)}`));
+                    newAccDesc = `<p class="text-xs mt-0.5" style="color:#B3A492">${ownerLabel}的${parts.join('、')}（基礎值每級累加，10等封頂）</p>`;
+                }
                 return `
                     <div class="flex items-center gap-3 px-3 py-2 rounded-2xl mb-2" style="background:var(--cream)">
                         <div class="flex-1 min-w-0">
-                            <p class="font-medium text-sm">${isBracelet ? '💍' : (slot === 'weapon' ? '🔪' : '👕')} ${itemName}<span class="text-xs ml-2" style="color:#B3A492">${ownerLabel}・目前 ⚒️+${lv}${isMax ? '（已滿等）' : `・${rateText}`}</span></p>
+                            <p class="font-medium text-sm">${isBracelet || newAccInfo ? '📿' : (slot === 'weapon' ? '🔪' : '👕')} ${itemName}<span class="text-xs ml-2" style="color:#B3A492">${ownerLabel}・目前 ⚒️+${lv}${isMax ? '（已滿等）' : `・${rateText}`}</span></p>
                             ${isBracelet ? `<p class="text-xs mt-0.5" style="color:#B3A492">${ownerLabel}的敏捷 +${1 + lv * 2}（基礎+1，每級再+2，每個人各自獨立）</p>` : ''}
+                            ${newAccDesc}
+                            ${newAccInfo && !isMax && p.gold < 100 ? `<p class="text-xs mt-0.5" style="color:#C4453F">金幣不足（需要💰100）</p>` : ''}
                             ${eligibleForManifest ? `<p class="text-xs mt-0.5 font-medium" style="color:#C77B3B">✨ 精煉${isPlayerOwner ? '' : '跟融合'}都已經滿等，可以幻化成全新的${slot === 'weapon' ? '武器' : '防具'}了！${slot === 'armor' ? `（幻化效果：${ownerLabel}最大HP+10%、最大SP+10%、DEF+10%）` : ''}</p>` : ''}
                         </div>
-                        <button onclick="rpgDoForge('${key}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${canForge ? '' : 'disabled style="opacity:.4"'}>${isMax ? '已滿等' : '❓×1 鍛造'}</button>
+                        <button onclick="rpgDoForge('${key}')" class="btn-amber text-xs !px-3 !py-1.5 shrink-0" ${canForge ? '' : 'disabled style="opacity:.4"'}>${isMax ? '已滿等' : (newAccInfo ? '❓×1+💰100 鍛造' : '❓×1 鍛造')}</button>
                         ${eligibleForManifest ? `<button onclick="rpgManifestEquip('${key}')" class="btn-secondary text-xs !px-3 !py-1.5 shrink-0">✨ 幻化</button>` : ''}
                     </div>`;
             }).join('');
@@ -6623,7 +6783,8 @@
             if (!entry) return;
             const metalCount = (p.materials && p.materials['神祕金屬']) || 0;
             const lv = entry.getLv();
-            if (lv >= 10 || metalCount < 1) return;
+            const newAccInfo = RPG_ACCESSORIES[entry.itemName];
+            if (lv >= 10 || metalCount < 1 || (newAccInfo && p.gold < 100)) return;
             if (lv === 9) {
                 // 最後一級（+9→+10）是決定性的一擊，改成先問玩家要不要一起幫忙，而不是直接套用機率
                 rpgOpenForgeHelpPrompt(key);
@@ -6659,9 +6820,11 @@
             if (!entry) return;
             const metalCount = (p.materials && p.materials['神祕金屬']) || 0;
             const lv = entry.getLv();
-            if (lv >= 10 || metalCount < 1) return;
+            const newAccInfo = RPG_ACCESSORIES[entry.itemName];
+            if (lv >= 10 || metalCount < 1 || (newAccInfo && p.gold < 100)) return;
             p.materials['神祕金屬'] -= 1;
             if (p.materials['神祕金屬'] <= 0) delete p.materials['神祕金屬'];
+            if (newAccInfo) p.gold -= 100; // 新飾品每次精煉（不管成功失敗）都要額外扣100金幣，跟神祕金屬一樣消耗掉不會退還
             const baseRate = rpgForgeSuccessRate(lv, entry.itemName);
             const rate = Math.max(0, Math.min(100, baseRate + (rateAdjust || 0)));
             const success = Math.random() * 100 < rate;
@@ -6669,12 +6832,46 @@
             let message;
             if (success) {
                 entry.setLv(lv + 1);
+                // 新飾品的HP/SP百分比加成，因為maxHp/maxSp是直接存起來的固定數值（不是每次即時計算），
+                // 所以用「追蹤這件飾品實際疊加了多少點數」的方式永久加上去，失敗歸零時才能準確地全部收回來，
+                // 不會因為反推百分比造成誤差
+                if (newAccInfo && newAccInfo.pct) {
+                    const owner = entry.ownerObj;
+                    owner.accBonusLog = owner.accBonusLog || {};
+                    ['hp', 'sp'].forEach(statKey => {
+                        if (!newAccInfo.pct[statKey]) return;
+                        const maxField = statKey === 'hp' ? 'maxHp' : 'maxSp';
+                        const curField = statKey === 'hp' ? 'hp' : 'sp';
+                        const trackKey = `${entry.itemName}:${statKey}`;
+                        const bonus = Math.round(owner[maxField] * newAccInfo.pct[statKey]);
+                        owner[maxField] += bonus;
+                        owner[curField] += bonus;
+                        owner.accBonusLog[trackKey] = (owner.accBonusLog[trackKey] || 0) + bonus;
+                    });
+                }
                 message = isBracelet
                     ? `⚒️ 鍛造成功！${entry.ownerLabel}的「${entry.itemName}」強度提升到 +${lv + 1}（敏捷 +${1 + (lv + 1) * 2}）！`
                     : `⚒️ 鍛造成功！「${entry.itemName}」強度提升到 +${lv + 1}！`;
                 playSfx('success');
             } else {
                 entry.setLv(0);
+                // 失敗歸零：把這件飾品目前為止已經永久疊加上去的HP/SP點數，原封不動地收回來
+                if (newAccInfo && newAccInfo.pct) {
+                    const owner = entry.ownerObj;
+                    owner.accBonusLog = owner.accBonusLog || {};
+                    ['hp', 'sp'].forEach(statKey => {
+                        if (!newAccInfo.pct[statKey]) return;
+                        const maxField = statKey === 'hp' ? 'maxHp' : 'maxSp';
+                        const curField = statKey === 'hp' ? 'hp' : 'sp';
+                        const trackKey = `${entry.itemName}:${statKey}`;
+                        const lose = owner.accBonusLog[trackKey] || 0;
+                        if (lose > 0) {
+                            owner[maxField] = Math.max(1, owner[maxField] - lose);
+                            owner[curField] = Math.max(1, Math.min(owner[curField], owner[maxField]));
+                            owner.accBonusLog[trackKey] = 0;
+                        }
+                    });
+                }
                 message = `💢 鍛造失敗了……「${entry.itemName}」沒有損壞，但強度被打回 +0，只能重新來過。`;
                 playSfx('fail');
             }
@@ -8257,7 +8454,13 @@
             rpgFormationEntries(b.monsterFormation).forEach(({ row, i, obj }) => {
                 if (obj.curHp > 0) entries.push({ side: 'monster', row, i, obj, agi: rpgEffectiveAgi(obj) });
             });
-            entries.sort((x, y) => (y.agi + Math.random() * 0.1) - (x.agi + Math.random() * 0.1));
+            entries.sort((x, y) => {
+                // 寶箱怪這類「必定優先攻擊」的怪物，不管敏捷多少都排在最前面
+                const xFirst = x.obj.alwaysFirst ? 1 : 0;
+                const yFirst = y.obj.alwaysFirst ? 1 : 0;
+                if (xFirst !== yFirst) return yFirst - xFirst;
+                return (y.agi + Math.random() * 0.1) - (x.agi + Math.random() * 0.1);
+            });
             rpgApplyStatusTicks(b); // 中毒/衰弱在每輪開始時統一結算一次
             // 中毒/灼傷/流血這類持續傷害有可能在這裡就把最後一隻怪或最後一位夥伴打死，
             // 如果不在這裡立刻判斷勝敗，遊戲會照常跑完這一輪剩下的行動，
@@ -9506,6 +9709,29 @@
                     const rowChars = vMap.rows[my].split('');
                     rowChars[mx] = '.';
                     vMap.rows[my] = rowChars.join('');
+                }
+            }
+        }
+        // 魔王城通道：牆上的鏟子(10,1)、寶箱(9,8)，每次進入這張地圖各自獨立50%機率出現（如果目前沒出現、
+        // 或上次的已經被撿走/打開過），已經出現但還沒撿的話不會重骰、繼續留著
+        function rpgRollCastlePassageSpawns() {
+            const map = RPG_MAPS.castle_passage;
+            if (!map || !map.tileMap) return;
+            map.pois = map.pois || {};
+            if (!map.pois['10,1']) {
+                if (Math.random() < 0.5) {
+                    map.pois['10,1'] = { type: 'wallShovel', found: false };
+                    map.tileMap['10,1'] = { tile: [8, 10], sheet: 'town', base: [4, 3], baseSheet: 'dungeon' };
+                } else {
+                    map.tileMap['10,1'] = [4, 3];
+                }
+            }
+            if (!map.pois['9,8']) {
+                if (Math.random() < 0.5) {
+                    map.pois['9,8'] = { type: 'shovelChest', found: false };
+                    map.tileMap['9,8'] = { tile: [5, 7], base: [2, 4] };
+                } else {
+                    map.tileMap['9,8'] = { tile: [2, 4], rotate: 270 };
                 }
             }
         }
