@@ -3595,6 +3595,45 @@
                 // 注意：這會把剛剛設定的row19內容（(9,19)/(10,19)不可通行、四根石柱裝飾）整批捨棄掉，
                 // 換成原本row18的走道內容；可通行的傳送點也因此往下變成(19,19)
                 shiftRow17_18Down();
+                const setWalkableFinal = (x, y) => { shiftedRows[y][x] = '.'; };
+                // ---- (9,19)/(10,19) 改成圖1(2,4)順時針180度 ----
+                setTileFinal(9, 19, { tile: [2, 4], rotate: 180 });
+                setTileFinal(10, 19, { tile: [2, 4], rotate: 180 });
+                // ---- 新增(19,7)/(19,8)傳送點，都通往魔王城通道(0,9)；這兩格原本是牆，
+                // 要能站上去觸發傳送，所以順便改成可通行 ----
+                setWalkableFinal(19, 7);
+                setWalkableFinal(19, 8);
+                // ---- col8/col9(rows9~15)資料整組往左移2格變成col6/col7，col10/col11(rows9~15)
+                // 資料整組往右移2格變成col12/col13，原本col8~11(rows9~15)的位置補圖1(0,4)（可通行）----
+                {
+                    const snap = {};
+                    [8, 9, 10, 11].forEach(x => {
+                        snap[x] = {};
+                        for (let y = 9; y <= 15; y++) {
+                            snap[x][y] = { tile: shiftedT[`${x},${y}`], walk: shiftedRows[y][x] };
+                        }
+                    });
+                    [8, 9].forEach(x => {
+                        const toX = x - 2;
+                        for (let y = 9; y <= 15; y++) {
+                            shiftedT[`${toX},${y}`] = snap[x][y].tile;
+                            shiftedRows[y][toX] = snap[x][y].walk;
+                        }
+                    });
+                    [10, 11].forEach(x => {
+                        const toX = x + 2;
+                        for (let y = 9; y <= 15; y++) {
+                            shiftedT[`${toX},${y}`] = snap[x][y].tile;
+                            shiftedRows[y][toX] = snap[x][y].walk;
+                        }
+                    });
+                    [8, 9, 10, 11].forEach(x => {
+                        for (let y = 9; y <= 15; y++) {
+                            shiftedT[`${x},${y}`] = [0, 4];
+                            shiftedRows[y][x] = '.';
+                        }
+                    });
+                }
                 return {
                     name: '魔王城主殿',
                     tileMap: shiftedT,
@@ -3604,6 +3643,8 @@
                     pois: {},
                     exits: {
                         '19,19': { to: 'castle_passage', x: 0, y: 10 }, // 回魔王城通道
+                        '19,7': { to: 'castle_passage', x: 0, y: 9 }, // 往魔王城通道
+                        '19,8': { to: 'castle_passage', x: 0, y: 9 }, // 往魔王城通道
                     },
                     wild: false,
                     viewport: { w: 12, h: 10 },
