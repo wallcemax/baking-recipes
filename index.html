@@ -615,6 +615,7 @@
             { id: 'finish_total_20', type: 'totalFinish', threshold: 20, title: { icon: '🍽️', name: '大胃王的' }, achievement: { name: '情緒價值已經無法滿足', desc: '胃口已經被養大了。' } },
             // ---- 異世界料理者：被魔王擊敗累計次數 ----
             { id: 'rpg_boss_loss_5', type: 'rpgBossLossCount', threshold: 5, title: { icon: '🤮', name: '難吃的' }, achievement: { name: '我覺得不錯吃阿', desc: '這應該不算是自我感覺良好吧？' } },
+            { id: 'rpg_game_cleared', type: 'rpgGameCleared', threshold: 1, title: { icon: '😋', name: '美味的' }, achievement: { name: '十里坡劍神', desc: '你真的玩不膩也！' } },
 
             // ---- 大功告成：蛋糕/糕餅 ----
             { id: 'finish_cake_1', type: 'categoryFinish', category: '蛋糕/糕餅', threshold: 1, achievement: { name: '你喜歡吃鹹的還是甜的?', desc: '真讓人欲罷不能。' } },
@@ -798,6 +799,7 @@
                     case 'afternoonCreateCount': current = userProgress.afternoonCreateCount || 0; break;
                     case 'ingredientKeyword': current = (userProgress.ingredientKeywordCounts || {})[rule.id] || 0; break;
                     case 'rpgBossLossCount': current = userProgress.rpgBossLossCount || 0; break;
+                    case 'rpgGameCleared': current = userProgress.rpgGameCleared ? 1 : 0; break;
                 }
                 if (current >= rule.threshold) {
                     if (rule.title && !userProgress.unlockedTitleIds.includes(rule.id)) {
@@ -829,6 +831,7 @@
                 case 'afternoonCreateCount': return `在下午時段新增食譜累計 ${rule.threshold} 次`;
                 case 'ingredientKeyword': return `食材名稱含有「${rule.keywords.join('、')}」累計使用 ${rule.threshold} 次（可跨食譜累計）`;
                 case 'rpgBossLossCount': return `在異世界料理者中被魔王擊敗五次`;
+                case 'rpgGameCleared': return `在異世界料理者中通關`;
                 default: return '';
             }
         }
@@ -6473,6 +6476,7 @@
             const state = rpgState;
             const box = document.getElementById('rpg-dialogue-box');
             state.locked = true;
+            state.customDialogueActive = true; // 告訴防卡死的watchdog計時器「這是正常的自訂畫面，不是卡住了」，不然2秒後會被強制重置、連帶把BGM也重置回村莊預設音樂
             document.getElementById('rpg-nearby-actions').innerHTML = '';
             if (box) box.textContent = '👥 大家一起圍上去，準備合力把石頭推開！（角色進圈之後、還沒離開圈之前點一下畫面）';
             playSfx('click');
@@ -6524,6 +6528,7 @@
             let hits = 0;
             let clicksUsed = 0;
             let hitWindowOpen = false;
+            let ended = false; // 額度提前用完時設成true，讓還在跑的計時器知道要提前收尾、不要再排下一拍
 
             const flash = () => {
                 const f = document.createElement('div');
@@ -6547,6 +6552,19 @@
                 requestAnimationFrame(() => { f.style.transition = 'opacity .28s'; f.style.opacity = '0'; });
                 setTimeout(() => f.remove(), 320);
             };
+            const finishGame = () => {
+                if (ended) return; // 避免正常跑完跟提前結束同時各觸發一次
+                ended = true;
+                overlay.removeEventListener('click', clickHandler);
+                setTimeout(() => {
+                    overlay.style.opacity = '0';
+                    setTimeout(() => {
+                        overlay.remove();
+                        rpgStartBgm(prevBgmMood || 'explore');
+                        rpgFinishStoneMinigame(hits >= neededHits);
+                    }, 400);
+                }, 400);
+            };
             const clickHandler = () => {
                 if (clicksUsed >= maxClicks) return; // 20次額度用完了，之後怎麼點都不算數
                 clicksUsed++;
@@ -6563,23 +6581,15 @@
                     playSfx('fail');
                 }
                 counterEl.textContent = `命中 ${hits}／已按 ${clicksUsed}/${maxClicks}（至少要命中${neededHits}下）`;
+                // 20次額度提前用完了，不用等剩下的跳入動畫跑完，直接提前結束
+                if (clicksUsed >= maxClicks) finishGame();
             };
             overlay.addEventListener('click', clickHandler);
 
             const runBeat = () => {
                 if (!rpgState) { overlay.remove(); rpgStopBgm(); return; } // 保險：中途離開遊戲就直接停掉，不要留下殘留的計時器
-                if (beat >= totalBeats) {
-                    overlay.removeEventListener('click', clickHandler);
-                    setTimeout(() => {
-                        overlay.style.opacity = '0';
-                        setTimeout(() => {
-                            overlay.remove();
-                            rpgStartBgm(prevBgmMood || 'explore');
-                            rpgFinishStoneMinigame(hits >= neededHits);
-                        }, 400);
-                    }, 400);
-                    return;
-                }
+                if (ended) return; // 額度已經提前用完、正在收尾了，不要再排新的一拍
+                if (beat >= totalBeats) { finishGame(); return; }
                 const person = icons[beat % icons.length];
                 person.el.style.transition = `left ${moveInMs}ms ease-out, top ${moveInMs}ms ease-out`;
                 person.el.style.left = '140px';
@@ -6587,8 +6597,9 @@
                 person.el.style.zIndex = '3';
                 hitWindowOpen = false;
                 // 角色「抵達」圈內的那一刻才開放判定，一直到牠開始往回走之前都算數（跟角色實際還站在圈裡的時間完全對齊）
-                setTimeout(() => { hitWindowOpen = true; }, moveInMs);
+                setTimeout(() => { if (!ended) hitWindowOpen = true; }, moveInMs);
                 setTimeout(() => {
+                    if (ended) return;
                     hitWindowOpen = false;
                     person.el.style.transition = `left ${moveOutMs}ms ease-in, top ${moveOutMs}ms ease-in`;
                     person.el.style.left = `${person.homeX}px`;
@@ -6618,7 +6629,7 @@
                 playSfx('fail');
                 if (box) box.textContent = '😮\u200d💨 大家用盡了力氣，但石頭還是紋風不動……休息一下，之後可以再試一次。';
             }
-            setTimeout(() => { if (rpgState) rpgState.locked = false; }, 1500);
+            setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; } }, 1500);
         }
         function rpgGiveKaiDish() {
             const state = rpgState;
@@ -10306,6 +10317,13 @@
                 state.trail = [1, 2, 3, 4].map(() => ({ x: 14, y: 14 }));
                 rpgSaveGame(true);
                 renderRpgMap();
+                // 通關這件事也要同步寫回 userProgress，觸發網站的稱號/成就系統，解鎖「美味的」稱號跟「十里坡劍神」成就
+                if (typeof userProgress !== 'undefined' && userProgress) {
+                    userProgress.rpgGameCleared = true;
+                    const newly = checkUnlocks();
+                    saveUserProgress();
+                    if (newly.length) showAchievementToast(newly);
+                }
                 setTimeout(() => {
                     const box = document.getElementById('rpg-dialogue-box');
                     if (box) box.textContent = '主角：我想這個世界應該會再次擁有美味了。';
