@@ -3790,7 +3790,7 @@
                 setTileFinal(12, 13, { tile: [8, 2], rotate: 90 });
                 setBlockedFinal(12, 13);
                 // ---- (9,4) 放上黑暗料理王・父王的外觀（圖磚邊緣透明，補地板墊底），不可通行，讓玩家看得到有人站在那裡可以調查 ----
-                setTileFinal(9, 4, { tile: [3, 9], base: [6, 3] });
+                setTileFinal(9, 4, { tile: [3, 9], base: [6, 3], hueFilter: 'hue-rotate(260deg) saturate(2.2) brightness(0.95)' });
                 setBlockedFinal(9, 4);
                 // ---- (7,12) 改用圖2(11,6)（圖磚邊緣透明，補地板墊底）----
                 setTileFinal(7, 12, { tile: [11, 6], sheet: 'town', base: [2, 4], baseSheet: 'dungeon' });
@@ -3814,7 +3814,7 @@
                     tileMap: shiftedT,
                     rows: shiftedRows.map(r => r.join('')),
                     start: { x: 19, y: 19 },
-                    npcs: {},
+                    npcs: { '9,4': 'darkCuisineFather' },
                     pois: {
                         '7,12': { sign: true, text: '故障！沒水！' },
                         '9,7': { sign: true, text: '這些食材看起來新鮮但是都沒烹調就被端上桌...。' },
@@ -3823,7 +3823,6 @@
                         '4,4': { sign: true, text: '裝成沒看到也不行...。' },
                         '15,4': { sign: true, text: '假如味覺可以關閉的話....。' },
                         '18,4': { sign: true, text: '就連使用分身術也不行...。' },
-                        '9,4': { type: 'finalGauntlet' },
                     },
                     exits: {
                         '19,19': { to: 'castle_passage', x: 0, y: 10 }, // 回魔王城通道
@@ -4088,6 +4087,7 @@
             ingredientShop: { name: '食材商店', icon: '🧺', lines: ['歡迎光臨食材行！買入 2 塊錢一份，賣出算你 1 塊錢一份，公道價！'], ingredientShop: true },
             laomai: { name: '老麥', icon: '🔨' },
             metalMerchant: { name: '神秘金屬商人', icon: '❓', lines: ['嘿，運氣不錯被你遇上了！要不要看看我這裡的神祕金屬？限量供應，賣完就沒了，明天請早。'], metalShop: true },
+            darkCuisineFather: { name: '黑暗料理王・父王', icon: '👑' },
         };
         // 這幾個 NPC 設定上是站在廣場/門口的石板地，腳下要畫石板路而不是草地
         const RPG_NPC_STANDS_ON_PATH = { innkeeper: true, ingredientShop: true, ginhaku: true };
@@ -5046,11 +5046,13 @@
                                     if (rotate) ctx.rotate(rotate * Math.PI / 180);
                                     if (flipH) ctx.scale(-1, 1);
                                     if (tileEntry.alpha != null) ctx.globalAlpha = tileEntry.alpha;
+                                    if (tileEntry.hueFilter) ctx.filter = tileEntry.hueFilter;
                                     rpgDrawSprite(ctx, sheetImg, tile, -T / 2, -T / 2, T, sheetStride);
                                     ctx.restore();
-                                } else if (tileEntry.alpha != null) {
+                                } else if (tileEntry.alpha != null || tileEntry.hueFilter) {
                                     ctx.save();
-                                    ctx.globalAlpha = tileEntry.alpha;
+                                    if (tileEntry.alpha != null) ctx.globalAlpha = tileEntry.alpha;
+                                    if (tileEntry.hueFilter) ctx.filter = tileEntry.hueFilter;
                                     rpgDrawSprite(ctx, sheetImg, tile, px, py, T, sheetStride);
                                     ctx.restore();
                                 } else {
@@ -5612,15 +5614,6 @@
                 if (box) box.textContent = `📋 ${poi.text}`;
                 return;
             }
-            // 魔王城主殿(9,4)：最終六連戰的觸發點，不設found，讓中途落敗後還能再次挑戰
-            if (poi.type === 'finalGauntlet') {
-                if (state.player.gameCleared) {
-                    if (box) box.textContent = '黑暗料理王・父王：謝謝你，這個世界已經再次擁有美味了。';
-                    return;
-                }
-                rpgStartFinalGauntlet();
-                return;
-            }
             // 魔王城通道・寶箱：70%開到鏟子、30%跳出寶箱怪戰鬥（強度跟一般小怪一樣，但一定優先行動）
             if (poi.type === 'shovelChest') {
                 poi.found = true;
@@ -6126,6 +6119,7 @@
             if (RPG_COMPANION_RECRUIT_INFO[npcId]) { rpgTalkToCompanion(npcId); return; }
             if (npcId === 'laomai') { rpgTalkToLaomai(); return; }
             if (npcId === 'kai') { rpgTalkToKai(); return; }
+            if (npcId === 'darkCuisineFather') { rpgTalkToDarkCuisineFather(); return; }
             const info = RPG_NPC_INFO[npcId];
             const box = document.getElementById('rpg-dialogue-box');
             if (!info || !box) return;
@@ -6327,6 +6321,28 @@
                     }, 250);
                 }
             }, 28);
+        }
+        // 魔王城主殿的黑暗料理王・父王：交談觸發最終六連戰（通關以後改講感謝的話，不會再打）
+        function rpgTalkToDarkCuisineFather() {
+            const state = rpgState;
+            const box = document.getElementById('rpg-dialogue-box');
+            if (!state || !box) return;
+            if (state.player.gameCleared) {
+                state.locked = true;
+                playSfx('click');
+                box.textContent = '';
+                const fullText = '黑暗料理王・父王：謝謝你，這個世界已經再次擁有美味了。';
+                let i = 0;
+                const typer = setInterval(() => {
+                    i++;
+                    box.textContent = fullText.slice(0, i);
+                    if (i % 2 === 0 && fullText[i - 1] && fullText[i - 1].trim()) playSfx('blip');
+                    if (i >= fullText.length) clearInterval(typer);
+                }, 28);
+                setTimeout(() => { if (rpgState) rpgState.locked = false; }, fullText.length * 28 + 200);
+                return;
+            }
+            rpgStartFinalGauntlet();
         }
         function rpgGiveKaiDish() {
             const state = rpgState;
@@ -7798,6 +7814,9 @@
                     playSfx('click');
                     state.mode = 'map';
                     state.battle = null; // 一定要清掉，不然下次骰到遭遇時 rpgStartBattle 的防重複呼叫檢查會誤判成「戰鬥還沒結束」，直接靜默失敗，之後永遠不會再遇到怪
+                    // 最終六連戰逃跑：這是導致「周目數卡住」bug的主要路徑——逃跑不會經過rpgBattleLose/rpgBackToVillage，
+                    // 所以要在這裡自己還原借用的ngPlus、清掉gauntlet狀態
+                    if (state.gauntlet && state.gauntlet.active) { state.gauntlet = null; p.ngPlus = 4; }
                     setTimeout(renderRpgMap, 500);
                 } else {
                     rpgLogAppend('逃跑失敗，大家都還沒來得及出手，怪物搶先攻擊了！');
@@ -8558,7 +8577,10 @@
                     b.phase = 'command';
                     b.commands = {};
                     b.uiMode = 'main';
-                    b.itemsDisabledThisRound = false; // 母后的「禁帶外食」只鎖一輪，新的一輪開始就解除
+                    // 母后的「禁帶外食」：觸發當下那一輪指令早就選好了，鎖定要從「下一輪」才真正生效，
+                    // 所以這裡把上一輪標記的itemsDisabledNextRound轉正為itemsDisabledThisRound，這一輪才會真的鎖住道具按鈕
+                    b.itemsDisabledThisRound = !!b.itemsDisabledNextRound;
+                    b.itemsDisabledNextRound = false;
                     const hasNext = rpgAdvanceToNextCommander();
                     if (!hasNext) {
                         // 嚴重bug修正：如果全場還活著的角色都因為麻痺/恐懼被自動跳過（例如只剩一個人、還中著麻痺），
@@ -9088,12 +9110,12 @@
                             <button onclick="rpgGauntletOrderChoice(false)" class="btn-secondary w-full">🙅 不交付</button>`;
                         return;
                     }
-                    // 魔王城通道最終六連戰・第六場「禁帶外食」：20%機率消耗母后自己20%SP，鎖住我方這一輪的道具欄；SP歸零就直接獲勝
+                    // 魔王城通道最終六連戰・第六場「禁帶外食」：20%機率消耗母后自己20%SP，鎖住我方下一輪的道具欄；SP歸零就直接獲勝
                     if (monsterObj.isMotherQueen && monsterObj.curHp > 0 && Math.random() < 0.2) {
                         const spCost = Math.max(1, Math.round((monsterObj.sp || 1) * 0.2));
                         monsterObj.curSp = Math.max(0, (monsterObj.curSp || 0) - spCost);
-                        b.itemsDisabledThisRound = true;
-                        rpgLogAppend(`🚫 ${monsterObj.name}厲聲喝斥：「禁帶外食！」我方這一輪的道具欄暫時無法使用！（她消耗了 ${spCost} 點SP，剩下 ${monsterObj.curSp} 點）`);
+                        b.itemsDisabledNextRound = true;
+                        rpgLogAppend(`🚫 ${monsterObj.name}厲聲喝斥：「禁帶外食！」下一輪我方的道具欄會暫時無法使用！（她消耗了 ${spCost} 點SP，剩下 ${monsterObj.curSp} 點）`);
                         updateBattleUI();
                         if (monsterObj.curSp <= 0) {
                             rpgLogAppend(`💫 ${monsterObj.name}的精神力已經耗盡了……`);
@@ -9805,25 +9827,48 @@
             return monster;
         }
         // 第四場專用：4個一模一樣的分身站後排，只有一個真身
-        function rpgGauntletCloneMonsters() {
+        function rpgGauntletCloneMonsters(nameOverride) {
             const state = rpgState;
             const p = state.player;
             const species = RPG_MONSTER_SPECIES.dark_cuisine_king;
             const realStats = rpgMonsterStatsAtLevel(p.level + 20 + Math.floor(Math.random() * 11), true);
             const decoyStats = rpgMonsterStatsAtLevel(p.level + 10, false);
             const realIdx = Math.floor(Math.random() * 4);
+            const cloneName = nameOverride || '黑暗料理王・真身';
             const freshStatuses = () => ({ poison: 0, paralysis: 0, weaken: 0, burn: 0, bleed: 0, fear: 0, blind: 0, tasteless: 0, softened: 0 });
             const monsters = [];
             for (let i = 0; i < 4; i++) {
                 if (i === realIdx) {
-                    monsters.push({ id: 'dark_cuisine_king', ...species, ...realStats, name: '黑暗料理王・真身', hue: 0, curHp: realStats.hp, curSp: realStats.sp || 0, isBoss: true, isRealBoss: true, aiType: 'low_hp', statuses: freshStatuses() });
+                    monsters.push({ id: 'dark_cuisine_king', ...species, ...realStats, name: cloneName, hue: 0, curHp: realStats.hp, curSp: realStats.sp || 0, isBoss: true, isRealBoss: true, aiType: 'low_hp', statuses: freshStatuses() });
                 } else {
-                    monsters.push({ id: 'dark_cuisine_king', ...species, ...decoyStats, name: '黑暗料理王・真身', hue: 0, curHp: decoyStats.hp, curSp: decoyStats.sp || 0, isBoss: false, isDecoy: true, aiType: rpgRandomMonsterAI(), statuses: freshStatuses() });
+                    monsters.push({ id: 'dark_cuisine_king', ...species, ...decoyStats, name: cloneName, hue: 0, curHp: decoyStats.hp, curSp: decoyStats.sp || 0, isBoss: false, isDecoy: true, aiType: rpgRandomMonsterAI(), statuses: freshStatuses() });
                 }
             }
             return monsters;
         }
         // 開始六連戰的第N場
+        // 每一場的魔王名稱
+        const RPG_GAUNTLET_BOSS_NAMES = {
+            1: '黑暗料理王・么弟', 2: '黑暗料理王・二姊', 3: '黑暗料理王・大弟',
+            4: '黑暗料理王・大姊', 5: '黑暗料理王・父王', 6: '黑暗料理王・母后',
+        };
+        // 建構「魔王+7隻隨從」的完整8格陣型（隨從強度比照一般遭遇戰的隨從公式），魔王固定站在後排第2位
+        function rpgGauntletBossWithEscorts(bossOpts) {
+            const state = rpgState;
+            const p = state.player;
+            const escortStats = rpgMonsterStatsAtLevel(p.level + 10, false);
+            const monsters = [];
+            for (let slotIdx = 0; slotIdx < 8; slotIdx++) {
+                if (slotIdx === 5) {
+                    monsters.push(rpgGauntletBossMonster(bossOpts));
+                } else {
+                    const escortId = RPG_MONSTER_POOL[Math.floor(Math.random() * RPG_MONSTER_POOL.length)];
+                    const escortSpecies = RPG_MONSTER_SPECIES[escortId];
+                    monsters.push({ id: escortId, ...escortSpecies, ...escortStats, curHp: escortStats.hp, aiType: rpgRandomMonsterAI() });
+                }
+            }
+            return monsters;
+        }
         function rpgGauntletStage(stage) {
             const state = rpgState;
             const p = state.player;
@@ -9835,12 +9880,13 @@
             state.locked = false;
             let monsters = [];
             let extraBattleFields = {};
-            if (stage === 1) { p.ngPlus = 0; monsters = [rpgGauntletBossMonster()]; }
-            else if (stage === 2) { p.ngPlus = 1; monsters = [rpgGauntletBossMonster()]; }
-            else if (stage === 3) { p.ngPlus = 2; monsters = [rpgGauntletBossMonster({ phase2Visual: true })]; extraBattleFields.bossPhase2 = true; }
-            else if (stage === 4) { p.ngPlus = 3; monsters = rpgGauntletCloneMonsters(); extraBattleFields.bossClonePhase2 = true; }
-            else if (stage === 5) { p.ngPlus = 4; monsters = [rpgGauntletBossMonster({ hpMult: 100, orderDishBoss: true })]; }
-            else if (stage === 6) { p.ngPlus = 4; monsters = [rpgGauntletBossMonster({ hpMult: 100, nameOverride: '黑暗料理王・母后', motherQueen: true })]; }
+            const nameOverride = RPG_GAUNTLET_BOSS_NAMES[stage];
+            if (stage === 1) { p.ngPlus = 0; monsters = rpgGauntletBossWithEscorts({ nameOverride }); }
+            else if (stage === 2) { p.ngPlus = 1; monsters = rpgGauntletBossWithEscorts({ nameOverride }); }
+            else if (stage === 3) { p.ngPlus = 2; monsters = rpgGauntletBossWithEscorts({ phase2Visual: true, nameOverride }); extraBattleFields.bossPhase2 = true; }
+            else if (stage === 4) { p.ngPlus = 3; monsters = rpgGauntletCloneMonsters(nameOverride); extraBattleFields.bossClonePhase2 = true; }
+            else if (stage === 5) { p.ngPlus = 4; monsters = [rpgGauntletBossMonster({ hpMult: 100, orderDishBoss: true, nameOverride })]; }
+            else if (stage === 6) { p.ngPlus = 4; monsters = [rpgGauntletBossMonster({ hpMult: 100, nameOverride: RPG_GAUNTLET_BOSS_NAMES[6], motherQueen: true })]; }
             rpgStartBattle({ monsters, isBossFight: true, extraBattleFields });
         }
         // 每一場打贏後的處理：不增加積分（第六場除外），顯示台詞，按繼續才進下一場
@@ -10036,6 +10082,12 @@
         }
         function rpgBackToVillage() {
             const state = rpgState;
+            // 保險：不管是用什麼方式離開最終六連戰（戰敗/逃跑/其他），只要gauntlet還沒清乾淨，回村莊時一律強制還原，
+            // 避免周目數卡在戰鬥中暫時借用的數字（例如卡在「第一周目」）
+            if (state.gauntlet && state.gauntlet.active) {
+                state.gauntlet = null;
+                state.player.ngPlus = 4;
+            }
             state.mode = 'map';
             state.battle = null;
             state.battleBusy = false;
