@@ -5663,29 +5663,8 @@
                     if (box) box.textContent = '📋 憑我們幾個人的力量還無法移動它。';
                     return;
                 }
-                // 條件都滿足了：播放眾人合力把石頭移開的動畫
-                document.getElementById('rpg-nearby-actions').innerHTML = '';
-                state.locked = true;
-                if (box) box.textContent = '👥 大家一起使勁地推……';
-                playSfx('click');
-                const shakeEl = document.getElementById('rpg-canvas');
-                let shakeCount = 0;
-                const shakeTimer = setInterval(() => {
-                    shakeCount++;
-                    if (shakeEl) shakeEl.style.transform = shakeCount % 2 === 0 ? 'translateX(-3px)' : 'translateX(3px)';
-                    if (shakeCount >= 8) {
-                        clearInterval(shakeTimer);
-                        if (shakeEl) shakeEl.style.transform = '';
-                        state.player.villageStoneMoved = true;
-                        poi.found = true; // 任務完成後把這個調查點標記掉，「調查」按鈕才不會一直殘留在畫面上
-                        rpgSyncDungeonEntranceAvailability();
-                        rpgDraw();
-                        playSfx('success');
-                        if (box) box.textContent = '🪨 石頭被緩緩推開了！村子底下的密道入口重見天日！';
-                        rpgSaveGame(true);
-                        setTimeout(() => { if (rpgState) rpgState.locked = false; }, 1500);
-                    }
-                }, 220);
+                // 條件都滿足了：進入推石頭的節奏小遊戲
+                rpgStartStoneMoveMinigame();
                 return;
             }
             // 魔王城通道・寶箱：70%開到鏟子、30%跳出寶箱怪戰鬥（強度跟一般小怪一樣，但一定優先行動）
@@ -6464,6 +6443,125 @@
             }, 28);
             setTimeout(() => { if (rpgState) rpgState.locked = false; }, fullText.length * 28 + 200);
             rpgSaveGame(true);
+        }
+        // 移石頭小遊戲：石頭放大置中、中間有一個虛線目標圈，全隊最多8人依序「跳入」圈內，
+        // 玩家在角色跳進圈內的當下點擊畫面觸發斬擊特效（借用小穗雙刀連擊的視覺），畫面閃一下代表命中，
+        // 總共20下，至少要命中15下才能成功把石頭推開
+        function rpgStartStoneMoveMinigame() {
+            const state = rpgState;
+            const box = document.getElementById('rpg-dialogue-box');
+            state.locked = true;
+            document.getElementById('rpg-nearby-actions').innerHTML = '';
+            if (box) box.textContent = '👥 大家一起圍上去，準備合力把石頭推開！（跳進圈裡的瞬間點一下畫面）';
+            playSfx('click');
+
+            const overlay = document.createElement('div');
+            overlay.id = 'rpg-stone-minigame';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(20,14,10,0.94); z-index:9999; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity .4s; cursor:pointer;';
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'position:relative; width:280px; height:280px;';
+            const ring = document.createElement('div');
+            ring.style.cssText = 'position:absolute; left:140px; top:140px; width:120px; height:120px; margin:-60px 0 0 -60px; border-radius:50%; border:3px dashed rgba(255,255,255,0.75);';
+            wrap.appendChild(ring);
+            const stoneEl = document.createElement('div');
+            stoneEl.style.cssText = 'position:absolute; left:140px; top:140px; transform:translate(-50%,-50%); font-size:56px; filter:drop-shadow(0 4px 6px rgba(0,0,0,0.5)); z-index:1;';
+            stoneEl.textContent = '🪨';
+            wrap.appendChild(stoneEl);
+            const counterEl = document.createElement('div');
+            counterEl.style.cssText = 'position:absolute; left:140px; top:-32px; transform:translateX(-50%); color:#F4E4CE; font-size:13px; font-weight:bold; white-space:nowrap; text-shadow:0 1px 3px rgba(0,0,0,0.8);';
+            counterEl.textContent = '命中 0/20（至少要15下）';
+            wrap.appendChild(counterEl);
+
+            const roster = [state.player, ...(state.companions || [])].slice(0, 8);
+            const radius = 118;
+            const icons = roster.map((m, idx) => {
+                const angle = (idx / roster.length) * Math.PI * 2 - Math.PI / 2;
+                const x = 140 + radius * Math.cos(angle);
+                const y = 140 + radius * Math.sin(angle);
+                const el = document.createElement('div');
+                el.style.cssText = `position:absolute; left:${x}px; top:${y}px; transform:translate(-50%,-50%); transition:left .3s ease-in, top .3s ease-in; z-index:2;`;
+                el.innerHTML = rpgCharThumbHTML(m, 34);
+                wrap.appendChild(el);
+                return { el, homeX: x, homeY: y };
+            });
+
+            overlay.appendChild(wrap);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => { overlay.style.opacity = '1'; });
+
+            const totalBeats = 20;
+            const neededHits = 15;
+            let beat = 0;
+            let hits = 0;
+            let hitWindowOpen = false;
+
+            const flash = () => {
+                const f = document.createElement('div');
+                f.style.cssText = 'position:absolute; inset:0; background:#fff; opacity:0.55; border-radius:12px; pointer-events:none;';
+                wrap.appendChild(f);
+                requestAnimationFrame(() => { f.style.transition = 'opacity .25s'; f.style.opacity = '0'; });
+                setTimeout(() => f.remove(), 300);
+            };
+            const clickHandler = () => {
+                if (!hitWindowOpen) return;
+                hitWindowOpen = false;
+                hits++;
+                counterEl.textContent = `命中 ${hits}/${totalBeats}（至少要${neededHits}下）`;
+                flash();
+                rpgBurstParticle('scratch_01', { x: 140, y: 140, size: 70, count: 1, duration: 0.35, style: 'slash', filter: 'brightness(0.15) contrast(3)' });
+                playSfx('secretSlash');
+            };
+            overlay.addEventListener('click', clickHandler);
+
+            const runBeat = () => {
+                if (!rpgState) { overlay.remove(); return; } // 保險：中途離開遊戲就直接停掉，不要留下殘留的計時器
+                if (beat >= totalBeats) {
+                    overlay.removeEventListener('click', clickHandler);
+                    setTimeout(() => {
+                        overlay.style.opacity = '0';
+                        setTimeout(() => {
+                            overlay.remove();
+                            rpgFinishStoneMinigame(hits >= neededHits);
+                        }, 400);
+                    }, 400);
+                    return;
+                }
+                const person = icons[beat % icons.length];
+                person.el.style.left = '140px';
+                person.el.style.top = '140px';
+                person.el.style.zIndex = '3';
+                hitWindowOpen = false;
+                setTimeout(() => { hitWindowOpen = true; }, 180); // 快靠近圈內時才開放判定，太早點不算
+                setTimeout(() => {
+                    hitWindowOpen = false;
+                    person.el.style.left = `${person.homeX}px`;
+                    person.el.style.top = `${person.homeY}px`;
+                    person.el.style.zIndex = '2';
+                    beat++;
+                    setTimeout(runBeat, 180);
+                }, 420);
+            };
+            setTimeout(runBeat, 500);
+        }
+        function rpgFinishStoneMinigame(success) {
+            const state = rpgState;
+            if (!state) return;
+            const box = document.getElementById('rpg-dialogue-box');
+            const map = RPG_MAPS.village;
+            const poi = map.pois && map.pois['22,16'];
+            if (success) {
+                state.player.villageStoneMoved = true;
+                if (poi) poi.found = true; // 任務完成後把這個調查點標記掉，「調查」按鈕才不會一直殘留在畫面上
+                rpgSyncDungeonEntranceAvailability();
+                rpgDraw();
+                playSfx('success');
+                if (box) box.textContent = '🪨 石頭被緩緩推開了！村子底下的密道入口重見天日！';
+                rpgSaveGame(true);
+            } else {
+                playSfx('fail');
+                if (box) box.textContent = '😮\u200d💨 大家用盡了力氣，但石頭還是紋風不動……休息一下，之後可以再試一次。';
+            }
+            setTimeout(() => { if (rpgState) rpgState.locked = false; }, 1500);
         }
         function rpgGiveKaiDish() {
             const state = rpgState;
