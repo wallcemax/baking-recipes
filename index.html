@@ -6447,13 +6447,37 @@
         // 移石頭小遊戲：石頭放大置中、中間有一個虛線目標圈，全隊最多8人依序「跳入」圈內，
         // 玩家在角色跳進圈內的當下點擊畫面觸發斬擊特效（借用小穗雙刀連擊的視覺），畫面閃一下代表命中，
         // 總共20下，至少要命中15下才能成功把石頭推開
+        // 小遊戲專用：去背的角色圖示+目前裝備的武器疊圖（不是圓形頭像縮圖，是完整站立圖案）
+        function rpgStoneMinigameCharIconHTML(obj, size) {
+            size = size || 40;
+            const spriteKey = obj.spriteKey || (obj.isCompanion ? 'hero_ako' : 'hero_player');
+            const tile = RPG_DUNGEON_TILES[spriteKey] || RPG_DUNGEON_TILES.hero_player;
+            const z = size / 16;
+            const [col, row] = tile;
+            const charDiv = `<div style="position:absolute; inset:0; background-image:url('${RPG_DUNGEON_URL}'); background-position:-${col * RPG_DUNGEON_STRIDE * z}px -${row * RPG_DUNGEON_STRIDE * z}px; background-size:${RPG_DUNGEON_W * z}px ${RPG_DUNGEON_H * z}px; image-rendering:pixelated;"></div>`;
+            const wKey = obj.weaponSprite || 'weapon_sword';
+            const useTownSheet = obj.weaponSheet === 'town';
+            const wUrl = useTownSheet ? RPG_TOWN_URL : RPG_DUNGEON_URL;
+            const wTiles = useTownSheet ? RPG_TOWN_TILES : RPG_DUNGEON_TILES;
+            const wStride = useTownSheet ? RPG_TOWN_STRIDE : RPG_DUNGEON_STRIDE;
+            const wSheetW = useTownSheet ? RPG_TOWN_W : RPG_DUNGEON_W;
+            const wSheetH = useTownSheet ? RPG_TOWN_H : RPG_DUNGEON_H;
+            const wTile = wTiles[wKey] || RPG_DUNGEON_TILES.weapon_sword;
+            const wSize = Math.round(size * 0.6);
+            const wz = wSize / 16;
+            const [wcol, wrow] = wTile;
+            const weaponDiv = wTile ? `<div style="position:absolute; left:${Math.round(size * 0.4)}px; top:${Math.round(size * 0.28)}px; width:${wSize}px; height:${wSize}px; background-image:url('${wUrl}'); background-position:-${wcol * wStride * wz}px -${wrow * wStride * wz}px; background-size:${wSheetW * wz}px ${wSheetH * wz}px; image-rendering:pixelated;"></div>` : '';
+            return `<div style="position:relative; width:${size}px; height:${size}px; filter:drop-shadow(0 2px 3px rgba(0,0,0,0.5));">${charDiv}${weaponDiv}</div>`;
+        }
         function rpgStartStoneMoveMinigame() {
             const state = rpgState;
             const box = document.getElementById('rpg-dialogue-box');
             state.locked = true;
             document.getElementById('rpg-nearby-actions').innerHTML = '';
-            if (box) box.textContent = '👥 大家一起圍上去，準備合力把石頭推開！（跳進圈裡的瞬間點一下畫面）';
+            if (box) box.textContent = '👥 大家一起圍上去，準備合力把石頭推開！（角色進圈之後、還沒離開圈之前點一下畫面）';
             playSfx('click');
+            const prevBgmMood = rpgBgmMood;
+            rpgStartBgm('stoneMinigame');
 
             const overlay = document.createElement('div');
             overlay.id = 'rpg-stone-minigame';
@@ -6461,11 +6485,13 @@
             const wrap = document.createElement('div');
             wrap.style.cssText = 'position:relative; width:280px; height:280px;';
             const ring = document.createElement('div');
-            ring.style.cssText = 'position:absolute; left:140px; top:140px; width:120px; height:120px; margin:-60px 0 0 -60px; border-radius:50%; border:3px dashed rgba(255,255,255,0.75);';
+            ring.style.cssText = 'position:absolute; left:140px; top:140px; width:60px; height:60px; margin:-30px 0 0 -30px; border-radius:50%; border:3px dashed rgba(255,220,150,0.85); box-shadow:0 0 10px rgba(255,220,150,0.4);';
             wrap.appendChild(ring);
+            // 石頭：圖3(5,7)放大顯示
+            const stoneSize = 64;
+            const stoneZ = stoneSize / RPG_PACKED3_STRIDE;
             const stoneEl = document.createElement('div');
-            stoneEl.style.cssText = 'position:absolute; left:140px; top:140px; transform:translate(-50%,-50%); font-size:56px; filter:drop-shadow(0 4px 6px rgba(0,0,0,0.5)); z-index:1;';
-            stoneEl.textContent = '🪨';
+            stoneEl.style.cssText = `position:absolute; left:140px; top:140px; width:${stoneSize}px; height:${stoneSize}px; margin:${-stoneSize / 2}px 0 0 ${-stoneSize / 2}px; background-image:url('${RPG_PACKED3_URL}'); background-position:-${5 * RPG_PACKED3_STRIDE * stoneZ}px -${7 * RPG_PACKED3_STRIDE * stoneZ}px; background-size:${RPG_PACKED3_W * stoneZ}px ${RPG_PACKED3_H * stoneZ}px; image-rendering:pixelated; filter:drop-shadow(0 4px 6px rgba(0,0,0,0.6)); z-index:1;`;
             wrap.appendChild(stoneEl);
             const counterEl = document.createElement('div');
             counterEl.style.cssText = 'position:absolute; left:140px; top:-32px; transform:translateX(-50%); color:#F4E4CE; font-size:13px; font-weight:bold; white-space:nowrap; text-shadow:0 1px 3px rgba(0,0,0,0.8);';
@@ -6474,13 +6500,14 @@
 
             const roster = [state.player, ...(state.companions || [])].slice(0, 8);
             const radius = 118;
+            const iconSize = 38;
             const icons = roster.map((m, idx) => {
                 const angle = (idx / roster.length) * Math.PI * 2 - Math.PI / 2;
                 const x = 140 + radius * Math.cos(angle);
                 const y = 140 + radius * Math.sin(angle);
                 const el = document.createElement('div');
-                el.style.cssText = `position:absolute; left:${x}px; top:${y}px; transform:translate(-50%,-50%); transition:left .3s ease-in, top .3s ease-in; z-index:2;`;
-                el.innerHTML = rpgCharThumbHTML(m, 34);
+                el.style.cssText = `position:absolute; left:${x}px; top:${y}px; transform:translate(-50%,-50%); transition:left .26s ease-in, top .26s ease-in; z-index:2;`;
+                el.innerHTML = rpgStoneMinigameCharIconHTML(m, iconSize);
                 wrap.appendChild(el);
                 return { el, homeX: x, homeY: y };
             });
@@ -6491,16 +6518,25 @@
 
             const totalBeats = 20;
             const neededHits = 15;
+            const moveInMs = 260, dwellMs = 260, moveOutMs = 240, gapMs = 140;
             let beat = 0;
             let hits = 0;
             let hitWindowOpen = false;
 
             const flash = () => {
                 const f = document.createElement('div');
-                f.style.cssText = 'position:absolute; inset:0; background:#fff; opacity:0.55; border-radius:12px; pointer-events:none;';
+                f.style.cssText = 'position:absolute; inset:0; background:#fff; opacity:0.6; border-radius:12px; pointer-events:none;';
                 wrap.appendChild(f);
-                requestAnimationFrame(() => { f.style.transition = 'opacity .25s'; f.style.opacity = '0'; });
-                setTimeout(() => f.remove(), 300);
+                requestAnimationFrame(() => { f.style.transition = 'opacity .28s'; f.style.opacity = '0'; });
+                setTimeout(() => f.remove(), 320);
+            };
+            const shake = () => {
+                let n = 0;
+                const t = setInterval(() => {
+                    n++;
+                    wrap.style.transform = n % 2 === 0 ? 'translateX(-4px)' : 'translateX(4px)';
+                    if (n >= 4) { clearInterval(t); wrap.style.transform = ''; }
+                }, 40);
             };
             const clickHandler = () => {
                 if (!hitWindowOpen) return;
@@ -6508,38 +6544,44 @@
                 hits++;
                 counterEl.textContent = `命中 ${hits}/${totalBeats}（至少要${neededHits}下）`;
                 flash();
-                rpgBurstParticle('scratch_01', { x: 140, y: 140, size: 70, count: 1, duration: 0.35, style: 'slash', filter: 'brightness(0.15) contrast(3)' });
+                shake();
+                rpgBurstParticle('scratch_01', { x: 140, y: 140, size: 76, count: 1, duration: 0.35, style: 'slash', filter: 'brightness(0.15) contrast(3)' });
+                rpgBurstParticle('light', { x: 140, y: 140, size: 30, count: 4, duration: 0.45, filter: 'sepia(1) hue-rotate(20deg) saturate(4) brightness(1.3)' });
                 playSfx('secretSlash');
             };
             overlay.addEventListener('click', clickHandler);
 
             const runBeat = () => {
-                if (!rpgState) { overlay.remove(); return; } // 保險：中途離開遊戲就直接停掉，不要留下殘留的計時器
+                if (!rpgState) { overlay.remove(); rpgStopBgm(); return; } // 保險：中途離開遊戲就直接停掉，不要留下殘留的計時器
                 if (beat >= totalBeats) {
                     overlay.removeEventListener('click', clickHandler);
                     setTimeout(() => {
                         overlay.style.opacity = '0';
                         setTimeout(() => {
                             overlay.remove();
+                            rpgStartBgm(prevBgmMood || 'explore');
                             rpgFinishStoneMinigame(hits >= neededHits);
                         }, 400);
                     }, 400);
                     return;
                 }
                 const person = icons[beat % icons.length];
+                person.el.style.transition = `left ${moveInMs}ms ease-out, top ${moveInMs}ms ease-out`;
                 person.el.style.left = '140px';
                 person.el.style.top = '140px';
                 person.el.style.zIndex = '3';
                 hitWindowOpen = false;
-                setTimeout(() => { hitWindowOpen = true; }, 180); // 快靠近圈內時才開放判定，太早點不算
+                // 角色「抵達」圈內的那一刻才開放判定，一直到牠開始往回走之前都算數（跟角色實際還站在圈裡的時間完全對齊）
+                setTimeout(() => { hitWindowOpen = true; }, moveInMs);
                 setTimeout(() => {
                     hitWindowOpen = false;
+                    person.el.style.transition = `left ${moveOutMs}ms ease-in, top ${moveOutMs}ms ease-in`;
                     person.el.style.left = `${person.homeX}px`;
                     person.el.style.top = `${person.homeY}px`;
                     person.el.style.zIndex = '2';
                     beat++;
-                    setTimeout(runBeat, 180);
-                }, 420);
+                    setTimeout(runBeat, moveOutMs + gapMs);
+                }, moveInMs + dwellMs);
             };
             setTimeout(runBeat, 500);
         }
@@ -11196,6 +11238,8 @@
             tomb: { tempo: 0.55, wave: 'sine', gain: 0.105, notes: [220, 208, 220, 233, 220, 196, 208, 220, 185, 196, 208, 196, 174, 185, 196, 174] },
             // 魔王城主殿專屬：莊嚴、有分量的城堡主題，鋸齒波增加一點威嚴感
             castleHall: { tempo: 0.30, wave: 'sawtooth', gain: 0.125, notes: [294, 349, 440, 523, 440, 349, 294, 349, 440, 587, 523, 440, 349, 294, 262, 294] },
+            // 推石頭小遊戲專屬：明快、方波，帶一點打擊感，配合節奏點擊的手感
+            stoneMinigame: { tempo: 0.26, wave: 'square', gain: 0.12, notes: [262, 262, 330, 392, 330, 262, 220, 262, 294, 294, 349, 440, 349, 294, 247, 294] },
             // 火熱鐵砧專用：固定拍子的鍛造敲擊感旋律，节奏小遊戲的「接拍窗口」直接對齊這裡的 tempo，
             // 讓玩家是真的跟著這段 BGM 的節奏點下鎚，而不是純粹看計時條
             forge: { tempo: 0.5, wave: 'square', gain: 0.1, notes: [220, 220, 165, 220, 262, 262, 196, 262, 294, 294, 220, 294, 220, 196, 165, 147] },
