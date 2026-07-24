@@ -3827,8 +3827,8 @@
                     npcs: { '9,4': 'darkCuisineFather' },
                     pois: {
                         '7,12': { sign: true, text: '故障！沒水！' },
-                        '9,7': { sign: true, text: '這些食材看起來新鮮但是都沒烹調就被端上桌...。' },
-                        '10,7': { sign: true, text: '這些食材看起來新鮮但是都沒烹調就被端上桌...。' },
+                        '9,7': { sign: true, text: '這些食材看起來新鮮但是都沒烹調就被端上桌...。', textAfterClear: '桌上擺滿了美味的食物。' },
+                        '10,7': { sign: true, text: '這些食材看起來新鮮但是都沒烹調就被端上桌...。', textAfterClear: '桌上擺滿了美味的食物。' },
                         '1,4': { sign: true, text: '不想再吃原型食物....。', textAfterClear: '現在終於有好多樣美食了。' },
                         '4,4': { sign: true, text: '裝成沒看到也不行...。', textAfterClear: '食物就是該多采多姿的樣子。' },
                         '15,4': { sign: true, text: '假如味覺可以關閉的話....。', textAfterClear: '重新拾回了味覺感覺真好。' },
@@ -4932,6 +4932,7 @@
             rpgSyncLaomaiAvailability(); // 老麥：一周目留言板、二周目起變成可對話的本人
             rpgSyncKaiAvailability(); // 凱：四周目魔王真身被擊敗後才會出現在麥穗平原
             rpgSyncDungeonEntranceAvailability(); // 地下密道入口：五周目起解鎖
+            rpgSyncCastleHallClearedDecor(); // 魔王城主殿餐桌：通關後食物換成成品料理emoji
             rpgSyncBattleFormation(); // 防呆：確保每個已加入的夥伴都有排進隊形
             rpgStartBgm(RPG_REGION_BGM[state.region] || 'explore');
             const map = RPG_MAPS[state.region];
@@ -5076,7 +5077,15 @@
                                         : sheetStride;
                                     rpgDrawSprite(ctx, baseImg, tileEntry.base, px, py, T, baseStride);
                                 }
-                                if (rotate || flipH) {
+                                if (tileEntry.emoji) {
+                                    // emoji圖磚：底下已經畫過base了，這裡直接把emoji文字畫在格子正中間
+                                    ctx.save();
+                                    ctx.font = `${Math.round(T * 0.62)}px sans-serif`;
+                                    ctx.textAlign = 'center';
+                                    ctx.textBaseline = 'middle';
+                                    ctx.fillText(tileEntry.emoji, px + T / 2, py + T / 2 + T * 0.03);
+                                    ctx.restore();
+                                } else if (rotate || flipH) {
                                     ctx.save();
                                     ctx.translate(px + T / 2, py + T / 2);
                                     if (rotate) ctx.rotate(rotate * Math.PI / 180);
@@ -6092,6 +6101,29 @@
                     map.rows[y] = rowChars.join('');
                 }
             }
+        }
+        // 魔王城主殿的餐桌：通關前是生食材縮圖，通關後換成成品甜點emoji（配合(9,7)/(10,7)留言板文字的改變）
+        function rpgSyncCastleHallClearedDecor() {
+            const state = rpgState;
+            if (!state || !state.player) return;
+            const map = RPG_MAPS.castle_hall;
+            if (!map || !map.tileMap) return;
+            const cleared = !!state.player.gameCleared;
+            const rawFoodLayout = [
+                { pos: [8, 6], icon: [8, 1] },
+                { pos: [10, 6], icon: [8, 3] },
+                { pos: [9, 7], icon: [8, 5] },
+                { pos: [11, 7], icon: [8, 0] },
+            ];
+            const dessertEmojis = ['🍮', '🍰', '🧁', '🍩'];
+            rawFoodLayout.forEach(({ pos: [x, y], icon }, idx) => {
+                const key = `${x},${y}`;
+                if (cleared) {
+                    map.tileMap[key] = { emoji: dessertEmojis[idx % dessertEmojis.length], base: [0, 6] };
+                } else {
+                    map.tileMap[key] = { tile: icon, sheet: 'packed3', base: [0, 6] };
+                }
+            });
         }
         function rpgRemoveNpcFromMap(map, npcId) {
             for (const key in map.npcs) {
