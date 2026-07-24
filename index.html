@@ -6418,6 +6418,7 @@
             if (!state || !box) return;
             if (state.player.gameCleared) {
                 state.locked = true;
+                state.customDialogueActive = true;
                 playSfx('click');
                 box.textContent = '';
                 const fullText = '黑暗料理王・父王：謝謝你，這個世界已經再次擁有美味了。';
@@ -6428,7 +6429,7 @@
                     if (i % 2 === 0 && fullText[i - 1] && fullText[i - 1].trim()) playSfx('blip');
                     if (i >= fullText.length) clearInterval(typer);
                 }, 28);
-                setTimeout(() => { if (rpgState) rpgState.locked = false; }, fullText.length * 28 + 200);
+                setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; } }, fullText.length * 28 + 200);
                 return;
             }
             rpgStartFinalGauntlet();
@@ -6440,6 +6441,7 @@
             if (!state || !box) return;
             state.player.chiefStoneRequested = true;
             state.locked = true;
+            state.customDialogueActive = true;
             playSfx('click');
             box.textContent = '';
             const fullText = '村長：村子東南方有一塊大石頭，能不能幫我將它移走？';
@@ -6450,7 +6452,7 @@
                 if (i % 2 === 0 && fullText[i - 1] && fullText[i - 1].trim()) playSfx('blip');
                 if (i >= fullText.length) clearInterval(typer);
             }, 28);
-            setTimeout(() => { if (rpgState) rpgState.locked = false; }, fullText.length * 28 + 200);
+            setTimeout(() => { if (rpgState) { rpgState.locked = false; rpgState.customDialogueActive = false; } }, fullText.length * 28 + 200);
             rpgSaveGame(true);
         }
         // 移石頭小遊戲：石頭放大置中、中間有一個虛線目標圈，全隊最多8人依序「跳入」圈內，
@@ -10131,11 +10133,12 @@
             const state = rpgState;
             if (!state || state.locked) return;
             state.locked = true;
+            state.customDialogueActive = true; // 避免watchdog在這2秒等待期間誤判成卡住
             playSfx('click');
             const box = document.getElementById('rpg-dialogue-box');
             if (box) box.textContent = '黑暗料理王・父王：你是來拯救我們的嗎？';
             document.getElementById('rpg-nearby-actions').innerHTML = '';
-            setTimeout(() => { rpgGauntletStage(1); }, 2000);
+            setTimeout(() => { state.customDialogueActive = false; rpgGauntletStage(1); }, 2000);
         }
         // 建構指定周目強度的黑暗料理王（暫時把p.ngPlus設成該周目，讓既有的數值/技能判斷邏輯直接沿用，
         // 這個函式結束後不會還原ngPlus——由呼叫端(rpgGauntletStage)統一決定整場戰鬥期間要維持哪個周目數）
