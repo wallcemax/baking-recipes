@@ -306,6 +306,7 @@
             </div>
             <div class="px-6 py-6">
                 <p id="ingredient-cost-modal-name" class="font-medium mb-3"></p>
+                <div id="ingredient-cost-modal-linked" class="mb-2"></div>
                 <div id="ingredient-cost-modal-similar" class="mb-4"></div>
                 <p class="text-xs mb-2" style="color:#B3A492">照你實際買的方式填就好，例如「麵粉 59元 買1000g」、「雞蛋 85元 買1台斤」、「牛奶 120元 買1000ml」，系統會自動換算成統一的單價</p>
                 <div class="grid grid-cols-3 gap-2 mb-2">
@@ -12060,13 +12061,20 @@
             return userIngredientCostCache;
         }
 
-        // 查詢順序：①使用者自己設定過的價格 → ②AI估一個參考價當預設值（會寫回使用者自己的Firestore文件，
-        // 標記成ai_suggested，避免每次都重新問AI；使用者之後編輯過就會變成user_set）
+        // 找出costs裡有沒有哪一筆資料把name設成關鍵字（別名），回傳[主要名稱, 資料]，找不到回傳undefined
+        function findKeywordOwner(name, costs) {
+            return Object.entries(costs).find(([canon, entry]) => Array.isArray(entry.keywords) && entry.keywords.includes(name));
+        }
+        // 查詢順序：①使用者自己設定過的價格 → ②有沒有被設成別的食材的關鍵字（例如「黑糖」被設成「黑糖粉」的關鍵字）
+        // → ③AI估一個參考價當預設值（會寫回使用者自己的Firestore文件，標記成ai_suggested，避免每次都重新問AI；
+        // 使用者之後編輯過就會變成user_set）
         // 回傳格式：{ pricePer100g, source, updatedAt } 或 null（完全查不到、AI也估不出來）
         async function resolveIngredientCost(name) {
             const trimmedName = name.trim();
             const costs = await loadUserIngredientCosts();
             if (costs[trimmedName]) return costs[trimmedName];
+            const owner = findKeywordOwner(trimmedName, costs);
+            if (owner) return owner[1];
             if (!currentUser) return null; // 沒登入就不主動問AI（避免未登入訪客也一直打AI額度），只查得到已經有的資料
 
             try {
@@ -12082,6 +12090,43 @@
             } catch (err) {
                 console.warn('AI 成本估算暫時無法使用（可能尚未完成 Firebase AI Logic 設定）', err && err.message);
                 return null;
+            }
+        }
+        // 把aliasName設成canonicalName的關鍵字（別名）：之後查aliasName的價格會直接沿用canonicalName這筆資料，
+        // 不會另外存成一筆獨立資料；如果aliasName原本自己有一筆獨立資料，會先刪掉，避免同時存在兩種狀態
+        async function linkIngredientAsKeyword(canonicalName, aliasName) {
+            if (!currentUser) return false;
+            const costs = await loadUserIngredientCosts();
+            const entry = costs[canonicalName];
+            if (!entry) return false;
+            const hadOwnEntry = !!costs[aliasName];
+            entry.keywords = Array.from(new Set([...(entry.keywords || []), aliasName]));
+            delete costs[aliasName];
+            try {
+                const payload = { [`items.${canonicalName}.keywords`]: entry.keywords };
+                if (hadOwnEntry) payload[`items.${aliasName}`] = firebase.firestore.FieldValue.delete();
+                await db.collection('userIngredientPrices').doc(currentUser.uid).update(payload);
+                return true;
+            } catch (err) {
+                console.warn('連結食材關鍵字失敗', err && err.message);
+                return false;
+            }
+        }
+        // 取消aliasName是canonicalName的關鍵字（拿掉連結，回到「尚未設定」的狀態）
+        async function unlinkIngredientKeyword(canonicalName, aliasName) {
+            if (!currentUser) return false;
+            const costs = await loadUserIngredientCosts();
+            const entry = costs[canonicalName];
+            if (!entry || !entry.keywords) return false;
+            entry.keywords = entry.keywords.filter(k => k !== aliasName);
+            try {
+                await db.collection('userIngredientPrices').doc(currentUser.uid).update({
+                    [`items.${canonicalName}.keywords`]: entry.keywords,
+                });
+                return true;
+            } catch (err) {
+                console.warn('移除食材關鍵字失敗', err && err.message);
+                return false;
             }
         }
 
@@ -12100,6 +12145,10 @@
             const price = Number(pricePer100g);
             if (!trimmedName || !(price >= 0)) return false;
             const costs = await loadUserIngredientCosts();
+            // 如果這個名稱原本是套用別的食材的關鍵字，現在手動存了自己的價格，就要先把關鍵字連結拿掉，
+            // 不然會同時存在「是別人的關鍵字」又「有自己獨立資料」兩種狀態，查詢的時候會搞混
+            const owner = findKeywordOwner(trimmedName, costs);
+            if (owner) await unlinkIngredientKeyword(owner[0], trimmedName);
             // purchaseInfo（選填）：使用者實際輸入的「花多少錢買多少數量」，記下來方便下次編輯時直接帶回原本填的內容，
             // 不用每次都重新換算成每100克多少錢再回推
             const extra = purchaseInfo ? { purchasePrice: Number(purchaseInfo.price) || 0, purchaseAmount: Number(purchaseInfo.amount) || 0, purchaseUnit: purchaseInfo.unit || '' } : {};
@@ -12635,15 +12684,27 @@
         let ingredientCostModalComputed = null; // 換算按鈕算出來的每100克單價，按「儲存」的時候會用這個
         let ingredientCostModalReturnToManage = false; // 如果是從「我的食材成本」管理頁面點進來的，關閉時要恢復顯示那個頁面
         // 找出使用者已經設定過價格、名稱裡有共同字的食材（例如「糖」會比對到「細砂糖」「二砂糖」，「蛋」會比對到「雞蛋」「全蛋」），
-        // 依共同字數量排序，最多回傳6個，方便使用者直接套用類似食材的價格，不用重新輸入
+        // 依共同字數量排序，最多回傳20個，方便使用者直接套用類似食材的價格，不用重新輸入
         function findSimilarIngredientCosts(targetName, costs) {
-            const targetChars = new Set(targetName.split(''));
+            // 從第一個字開始給遞減權重（越前面權重越高），比對時看候選字串裡有沒有出現這些字、加總權重來排序，
+            // 這樣「糖粉」會優先比對到含「糖」的食材（細砂糖、二砂糖…），不會被單純字數比較多的「粉」類食材洗過去
+            const chars = targetName.split('');
+            const weightMap = {};
+            chars.forEach((ch, i) => {
+                const w = chars.length - i;
+                if (!weightMap[ch] || weightMap[ch] < w) weightMap[ch] = w;
+            });
             return Object.keys(costs)
                 .filter(n => n !== targetName)
-                .map(n => ({ name: n, overlap: n.split('').filter(ch => targetChars.has(ch)).length, info: costs[n] }))
+                .map(n => {
+                    const nChars = new Set(n.split(''));
+                    let score = 0;
+                    Object.keys(weightMap).forEach(ch => { if (nChars.has(ch)) score += weightMap[ch]; });
+                    return { name: n, overlap: score, info: costs[n] };
+                })
                 .filter(c => c.overlap > 0)
                 .sort((a, b) => b.overlap - a.overlap || a.name.localeCompare(b.name, 'zh-Hant'))
-                .slice(0, 6);
+                .slice(0, 20);
         }
         function renderSimilarIngredientDropdown(name, costs) {
             const el = document.getElementById('ingredient-cost-modal-similar');
@@ -12659,43 +12720,63 @@
                     <button onclick="applySimilarIngredientCost()" class="btn-secondary text-sm whitespace-nowrap">套用</button>
                 </div>`;
         }
-        function applySimilarIngredientCost() {
+        // 「套用」：不是複製一份獨立資料，而是把目前這個食材設成被選到的食材的「關鍵字」，
+        // 之後這個名稱都會直接沿用那筆資料的價格，不會另外存一份
+        async function applySimilarIngredientCost() {
             const select = document.getElementById('ingredient-cost-modal-similar-select');
             if (!select || !select.value) return;
-            loadUserIngredientCosts().then(costs => {
-                const picked = costs[select.value];
-                if (!picked) return;
-                ingredientCostModalComputed = picked.pricePer100g;
-                document.getElementById('ingredient-cost-modal-result').innerHTML = `✅ 已套用「${select.value}」的價格：每100克約 <b>NT$${picked.pricePer100g.toFixed(2)}</b>`;
-                // 順便把計算機欄位也帶成等效的100g版本，方便使用者之後想自己微調
-                document.getElementById('ingredient-cost-modal-price').value = picked.pricePer100g;
-                document.getElementById('ingredient-cost-modal-amount').value = 100;
-                document.getElementById('ingredient-cost-modal-unit').value = 'g';
-                const saveBtn = document.getElementById('ingredient-cost-modal-save-btn');
-                saveBtn.disabled = false; saveBtn.style.opacity = '1';
-            });
+            const canonicalName = select.value;
+            const aliasName = ingredientCostModalTarget;
+            const ok = await linkIngredientAsKeyword(canonicalName, aliasName);
+            if (!ok) { alert('套用失敗'); return; }
+            await renderIngredientCostModalView(aliasName);
+            if (window.__lastOpenRecipe) scaleRecipe(window.__lastOpenRecipe);
         }
-        async function openIngredientCostEditor(name) {
-            if (!currentUser) { alert('請先登入才能設定食材成本'); return; }
-            const manageModal = document.getElementById('my-ingredient-costs-modal');
-            ingredientCostModalReturnToManage = !!(manageModal && !manageModal.classList.contains('hidden'));
-            if (manageModal) manageModal.classList.add('hidden'); // 兩個彈窗疊在一起層級會亂掉，先把管理頁面藏起來
+        // 從快速編輯視窗裡按「取消套用」
+        async function unlinkIngredientKeywordFromModal() {
+            const costs = await loadUserIngredientCosts();
+            const owner = findKeywordOwner(ingredientCostModalTarget, costs);
+            if (!owner) return;
+            const ok = await unlinkIngredientKeyword(owner[0], ingredientCostModalTarget);
+            if (ok) {
+                await renderIngredientCostModalView(ingredientCostModalTarget);
+                if (window.__lastOpenRecipe) scaleRecipe(window.__lastOpenRecipe);
+            }
+        }
+        // 把「畫面要顯示什麼」的邏輯獨立出來，openIngredientCostEditor（第一次打開）跟套用/取消套用
+        // （視窗已經開著、只是狀態變了）都會呼叫這個，不用重複寫一次
+        async function renderIngredientCostModalView(name) {
             ingredientCostModalTarget = name;
             ingredientCostModalComputed = null;
             document.getElementById('ingredient-cost-modal-name').textContent = name;
             document.getElementById('ingredient-cost-modal-result').textContent = '';
             const saveBtn = document.getElementById('ingredient-cost-modal-save-btn');
             saveBtn.disabled = true; saveBtn.style.opacity = '.4';
-            const costs = await loadUserIngredientCosts();
-            renderSimilarIngredientDropdown(name, costs);
+            const costs = await loadUserIngredientCosts(true);
             const existing = costs[name];
+            const owner = !existing ? findKeywordOwner(name, costs) : null;
+            const linkedEl = document.getElementById('ingredient-cost-modal-linked');
+            if (owner) {
+                const [canonicalName, entry] = owner;
+                linkedEl.innerHTML = `<div class="px-4 py-3 rounded-2xl text-sm" style="background:var(--sage); color:white">🔗 目前套用「${canonicalName}」的價格（NT$${entry.pricePer100g.toFixed(2)}/100g）<br><button onclick="unlinkIngredientKeywordFromModal()" class="text-xs underline mt-1">取消套用，改自己設定價格</button></div>`;
+            } else {
+                linkedEl.innerHTML = '';
+            }
+            renderSimilarIngredientDropdown(name, costs);
             // 有記錄過上次輸入的「花多少錢買多少數量」就帶回來，沒有的話用每100克單價換算回一個預設的100g版本，方便使用者參考
             document.getElementById('ingredient-cost-modal-price').value = existing && existing.purchaseAmount ? existing.purchasePrice : (existing ? existing.pricePer100g : '');
             document.getElementById('ingredient-cost-modal-amount').value = existing && existing.purchaseAmount ? existing.purchaseAmount : (existing ? 100 : '');
             document.getElementById('ingredient-cost-modal-unit').value = existing && existing.purchaseUnit ? existing.purchaseUnit : (existing ? 'g' : '');
             document.getElementById('ingredient-cost-modal-hint').textContent = existing && existing.source === 'ai_suggested'
                 ? '目前是AI估算的參考價，改成你自己知道的價格吧'
-                : (existing ? '這是你之前設定過的價格，可以直接按「換算單價」確認' : '這個食材還沒有價格資料，填好左邊三格再按換算');
+                : (existing ? '這是你之前設定過的價格，可以直接按「換算單價」確認' : (owner ? '目前是套用其他食材的價格，下面填寫並儲存可以改成自己獨立設定' : '這個食材還沒有價格資料，填好左邊三格再按換算'));
+        }
+        async function openIngredientCostEditor(name) {
+            if (!currentUser) { alert('請先登入才能設定食材成本'); return; }
+            const manageModal = document.getElementById('my-ingredient-costs-modal');
+            ingredientCostModalReturnToManage = !!(manageModal && !manageModal.classList.contains('hidden'));
+            if (manageModal) manageModal.classList.add('hidden'); // 兩個彈窗疊在一起層級會亂掉，先把管理頁面藏起來
+            await renderIngredientCostModalView(name);
             document.getElementById('ingredient-cost-modal').classList.remove('hidden');
             pushModalHistoryState();
         }
@@ -12770,11 +12851,13 @@
             listEl.innerHTML = names.map(name => {
                 const c = costs[name];
                 const purchaseText = c.purchaseAmount ? `（${c.purchasePrice}元／${c.purchaseAmount}${c.purchaseUnit}）` : '';
+                const keywordsText = (c.keywords && c.keywords.length) ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🔗 也套用：${c.keywords.join('、')}</p>` : '';
                 return `
                     <div class="flex items-center gap-3 px-4 py-3 rounded-2xl" style="background:var(--cream)">
                         <div class="flex-1 min-w-0">
                             <p class="font-medium text-sm">${name}${c.source === 'ai_suggested' ? ' <span class="text-xs" style="color:var(--sage)">🤖 AI估算</span>' : ''}</p>
                             <p class="text-xs" style="color:#B3A492">每100克 NT$${c.pricePer100g.toFixed(2)} ${purchaseText}</p>
+                            ${keywordsText}
                         </div>
                         <button onclick="openIngredientCostEditor('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:white">編輯</button>
                         <button onclick="removeMyIngredientCost('${escapeHtmlAttr(name)}')" class="text-xs shrink-0" style="color:#C4453F">刪除</button>
@@ -12806,7 +12889,12 @@
             }
         }
         async function removeMyIngredientCost(name) {
-            if (!confirm(`確定要刪除「${name}」的價格資料嗎？`)) return;
+            const costs = await loadUserIngredientCosts();
+            const entry = costs[name];
+            const keywordWarning = entry && entry.keywords && entry.keywords.length
+                ? `\n注意：目前有「${entry.keywords.join('、')}」套用這筆資料的價格，刪除後它們會變成尚未設定價格。`
+                : '';
+            if (!confirm(`確定要刪除「${name}」的價格資料嗎？${keywordWarning}`)) return;
             await deleteUserIngredientCost(name);
             renderMyIngredientCostsList();
         }
