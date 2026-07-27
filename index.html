@@ -313,7 +313,7 @@
                         <input id="ingredient-cost-modal-price" type="number" step="0.1" min="0" placeholder="NT$" class="form-input">
                     </div>
                     <div class="col-span-1">
-                        <label class="text-xs block mb-1" style="color:#B3A492">買了多少</label>
+                        <label class="text-xs block mb-1" style="color:#B3A492">數量</label>
                         <input id="ingredient-cost-modal-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input">
                     </div>
                     <div class="col-span-1">
@@ -340,10 +340,10 @@
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p class="text-xs mb-4" style="color:#B3A492">這裡設定的價格只有你自己看得到，計算食譜成本時會優先使用；還沒設定過的食材，系統會先用AI幫你估一個參考價（標示🤖），你可以隨時修改成自己實際買到的價格。新增/修改都是照你實際購買的方式填（例如「雞蛋 85元 買1台斤」），系統會自動換算成統一單價。</p>
                 <div class="grid grid-cols-4 gap-2 mb-2">
-                    <input id="my-cost-new-name" placeholder="食材名稱" class="form-input col-span-1">
-                    <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="花費NT$" class="form-input col-span-1">
-                    <input id="my-cost-new-amount" type="number" step="0.1" min="0" placeholder="買了多少" class="form-input col-span-1">
-                    <input id="my-cost-new-unit" placeholder="單位(g/台斤/顆/ml)" class="form-input col-span-1">
+                    <input id="my-cost-new-name" placeholder="名稱" class="form-input col-span-1">
+                    <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="花費" class="form-input col-span-1">
+                    <input id="my-cost-new-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input col-span-1">
+                    <input id="my-cost-new-unit" placeholder="單位" class="form-input col-span-1">
                 </div>
                 <button onclick="addMyIngredientCost()" class="btn-amber w-full mb-2">🧮 換算並新增</button>
                 <div id="my-cost-new-result" class="text-xs mb-5" style="color:#B3A492"></div>
@@ -12773,13 +12773,15 @@
         // servings是「這次要做幾份」，不一定等於食譜原本預設的份數，用來算加總的時候要照這個倍率縮放
         let shoppingListCache = null;
         let shoppingListCacheUid = null;
+        let shoppingListPurchasedCache = {}; // 食材加總清單裡，哪些食材已經點過「已購買」（存在同一份文件的purchased欄位）
 
         async function loadShoppingList(forceRefresh) {
-            if (!currentUser) { shoppingListCache = []; shoppingListCacheUid = null; return shoppingListCache; }
+            if (!currentUser) { shoppingListCache = []; shoppingListPurchasedCache = {}; shoppingListCacheUid = null; return shoppingListCache; }
             if (!forceRefresh && shoppingListCache && shoppingListCacheUid === currentUser.uid) return shoppingListCache;
             try {
                 const doc = await db.collection('userShoppingLists').doc(currentUser.uid).get();
                 shoppingListCache = doc.exists ? (doc.data().items || []) : [];
+                shoppingListPurchasedCache = doc.exists ? (doc.data().purchased || {}) : {};
                 shoppingListCacheUid = currentUser.uid;
             } catch (err) {
                 console.warn('讀取採購清單失敗', err && err.message);
@@ -12790,7 +12792,7 @@
         async function saveShoppingList(list) {
             if (!currentUser) return false;
             try {
-                await db.collection('userShoppingLists').doc(currentUser.uid).set({ items: list });
+                await db.collection('userShoppingLists').doc(currentUser.uid).set({ items: list, purchased: shoppingListPurchasedCache }, { merge: true });
                 shoppingListCache = list;
                 return true;
             } catch (err) {
@@ -12798,6 +12800,17 @@
                 alert('儲存失敗：' + err.message);
                 return false;
             }
+        }
+        // 點食材加總清單裡的某一項，切換「已購買」的劃掉狀態
+        async function toggleIngredientPurchased(name) {
+            shoppingListPurchasedCache[name] = !shoppingListPurchasedCache[name];
+            if (!shoppingListPurchasedCache[name]) delete shoppingListPurchasedCache[name];
+            try {
+                await db.collection('userShoppingLists').doc(currentUser.uid).set({ purchased: shoppingListPurchasedCache }, { merge: true });
+            } catch (err) {
+                console.warn('更新採購狀態失敗', err && err.message);
+            }
+            renderShoppingListModal();
         }
         async function addToShoppingList(recipe) {
             if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
@@ -12819,6 +12832,18 @@
             if (!item) return;
             item.servings = Math.max(1, parseInt(servings) || item.servings);
             await saveShoppingList(list);
+        }
+        // 點採購清單裡的食譜名稱，直接開啟該食譜的詳細頁
+        async function openRecipeFromShoppingList(recipeId) {
+            try {
+                const doc = await db.collection('recipes').doc(recipeId).get();
+                if (!doc.exists) { alert('這篇食譜已經找不到了，可能被刪除了'); return; }
+                const recipe = { id: doc.id, ...doc.data() };
+                closeShoppingListModal();
+                showDetail(recipe);
+            } catch (err) {
+                alert('開啟食譜失敗：' + err.message);
+            }
         }
 
         async function openShoppingListModal() {
@@ -12843,7 +12868,7 @@
             }
             recipesEl.innerHTML = list.map(item => `
                 <div class="flex items-center gap-3 px-4 py-3 rounded-2xl" style="background:var(--cream)">
-                    <span class="flex-1 font-medium text-sm min-w-0 truncate">${item.recipeName}</span>
+                    <span onclick="openRecipeFromShoppingList('${escapeHtmlAttr(item.recipeId)}')" class="flex-1 font-medium text-sm min-w-0 truncate" style="cursor:pointer; text-decoration:underline; text-decoration-color:transparent;" onmouseover="this.style.textDecorationColor='currentColor'" onmouseout="this.style.textDecorationColor='transparent'">${item.recipeName}</span>
                     <span class="text-xs shrink-0" style="color:#B3A492">這次做</span>
                     <input type="number" min="1" value="${item.servings}" onchange="updateShoppingListServings('${escapeHtmlAttr(item.recipeId)}', this.value); renderShoppingListModal();" class="form-input !py-1.5 text-sm shrink-0" style="width:64px">
                     <span class="text-xs shrink-0" style="color:#B3A492">份</span>
@@ -12895,11 +12920,12 @@
                     </div>
                     ${perRecipeCosts.length ? `<div class="text-xs mb-3" style="color:#B3A492">${perRecipeCosts.map(r => `${r.name} NT$${r.cost.toFixed(0)}`).join('　')}</div>` : ''}
                     ${missingRecipes.length ? `<p class="text-xs mb-3" style="color:#C4453F">⚠️ 找不到這些食譜的最新資料，沒有算進總花費：${missingRecipes.join('、')}</p>` : ''}
-                    <h3 class="font-display font-semibold text-sm mb-2 mt-4">食材加總清單</h3>
+                    <h3 class="font-display font-semibold text-sm mb-2 mt-4">食材加總清單<span class="text-xs font-normal" style="color:#B3A492">（點一下代表已經買了）</span></h3>
                     <div class="space-y-1">
                         ${ingredientNames.map(name => {
                             const t = ingredientTotals[name];
-                            return `<div class="flex justify-between text-sm"><span>${name}</span><span style="color:#B3A492">${t.grams.toFixed(0)}g・NT$${t.cost.toFixed(0)}</span></div>`;
+                            const bought = !!shoppingListPurchasedCache[name];
+                            return `<div onclick="toggleIngredientPurchased('${escapeHtmlAttr(name)}')" class="flex justify-between text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}"><span>${bought ? '✅ ' : ''}${name}</span><span style="color:#B3A492">${t.grams.toFixed(0)}g・NT$${t.cost.toFixed(0)}</span></div>`;
                         }).join('') || `<p class="text-xs" style="color:#B3A492">目前沒有任何食材能算出成本（可能都還沒設定價格）</p>`}
                     </div>
                 </div>`;
