@@ -13085,6 +13085,7 @@
         // ========== 市場價格專區 ==========
         // 每個分頁對應Firestore文件裡的欄位名稱（key跟key+'All'兩個欄位）
         const MARKET_PRICE_CATEGORIES = [
+            { key: 'all', emoji: '🔍', label: '全部' },
             { key: 'vegetables', emoji: '🌾', label: '農產' },
             { key: 'fish', emoji: '🐟', label: '漁產' },
             { key: 'pig', emoji: '🐷', label: '毛豬' },
@@ -13122,7 +13123,7 @@
             } else {
                 updatedEl.textContent = '';
             }
-            switchMarketPricesTab('vegetables');
+            switchMarketPricesTab('all');
         }
         function closeMarketPricesModal() {
             document.getElementById('market-prices-modal').classList.add('hidden');
@@ -13141,11 +13142,22 @@
             const changeText = isDrop ? `↓${item.dropPct}%` : `↑${Math.abs(item.dropPct)}%`;
             const changeColor = isDrop ? '#4E9F6E' : '#C4453F';
             const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(item.name)}`;
+            const categoryTag = item.categoryLabel ? `<span style="color:#B3A492">［${item.categoryLabel}］</span> ` : '';
             return `
                 <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)">
-                    <p class="font-medium text-sm"><a href="${googleUrl}" target="_blank" rel="noopener" style="text-decoration:underline; text-decoration-color:#B3A492">${item.name}</a> <span style="color:${changeColor}">${changeText}</span></p>
+                    <p class="font-medium text-sm">${categoryTag}<a href="${googleUrl}" target="_blank" rel="noopener" style="text-decoration:underline; text-decoration-color:#B3A492">${item.name}</a> <span style="color:${changeColor}">${changeText}</span></p>
                     <p class="text-xs" style="color:#B3A492">現在約 NT$${item.recentPrice}/公斤（去年同期約 NT$${item.baselinePrice}/公斤）</p>
                 </div>`;
+        }
+        // 把所有類別的清單合併成一份，每一項都標記來源類別，給「全部」分頁用
+        // fieldSuffix傳空字串取「推薦清單」，傳'All'取「完整清單」（給搜尋用）
+        function getMergedMarketPriceList(fieldSuffix) {
+            const merged = [];
+            MARKET_PRICE_CATEGORIES.filter(c => c.key !== 'all').forEach(c => {
+                const list = (marketPricesCache && marketPricesCache[`${c.key}${fieldSuffix}`]) || [];
+                list.forEach(item => merged.push({ ...item, categoryLabel: c.label }));
+            });
+            return merged;
         }
         function renderMarketPricesList() {
             const listEl = document.getElementById('market-prices-list');
@@ -13156,21 +13168,25 @@
             }
             const searchInput = document.getElementById('market-prices-search');
             const keyword = (searchInput && searchInput.value || '').trim();
+            const isAllTab = marketPricesActiveTab === 'all';
 
             // 有輸入關鍵字：搜尋「完整清單」（不限漲跌方向，讓使用者可以查任何一種食材現在的行情）
+            // 「全部」分頁會合併所有類別一起搜，其他分頁只搜當前這一類
             if (keyword) {
-                const allItems = marketPricesCache[`${marketPricesActiveTab}All`] || [];
+                const allItems = isAllTab ? getMergedMarketPriceList('All') : (marketPricesCache[`${marketPricesActiveTab}All`] || []);
                 const matched = allItems.filter(item => item.name.includes(keyword));
                 if (!matched.length) {
-                    listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">查無「${keyword}」的資料（可能是政府資料裡沒有用這個名稱，試試看別的寫法，例如「甘藍」而不是「高麗菜」）</p>`;
+                    listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">查無「${keyword}」的資料（可能是政府資料裡沒有用這個名稱，試試看別的寫法，例如「甘藍」而不是「高麗菜」；也可以切到別的分頁再試試看）</p>`;
                     return;
                 }
                 listEl.innerHTML = `<div class="space-y-2">${matched.map(marketPriceCardHTML).join('')}</div>`;
                 return;
             }
 
-            // 沒有關鍵字：顯示原本的跌幅排行榜
-            const items = marketPricesCache[marketPricesActiveTab] || [];
+            // 沒有關鍵字：顯示跌幅排行榜。「全部」分頁會把各類別的推薦清單合併、重新依跌幅排序取前50
+            const items = isAllTab
+                ? getMergedMarketPriceList('').sort((a, b) => b.dropPct - a.dropPct).slice(0, 50)
+                : (marketPricesCache[marketPricesActiveTab] || []);
             if (!items.length) {
                 listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">目前沒有偵測到明顯跌價的項目</p>`;
                 return;
