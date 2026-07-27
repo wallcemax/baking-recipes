@@ -305,10 +305,25 @@
             </div>
             <div class="px-6 py-6">
                 <p id="ingredient-cost-modal-name" class="font-medium mb-3"></p>
-                <label class="text-xs block mb-1" style="color:#B3A492">參考價格（新台幣 / 每100克）</label>
-                <input id="ingredient-cost-modal-input" type="number" step="0.1" min="0" class="form-input mb-2">
+                <p class="text-xs mb-2" style="color:#B3A492">照你實際買的方式填就好，例如「麵粉 59元 買1000g」、「雞蛋 85元 買1台斤」、「牛奶 120元 買1000ml」，系統會自動換算成統一的單價</p>
+                <div class="grid grid-cols-3 gap-2 mb-2">
+                    <div class="col-span-1">
+                        <label class="text-xs block mb-1" style="color:#B3A492">花費</label>
+                        <input id="ingredient-cost-modal-price" type="number" step="0.1" min="0" placeholder="NT$" class="form-input">
+                    </div>
+                    <div class="col-span-1">
+                        <label class="text-xs block mb-1" style="color:#B3A492">買了多少</label>
+                        <input id="ingredient-cost-modal-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input">
+                    </div>
+                    <div class="col-span-1">
+                        <label class="text-xs block mb-1" style="color:#B3A492">單位</label>
+                        <input id="ingredient-cost-modal-unit" placeholder="g/台斤/顆/ml" class="form-input">
+                    </div>
+                </div>
+                <button onclick="calcIngredientCostModal()" class="btn-secondary w-full mb-3 text-sm">🧮 換算單價</button>
+                <div id="ingredient-cost-modal-result" class="text-sm mb-3" style="color:var(--espresso-soft)"></div>
                 <p id="ingredient-cost-modal-hint" class="text-xs mb-4" style="color:#B3A492"></p>
-                <button onclick="saveIngredientCostModal()" class="btn-primary w-full mb-2">💾 儲存（存到我自己的價格清單）</button>
+                <button id="ingredient-cost-modal-save-btn" onclick="saveIngredientCostModal()" class="btn-primary w-full mb-2" disabled style="opacity:.4">💾 儲存（存到我自己的價格清單）</button>
                 <button onclick="openMyIngredientCostsModal()" class="text-xs w-full text-center" style="color:#B3A492">前往「我的食材成本」管理全部食材 →</button>
             </div>
         </div>
@@ -322,12 +337,15 @@
                 <button onclick="closeMyIngredientCostsModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
-                <p class="text-xs mb-4" style="color:#B3A492">這裡設定的價格只有你自己看得到，計算食譜成本時會優先使用；還沒設定過的食材，系統會先用AI幫你估一個參考價（標示🤖），你可以隨時在這裡修改成自己實際買到的價格。</p>
-                <div class="flex gap-3 mb-5">
-                    <input id="my-cost-new-name" placeholder="食材名稱" class="form-input flex-1">
-                    <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="NT$ / 100g" class="form-input" style="width:120px">
-                    <button onclick="addMyIngredientCost()" class="btn-amber whitespace-nowrap">新增</button>
+                <p class="text-xs mb-4" style="color:#B3A492">這裡設定的價格只有你自己看得到，計算食譜成本時會優先使用；還沒設定過的食材，系統會先用AI幫你估一個參考價（標示🤖），你可以隨時修改成自己實際買到的價格。新增/修改都是照你實際購買的方式填（例如「雞蛋 85元 買1台斤」），系統會自動換算成統一單價。</p>
+                <div class="grid grid-cols-4 gap-2 mb-2">
+                    <input id="my-cost-new-name" placeholder="食材名稱" class="form-input col-span-1">
+                    <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="花費NT$" class="form-input col-span-1">
+                    <input id="my-cost-new-amount" type="number" step="0.1" min="0" placeholder="買了多少" class="form-input col-span-1">
+                    <input id="my-cost-new-unit" placeholder="單位(g/台斤/顆/ml)" class="form-input col-span-1">
                 </div>
+                <button onclick="addMyIngredientCost()" class="btn-amber w-full mb-2">🧮 換算並新增</button>
+                <div id="my-cost-new-result" class="text-xs mb-5" style="color:#B3A492"></div>
                 <div id="my-cost-list" class="space-y-2"></div>
             </div>
         </div>
@@ -12049,16 +12067,26 @@
 
         // 使用者自己輸入/修改一個食材的價格（第二階段的介面會呼叫這個），一律標記成user_set，
         // 之後resolveIngredientCost就不會再用AI估算的值蓋掉它
-        async function setUserIngredientCost(name, pricePer100g) {
+        // 把「花NT$price買amount個unit」換算成「每100克多少錢」，跟熱量系統共用同一套單位換算邏輯
+        // （公克/公斤/台斤/ml/顆…等等），換算不出來就回傳null
+        async function calcPricePer100g(price, amount, unit, name) {
+            const grams = await resolveGrams(Number(amount), unit, name);
+            if (grams === null || !(grams > 0)) return null;
+            return (Number(price) / grams) * 100;
+        }
+        async function setUserIngredientCost(name, pricePer100g, purchaseInfo) {
             if (!currentUser) { alert('請先登入才能設定食材成本'); return false; }
             const trimmedName = name.trim();
             const price = Number(pricePer100g);
             if (!trimmedName || !(price >= 0)) return false;
             const costs = await loadUserIngredientCosts();
-            costs[trimmedName] = { pricePer100g: price, source: 'user_set', updatedAt: Date.now() };
+            // purchaseInfo（選填）：使用者實際輸入的「花多少錢買多少數量」，記下來方便下次編輯時直接帶回原本填的內容，
+            // 不用每次都重新換算成每100克多少錢再回推
+            const extra = purchaseInfo ? { purchasePrice: Number(purchaseInfo.price) || 0, purchaseAmount: Number(purchaseInfo.amount) || 0, purchaseUnit: purchaseInfo.unit || '' } : {};
+            costs[trimmedName] = { pricePer100g: price, source: 'user_set', updatedAt: Date.now(), ...extra };
             try {
                 await db.collection('userIngredientPrices').doc(currentUser.uid).set({
-                    items: { [trimmedName]: { pricePer100g: price, source: 'user_set', updatedAt: firebase.firestore.FieldValue.serverTimestamp() } }
+                    items: { [trimmedName]: { pricePer100g: price, source: 'user_set', updatedAt: firebase.firestore.FieldValue.serverTimestamp(), ...extra } }
                 }, { merge: true });
                 return true;
             } catch (err) {
@@ -12442,6 +12470,12 @@
                 case 'oz': return amount * 28.3495;
                 case 'lb': return amount * 453.592;
             }
+            // 中文重量單位（台斤是台灣傳統市場很常見的報價單位，1台斤=600克，跟「磅」不一樣，不要搞混）
+            switch (u) {
+                case '台斤': case '斤': return amount * 600;
+                case '公斤': return amount * 1000;
+                case '公克': case '克': return amount;
+            }
             const ml = convertToMilliliters(amount, unit);
             if (ml !== null) {
                 const density = await resolveIngredientDensity(name);
@@ -12578,31 +12612,75 @@
         }
 
         // 點某個食材，跳出快速編輯小視窗（可以設定/修改這個食材的參考價）
+        let ingredientCostModalComputed = null; // 換算按鈕算出來的每100克單價，按「儲存」的時候會用這個
+        let ingredientCostModalReturnToManage = false; // 如果是從「我的食材成本」管理頁面點進來的，關閉時要恢復顯示那個頁面
         async function openIngredientCostEditor(name) {
             if (!currentUser) { alert('請先登入才能設定食材成本'); return; }
+            const manageModal = document.getElementById('my-ingredient-costs-modal');
+            ingredientCostModalReturnToManage = !!(manageModal && !manageModal.classList.contains('hidden'));
+            if (manageModal) manageModal.classList.add('hidden'); // 兩個彈窗疊在一起層級會亂掉，先把管理頁面藏起來
             ingredientCostModalTarget = name;
+            ingredientCostModalComputed = null;
             document.getElementById('ingredient-cost-modal-name').textContent = name;
+            document.getElementById('ingredient-cost-modal-result').textContent = '';
+            const saveBtn = document.getElementById('ingredient-cost-modal-save-btn');
+            saveBtn.disabled = true; saveBtn.style.opacity = '.4';
             const costs = await loadUserIngredientCosts();
             const existing = costs[name];
-            document.getElementById('ingredient-cost-modal-input').value = existing ? existing.pricePer100g : '';
+            // 有記錄過上次輸入的「花多少錢買多少數量」就帶回來，沒有的話用每100克單價換算回一個預設的100g版本，方便使用者參考
+            document.getElementById('ingredient-cost-modal-price').value = existing && existing.purchaseAmount ? existing.purchasePrice : (existing ? existing.pricePer100g : '');
+            document.getElementById('ingredient-cost-modal-amount').value = existing && existing.purchaseAmount ? existing.purchaseAmount : (existing ? 100 : '');
+            document.getElementById('ingredient-cost-modal-unit').value = existing && existing.purchaseUnit ? existing.purchaseUnit : (existing ? 'g' : '');
             document.getElementById('ingredient-cost-modal-hint').textContent = existing && existing.source === 'ai_suggested'
                 ? '目前是AI估算的參考價，改成你自己知道的價格吧'
-                : (existing ? '這是你之前設定過的價格' : '這個食材還沒有價格資料');
+                : (existing ? '這是你之前設定過的價格，可以直接按「換算單價」確認' : '這個食材還沒有價格資料，填好左邊三格再按換算');
             document.getElementById('ingredient-cost-modal').classList.remove('hidden');
             pushModalHistoryState();
         }
         function closeIngredientCostModal() {
             document.getElementById('ingredient-cost-modal').classList.add('hidden');
             ingredientCostModalTarget = null;
+            ingredientCostModalComputed = null;
+            if (ingredientCostModalReturnToManage) {
+                document.getElementById('my-ingredient-costs-modal').classList.remove('hidden');
+                ingredientCostModalReturnToManage = false;
+            }
+        }
+        // 「換算單價」按鈕：把使用者填的「花NT$price買amount個unit」換算成每100克多少錢，換算成功才能按儲存
+        async function calcIngredientCostModal() {
+            const price = document.getElementById('ingredient-cost-modal-price').value;
+            const amount = document.getElementById('ingredient-cost-modal-amount').value;
+            const unit = document.getElementById('ingredient-cost-modal-unit').value;
+            const resultEl = document.getElementById('ingredient-cost-modal-result');
+            const saveBtn = document.getElementById('ingredient-cost-modal-save-btn');
+            if (!price || !amount || !unit) { resultEl.textContent = '⚠️ 三格都要填喔'; return; }
+            resultEl.textContent = '換算中…（單位如果需要AI幫忙估算重量/密度，可能要等一下）';
+            const per100g = await calcPricePer100g(price, amount, unit, ingredientCostModalTarget);
+            if (per100g === null) {
+                resultEl.innerHTML = `⚠️ 沒辦法辨識「${unit}」這個單位，換算不出來，試試看g、kg、台斤、ml、顆這類常見單位`;
+                saveBtn.disabled = true; saveBtn.style.opacity = '.4';
+                ingredientCostModalComputed = null;
+                return;
+            }
+            ingredientCostModalComputed = per100g;
+            resultEl.innerHTML = `✅ 換算結果：每100克約 <b>NT$${per100g.toFixed(2)}</b>`;
+            saveBtn.disabled = false; saveBtn.style.opacity = '1';
         }
         async function saveIngredientCostModal() {
-            if (!ingredientCostModalTarget) return;
-            const price = document.getElementById('ingredient-cost-modal-input').value;
-            const ok = await setUserIngredientCost(ingredientCostModalTarget, price);
+            if (!ingredientCostModalTarget || ingredientCostModalComputed === null) return;
+            const purchaseInfo = {
+                price: document.getElementById('ingredient-cost-modal-price').value,
+                amount: document.getElementById('ingredient-cost-modal-amount').value,
+                unit: document.getElementById('ingredient-cost-modal-unit').value,
+            };
+            const ok = await setUserIngredientCost(ingredientCostModalTarget, ingredientCostModalComputed, purchaseInfo);
             if (ok) {
                 closeIngredientCostModal();
                 // 存完之後，如果食譜詳細頁還開著，重新整理一次成本顯示
                 if (window.__lastOpenRecipe) scaleRecipe(window.__lastOpenRecipe);
+                // 如果「我的食材成本」管理頁面也開著，一併重新整理列表
+                const myModal = document.getElementById('my-ingredient-costs-modal');
+                if (myModal && !myModal.classList.contains('hidden')) renderMyIngredientCostsList();
             }
         }
 
@@ -12610,6 +12688,7 @@
         async function openMyIngredientCostsModal() {
             if (!currentUser) { alert('請先登入才能管理食材成本'); return; }
             document.getElementById('ingredient-cost-modal').classList.add('hidden'); // 如果是從快速編輯那邊點過來的，先關掉那個小視窗
+            ingredientCostModalReturnToManage = false; // 這是主動切換過來的，不是「編輯完要自動回去」的情境
             document.getElementById('my-ingredient-costs-modal').classList.remove('hidden');
             await renderMyIngredientCostsList();
             pushModalHistoryState();
@@ -12626,35 +12705,43 @@
                 listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">還沒有任何食材價格資料，去食譜詳細頁點食材、或用上面的表單新增一個吧</p>`;
                 return;
             }
-            listEl.innerHTML = names.map((name, idx) => {
+            listEl.innerHTML = names.map(name => {
                 const c = costs[name];
+                const purchaseText = c.purchaseAmount ? `（${c.purchasePrice}元／${c.purchaseAmount}${c.purchaseUnit}）` : '';
                 return `
                     <div class="flex items-center gap-3 px-4 py-3 rounded-2xl" style="background:var(--cream)">
-                        <span class="flex-1 font-medium text-sm">${name}${c.source === 'ai_suggested' ? ' <span class="text-xs" style="color:var(--sage)">🤖 AI估算</span>' : ''}</span>
-                        <input type="number" step="0.1" min="0" value="${c.pricePer100g}" id="my-cost-input-${idx}" class="form-input !py-1.5 text-sm" style="width:90px">
-                        <span class="text-xs" style="color:#B3A492">/100g</span>
-                        <button onclick="updateMyIngredientCost('${escapeHtmlAttr(name)}', ${idx})" class="text-xs px-3 py-1.5 rounded-full" style="background:var(--sage); color:white">儲存</button>
-                        <button onclick="removeMyIngredientCost('${escapeHtmlAttr(name)}')" class="text-xs" style="color:#C4453F">刪除</button>
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium text-sm">${name}${c.source === 'ai_suggested' ? ' <span class="text-xs" style="color:var(--sage)">🤖 AI估算</span>' : ''}</p>
+                            <p class="text-xs" style="color:#B3A492">每100克 NT$${c.pricePer100g.toFixed(2)} ${purchaseText}</p>
+                        </div>
+                        <button onclick="openIngredientCostEditor('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:white">編輯</button>
+                        <button onclick="removeMyIngredientCost('${escapeHtmlAttr(name)}')" class="text-xs shrink-0" style="color:#C4453F">刪除</button>
                     </div>`;
             }).join('');
         }
         async function addMyIngredientCost() {
             const nameInput = document.getElementById('my-cost-new-name');
             const priceInput = document.getElementById('my-cost-new-price');
+            const amountInput = document.getElementById('my-cost-new-amount');
+            const unitInput = document.getElementById('my-cost-new-unit');
+            const resultEl = document.getElementById('my-cost-new-result');
             const name = nameInput.value.trim();
-            if (!name) { alert('請輸入食材名稱'); return; }
-            const ok = await setUserIngredientCost(name, priceInput.value);
+            if (!name || !priceInput.value || !amountInput.value || !unitInput.value) {
+                resultEl.textContent = '⚠️ 食材名稱、花費、數量、單位都要填喔';
+                return;
+            }
+            resultEl.textContent = '換算中…';
+            const per100g = await calcPricePer100g(priceInput.value, amountInput.value, unitInput.value, name);
+            if (per100g === null) {
+                resultEl.textContent = `⚠️ 沒辦法辨識「${unitInput.value}」這個單位，試試看g、kg、台斤、ml、顆這類常見單位`;
+                return;
+            }
+            const ok = await setUserIngredientCost(name, per100g, { price: priceInput.value, amount: amountInput.value, unit: unitInput.value });
             if (ok) {
-                nameInput.value = '';
-                priceInput.value = '';
+                nameInput.value = ''; priceInput.value = ''; amountInput.value = ''; unitInput.value = '';
+                resultEl.textContent = `✅ 已新增，每100克約 NT$${per100g.toFixed(2)}`;
                 renderMyIngredientCostsList();
             }
-        }
-        async function updateMyIngredientCost(name, idx) {
-            const input = document.getElementById(`my-cost-input-${idx}`);
-            if (!input) return;
-            const ok = await setUserIngredientCost(name, input.value);
-            if (ok) renderMyIngredientCostsList();
         }
         async function removeMyIngredientCost(name) {
             if (!confirm(`確定要刪除「${name}」的價格資料嗎？`)) return;
