@@ -1,6 +1,6 @@
 // ============================================================
 // 市場價格專區 - 排程腳本
-// SCRIPT_VERSION: 2026-07-27-v8 （加入官方確認的TcType種類代碼欄位、民國短橫線日期格式；維持v7的診斷log等待實測結果）
+// SCRIPT_VERSION: 2026-07-27-v12 （鴨鵝改試新版REST API網址(/api/v1/PoultryTransType_Goose_Duck_Duckegg/)，不帶金鑰測試看看能不能用）
 // ------------------------------------------------------------
 // 這支腳本會：
 //   1. 向農業部「農產品交易行情」「漁產品交易行情」開放資料 API 抓取：
@@ -178,7 +178,46 @@ async function fetchAllPages(baseUrl, startDate, endDate, dateFormatFn, paramNam
         skip += top;
         await new Promise(r => setTimeout(r, 300)); // 稍微間隔一下，對政府API客氣一點
     }
-    return all;
+    return filterRowsByDateRange(all, startDate, endDate);
+}
+
+// 解析各種可能的日期欄位/格式成JS Date物件，供「用戶端二次篩選」這道保護網用
+function parseRowDate(row) {
+    const raw = pickField(row, ['交易日期', 'TransDate', 'transDate', 'pt_date_day', '日期']);
+    if (raw === null) return null;
+    const str = String(raw).trim();
+    let m;
+    // 民國年（2~3位數字）+ . - / 其中一種分隔（例如113.06.01、107-05-01、113/06/01）
+    if ((m = str.match(/^(\d{2,3})[.\-\/](\d{1,2})[.\-\/](\d{1,2})$/))) {
+        return new Date(parseInt(m[1], 10) + 1911, parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+    }
+    // 西元年（4位數字）+ . - / 其中一種分隔（例如2024/06/01）
+    if ((m = str.match(/^(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})$/))) {
+        return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+    }
+    // 民國年月日黏在一起、沒有分隔符號（例如毛豬的1150727＝民國115年07月27日）
+    if ((m = str.match(/^(\d{3})(\d{2})(\d{2})$/))) {
+        return new Date(parseInt(m[1], 10) + 1911, parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+    }
+    return null;
+}
+// 不管伺服器有沒有真的照StartDate/EndDate篩選，抓回來之後自己再篩一次，
+// 確保「近期」「去年同期」這兩批資料真的落在該有的時間範圍內——
+// 這是為了修羊隻那個bug：伺服器不管給什麼參數，都把1999~2026年的全部歷史資料整包丟回來，
+// 篩選形同虛設，導致「近期」跟「去年同期」變成同一份資料在比較，算出來的漲跌幅完全沒有意義
+function filterRowsByDateRange(rows, startDate, endDate) {
+    const kept = [];
+    const startBound = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0);
+    const endBound = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59);
+    rows.forEach(row => {
+        const d = parseRowDate(row);
+        if (!d) { kept.push(row); return; } // 解析不出日期的先保留，不要因為看不懂格式就整批丟掉
+        if (d >= startBound && d <= endBound) kept.push(row);
+    });
+    if (kept.length !== rows.length) {
+        console.log(`  用戶端二次篩選：伺服器回傳 ${rows.length} 筆，過濾掉範圍外的之後剩 ${kept.length} 筆（代表伺服器沒有真的照日期篩選，這是正常的保護機制在運作）`);
+    }
+    return kept;
 }
 
 // 把一段時間範圍內的原始交易紀錄，依名稱聚合成「加權平均價」
@@ -355,7 +394,7 @@ function logRawFieldNames(rows, columns, label) {
 // 如果印出來的範圍跟預期差很多（例如涵蓋了好幾年），代表日期篩選沒有真的作用
 function logDateRangeSanity(rows, type, label, expectedDesc) {
     if (!rows.length) return;
-    const dateFieldCandidates = ['交易日期', 'TransDate', 'transDate'];
+    const dateFieldCandidates = ['交易日期', 'TransDate', 'transDate', 'pt_date_day', '日期'];
     const dateField = dateFieldCandidates.find(f => rows[0][f] !== undefined);
     if (!dateField) {
         console.log(`[${label}] 診斷：找不到日期欄位可以檢查範圍`);
@@ -405,38 +444,38 @@ async function buildColumnRecommendations(baseUrl, columns, label) {
     return { all, recommended };
 }
 
-// 毛豬：欄位名稱已由使用者提供的官方文件確認過
+// 毛豬：實際欄位名稱從診斷log確認過了，是純中文命名，單位已經是元/公斤不用換算
 const PIG_COLUMNS = [
-    { field: 'SpecPig_AvgPrice', name: '毛豬(規格豬)', unit: 'kg' },
+    { field: '規格豬-平均價格', name: '毛豬(規格豬)', unit: 'kg' },
 ];
-// 家禽白肉雞/雞蛋：欄位名稱已確認，單位是元/台斤
+// 家禽白肉雞/雞蛋：實際欄位名稱從診斷log確認過了，是純中文命名，單位是元/台斤；
+// 「雞蛋大盤運輸價」這個欄位實際上不存在（回傳的資料裡只有「雞蛋(產地)」），拿掉
 const CHICKEN_EGG_COLUMNS = [
-    { field: 'TaijinPrice_2.0kgup', name: '白肉雞(2.0kg以上)', unit: 'taijin' },
-    { field: 'TaijinPrice_1.75kg_1.95kg', name: '白肉雞(1.75-1.95kg)', unit: 'taijin' },
-    { field: 'Store_KP_TaijinPrice', name: '白肉雞(門市價高屏)', unit: 'taijin' },
-    { field: 'egg_Price', name: '雞蛋(大盤運輸價)', unit: 'taijin' },
-    { field: 'egg_Producer_Price', name: '雞蛋(產地價)', unit: 'taijin' },
+    { field: '白肉雞(2.0Kg以上)', name: '白肉雞(2.0kg以上)', unit: 'taijin' },
+    { field: '白肉雞(1.75-1.95Kg)', name: '白肉雞(1.75-1.95kg)', unit: 'taijin' },
+    { field: '白肉雞(門市價高屏)', name: '白肉雞(門市價高屏)', unit: 'taijin' },
+    { field: '雞蛋(產地)', name: '雞蛋(產地價)', unit: 'taijin' },
 ];
-// 家禽肉鵝/番鴨/鴨蛋：欄位名稱已確認，單位是元/台斤
+// 家禽肉鵝/番鴨/鴨蛋：目前用的網址（跟雞肉雞蛋共用同一個）實測證實抓不到這份資料
+// （回傳的其實是雞肉雞蛋那份資料，不是真正的鴨鵝資料），還沒找到正確的介接網址，先保留設定但知道目前是抓不到的狀態
 const GOOSE_DUCK_COLUMNS = [
     { field: 'Goose_WR_TaijinPrice', name: '肉鵝(白羅曼)', unit: 'taijin' },
     { field: 'Duck_M_TaijinPrice', name: '鴨(正番鴨公)', unit: 'taijin' },
     { field: 'Duck_75D_TaijinPrice', name: '鴨(土番鴨75天)', unit: 'taijin' },
     { field: 'Duckegg_TNN_TaijinPrice', name: '鴨蛋(新蛋台南)', unit: 'taijin' },
 ];
-// 白米：零售價格資料，單位本來就是元/公斤，不用像台斤那樣轉換；
-// 實際的英文欄位名稱沒有查到官方文件確認，所以每個米種放好幾種常見命名當候選，用pickField去試
+// 白米：實際欄位名稱從診斷log確認過了，pt_1xxx是零售價(元/公斤)，直接可用不用換算
 const RICE_COLUMNS = [
-    { field: ['JaptRetailPrice', 'Japt_RetailPrice', 'RetailPrice_Japt', 'JaptPrice'], name: '白米(稉種)', unit: 'kg' },
-    { field: ['TsaitRetailPrice', 'Tsait_RetailPrice', 'RetailPrice_Tsait', 'TsaitPrice'], name: '白米(硬秈)', unit: 'kg' },
-    { field: ['SangtRetailPrice', 'Sangt_RetailPrice', 'RetailPrice_Sangt', 'SangtPrice'], name: '白米(軟秈)', unit: 'kg' },
-    { field: ['GlutltRetailPrice', 'Glutlt_RetailPrice', 'RetailPrice_Glutlt', 'GlutltPrice'], name: '白米(圓糯)', unit: 'kg' },
-    { field: ['GlutrtRetailPrice', 'Glutrt_RetailPrice', 'RetailPrice_Glutrt', 'GlutrtPrice'], name: '白米(長糯)', unit: 'kg' },
+    { field: 'pt_1japt', name: '白米(稉種)', unit: 'kg' },
+    { field: 'pt_1tsait', name: '白米(硬秈)', unit: 'kg' },
+    { field: 'pt_1sangt', name: '白米(軟秈)', unit: 'kg' },
+    { field: 'pt_1glutrt', name: '白米(圓糯)', unit: 'kg' },
+    { field: 'pt_1glutlt', name: '白米(長糯)', unit: 'kg' },
 ];
 
 // ---- 4. 執行並寫入 Firestore ----
 async function main() {
-    console.log('開始更新市場價格推薦...(SCRIPT_VERSION: 2026-07-27-v8)');
+    console.log('開始更新市場價格推薦...(SCRIPT_VERSION: 2026-07-27-v12)');
 
     const emptyResult = { all: [], recommended: [] };
     async function safeBuild(fn, label) {
@@ -477,7 +516,7 @@ async function main() {
         '雞肉雞蛋'
     ), '雞肉雞蛋');
     const gooseDuck = await safeBuild(() => buildColumnRecommendations(
-        'https://data.moa.gov.tw/Service/OpenData/FromM/PoultryTransData.aspx',
+        'https://data.moa.gov.tw/api/v1/PoultryTransType_Goose_Duck_Duckegg/',
         GOOSE_DUCK_COLUMNS,
         '鴨鵝'
     ), '鴨鵝');
