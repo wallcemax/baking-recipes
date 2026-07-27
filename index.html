@@ -378,11 +378,11 @@
                 <button onclick="closeMarketPricesModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
-                <p class="text-xs mb-1" style="color:#B3A492">資料來源：農業部「農產品交易行情」、漁業署「漁產品交易行情」開放資料，每天自動更新一次。跟去年同期比價格掉最多的食材，代表現在正是便宜盛產的時候。</p>
+                <p class="text-xs mb-1" style="color:#B3A492">資料來源：農業部/漁業署開放資料，每天自動更新一次。跟去年同期比價格掉最多的食材，代表現在正是便宜盛產的時候。※這些是批發市場價格，跟你實際在市場/超市買到的零售價會有落差，僅供參考當季便宜與否。</p>
                 <p id="market-prices-updated-at" class="text-xs mb-4" style="color:#B3A492"></p>
-                <div class="flex gap-2 mb-4">
-                    <button id="market-prices-tab-veg" onclick="switchMarketPricesTab('vegetables')" class="chip">🌾 農產</button>
-                    <button id="market-prices-tab-fish" onclick="switchMarketPricesTab('fish')" class="chip">🐟 漁產</button>
+                <div id="market-prices-tabs" class="flex gap-2 mb-4 flex-wrap"></div>
+                <div class="relative mb-4">
+                    <input id="market-prices-search" oninput="renderMarketPricesList()" placeholder="搜尋特定食材，例如「高麗菜」" class="form-input">
                 </div>
                 <div id="market-prices-list"></div>
             </div>
@@ -13083,12 +13083,30 @@
         }
 
         // ========== 市場價格專區 ==========
-        let marketPricesCache = null; // {updatedAt, vegetables:[...], fish:[...]}
+        // 每個分頁對應Firestore文件裡的欄位名稱（key跟key+'All'兩個欄位）
+        const MARKET_PRICE_CATEGORIES = [
+            { key: 'vegetables', emoji: '🌾', label: '農產' },
+            { key: 'fish', emoji: '🐟', label: '漁產' },
+            { key: 'pig', emoji: '🐷', label: '毛豬' },
+            { key: 'chickenEgg', emoji: '🐔', label: '雞肉雞蛋' },
+            { key: 'gooseDuck', emoji: '🦆', label: '鴨鵝' },
+            { key: 'sheep', emoji: '🐑', label: '羊隻' },
+            { key: 'rice', emoji: '🍚', label: '白米' },
+        ];
+        let marketPricesCache = null; // {updatedAt, vegetables:[...], fish:[...], pig:[...], ...}
         let marketPricesActiveTab = 'vegetables';
 
         async function openMarketPricesModal() {
             document.getElementById('market-prices-modal').classList.remove('hidden');
             document.getElementById('market-prices-list').innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">讀取中...</p>`;
+            const tabsEl = document.getElementById('market-prices-tabs');
+            if (tabsEl) {
+                tabsEl.innerHTML = MARKET_PRICE_CATEGORIES.map(c =>
+                    `<button id="market-prices-tab-${c.key}" onclick="switchMarketPricesTab('${c.key}')" class="chip">${c.emoji} ${c.label}</button>`
+                ).join('');
+            }
+            const searchInput = document.getElementById('market-prices-search');
+            if (searchInput) searchInput.value = '';
             pushModalHistoryState();
             try {
                 const doc = await db.collection('marketPriceRecommendations').doc('latest').get();
@@ -13111,9 +13129,23 @@
         }
         function switchMarketPricesTab(tab) {
             marketPricesActiveTab = tab;
-            document.getElementById('market-prices-tab-veg').style.opacity = tab === 'vegetables' ? '1' : '.5';
-            document.getElementById('market-prices-tab-fish').style.opacity = tab === 'fish' ? '1' : '.5';
+            MARKET_PRICE_CATEGORIES.forEach(c => {
+                const btn = document.getElementById(`market-prices-tab-${c.key}`);
+                if (btn) btn.style.opacity = c.key === tab ? '1' : '.5';
+            });
             renderMarketPricesList();
+        }
+        // 單一食材的卡片HTML，搜尋結果跟推薦排行榜共用同一個樣式
+        function marketPriceCardHTML(item) {
+            const isDrop = item.dropPct > 0;
+            const changeText = isDrop ? `↓${item.dropPct}%` : `↑${Math.abs(item.dropPct)}%`;
+            const changeColor = isDrop ? '#4E9F6E' : '#C4453F';
+            const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(item.name)}`;
+            return `
+                <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)">
+                    <p class="font-medium text-sm"><a href="${googleUrl}" target="_blank" rel="noopener" style="text-decoration:underline; text-decoration-color:#B3A492">${item.name}</a> <span style="color:${changeColor}">${changeText}</span></p>
+                    <p class="text-xs" style="color:#B3A492">現在約 NT$${item.recentPrice}/公斤（去年同期約 NT$${item.baselinePrice}/公斤）</p>
+                </div>`;
         }
         function renderMarketPricesList() {
             const listEl = document.getElementById('market-prices-list');
@@ -13122,29 +13154,28 @@
                 listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">還沒有資料，排程可能還沒執行過第一次，晚點再回來看看</p>`;
                 return;
             }
+            const searchInput = document.getElementById('market-prices-search');
+            const keyword = (searchInput && searchInput.value || '').trim();
+
+            // 有輸入關鍵字：搜尋「完整清單」（不限漲跌方向，讓使用者可以查任何一種食材現在的行情）
+            if (keyword) {
+                const allItems = marketPricesCache[`${marketPricesActiveTab}All`] || [];
+                const matched = allItems.filter(item => item.name.includes(keyword));
+                if (!matched.length) {
+                    listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">查無「${keyword}」的資料（可能是政府資料裡沒有用這個名稱，試試看別的寫法，例如「甘藍」而不是「高麗菜」）</p>`;
+                    return;
+                }
+                listEl.innerHTML = `<div class="space-y-2">${matched.map(marketPriceCardHTML).join('')}</div>`;
+                return;
+            }
+
+            // 沒有關鍵字：顯示原本的跌幅排行榜
             const items = marketPricesCache[marketPricesActiveTab] || [];
             if (!items.length) {
                 listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">目前沒有偵測到明顯跌價的項目</p>`;
                 return;
             }
-            listEl.innerHTML = `<div class="space-y-2">${items.map(item => `
-                <div class="flex items-center gap-3 px-4 py-3 rounded-2xl" style="background:var(--cream)">
-                    <div class="flex-1 min-w-0">
-                        <p class="font-medium text-sm">${item.name} <span style="color:#4E9F6E">↓${item.dropPct}%</span></p>
-                        <p class="text-xs" style="color:#B3A492">現在約 NT$${item.recentPrice}/公斤（去年同期約 NT$${item.baselinePrice}/公斤）</p>
-                    </div>
-                    <button onclick="applyMarketPriceToCost('${escapeHtmlAttr(item.name)}', ${item.recentPrice})" class="text-xs px-3 py-1.5 rounded-full shrink-0 whitespace-nowrap" style="background:var(--sage); color:white">套用到成本</button>
-                </div>`).join('')}</div>`;
-        }
-        // 把市場價格套用到「我的食材成本」——直接打開快速編輯視窗，並且把「花NT$X買1000g（=1公斤）」帶進計算機欄位，
-        // 使用者可以直接按換算單價、或是先把名稱改成跟自己食譜裡用的名稱一致再存
-        async function applyMarketPriceToCost(name, pricePerKg) {
-            if (!currentUser) { alert('請先登入才能設定食材成本'); return; }
-            await openIngredientCostEditor(name);
-            document.getElementById('ingredient-cost-modal-price').value = pricePerKg;
-            document.getElementById('ingredient-cost-modal-amount').value = 1000;
-            document.getElementById('ingredient-cost-modal-unit').value = 'g';
-            document.getElementById('ingredient-cost-modal-hint').textContent = '這是市場最新的參考價格，按「換算單價」確認後儲存即可；如果你食譜裡用的食材名稱寫法不一樣，去食譜頁面點該食材、用「套用類似食材」應該可以找到這筆資料';
+            listEl.innerHTML = `<div class="space-y-2">${items.map(marketPriceCardHTML).join('')}</div>`;
         }
 
         function scaleRecipe(recipe) {
