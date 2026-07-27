@@ -296,6 +296,43 @@
         </div>
     </div>
 
+    <!-- 單一食材成本快速編輯（從食譜詳細頁點食材縮圖跳出） -->
+    <div id="ingredient-cost-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-sm rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-lg font-bold">💰 設定食材價格</h2>
+                <button onclick="closeIngredientCostModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+            </div>
+            <div class="px-6 py-6">
+                <p id="ingredient-cost-modal-name" class="font-medium mb-3"></p>
+                <label class="text-xs block mb-1" style="color:#B3A492">參考價格（新台幣 / 每100克）</label>
+                <input id="ingredient-cost-modal-input" type="number" step="0.1" min="0" class="form-input mb-2">
+                <p id="ingredient-cost-modal-hint" class="text-xs mb-4" style="color:#B3A492"></p>
+                <button onclick="saveIngredientCostModal()" class="btn-primary w-full mb-2">💾 儲存（存到我自己的價格清單）</button>
+                <button onclick="openMyIngredientCostsModal()" class="text-xs w-full text-center" style="color:#B3A492">前往「我的食材成本」管理全部食材 →</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 個人食材成本管理頁面：一次看到/編輯所有食材的價格 -->
+    <div id="my-ingredient-costs-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">💰 我的食材成本</h2>
+                <button onclick="closeMyIngredientCostsModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <p class="text-xs mb-4" style="color:#B3A492">這裡設定的價格只有你自己看得到，計算食譜成本時會優先使用；還沒設定過的食材，系統會先用AI幫你估一個參考價（標示🤖），你可以隨時在這裡修改成自己實際買到的價格。</p>
+                <div class="flex gap-3 mb-5">
+                    <input id="my-cost-new-name" placeholder="食材名稱" class="form-input flex-1">
+                    <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="NT$ / 100g" class="form-input" style="width:120px">
+                    <button onclick="addMyIngredientCost()" class="btn-amber whitespace-nowrap">新增</button>
+                </div>
+                <div id="my-cost-list" class="space-y-2"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- 孤兒 Cloudinary 圖片清單（管理者用）-->
     <div id="orphaned-images-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
         <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
@@ -11772,6 +11809,7 @@
                     </div>
                     <div class="mb-8">
                         <div id="detail-nutrition"></div>
+                        <div id="detail-cost" class="mt-3"></div>
                     </div>
                     </div>
                     <div class="cook-split-wrap">
@@ -11954,7 +11992,113 @@
         // ---------- 食材熱量查詢優先順序：Firestore 快取 → 本地食材資料庫 → AI（Gemini，可用網路搜尋輔助）----------
         // 需要先在 Firebase 主控台完成 AI Logic + App Check 設定，AI 那一步才會生效
         // （見上方 module script 的說明註解），還沒設定完成前 AI 那一步會安靜地回傳 null，不影響其他功能
+        // 把字串安全地塞進單引號包起來的onclick字串參數裡（食材名稱是使用者自己打的，可能含撇號/雙引號）
+        function escapeHtmlAttr(str) {
+            return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        }
         let aiNutritionCache = {}; // 同一次瀏覽期間的暫存，避免同個食材重複問 Firestore／AI
+
+        // ========== 個人食材成本系統（第一階段：資料層） ==========
+        // 跟熱量系統的關鍵差異：熱量是客觀值，全站共用一份資料庫；
+        // 但食材價格因人而異（每個人買菜的通路、地點、時間都不同），所以這裡存在「每個使用者自己」的
+        // Firestore文件裡：userIngredientPrices/{uid}，欄位是 items: { 食材名稱: {pricePer100g, source, updatedAt} }
+        // source 的意義：'user_set' = 使用者自己輸入/確認過的價格；'ai_suggested' = 使用者還沒設定、AI幫忙估的參考價，
+        // 畫面上要用不同樣式顯示（例如「AI估算」徽章），提醒使用者這只是參考值、可以點開修改
+        let userIngredientCostCache = null; // 快取目前登入者完整的食材成本清單，避免每次都重新讀Firestore
+        let userIngredientCostCacheUid = null;
+
+        // 讀出目前登入者的完整食材成本清單（一次讀一份文件，之後同一次瀏覽都用快取，不會一直重複讀Firestore）
+        async function loadUserIngredientCosts(forceRefresh) {
+            if (!currentUser) { userIngredientCostCache = {}; userIngredientCostCacheUid = null; return userIngredientCostCache; }
+            if (!forceRefresh && userIngredientCostCache && userIngredientCostCacheUid === currentUser.uid) return userIngredientCostCache;
+            try {
+                const doc = await db.collection('userIngredientPrices').doc(currentUser.uid).get();
+                userIngredientCostCache = doc.exists ? (doc.data().items || {}) : {};
+                userIngredientCostCacheUid = currentUser.uid;
+            } catch (err) {
+                console.warn('讀取個人食材成本失敗', err && err.message);
+                userIngredientCostCache = userIngredientCostCache || {};
+            }
+            return userIngredientCostCache;
+        }
+
+        // 查詢順序：①使用者自己設定過的價格 → ②AI估一個參考價當預設值（會寫回使用者自己的Firestore文件，
+        // 標記成ai_suggested，避免每次都重新問AI；使用者之後編輯過就會變成user_set）
+        // 回傳格式：{ pricePer100g, source, updatedAt } 或 null（完全查不到、AI也估不出來）
+        async function resolveIngredientCost(name) {
+            const trimmedName = name.trim();
+            const costs = await loadUserIngredientCosts();
+            if (costs[trimmedName]) return costs[trimmedName];
+            if (!currentUser) return null; // 沒登入就不主動問AI（避免未登入訪客也一直打AI額度），只查得到已經有的資料
+
+            try {
+                if (typeof window.__fetchGeminiIngredientCost !== 'function') return null;
+                const data = await window.__fetchGeminiIngredientCost(trimmedName);
+                if (!data || !data.pricePer100g) return null;
+                const record = { pricePer100g: data.pricePer100g, source: 'ai_suggested', updatedAt: Date.now() };
+                costs[trimmedName] = record; // 先更新本地快取，讓同一次瀏覽不會重複問AI
+                db.collection('userIngredientPrices').doc(currentUser.uid).set({
+                    items: { [trimmedName]: { pricePer100g: data.pricePer100g, source: 'ai_suggested', updatedAt: firebase.firestore.FieldValue.serverTimestamp() } }
+                }, { merge: true }).catch(err => console.warn('寫入食材成本快取失敗', err && err.message));
+                return record;
+            } catch (err) {
+                console.warn('AI 成本估算暫時無法使用（可能尚未完成 Firebase AI Logic 設定）', err && err.message);
+                return null;
+            }
+        }
+
+        // 使用者自己輸入/修改一個食材的價格（第二階段的介面會呼叫這個），一律標記成user_set，
+        // 之後resolveIngredientCost就不會再用AI估算的值蓋掉它
+        async function setUserIngredientCost(name, pricePer100g) {
+            if (!currentUser) { alert('請先登入才能設定食材成本'); return false; }
+            const trimmedName = name.trim();
+            const price = Number(pricePer100g);
+            if (!trimmedName || !(price >= 0)) return false;
+            const costs = await loadUserIngredientCosts();
+            costs[trimmedName] = { pricePer100g: price, source: 'user_set', updatedAt: Date.now() };
+            try {
+                await db.collection('userIngredientPrices').doc(currentUser.uid).set({
+                    items: { [trimmedName]: { pricePer100g: price, source: 'user_set', updatedAt: firebase.firestore.FieldValue.serverTimestamp() } }
+                }, { merge: true });
+                return true;
+            } catch (err) {
+                console.warn('儲存食材成本失敗', err && err.message);
+                alert('儲存失敗：' + err.message);
+                return false;
+            }
+        }
+
+        // 刪除使用者自己設定的某個食材價格（回到「尚未設定」的狀態，下次查詢會重新觸發AI估算）
+        async function deleteUserIngredientCost(name) {
+            if (!currentUser) return false;
+            const trimmedName = name.trim();
+            const costs = await loadUserIngredientCosts();
+            delete costs[trimmedName];
+            try {
+                await db.collection('userIngredientPrices').doc(currentUser.uid).update({
+                    [`items.${trimmedName}`]: firebase.firestore.FieldValue.delete()
+                });
+                return true;
+            } catch (err) {
+                console.warn('刪除食材成本失敗', err && err.message);
+                return false;
+            }
+        }
+
+        // 計算一份食譜（依servings倍率）的總成本；沿用熱量系統的resolveGrams做單位換算，兩邊邏輯保持一致
+        // 回傳：{ totalCost, uncountedNames }，uncountedNames是查不到成本/單位換算失敗的食材名稱清單
+        async function calcRecipeCost(recipe, factor) {
+            let totalCost = 0;
+            const uncountedNames = [];
+            await Promise.all(recipe.ingredients.map(async ing => {
+                const grams = await resolveGrams(ing.amount * factor, ing.unit, ing.name);
+                if (grams === null) { uncountedNames.push(ing.name); return; }
+                const costInfo = await resolveIngredientCost(ing.name);
+                if (!costInfo) { uncountedNames.push(ing.name); return; }
+                totalCost += grams / 100 * costInfo.pricePer100g;
+            }));
+            return { totalCost, uncountedNames };
+        }
         async function resolveIngredientNutrition(name) {
             if (Object.prototype.hasOwnProperty.call(aiNutritionCache, name)) return aiNutritionCache[name];
             const trimmedName = name.trim();
@@ -12379,7 +12523,147 @@
                 </div>`;
         }
 
+        // ========== 個人食材成本系統（第二階段：介面） ==========
+        // 這個名字先存起來，讓「快速編輯」小視窗知道存檔要用哪個食材名稱
+        let ingredientCostModalTarget = null;
+
+        async function updateCostBox(recipe, factor, newServings) {
+            const box = document.getElementById('detail-cost');
+            if (!box) return;
+            if (!currentUser) {
+                box.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">登入後可以設定自己的食材價格，估算這道食譜大概要花多少錢</div>`;
+                return;
+            }
+            box.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">成本計算中…</div>`;
+
+            const rows = [];
+            let totalCost = 0;
+            let aiSuggestedCount = 0;
+            await Promise.all(recipe.ingredients.map(async ing => {
+                const grams = await resolveGrams(ing.amount * factor, ing.unit, ing.name);
+                if (grams === null) { rows.push({ name: ing.name, status: 'uncounted' }); return; }
+                const costInfo = await resolveIngredientCost(ing.name);
+                if (!costInfo) { rows.push({ name: ing.name, status: 'unset' }); return; }
+                const cost = grams / 100 * costInfo.pricePer100g;
+                totalCost += cost;
+                if (costInfo.source === 'ai_suggested') aiSuggestedCount++;
+                rows.push({ name: ing.name, status: 'ok', cost, source: costInfo.source, pricePer100g: costInfo.pricePer100g });
+            }));
+
+            // 若 modal 在等待期間被關閉／換了別的食譜，這個節點可能已經不在畫面上了
+            const liveBox = document.getElementById('detail-cost');
+            if (!liveBox) return;
+
+            if (rows.every(r => r.status !== 'ok')) {
+                liveBox.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">目前還沒有任何食材設定成本，點下面的食材可以開始設定</div>
+                    <div class="flex flex-wrap gap-2 mt-2">${rows.map(r => `<button onclick="openIngredientCostEditor('${escapeHtmlAttr(r.name)}')" class="chip text-xs">${r.name} 設定價格</button>`).join('')}</div>`;
+                return;
+            }
+            const perCost = totalCost / newServings;
+            liveBox.innerHTML = `
+                <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
+                    <div class="flex items-baseline gap-2 mb-2">
+                        <span class="font-display font-bold text-2xl" style="color:var(--jam)">NT$${totalCost.toFixed(0)}</span>
+                        <span class="text-sm" style="color:var(--espresso-soft)">總成本估算（每份約 NT$${perCost.toFixed(1)}）</span>
+                    </div>
+                    ${aiSuggestedCount > 0 ? `<p class="text-xs mt-1" style="color:var(--sage)">🤖 有 ${aiSuggestedCount} 項食材是AI估算的參考價，點下面的食材可以修改成你自己的價格</p>` : ''}
+                    <div class="flex flex-wrap gap-2 mt-3">
+                        ${rows.map(r => r.status === 'ok'
+                            ? `<button onclick="openIngredientCostEditor('${escapeHtmlAttr(r.name)}')" class="chip text-xs">${r.name} NT$${r.cost.toFixed(1)}${r.source === 'ai_suggested' ? ' 🤖' : ''}</button>`
+                            : `<button onclick="openIngredientCostEditor('${escapeHtmlAttr(r.name)}')" class="chip text-xs" style="color:#B3A492">${r.name} 設定價格</button>`
+                        ).join('')}
+                    </div>
+                    <p class="text-xs mt-3" style="color:#B3A492">價格只有你自己看得到，<a href="javascript:void(0)" onclick="openMyIngredientCostsModal()" style="text-decoration:underline">前往「我的食材成本」統一管理 →</a></p>
+                </div>`;
+        }
+
+        // 點某個食材，跳出快速編輯小視窗（可以設定/修改這個食材的參考價）
+        async function openIngredientCostEditor(name) {
+            if (!currentUser) { alert('請先登入才能設定食材成本'); return; }
+            ingredientCostModalTarget = name;
+            document.getElementById('ingredient-cost-modal-name').textContent = name;
+            const costs = await loadUserIngredientCosts();
+            const existing = costs[name];
+            document.getElementById('ingredient-cost-modal-input').value = existing ? existing.pricePer100g : '';
+            document.getElementById('ingredient-cost-modal-hint').textContent = existing && existing.source === 'ai_suggested'
+                ? '目前是AI估算的參考價，改成你自己知道的價格吧'
+                : (existing ? '這是你之前設定過的價格' : '這個食材還沒有價格資料');
+            document.getElementById('ingredient-cost-modal').classList.remove('hidden');
+            pushModalHistoryState();
+        }
+        function closeIngredientCostModal() {
+            document.getElementById('ingredient-cost-modal').classList.add('hidden');
+            ingredientCostModalTarget = null;
+        }
+        async function saveIngredientCostModal() {
+            if (!ingredientCostModalTarget) return;
+            const price = document.getElementById('ingredient-cost-modal-input').value;
+            const ok = await setUserIngredientCost(ingredientCostModalTarget, price);
+            if (ok) {
+                closeIngredientCostModal();
+                // 存完之後，如果食譜詳細頁還開著，重新整理一次成本顯示
+                if (window.__lastOpenRecipe) scaleRecipe(window.__lastOpenRecipe);
+            }
+        }
+
+        // 「我的食材成本」管理頁面
+        async function openMyIngredientCostsModal() {
+            if (!currentUser) { alert('請先登入才能管理食材成本'); return; }
+            document.getElementById('ingredient-cost-modal').classList.add('hidden'); // 如果是從快速編輯那邊點過來的，先關掉那個小視窗
+            document.getElementById('my-ingredient-costs-modal').classList.remove('hidden');
+            await renderMyIngredientCostsList();
+            pushModalHistoryState();
+        }
+        function closeMyIngredientCostsModal() {
+            document.getElementById('my-ingredient-costs-modal').classList.add('hidden');
+        }
+        async function renderMyIngredientCostsList() {
+            const listEl = document.getElementById('my-cost-list');
+            if (!listEl) return;
+            const costs = await loadUserIngredientCosts(true); // 強制重新讀一次，確保跟Firestore同步
+            const names = Object.keys(costs).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+            if (!names.length) {
+                listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">還沒有任何食材價格資料，去食譜詳細頁點食材、或用上面的表單新增一個吧</p>`;
+                return;
+            }
+            listEl.innerHTML = names.map((name, idx) => {
+                const c = costs[name];
+                return `
+                    <div class="flex items-center gap-3 px-4 py-3 rounded-2xl" style="background:var(--cream)">
+                        <span class="flex-1 font-medium text-sm">${name}${c.source === 'ai_suggested' ? ' <span class="text-xs" style="color:var(--sage)">🤖 AI估算</span>' : ''}</span>
+                        <input type="number" step="0.1" min="0" value="${c.pricePer100g}" id="my-cost-input-${idx}" class="form-input !py-1.5 text-sm" style="width:90px">
+                        <span class="text-xs" style="color:#B3A492">/100g</span>
+                        <button onclick="updateMyIngredientCost('${escapeHtmlAttr(name)}', ${idx})" class="text-xs px-3 py-1.5 rounded-full" style="background:var(--sage); color:white">儲存</button>
+                        <button onclick="removeMyIngredientCost('${escapeHtmlAttr(name)}')" class="text-xs" style="color:#C4453F">刪除</button>
+                    </div>`;
+            }).join('');
+        }
+        async function addMyIngredientCost() {
+            const nameInput = document.getElementById('my-cost-new-name');
+            const priceInput = document.getElementById('my-cost-new-price');
+            const name = nameInput.value.trim();
+            if (!name) { alert('請輸入食材名稱'); return; }
+            const ok = await setUserIngredientCost(name, priceInput.value);
+            if (ok) {
+                nameInput.value = '';
+                priceInput.value = '';
+                renderMyIngredientCostsList();
+            }
+        }
+        async function updateMyIngredientCost(name, idx) {
+            const input = document.getElementById(`my-cost-input-${idx}`);
+            if (!input) return;
+            const ok = await setUserIngredientCost(name, input.value);
+            if (ok) renderMyIngredientCostsList();
+        }
+        async function removeMyIngredientCost(name) {
+            if (!confirm(`確定要刪除「${name}」的價格資料嗎？`)) return;
+            await deleteUserIngredientCost(name);
+            renderMyIngredientCostsList();
+        }
+
         function scaleRecipe(recipe) {
+            window.__lastOpenRecipe = recipe; // 記住目前開著的食譜，成本編輯完要重新整理顯示時會用到
             const newServings = parseInt(document.getElementById('scale-servings').value) || recipe.servings;
             let factor;
             if (recipe.sizeValue) {
@@ -12403,6 +12687,7 @@
 
             // 熱量／營養素計算改成非同步（Firestore → 本地資料庫 → AI 依序查詢），不卡住下面的食材清單渲染
             updateNutritionBox(recipe, factor, newServings, LOSS_RATE);
+            updateCostBox(recipe, factor, newServings);
 
             // 食材清單本身（品名/份量）先同步顯示，重量小計徽章之後非同步補上
             // （大匙/茶匙等體積單位，本地表查不到密度時會改問 AI，需要時間）
@@ -13124,6 +13409,17 @@
             const match = text.match(/[\d.]+/);
             const num = match ? parseFloat(match[0]) : NaN;
             return isNaN(num) ? null : num;
+        };
+        // 估算食材參考市價（新台幣／每100克），用於個人食材成本系統：使用者還沒自己設定過價格時，
+        // 先用這個給一個參考預設值，使用者可以再自己修改覆蓋
+        window.__fetchGeminiIngredientCost = async function (name) {
+            if (!aiModel) return null;
+            const prompt = `請估算食材「${name}」（繁體中文，台灣一般超市或傳統市場的常見零售價格，新台幣）每100克的大約參考價格。只回傳一個JSON物件，不要有其他文字、不要用markdown code block，格式：{"pricePer100g":數字}`;
+            const result = await aiModel.generateContent(prompt);
+            const text = result.response.text().replace(/```json|```/g, '').trim();
+            const parsed = JSON.parse(text);
+            const price = Number(parsed.pricePer100g);
+            return isNaN(price) ? null : { pricePer100g: price };
         };
     </script>
 </body>
