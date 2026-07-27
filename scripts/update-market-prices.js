@@ -44,6 +44,26 @@ function toRocDateString(date) {
     const d = String(date.getDate()).padStart(2, '0');
     return `${y}.${m}.${d}`;
 }
+// 西元日期 -> 西元斜線格式（例如 2024-06-01 -> "2024/06/01"），漁產API實際查詢介面看起來是用這種格式
+function toGregSlashDateString(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}/${m}/${d}`;
+}
+// 西元日期 -> 民國斜線格式（例如 2024-06-01 -> "113/06/01"）
+function toRocSlashDateString(date) {
+    const y = date.getFullYear() - 1911;
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}/${m}/${d}`;
+}
+// 三種日期格式都準備好，遇到不確定用哪種格式的API（例如漁產）時，會依序嘗試，抓到第一個有資料的格式
+const DATE_FORMATTERS = [
+    { label: '民國.月.日', fn: toRocDateString },
+    { label: '西元/月/日', fn: toGregSlashDateString },
+    { label: '民國/月/日', fn: toRocSlashDateString },
+];
 
 function addDays(date, days) {
     const d = new Date(date);
@@ -72,12 +92,13 @@ function extractRecord(row, type) {
 }
 
 // 分頁抓取整段時間範圍內的所有交易紀錄（政府API單次最多回傳一定筆數，用$skip分頁抓到底）
-async function fetchAllPages(baseUrl, startDate, endDate) {
+async function fetchAllPages(baseUrl, startDate, endDate, dateFormatFn) {
+    const formatDate = dateFormatFn || toRocDateString;
     const top = 5000;
     let skip = 0;
     const all = [];
     for (let guard = 0; guard < 50; guard++) { // 安全上限，避免萬一API行為異常造成無窮迴圈
-        const url = `${baseUrl}?$top=${top}&$skip=${skip}&StartDate=${toRocDateString(startDate)}&EndDate=${toRocDateString(endDate)}`;
+        const url = `${baseUrl}?$top=${top}&$skip=${skip}&StartDate=${formatDate(startDate)}&EndDate=${formatDate(endDate)}`;
         console.log(`  抓取第 ${guard + 1} 頁（$skip=${skip}）...`); // 進度訊息：讓執行的人看得到它還在動，不是卡住了
         let res;
         try {
@@ -127,13 +148,36 @@ function aggregateByName(rows, type) {
     return result;
 }
 
+// 用一個很短的測試區間（最近3天），依序試每一種日期格式，找出這個API實際吃哪一種格式
+async function detectDateFormat(baseUrl, label) {
+    const today = new Date();
+    for (const { label: fmtLabel, fn } of DATE_FORMATTERS) {
+        const url = `${baseUrl}?$top=5&$skip=0&StartDate=${fn(addDays(today, -3))}&EndDate=${fn(today)}`;
+        try {
+            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+            if (res.ok) {
+                const json = await res.json();
+                if (Array.isArray(json) && json.length > 0) {
+                    console.log(`[${label}] 偵測到可用的日期格式：${fmtLabel}`);
+                    return fn;
+                }
+            }
+        } catch (err) {
+            // 這個格式試失敗了，繼續試下一個
+        }
+    }
+    console.warn(`[${label}] 三種日期格式都試過，最近3天都抓不到資料，先用預設格式（民國.月.日）繼續嘗試`);
+    return toRocDateString;
+}
+
 // ---- 3. 主流程：抓「近期」跟「歷史同期基準」兩段資料，算跌幅排行 ----
 async function buildRecommendations(baseUrl, type, label) {
     const today = new Date();
+    const dateFormatFn = await detectDateFormat(baseUrl, label);
 
     // 近期：最近14天
     console.log(`[${label}] 開始抓取「近期14天」資料...`);
-    const recentRows = await fetchAllPages(baseUrl, addDays(today, -14), today);
+    const recentRows = await fetchAllPages(baseUrl, addDays(today, -14), today, dateFormatFn);
     const recentAgg = aggregateByName(recentRows, type);
     console.log(`[${label}] 近期資料筆數：${recentRows.length}，聚合出 ${Object.keys(recentAgg).length} 種`);
 
@@ -147,7 +191,7 @@ async function buildRecommendations(baseUrl, type, label) {
         centerDate.setFullYear(centerDate.getFullYear() - yearsAgo);
         const rangeStart = addDays(centerDate, -15);
         const rangeEnd = addDays(centerDate, 15);
-        const rows = await fetchAllPages(baseUrl, rangeStart, rangeEnd);
+        const rows = await fetchAllPages(baseUrl, rangeStart, rangeEnd, dateFormatFn);
         baselineRows.push(...rows);
         console.log(`[${label}] ${yearsAgo}年前同期資料筆數：${rows.length}`);
     }
