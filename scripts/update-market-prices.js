@@ -1,6 +1,6 @@
 // ============================================================
 // 市場價格專區 - 排程腳本
-// SCRIPT_VERSION: 2026-07-27-v6 （農產正式拆成蔬菜(N04)/水果(N05)/花卉(N06)三個獨立分類，代碼已由使用者實測確認）
+// SCRIPT_VERSION: 2026-07-27-v8 （加入官方確認的TcType種類代碼欄位、民國短橫線日期格式；維持v7的診斷log等待實測結果）
 // ------------------------------------------------------------
 // 這支腳本會：
 //   1. 向農業部「農產品交易行情」「漁產品交易行情」開放資料 API 抓取：
@@ -59,11 +59,19 @@ function toRocSlashDateString(date) {
     const d = String(date.getDate()).padStart(2, '0');
     return `${y}/${m}/${d}`;
 }
-// 三種日期格式都準備好，遇到不確定用哪種格式的API（例如漁產）時，會依序嘗試，抓到第一個有資料的格式
+// 西元日期 -> 民國短橫線格式（例如 2024-06-01 -> "113-06-01"），漁產文件範例(107-05-01)用的是這種格式
+function toRocDashDateString(date) {
+    const y = date.getFullYear() - 1911;
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+// 四種日期格式都準備好，遇到不確定用哪種格式的API（例如漁產）時，會依序嘗試，抓到第一個有資料的格式
 const DATE_FORMATTERS = [
     { label: '民國.月.日', fn: toRocDateString },
     { label: '西元/月/日', fn: toGregSlashDateString },
     { label: '民國/月/日', fn: toRocSlashDateString },
+    { label: '民國-月-日', fn: toRocDashDateString },
 ];
 
 function addDays(date, days) {
@@ -110,7 +118,7 @@ function extractRecord(row, type) {
     if (!name || isNaN(avgPrice) || avgPrice <= 0) return null;
     // 種類代碼：農產這份資料裡蔬菜/水果/花卉/特產都混在一起，這個代碼是用來區分的關鍵欄位，
     // 但目前還不確定實際代碼數字對應到哪一種類別，先擷取起來，main()裡會印診斷log幫忙確認
-    const categoryCode = pickField(row, ['種類代碼', 'CategoryCode', 'category_code']);
+    const categoryCode = pickField(row, ['TcType', '種類代碼', 'CategoryCode', 'category_code']);
     return { name: String(name).trim(), avgPrice, volume: isNaN(volume) ? 1 : Math.max(volume, 0.01), categoryCode: categoryCode !== null ? String(categoryCode) : null };
 }
 // 診斷用：印出「種類代碼」底下各自抓到哪些樣本名稱，方便人工確認代碼對應到蔬菜/水果/花卉/特產哪一種
@@ -228,13 +236,14 @@ async function detectQueryFormat(baseUrl, label) {
 // ---- 3. 主流程：抓「近期」跟「歷史同期基準」兩段資料，算跌幅排行 ----
 // 抓「近期14天」跟「去年同期±15天」兩段原始資料（還沒聚合），回傳原始rows，
 // 讓呼叫端可以用同一份原始資料，依不同的類別代碼各自聚合（例如農產要拆成蔬菜/水果/花卉三種，不用重複打三次API）
-async function fetchRecentAndBaselineRows(baseUrl, label) {
+async function fetchRecentAndBaselineRows(baseUrl, label, type) {
     const today = new Date();
     const { dateFormatFn, paramNames } = await detectQueryFormat(baseUrl, label);
 
     console.log(`[${label}] 開始抓取「近期14天」資料...`);
     const recentRows = await fetchAllPages(baseUrl, addDays(today, -14), today, dateFormatFn, paramNames);
     console.log(`[${label}] 近期資料筆數：${recentRows.length}`);
+    if (type) logDateRangeSanity(recentRows, type, label, '近期應該要是最近14天');
 
     const baselineRows = [];
     for (const yearsAgo of [1]) {
@@ -247,6 +256,7 @@ async function fetchRecentAndBaselineRows(baseUrl, label) {
         appendAll(baselineRows, rows);
         console.log(`[${label}] ${yearsAgo}年前同期資料筆數：${rows.length}`);
     }
+    if (type) logDateRangeSanity(baselineRows, type, label, '去年同期應該要是1年前±15天');
     return { recentRows, baselineRows };
 }
 
@@ -281,7 +291,7 @@ function buildRecommendationsFromRows(recentRows, baselineRows, type, categoryFi
 }
 
 async function buildRecommendations(baseUrl, type, label) {
-    const { recentRows, baselineRows } = await fetchRecentAndBaselineRows(baseUrl, label);
+    const { recentRows, baselineRows } = await fetchRecentAndBaselineRows(baseUrl, label, type);
     logCategoryCodeSamples(recentRows, type, label);
     return buildRecommendationsFromRows(recentRows, baselineRows, type, null);
 }
@@ -294,7 +304,7 @@ const FARM_CATEGORY_CODES = {
     flowers: 'N06',
 };
 async function buildFarmCategorizedRecommendations(baseUrl, label) {
-    const { recentRows, baselineRows } = await fetchRecentAndBaselineRows(baseUrl, label);
+    const { recentRows, baselineRows } = await fetchRecentAndBaselineRows(baseUrl, label, 'farm');
     const result = {};
     for (const [key, code] of Object.entries(FARM_CATEGORY_CODES)) {
         result[key] = buildRecommendationsFromRows(recentRows, baselineRows, 'farm', code);
@@ -329,6 +339,32 @@ function aggregateByColumns(rows, columns) {
     return result;
 }
 
+// 診斷用：印出第一筆資料實際的JSON欄位名稱，跟我們設定的columns候選名稱做對照，
+// 方便一眼看出是不是欄位名稱猜錯了（用在毛豬/雞蛋雞肉/鴨鵝/白米這種聚合出0筆的類別）
+function logRawFieldNames(rows, columns, label) {
+    if (!rows.length) {
+        console.log(`[${label}] 診斷：完全沒有資料可以看欄位名稱`);
+        return;
+    }
+    console.log(`[${label}] 診斷：第一筆資料實際的JSON欄位名稱＝${JSON.stringify(Object.keys(rows[0]))}`);
+    console.log(`[${label}] 診斷：第一筆資料完整內容＝${JSON.stringify(rows[0])}`);
+    console.log(`[${label}] 診斷：我們設定要找的欄位候選＝${JSON.stringify(columns.map(c => c.field))}`);
+}
+// 診斷用：印出這批資料實際涵蓋的日期範圍（最早～最晚的交易日期），
+// 用來檢查「近期14天」「去年同期±15天」這種日期篩選是不是真的有生效，
+// 如果印出來的範圍跟預期差很多（例如涵蓋了好幾年），代表日期篩選沒有真的作用
+function logDateRangeSanity(rows, type, label, expectedDesc) {
+    if (!rows.length) return;
+    const dateFieldCandidates = ['交易日期', 'TransDate', 'transDate'];
+    const dateField = dateFieldCandidates.find(f => rows[0][f] !== undefined);
+    if (!dateField) {
+        console.log(`[${label}] 診斷：找不到日期欄位可以檢查範圍`);
+        return;
+    }
+    const dates = rows.map(r => r[dateField]).filter(d => d !== undefined && d !== null).sort();
+    console.log(`[${label}] 診斷（${expectedDesc}）：實際涵蓋日期範圍＝${dates[0]} ～ ${dates[dates.length - 1]}（共${dates.length}筆有日期）`);
+}
+
 async function buildColumnRecommendations(baseUrl, columns, label) {
     const today = new Date();
     const { dateFormatFn, paramNames } = await detectQueryFormat(baseUrl, label);
@@ -337,6 +373,7 @@ async function buildColumnRecommendations(baseUrl, columns, label) {
     const recentRows = await fetchAllPages(baseUrl, addDays(today, -14), today, dateFormatFn, paramNames);
     const recentAgg = aggregateByColumns(recentRows, columns);
     console.log(`[${label}] 近期資料筆數：${recentRows.length}`);
+    logRawFieldNames(recentRows, columns, label);
 
     const baselineRows = [];
     for (const yearsAgo of [1]) {
@@ -399,7 +436,7 @@ const RICE_COLUMNS = [
 
 // ---- 4. 執行並寫入 Firestore ----
 async function main() {
-    console.log('開始更新市場價格推薦...(SCRIPT_VERSION: 2026-07-27-v6)');
+    console.log('開始更新市場價格推薦...(SCRIPT_VERSION: 2026-07-27-v8)');
 
     const emptyResult = { all: [], recommended: [] };
     async function safeBuild(fn, label) {
