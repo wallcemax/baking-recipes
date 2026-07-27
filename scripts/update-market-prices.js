@@ -78,6 +78,7 @@ async function fetchAllPages(baseUrl, startDate, endDate) {
     const all = [];
     for (let guard = 0; guard < 50; guard++) { // 安全上限，避免萬一API行為異常造成無窮迴圈
         const url = `${baseUrl}?$top=${top}&$skip=${skip}&StartDate=${toRocDateString(startDate)}&EndDate=${toRocDateString(endDate)}`;
+        console.log(`  抓取第 ${guard + 1} 頁（$skip=${skip}）...`); // 進度訊息：讓執行的人看得到它還在動，不是卡住了
         let res;
         try {
             res = await fetch(url, { headers: { 'Accept': 'application/json' } });
@@ -98,6 +99,7 @@ async function fetchAllPages(baseUrl, startDate, endDate) {
         }
         if (!Array.isArray(json) || json.length === 0) break;
         all.push(...json);
+        console.log(`  這一頁拿到 ${json.length} 筆，累計 ${all.length} 筆`);
         if (json.length < top) break; // 這一頁沒抓滿，代表已經是最後一頁
         skip += top;
         await new Promise(r => setTimeout(r, 300)); // 稍微間隔一下，對政府API客氣一點
@@ -130,13 +132,17 @@ async function buildRecommendations(baseUrl, type, label) {
     const today = new Date();
 
     // 近期：最近14天
+    console.log(`[${label}] 開始抓取「近期14天」資料...`);
     const recentRows = await fetchAllPages(baseUrl, addDays(today, -14), today);
     const recentAgg = aggregateByName(recentRows, type);
     console.log(`[${label}] 近期資料筆數：${recentRows.length}，聚合出 ${Object.keys(recentAgg).length} 種`);
 
-    // 基準：過去2年，同一個時節（月/日 ±15天）
+    // 基準：過去1年，同一個時節（月/日 ±15天）
+    // （原本設計比對過去2年，但實測發現資料量大、GitHub Actions的機器離台灣遠，跨國抓取要花不少時間，
+    // 先縮減成只比對去年同期，資料量減半，也已經足夠當「跟去年這時候比是不是特別便宜」的參考基準）
     const baselineRows = [];
-    for (const yearsAgo of [1, 2]) {
+    for (const yearsAgo of [1]) {
+        console.log(`[${label}] 開始抓取「${yearsAgo}年前同期」資料...`);
         const centerDate = new Date(today);
         centerDate.setFullYear(centerDate.getFullYear() - yearsAgo);
         const rangeStart = addDays(centerDate, -15);
