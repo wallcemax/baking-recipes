@@ -235,6 +235,7 @@
             <div id="extra-filter-chips" class="chip-row">
                 <button id="chip-fav" class="chip" onclick="toggleFavoritesOnly()">❤️ 我的最愛</button>
                 <button id="chip-mine" class="chip" onclick="toggleMyRecipesOnly()">🙋 我的食譜</button>
+                <button id="chip-shopping-list" class="chip" onclick="openShoppingListModal()">🛒 採購清單</button>
             </div>
             <div id="category-chips" class="chip-row"></div>
         </div>
@@ -347,6 +348,21 @@
                 <button onclick="addMyIngredientCost()" class="btn-amber w-full mb-2">🧮 換算並新增</button>
                 <div id="my-cost-new-result" class="text-xs mb-5" style="color:#B3A492"></div>
                 <div id="my-cost-list" class="space-y-2"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 採購清單：加入多篇食譜、各自設定要做幾份，統一算出食材加總花費（例如一週菜單） -->
+    <div id="shopping-list-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">🛒 採購清單</h2>
+                <button onclick="closeShoppingListModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <p class="text-xs mb-4" style="color:#B3A492">在食譜詳細頁點🛒可以加入這裡；每篇食譜可以自己調整這次要做幾份，下面會統一把所有食材加總，估算這次採買總共要花多少錢。</p>
+                <div id="shopping-list-recipes" class="space-y-2 mb-6"></div>
+                <div id="shopping-list-summary"></div>
             </div>
         </div>
     </div>
@@ -11810,6 +11826,9 @@
                         <h2 class="font-display text-2xl sm:text-3xl font-bold mt-3 leading-snug">${recipe.name}</h2>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
+                        <button onclick="addToShoppingList(${recipeJson})" class="fav-btn" style="background:var(--cream)" aria-label="加入採購清單" title="加入採購清單">
+                            🛒
+                        </button>
                         <button onclick="toggleFavorite('${recipe.id}')" data-fav-id="${recipe.id}" class="fav-btn" style="background:var(--cream)" aria-label="收藏">
                             <i class="${isFav ? 'fas' : 'far'} fa-heart" style="color:var(--jam)"></i>
                         </button>
@@ -12747,6 +12766,143 @@
             if (!confirm(`確定要刪除「${name}」的價格資料嗎？`)) return;
             await deleteUserIngredientCost(name);
             renderMyIngredientCostsList();
+        }
+
+        // ========== 個人食材成本系統（第三階段：採購清單加總） ==========
+        // Firestore結構：userShoppingLists/{uid}，欄位items是陣列：[{recipeId, recipeName, servings}]
+        // servings是「這次要做幾份」，不一定等於食譜原本預設的份數，用來算加總的時候要照這個倍率縮放
+        let shoppingListCache = null;
+        let shoppingListCacheUid = null;
+
+        async function loadShoppingList(forceRefresh) {
+            if (!currentUser) { shoppingListCache = []; shoppingListCacheUid = null; return shoppingListCache; }
+            if (!forceRefresh && shoppingListCache && shoppingListCacheUid === currentUser.uid) return shoppingListCache;
+            try {
+                const doc = await db.collection('userShoppingLists').doc(currentUser.uid).get();
+                shoppingListCache = doc.exists ? (doc.data().items || []) : [];
+                shoppingListCacheUid = currentUser.uid;
+            } catch (err) {
+                console.warn('讀取採購清單失敗', err && err.message);
+                shoppingListCache = shoppingListCache || [];
+            }
+            return shoppingListCache;
+        }
+        async function saveShoppingList(list) {
+            if (!currentUser) return false;
+            try {
+                await db.collection('userShoppingLists').doc(currentUser.uid).set({ items: list });
+                shoppingListCache = list;
+                return true;
+            } catch (err) {
+                console.warn('儲存採購清單失敗', err && err.message);
+                alert('儲存失敗：' + err.message);
+                return false;
+            }
+        }
+        async function addToShoppingList(recipe) {
+            if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
+            const list = await loadShoppingList();
+            if (list.some(item => item.recipeId === recipe.id)) { alert(`「${recipe.name}」已經在採購清單裡了`); return; }
+            list.push({ recipeId: recipe.id, recipeName: recipe.name, servings: recipe.servings || 1 });
+            const ok = await saveShoppingList(list);
+            if (ok) alert(`已加入採購清單：${recipe.name}`);
+        }
+        async function removeFromShoppingList(recipeId) {
+            const list = await loadShoppingList();
+            const next = list.filter(item => item.recipeId !== recipeId);
+            const ok = await saveShoppingList(next);
+            if (ok) renderShoppingListModal();
+        }
+        async function updateShoppingListServings(recipeId, servings) {
+            const list = await loadShoppingList();
+            const item = list.find(i => i.recipeId === recipeId);
+            if (!item) return;
+            item.servings = Math.max(1, parseInt(servings) || item.servings);
+            await saveShoppingList(list);
+        }
+
+        async function openShoppingListModal() {
+            if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
+            document.getElementById('shopping-list-modal').classList.remove('hidden');
+            await renderShoppingListModal();
+            pushModalHistoryState();
+        }
+        function closeShoppingListModal() {
+            document.getElementById('shopping-list-modal').classList.add('hidden');
+        }
+
+        async function renderShoppingListModal() {
+            const recipesEl = document.getElementById('shopping-list-recipes');
+            const summaryEl = document.getElementById('shopping-list-summary');
+            if (!recipesEl || !summaryEl) return;
+            const list = await loadShoppingList(true);
+            if (!list.length) {
+                recipesEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">還沒有加入任何食譜，去食譜詳細頁點🛒加進來吧</p>`;
+                summaryEl.innerHTML = '';
+                return;
+            }
+            recipesEl.innerHTML = list.map(item => `
+                <div class="flex items-center gap-3 px-4 py-3 rounded-2xl" style="background:var(--cream)">
+                    <span class="flex-1 font-medium text-sm min-w-0 truncate">${item.recipeName}</span>
+                    <span class="text-xs shrink-0" style="color:#B3A492">這次做</span>
+                    <input type="number" min="1" value="${item.servings}" onchange="updateShoppingListServings('${escapeHtmlAttr(item.recipeId)}', this.value); renderShoppingListModal();" class="form-input !py-1.5 text-sm shrink-0" style="width:64px">
+                    <span class="text-xs shrink-0" style="color:#B3A492">份</span>
+                    <button onclick="removeFromShoppingList('${escapeHtmlAttr(item.recipeId)}')" class="text-xs shrink-0" style="color:#C4453F">移除</button>
+                </div>`).join('');
+
+            summaryEl.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">加總計算中…</div>`;
+
+            // 逐篇食譜去抓最新的食材資料（怕食譜後來被編輯過），再依這次要做的份數比例縮放，全部加總
+            const ingredientTotals = {}; // 依食材名稱加總：{克數, 成本, 是否有任何一項沒算到}
+            let grandTotal = 0;
+            const perRecipeCosts = [];
+            const missingRecipes = [];
+            await Promise.all(list.map(async item => {
+                let recipeDoc;
+                try {
+                    recipeDoc = await db.collection('recipes').doc(item.recipeId).get();
+                } catch (err) {
+                    missingRecipes.push(item.recipeName);
+                    return;
+                }
+                if (!recipeDoc.exists) { missingRecipes.push(item.recipeName); return; }
+                const recipe = { id: recipeDoc.id, ...recipeDoc.data() };
+                const factor = item.servings / (recipe.servings || 1);
+                let recipeCost = 0;
+                await Promise.all((recipe.ingredients || []).map(async ing => {
+                    const grams = await resolveGrams(ing.amount * factor, ing.unit, ing.name);
+                    if (grams === null) return;
+                    const costInfo = await resolveIngredientCost(ing.name);
+                    if (!costInfo) return;
+                    const cost = grams / 100 * costInfo.pricePer100g;
+                    recipeCost += cost;
+                    if (!ingredientTotals[ing.name]) ingredientTotals[ing.name] = { grams: 0, cost: 0 };
+                    ingredientTotals[ing.name].grams += grams;
+                    ingredientTotals[ing.name].cost += cost;
+                }));
+                grandTotal += recipeCost;
+                perRecipeCosts.push({ name: item.recipeName, cost: recipeCost });
+            }));
+
+            const liveSummaryEl = document.getElementById('shopping-list-summary');
+            if (!liveSummaryEl) return;
+            const ingredientNames = Object.keys(ingredientTotals).sort((a, b) => ingredientTotals[b].cost - ingredientTotals[a].cost);
+            liveSummaryEl.innerHTML = `
+                <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
+                    <div class="flex items-baseline gap-2 mb-3">
+                        <span class="font-display font-bold text-2xl" style="color:var(--jam)">NT$${grandTotal.toFixed(0)}</span>
+                        <span class="text-sm" style="color:var(--espresso-soft)">這次採購預估總花費（共 ${list.length} 篇食譜）</span>
+                    </div>
+                    ${perRecipeCosts.length ? `<div class="text-xs mb-3" style="color:#B3A492">${perRecipeCosts.map(r => `${r.name} NT$${r.cost.toFixed(0)}`).join('　')}</div>` : ''}
+                    ${missingRecipes.length ? `<p class="text-xs mb-3" style="color:#C4453F">⚠️ 找不到這些食譜的最新資料，沒有算進總花費：${missingRecipes.join('、')}</p>` : ''}
+                    <h3 class="font-display font-semibold text-sm mb-2 mt-4">食材加總清單</h3>
+                    <div class="space-y-1">
+                        ${ingredientNames.map(name => {
+                            const t = ingredientTotals[name];
+                            return `<div class="flex justify-between text-sm"><span>${name}</span><span style="color:#B3A492">${t.grams.toFixed(0)}g・NT$${t.cost.toFixed(0)}</span></div>`;
+                        }).join('') || `<p class="text-xs" style="color:#B3A492">目前沒有任何食材能算出成本（可能都還沒設定價格）</p>`}
+                    </div>
+                </div>`;
         }
 
         function scaleRecipe(recipe) {
