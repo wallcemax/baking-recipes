@@ -92,13 +92,14 @@ function extractRecord(row, type) {
 }
 
 // 分頁抓取整段時間範圍內的所有交易紀錄（政府API單次最多回傳一定筆數，用$skip分頁抓到底）
-async function fetchAllPages(baseUrl, startDate, endDate, dateFormatFn) {
+async function fetchAllPages(baseUrl, startDate, endDate, dateFormatFn, paramNames) {
     const formatDate = dateFormatFn || toRocDateString;
+    const { start: startParam, end: endParam } = paramNames || { start: 'StartDate', end: 'EndDate' };
     const top = 5000;
     let skip = 0;
     const all = [];
     for (let guard = 0; guard < 50; guard++) { // 安全上限，避免萬一API行為異常造成無窮迴圈
-        const url = `${baseUrl}?$top=${top}&$skip=${skip}&StartDate=${formatDate(startDate)}&EndDate=${formatDate(endDate)}`;
+        const url = `${baseUrl}?$top=${top}&$skip=${skip}&${startParam}=${formatDate(startDate)}&${endParam}=${formatDate(endDate)}`;
         console.log(`  抓取第 ${guard + 1} 頁（$skip=${skip}）...`); // 進度訊息：讓執行的人看得到它還在動，不是卡住了
         let res;
         try {
@@ -149,35 +150,44 @@ function aggregateByName(rows, type) {
 }
 
 // 用一個很短的測試區間（最近3天），依序試每一種日期格式，找出這個API實際吃哪一種格式
-async function detectDateFormat(baseUrl, label) {
+// 政府API有些用StartDate/EndDate，有些（例如漁產）用Start_time/End_time，這裡兩種都準備
+const PARAM_NAME_OPTIONS = [
+    { start: 'StartDate', end: 'EndDate' },
+    { start: 'Start_time', end: 'End_time' },
+];
+
+// 用一個很短的測試區間（最近3天），依序嘗試「參數名稱 x 日期格式」的各種組合，找出這個API實際吃哪一種
+async function detectQueryFormat(baseUrl, label) {
     const today = new Date();
-    for (const { label: fmtLabel, fn } of DATE_FORMATTERS) {
-        const url = `${baseUrl}?$top=5&$skip=0&StartDate=${fn(addDays(today, -3))}&EndDate=${fn(today)}`;
-        try {
-            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-            if (res.ok) {
-                const json = await res.json();
-                if (Array.isArray(json) && json.length > 0) {
-                    console.log(`[${label}] 偵測到可用的日期格式：${fmtLabel}`);
-                    return fn;
+    for (const paramNames of PARAM_NAME_OPTIONS) {
+        for (const { label: fmtLabel, fn } of DATE_FORMATTERS) {
+            const url = `${baseUrl}?$top=5&$skip=0&${paramNames.start}=${fn(addDays(today, -3))}&${paramNames.end}=${fn(today)}`;
+            try {
+                const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+                if (res.ok) {
+                    const json = await res.json();
+                    if (Array.isArray(json) && json.length > 0) {
+                        console.log(`[${label}] 偵測到可用的組合：參數名稱=${paramNames.start}/${paramNames.end}，日期格式=${fmtLabel}`);
+                        return { dateFormatFn: fn, paramNames };
+                    }
                 }
+            } catch (err) {
+                // 這個組合試失敗了，繼續試下一個
             }
-        } catch (err) {
-            // 這個格式試失敗了，繼續試下一個
         }
     }
-    console.warn(`[${label}] 三種日期格式都試過，最近3天都抓不到資料，先用預設格式（民國.月.日）繼續嘗試`);
-    return toRocDateString;
+    console.warn(`[${label}] 所有參數名稱/日期格式組合都試過，最近3天都抓不到資料，先用預設組合繼續嘗試`);
+    return { dateFormatFn: toRocDateString, paramNames: PARAM_NAME_OPTIONS[0] };
 }
 
 // ---- 3. 主流程：抓「近期」跟「歷史同期基準」兩段資料，算跌幅排行 ----
 async function buildRecommendations(baseUrl, type, label) {
     const today = new Date();
-    const dateFormatFn = await detectDateFormat(baseUrl, label);
+    const { dateFormatFn, paramNames } = await detectQueryFormat(baseUrl, label);
 
     // 近期：最近14天
     console.log(`[${label}] 開始抓取「近期14天」資料...`);
-    const recentRows = await fetchAllPages(baseUrl, addDays(today, -14), today, dateFormatFn);
+    const recentRows = await fetchAllPages(baseUrl, addDays(today, -14), today, dateFormatFn, paramNames);
     const recentAgg = aggregateByName(recentRows, type);
     console.log(`[${label}] 近期資料筆數：${recentRows.length}，聚合出 ${Object.keys(recentAgg).length} 種`);
 
@@ -191,7 +201,7 @@ async function buildRecommendations(baseUrl, type, label) {
         centerDate.setFullYear(centerDate.getFullYear() - yearsAgo);
         const rangeStart = addDays(centerDate, -15);
         const rangeEnd = addDays(centerDate, 15);
-        const rows = await fetchAllPages(baseUrl, rangeStart, rangeEnd, dateFormatFn);
+        const rows = await fetchAllPages(baseUrl, rangeStart, rangeEnd, dateFormatFn, paramNames);
         baselineRows.push(...rows);
         console.log(`[${label}] ${yearsAgo}年前同期資料筆數：${rows.length}`);
     }
