@@ -381,10 +381,15 @@
                 <p class="text-xs mb-1" style="color:#B3A492">資料來源：農業部/漁業署開放資料，每天自動更新一次。跟去年同期比價格掉最多的食材，代表現在正是便宜盛產的時候。※這些是批發市場價格，跟你實際在市場/超市買到的零售價會有落差，僅供參考當季便宜與否。</p>
                 <p id="market-prices-updated-at" class="text-xs mb-4" style="color:#B3A492"></p>
                 <div id="market-prices-tabs" class="flex gap-2 mb-4 flex-wrap"></div>
-                <div class="relative mb-4">
-                    <input id="market-prices-search" oninput="renderMarketPricesList()" placeholder="搜尋特定食材，例如「高麗菜」" class="form-input">
+                <div class="relative mb-3">
+                    <input id="market-prices-search" oninput="renderMarketPricesList(true)" placeholder="搜尋特定食材，例如「玉米」" class="form-input">
+                </div>
+                <div class="flex items-center justify-between mb-4">
+                    <button id="market-prices-sort-btn" onclick="toggleMarketPricesSortDir()" class="chip text-xs"></button>
+                    <span id="market-prices-count" class="text-xs" style="color:#B3A492"></span>
                 </div>
                 <div id="market-prices-list"></div>
+                <div id="market-prices-pagination" class="flex items-center justify-center gap-4 mt-4"></div>
             </div>
         </div>
     </div>
@@ -13086,7 +13091,9 @@
         // 每個分頁對應Firestore文件裡的欄位名稱（key跟key+'All'兩個欄位）
         const MARKET_PRICE_CATEGORIES = [
             { key: 'all', emoji: '🔍', label: '全部' },
-            { key: 'vegetables', emoji: '🌾', label: '農產' },
+            { key: 'vegetables', emoji: '🥬', label: '蔬菜' },
+            { key: 'fruits', emoji: '🍎', label: '水果' },
+            { key: 'flowers', emoji: '🌸', label: '花卉' },
             { key: 'fish', emoji: '🐟', label: '漁產' },
             { key: 'pig', emoji: '🐷', label: '毛豬' },
             { key: 'chickenEgg', emoji: '🐔', label: '雞肉雞蛋' },
@@ -13095,7 +13102,10 @@
             { key: 'rice', emoji: '🍚', label: '白米' },
         ];
         let marketPricesCache = null; // {updatedAt, vegetables:[...], fish:[...], pig:[...], ...}
-        let marketPricesActiveTab = 'vegetables';
+        let marketPricesActiveTab = 'all';
+        let marketPricesSortDir = 'desc'; // 'desc'=跌幅高到低，'asc'=跌幅低到高（漲最多排最前面）
+        let marketPricesPage = 0; // 目前頁數，從0開始
+        const MARKET_PRICES_PAGE_SIZE = 50;
 
         async function openMarketPricesModal() {
             document.getElementById('market-prices-modal').classList.remove('hidden');
@@ -13108,6 +13118,8 @@
             }
             const searchInput = document.getElementById('market-prices-search');
             if (searchInput) searchInput.value = '';
+            marketPricesSortDir = 'desc';
+            marketPricesPage = 0;
             pushModalHistoryState();
             try {
                 const doc = await db.collection('marketPriceRecommendations').doc('latest').get();
@@ -13130,68 +13142,100 @@
         }
         function switchMarketPricesTab(tab) {
             marketPricesActiveTab = tab;
+            marketPricesPage = 0; // 換分頁重新從第一頁看起
             MARKET_PRICE_CATEGORIES.forEach(c => {
                 const btn = document.getElementById(`market-prices-tab-${c.key}`);
                 if (btn) btn.style.opacity = c.key === tab ? '1' : '.5';
             });
             renderMarketPricesList();
         }
-        // 單一食材的卡片HTML，搜尋結果跟推薦排行榜共用同一個樣式
+        function toggleMarketPricesSortDir() {
+            marketPricesSortDir = marketPricesSortDir === 'desc' ? 'asc' : 'desc';
+            marketPricesPage = 0;
+            renderMarketPricesList();
+        }
+        // 單一食材的卡片HTML，搜尋結果跟清單共用同一個樣式
         function marketPriceCardHTML(item) {
-            const isDrop = item.dropPct > 0;
-            const changeText = isDrop ? `↓${item.dropPct}%` : `↑${Math.abs(item.dropPct)}%`;
-            const changeColor = isDrop ? '#4E9F6E' : '#C4453F';
             const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(item.name)}`;
             const categoryTag = item.categoryLabel ? `<span style="color:#B3A492">［${item.categoryLabel}］</span> ` : '';
+            let changeHTML = `<span style="color:#B3A492">（無去年同期資料可比較）</span>`;
+            if (item.dropPct !== null && item.dropPct !== undefined) {
+                const isDrop = item.dropPct > 0;
+                const changeText = isDrop ? `↓${item.dropPct}%` : (item.dropPct < 0 ? `↑${Math.abs(item.dropPct)}%` : '持平');
+                const changeColor = isDrop ? '#4E9F6E' : (item.dropPct < 0 ? '#C4453F' : '#B3A492');
+                changeHTML = `<span style="color:${changeColor}">${changeText}</span>`;
+            }
             return `
                 <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)">
-                    <p class="font-medium text-sm">${categoryTag}<a href="${googleUrl}" target="_blank" rel="noopener" style="text-decoration:underline; text-decoration-color:#B3A492">${item.name}</a> <span style="color:${changeColor}">${changeText}</span></p>
-                    <p class="text-xs" style="color:#B3A492">現在約 NT$${item.recentPrice}/公斤（去年同期約 NT$${item.baselinePrice}/公斤）</p>
+                    <p class="font-medium text-sm">${categoryTag}<a href="${googleUrl}" target="_blank" rel="noopener" style="text-decoration:underline; text-decoration-color:#B3A492">${item.name}</a> ${changeHTML}</p>
+                    <p class="text-xs" style="color:#B3A492">現在約 NT$${item.recentPrice}/公斤${item.baselinePrice !== null ? `（去年同期約 NT$${item.baselinePrice}/公斤）` : ''}</p>
                 </div>`;
         }
-        // 把所有類別的清單合併成一份，每一項都標記來源類別，給「全部」分頁用
-        // fieldSuffix傳空字串取「推薦清單」，傳'All'取「完整清單」（給搜尋用）
-        function getMergedMarketPriceList(fieldSuffix) {
+        // 把所有類別的完整清單合併成一份，每一項都標記來源類別，給「全部」分頁用
+        function getMergedMarketPriceList() {
             const merged = [];
             MARKET_PRICE_CATEGORIES.filter(c => c.key !== 'all').forEach(c => {
-                const list = (marketPricesCache && marketPricesCache[`${c.key}${fieldSuffix}`]) || [];
+                const list = (marketPricesCache && marketPricesCache[`${c.key}All`]) || [];
                 list.forEach(item => merged.push({ ...item, categoryLabel: c.label }));
             });
             return merged;
         }
-        function renderMarketPricesList() {
+        // 排序：有跌幅資料的依方向排序在前面，沒有比較資料的（dropPct是null）一律排在最後面
+        function sortMarketPriceItems(items, dir) {
+            const withDrop = items.filter(i => i.dropPct !== null && i.dropPct !== undefined);
+            const withoutDrop = items.filter(i => i.dropPct === null || i.dropPct === undefined);
+            withDrop.sort((a, b) => dir === 'desc' ? b.dropPct - a.dropPct : a.dropPct - b.dropPct);
+            return [...withDrop, ...withoutDrop];
+        }
+        function renderMarketPricesList(resetPage) {
+            if (resetPage) marketPricesPage = 0;
             const listEl = document.getElementById('market-prices-list');
+            const paginationEl = document.getElementById('market-prices-pagination');
+            const countEl = document.getElementById('market-prices-count');
+            const sortBtn = document.getElementById('market-prices-sort-btn');
             if (!listEl) return;
+            if (sortBtn) sortBtn.textContent = marketPricesSortDir === 'desc' ? '跌幅：高→低 ⇅' : '跌幅：低→高 ⇅';
             if (!marketPricesCache) {
                 listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">還沒有資料，排程可能還沒執行過第一次，晚點再回來看看</p>`;
+                if (paginationEl) paginationEl.innerHTML = '';
+                if (countEl) countEl.textContent = '';
                 return;
             }
             const searchInput = document.getElementById('market-prices-search');
             const keyword = (searchInput && searchInput.value || '').trim();
             const isAllTab = marketPricesActiveTab === 'all';
 
-            // 有輸入關鍵字：搜尋「完整清單」（不限漲跌方向，讓使用者可以查任何一種食材現在的行情）
-            // 「全部」分頁會合併所有類別一起搜，其他分頁只搜當前這一類
-            if (keyword) {
-                const allItems = isAllTab ? getMergedMarketPriceList('All') : (marketPricesCache[`${marketPricesActiveTab}All`] || []);
-                const matched = allItems.filter(item => item.name.includes(keyword));
-                if (!matched.length) {
-                    listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">查無「${keyword}」的資料（可能是政府資料裡沒有用這個名稱，試試看別的寫法，例如「甘藍」而不是「高麗菜」；也可以切到別的分頁再試試看）</p>`;
-                    return;
-                }
-                listEl.innerHTML = `<div class="space-y-2">${matched.map(marketPriceCardHTML).join('')}</div>`;
+            let items = isAllTab ? getMergedMarketPriceList() : (marketPricesCache[`${marketPricesActiveTab}All`] || []);
+            if (keyword) items = items.filter(item => item.name.includes(keyword));
+            items = sortMarketPriceItems(items, marketPricesSortDir);
+
+            if (!items.length) {
+                listEl.innerHTML = keyword
+                    ? `<p class="text-sm text-center py-6" style="color:#B3A492">查無「${keyword}」的資料（可能是政府資料裡沒有用這個名稱，試試看別的寫法，例如「甘藍」而不是「高麗菜」；也可以切到別的分頁再試試看）</p>`
+                    : `<p class="text-sm text-center py-6" style="color:#B3A492">這個分類目前還沒有資料</p>`;
+                if (paginationEl) paginationEl.innerHTML = '';
+                if (countEl) countEl.textContent = '';
                 return;
             }
 
-            // 沒有關鍵字：顯示跌幅排行榜。「全部」分頁會把各類別的推薦清單合併、重新依跌幅排序取前50
-            const items = isAllTab
-                ? getMergedMarketPriceList('').sort((a, b) => b.dropPct - a.dropPct).slice(0, 50)
-                : (marketPricesCache[marketPricesActiveTab] || []);
-            if (!items.length) {
-                listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">目前沒有偵測到明顯跌價的項目</p>`;
-                return;
+            const totalPages = Math.ceil(items.length / MARKET_PRICES_PAGE_SIZE);
+            if (marketPricesPage >= totalPages) marketPricesPage = totalPages - 1;
+            if (marketPricesPage < 0) marketPricesPage = 0;
+            const pageItems = items.slice(marketPricesPage * MARKET_PRICES_PAGE_SIZE, (marketPricesPage + 1) * MARKET_PRICES_PAGE_SIZE);
+
+            if (countEl) countEl.textContent = `共 ${items.length} 項`;
+            listEl.innerHTML = `<div class="space-y-2">${pageItems.map(marketPriceCardHTML).join('')}</div>`;
+            if (paginationEl) {
+                paginationEl.innerHTML = totalPages > 1 ? `
+                    <button onclick="changeMarketPricesPage(-1)" class="chip text-xs" ${marketPricesPage === 0 ? 'disabled style="opacity:.3"' : ''}>← 上一頁</button>
+                    <span class="text-xs" style="color:#B3A492">第 ${marketPricesPage + 1} / ${totalPages} 頁</span>
+                    <button onclick="changeMarketPricesPage(1)" class="chip text-xs" ${marketPricesPage >= totalPages - 1 ? 'disabled style="opacity:.3"' : ''}>下一頁 →</button>
+                ` : '';
             }
-            listEl.innerHTML = `<div class="space-y-2">${items.map(marketPriceCardHTML).join('')}</div>`;
+        }
+        function changeMarketPricesPage(delta) {
+            marketPricesPage += delta;
+            renderMarketPricesList();
         }
 
         function scaleRecipe(recipe) {
