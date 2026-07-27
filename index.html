@@ -236,6 +236,7 @@
                 <button id="chip-fav" class="chip" onclick="toggleFavoritesOnly()">❤️ 我的最愛</button>
                 <button id="chip-mine" class="chip" onclick="toggleMyRecipesOnly()">🙋 我的食譜</button>
                 <button id="chip-shopping-list" class="chip" onclick="openShoppingListModal()">🛒 採購清單</button>
+                <button id="chip-market-prices" class="chip" onclick="openMarketPricesModal()">📉 市場價格</button>
             </div>
             <div id="category-chips" class="chip-row"></div>
         </div>
@@ -365,6 +366,25 @@
                 <p class="text-xs mb-4" style="color:#B3A492">在食譜詳細頁點🛒可以加入這裡；每篇食譜可以自己調整這次要做幾份，下面會統一把所有食材加總，估算這次採買總共要花多少錢。</p>
                 <div id="shopping-list-recipes" class="space-y-2 mb-6"></div>
                 <div id="shopping-list-summary"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 市場價格專區：顯示農產品/漁產品跟去年同期比跌幅最大的食材排行 -->
+    <div id="market-prices-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">📉 市場價格專區</h2>
+                <button onclick="closeMarketPricesModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <p class="text-xs mb-1" style="color:#B3A492">資料來源：農業部「農產品交易行情」、漁業署「漁產品交易行情」開放資料，每天自動更新一次。跟去年同期比價格掉最多的食材，代表現在正是便宜盛產的時候。</p>
+                <p id="market-prices-updated-at" class="text-xs mb-4" style="color:#B3A492"></p>
+                <div class="flex gap-2 mb-4">
+                    <button id="market-prices-tab-veg" onclick="switchMarketPricesTab('vegetables')" class="chip">🥬 蔬果</button>
+                    <button id="market-prices-tab-fish" onclick="switchMarketPricesTab('fish')" class="chip">🐟 漁產</button>
+                </div>
+                <div id="market-prices-list"></div>
             </div>
         </div>
     </div>
@@ -13060,6 +13080,71 @@
                         }).join('') || `<p class="text-xs" style="color:#B3A492">目前沒有任何食材能算出成本（可能都還沒設定價格）</p>`}
                     </div>
                 </div>`;
+        }
+
+        // ========== 市場價格專區 ==========
+        let marketPricesCache = null; // {updatedAt, vegetables:[...], fish:[...]}
+        let marketPricesActiveTab = 'vegetables';
+
+        async function openMarketPricesModal() {
+            document.getElementById('market-prices-modal').classList.remove('hidden');
+            document.getElementById('market-prices-list').innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">讀取中...</p>`;
+            pushModalHistoryState();
+            try {
+                const doc = await db.collection('marketPriceRecommendations').doc('latest').get();
+                marketPricesCache = doc.exists ? doc.data() : null;
+            } catch (err) {
+                console.warn('讀取市場價格失敗', err && err.message);
+                marketPricesCache = null;
+            }
+            const updatedEl = document.getElementById('market-prices-updated-at');
+            if (marketPricesCache && marketPricesCache.updatedAt) {
+                const d = marketPricesCache.updatedAt.toDate ? marketPricesCache.updatedAt.toDate() : new Date(marketPricesCache.updatedAt);
+                updatedEl.textContent = `最後更新：${d.toLocaleString('zh-TW')}`;
+            } else {
+                updatedEl.textContent = '';
+            }
+            switchMarketPricesTab('vegetables');
+        }
+        function closeMarketPricesModal() {
+            document.getElementById('market-prices-modal').classList.add('hidden');
+        }
+        function switchMarketPricesTab(tab) {
+            marketPricesActiveTab = tab;
+            document.getElementById('market-prices-tab-veg').style.opacity = tab === 'vegetables' ? '1' : '.5';
+            document.getElementById('market-prices-tab-fish').style.opacity = tab === 'fish' ? '1' : '.5';
+            renderMarketPricesList();
+        }
+        function renderMarketPricesList() {
+            const listEl = document.getElementById('market-prices-list');
+            if (!listEl) return;
+            if (!marketPricesCache) {
+                listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">還沒有資料，排程可能還沒執行過第一次，晚點再回來看看</p>`;
+                return;
+            }
+            const items = marketPricesCache[marketPricesActiveTab] || [];
+            if (!items.length) {
+                listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">目前沒有偵測到明顯跌價的項目</p>`;
+                return;
+            }
+            listEl.innerHTML = `<div class="space-y-2">${items.map(item => `
+                <div class="flex items-center gap-3 px-4 py-3 rounded-2xl" style="background:var(--cream)">
+                    <div class="flex-1 min-w-0">
+                        <p class="font-medium text-sm">${item.name} <span style="color:#4E9F6E">↓${item.dropPct}%</span></p>
+                        <p class="text-xs" style="color:#B3A492">現在約 NT$${item.recentPrice}/公斤（去年同期約 NT$${item.baselinePrice}/公斤）</p>
+                    </div>
+                    <button onclick="applyMarketPriceToCost('${escapeHtmlAttr(item.name)}', ${item.recentPrice})" class="text-xs px-3 py-1.5 rounded-full shrink-0 whitespace-nowrap" style="background:var(--sage); color:white">套用到成本</button>
+                </div>`).join('')}</div>`;
+        }
+        // 把市場價格套用到「我的食材成本」——直接打開快速編輯視窗，並且把「花NT$X買1000g（=1公斤）」帶進計算機欄位，
+        // 使用者可以直接按換算單價、或是先把名稱改成跟自己食譜裡用的名稱一致再存
+        async function applyMarketPriceToCost(name, pricePerKg) {
+            if (!currentUser) { alert('請先登入才能設定食材成本'); return; }
+            await openIngredientCostEditor(name);
+            document.getElementById('ingredient-cost-modal-price').value = pricePerKg;
+            document.getElementById('ingredient-cost-modal-amount').value = 1000;
+            document.getElementById('ingredient-cost-modal-unit').value = 'g';
+            document.getElementById('ingredient-cost-modal-hint').textContent = '這是市場最新的參考價格，按「換算單價」確認後儲存即可；如果你食譜裡用的食材名稱寫法不一樣，去食譜頁面點該食材、用「套用類似食材」應該可以找到這筆資料';
         }
 
         function scaleRecipe(recipe) {
