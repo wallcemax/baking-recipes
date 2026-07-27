@@ -306,6 +306,7 @@
             </div>
             <div class="px-6 py-6">
                 <p id="ingredient-cost-modal-name" class="font-medium mb-3"></p>
+                <div id="ingredient-cost-modal-similar" class="mb-4"></div>
                 <p class="text-xs mb-2" style="color:#B3A492">照你實際買的方式填就好，例如「麵粉 59元 買1000g」、「雞蛋 85元 買1台斤」、「牛奶 120元 買1000ml」，系統會自動換算成統一的單價</p>
                 <div class="grid grid-cols-3 gap-2 mb-2">
                     <div class="col-span-1">
@@ -12633,6 +12634,47 @@
         // 點某個食材，跳出快速編輯小視窗（可以設定/修改這個食材的參考價）
         let ingredientCostModalComputed = null; // 換算按鈕算出來的每100克單價，按「儲存」的時候會用這個
         let ingredientCostModalReturnToManage = false; // 如果是從「我的食材成本」管理頁面點進來的，關閉時要恢復顯示那個頁面
+        // 找出使用者已經設定過價格、名稱裡有共同字的食材（例如「糖」會比對到「細砂糖」「二砂糖」，「蛋」會比對到「雞蛋」「全蛋」），
+        // 依共同字數量排序，最多回傳6個，方便使用者直接套用類似食材的價格，不用重新輸入
+        function findSimilarIngredientCosts(targetName, costs) {
+            const targetChars = new Set(targetName.split(''));
+            return Object.keys(costs)
+                .filter(n => n !== targetName)
+                .map(n => ({ name: n, overlap: n.split('').filter(ch => targetChars.has(ch)).length, info: costs[n] }))
+                .filter(c => c.overlap > 0)
+                .sort((a, b) => b.overlap - a.overlap || a.name.localeCompare(b.name, 'zh-Hant'))
+                .slice(0, 6);
+        }
+        function renderSimilarIngredientDropdown(name, costs) {
+            const el = document.getElementById('ingredient-cost-modal-similar');
+            if (!el) return;
+            const similar = findSimilarIngredientCosts(name, costs);
+            if (!similar.length) { el.innerHTML = ''; return; }
+            el.innerHTML = `
+                <label class="text-xs block mb-1" style="color:#B3A492">套用類似食材的價格（你之前設定過的）</label>
+                <div class="flex gap-2">
+                    <select id="ingredient-cost-modal-similar-select" class="form-input flex-1 text-sm">
+                        ${similar.map(c => `<option value="${escapeHtmlAttr(c.name)}">${c.name}（NT$${c.info.pricePer100g.toFixed(2)}/100g）</option>`).join('')}
+                    </select>
+                    <button onclick="applySimilarIngredientCost()" class="btn-secondary text-sm whitespace-nowrap">套用</button>
+                </div>`;
+        }
+        function applySimilarIngredientCost() {
+            const select = document.getElementById('ingredient-cost-modal-similar-select');
+            if (!select || !select.value) return;
+            loadUserIngredientCosts().then(costs => {
+                const picked = costs[select.value];
+                if (!picked) return;
+                ingredientCostModalComputed = picked.pricePer100g;
+                document.getElementById('ingredient-cost-modal-result').innerHTML = `✅ 已套用「${select.value}」的價格：每100克約 <b>NT$${picked.pricePer100g.toFixed(2)}</b>`;
+                // 順便把計算機欄位也帶成等效的100g版本，方便使用者之後想自己微調
+                document.getElementById('ingredient-cost-modal-price').value = picked.pricePer100g;
+                document.getElementById('ingredient-cost-modal-amount').value = 100;
+                document.getElementById('ingredient-cost-modal-unit').value = 'g';
+                const saveBtn = document.getElementById('ingredient-cost-modal-save-btn');
+                saveBtn.disabled = false; saveBtn.style.opacity = '1';
+            });
+        }
         async function openIngredientCostEditor(name) {
             if (!currentUser) { alert('請先登入才能設定食材成本'); return; }
             const manageModal = document.getElementById('my-ingredient-costs-modal');
@@ -12645,6 +12687,7 @@
             const saveBtn = document.getElementById('ingredient-cost-modal-save-btn');
             saveBtn.disabled = true; saveBtn.style.opacity = '.4';
             const costs = await loadUserIngredientCosts();
+            renderSimilarIngredientDropdown(name, costs);
             const existing = costs[name];
             // 有記錄過上次輸入的「花多少錢買多少數量」就帶回來，沒有的話用每100克單價換算回一個預設的100g版本，方便使用者參考
             document.getElementById('ingredient-cost-modal-price').value = existing && existing.purchaseAmount ? existing.purchasePrice : (existing ? existing.pricePer100g : '');
