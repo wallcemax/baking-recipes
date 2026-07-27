@@ -82,9 +82,9 @@ function pickField(row, candidates) {
 function extractRecord(row, type) {
     const name = pickField(row, type === 'farm'
         ? ['作物名稱', 'CropName', 'crop_name']
-        : ['魚貨名稱', 'FishName', 'fish_name']);
-    const avgPriceRaw = pickField(row, ['平均價', 'AveragePrice', 'average_price']);
-    const volumeRaw = pickField(row, ['交易量', 'TradeVolumn', 'TradeVolume', 'trade_volume']);
+        : ['魚貨名稱', 'SeafoodProdName', 'FishName', 'fish_name']);
+    const avgPriceRaw = pickField(row, ['平均價', 'Avg_Price', 'AveragePrice', 'average_price']);
+    const volumeRaw = pickField(row, ['交易量', 'Trans_Quantity', 'TradeVolumn', 'TradeVolume', 'trade_volume']);
     const avgPrice = parseFloat(avgPriceRaw);
     const volume = parseFloat(volumeRaw);
     if (!name || isNaN(avgPrice) || avgPrice <= 0) return null;
