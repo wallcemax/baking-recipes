@@ -12802,15 +12802,24 @@
             }
         }
         // 點食材加總清單裡的某一項，切換「已購買」的劃掉狀態
-        async function toggleIngredientPurchased(name) {
+        function toggleIngredientPurchased(name, idx) {
             shoppingListPurchasedCache[name] = !shoppingListPurchasedCache[name];
             if (!shoppingListPurchasedCache[name]) delete shoppingListPurchasedCache[name];
-            try {
-                await db.collection('userShoppingLists').doc(currentUser.uid).set({ purchased: shoppingListPurchasedCache }, { merge: true });
-            } catch (err) {
-                console.warn('更新採購狀態失敗', err && err.message);
+            const bought = !!shoppingListPurchasedCache[name];
+            // 只直接更新這一列的畫面，不整個重新呼叫renderShoppingListModal()——
+            // 那個函式要重新抓所有食譜、重新算一次成本，很慢，如果連續點好幾個食材，
+            // 舊的那次重算比較慢跑完的話會晚一步蓋掉畫面，看起來就像「點了沒反應」
+            const row = document.getElementById(`shopping-ing-row-${idx}`);
+            if (row) {
+                row.style.textDecoration = bought ? 'line-through' : 'none';
+                row.style.opacity = bought ? '.45' : '1';
+                const labelEl = row.querySelector('[data-ing-label]');
+                if (labelEl) labelEl.textContent = (bought ? '✅ ' : '') + name;
             }
-            renderShoppingListModal();
+            if (currentUser) {
+                db.collection('userShoppingLists').doc(currentUser.uid).set({ purchased: shoppingListPurchasedCache }, { merge: true })
+                    .catch(err => console.warn('更新採購狀態失敗', err && err.message));
+            }
         }
         async function addToShoppingList(recipe) {
             if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
@@ -12823,6 +12832,9 @@
         async function removeFromShoppingList(recipeId) {
             const list = await loadShoppingList();
             const next = list.filter(item => item.recipeId !== recipeId);
+            // 清單整個清空了，代表這趟採購結束了，已購買的標記也一起重置，
+            // 不然下次重新加入同一篇食譜，食材會殘留上次的「已購買」勾選
+            if (next.length === 0) shoppingListPurchasedCache = {};
             const ok = await saveShoppingList(next);
             if (ok) renderShoppingListModal();
         }
@@ -12910,10 +12922,10 @@
                     ${missingRecipes.length ? `<p class="text-xs mb-3" style="color:#C4453F">⚠️ 找不到這些食譜的最新資料，沒有算進總花費：${missingRecipes.join('、')}</p>` : ''}
                     <h3 class="font-display font-semibold text-sm mb-2 mt-4">食材加總清單<span class="text-xs font-normal" style="color:#B3A492">（點一下代表已經買了）</span></h3>
                     <div class="space-y-1">
-                        ${ingredientNames.map(name => {
+                        ${ingredientNames.map((name, idx) => {
                             const t = ingredientTotals[name];
                             const bought = !!shoppingListPurchasedCache[name];
-                            return `<div onclick="toggleIngredientPurchased('${escapeHtmlAttr(name)}')" class="flex justify-between text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}"><span>${bought ? '✅ ' : ''}${name}</span><span style="color:#B3A492">${t.grams.toFixed(0)}g・NT$${t.cost.toFixed(0)}</span></div>`;
+                            return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(name)}', ${idx})" class="flex justify-between text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}"><span data-ing-label>${bought ? '✅ ' : ''}${name}</span><span style="color:#B3A492">${t.grams.toFixed(0)}g・NT$${t.cost.toFixed(0)}</span></div>`;
                         }).join('') || `<p class="text-xs" style="color:#B3A492">目前沒有任何食材能算出成本（可能都還沒設定價格）</p>`}
                     </div>
                 </div>`;
