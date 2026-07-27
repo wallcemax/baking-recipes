@@ -1,6 +1,6 @@
 // ============================================================
 // 市場價格專區 - 排程腳本
-// SCRIPT_VERSION: 2026-07-27-v3 （這一版修好了大量資料時push(...array)造成的Maximum call stack size exceeded問題）
+// SCRIPT_VERSION: 2026-07-27-v6 （農產正式拆成蔬菜(N04)/水果(N05)/花卉(N06)三個獨立分類，代碼已由使用者實測確認）
 // ------------------------------------------------------------
 // 這支腳本會：
 //   1. 向農業部「農產品交易行情」「漁產品交易行情」開放資料 API 抓取：
@@ -108,7 +108,31 @@ function extractRecord(row, type) {
     const avgPrice = parseFloat(avgPriceRaw);
     const volume = parseFloat(volumeRaw);
     if (!name || isNaN(avgPrice) || avgPrice <= 0) return null;
-    return { name: String(name).trim(), avgPrice, volume: isNaN(volume) ? 1 : Math.max(volume, 0.01) };
+    // 種類代碼：農產這份資料裡蔬菜/水果/花卉/特產都混在一起，這個代碼是用來區分的關鍵欄位，
+    // 但目前還不確定實際代碼數字對應到哪一種類別，先擷取起來，main()裡會印診斷log幫忙確認
+    const categoryCode = pickField(row, ['種類代碼', 'CategoryCode', 'category_code']);
+    return { name: String(name).trim(), avgPrice, volume: isNaN(volume) ? 1 : Math.max(volume, 0.01), categoryCode: categoryCode !== null ? String(categoryCode) : null };
+}
+// 診斷用：印出「種類代碼」底下各自抓到哪些樣本名稱，方便人工確認代碼對應到蔬菜/水果/花卉/特產哪一種
+// 之後確認清楚了，就可以把分類邏輯改成依這個代碼把農產拆成獨立的蔬菜/水果/花卉三個類別
+function logCategoryCodeSamples(rows, type, label) {
+    if (type !== 'farm') return; // 目前只有農產這份資料需要拆分類別
+    const samples = {}; // 代碼 -> Set(名稱)
+    rows.forEach(row => {
+        const rec = extractRecord(row, type);
+        if (!rec || rec.categoryCode === null) return;
+        if (!samples[rec.categoryCode]) samples[rec.categoryCode] = new Set();
+        if (samples[rec.categoryCode].size < 5) samples[rec.categoryCode].add(rec.name);
+    });
+    const codes = Object.keys(samples);
+    if (!codes.length) {
+        console.log(`[${label}] 診斷：這批資料裡沒有找到「種類代碼」欄位，可能欄位名稱又不一樣，之後要再確認`);
+        return;
+    }
+    console.log(`[${label}] 診斷：種類代碼一覽（幫忙確認哪個代碼是蔬菜/水果/花卉/特產）`);
+    codes.forEach(code => {
+        console.log(`  代碼 ${code}：${Array.from(samples[code]).join('、')}`);
+    });
 }
 
 // 分頁抓取整段時間範圍內的所有交易紀錄（政府API單次最多回傳一定筆數，用$skip分頁抓到底）
@@ -151,11 +175,12 @@ async function fetchAllPages(baseUrl, startDate, endDate, dateFormatFn, paramNam
 
 // 把一段時間範圍內的原始交易紀錄，依名稱聚合成「加權平均價」
 // （用交易量當權重，交易量大的市場/日期影響力比較大，比單純算術平均更貼近真實行情）
-function aggregateByName(rows, type) {
+function aggregateByName(rows, type, categoryFilter) {
     const totals = {}; // name -> { priceVolumeSum, volumeSum, count }
     rows.forEach(row => {
         const rec = extractRecord(row, type);
         if (!rec) return;
+        if (categoryFilter && rec.categoryCode !== categoryFilter) return; // 只挑出指定類別代碼的資料（例如只要蔬菜N04）
         if (!totals[rec.name]) totals[rec.name] = { priceVolumeSum: 0, volumeSum: 0, count: 0 };
         totals[rec.name].priceVolumeSum += rec.avgPrice * rec.volume;
         totals[rec.name].volumeSum += rec.volume;
@@ -201,19 +226,16 @@ async function detectQueryFormat(baseUrl, label) {
 }
 
 // ---- 3. 主流程：抓「近期」跟「歷史同期基準」兩段資料，算跌幅排行 ----
-async function buildRecommendations(baseUrl, type, label) {
+// 抓「近期14天」跟「去年同期±15天」兩段原始資料（還沒聚合），回傳原始rows，
+// 讓呼叫端可以用同一份原始資料，依不同的類別代碼各自聚合（例如農產要拆成蔬菜/水果/花卉三種，不用重複打三次API）
+async function fetchRecentAndBaselineRows(baseUrl, label) {
     const today = new Date();
     const { dateFormatFn, paramNames } = await detectQueryFormat(baseUrl, label);
 
-    // 近期：最近14天
     console.log(`[${label}] 開始抓取「近期14天」資料...`);
     const recentRows = await fetchAllPages(baseUrl, addDays(today, -14), today, dateFormatFn, paramNames);
-    const recentAgg = aggregateByName(recentRows, type);
-    console.log(`[${label}] 近期資料筆數：${recentRows.length}，聚合出 ${Object.keys(recentAgg).length} 種`);
+    console.log(`[${label}] 近期資料筆數：${recentRows.length}`);
 
-    // 基準：過去1年，同一個時節（月/日 ±15天）
-    // （原本設計比對過去2年，但實測發現資料量大、GitHub Actions的機器離台灣遠，跨國抓取要花不少時間，
-    // 先縮減成只比對去年同期，資料量減半，也已經足夠當「跟去年這時候比是不是特別便宜」的參考基準）
     const baselineRows = [];
     for (const yearsAgo of [1]) {
         console.log(`[${label}] 開始抓取「${yearsAgo}年前同期」資料...`);
@@ -225,34 +247,60 @@ async function buildRecommendations(baseUrl, type, label) {
         appendAll(baselineRows, rows);
         console.log(`[${label}] ${yearsAgo}年前同期資料筆數：${rows.length}`);
     }
-    const baselineAgg = aggregateByName(baselineRows, type);
+    return { recentRows, baselineRows };
+}
 
-    // 比對兩邊都有資料的食材，算漲跌幅（正值代表變便宜了、負值代表變貴了）
-    // 這裡不篩選漲跌方向，把「所有比對得出結果的食材」都留著，讓使用者可以搜尋任何一種食材、不只是變便宜的
+// 把「近期rows」跟「基準rows」聚合成 { all, recommended }，可以指定type（farm/fish/sheep）跟類別代碼篩選
+function buildRecommendationsFromRows(recentRows, baselineRows, type, categoryFilter) {
+    const recentAgg = aggregateByName(recentRows, type, categoryFilter);
+    const baselineAgg = aggregateByName(baselineRows, type, categoryFilter);
+
+    // 完整清單以「近期」為主——只要現在有在交易，搜尋就要找得到，不能因為去年同期沒有對應資料就整個消失
+    // （例如新品種、或去年這段時間剛好沒上市，都會缺基準資料，但這不代表現在買不到、不該讓人搜尋不到）
+    // 去年同期有資料才會附上跌幅比較，樣本數太少（<3筆）的比較不採用，但一樣不影響能不能被搜尋到
     const all = [];
     Object.keys(recentAgg).forEach(name => {
         const recent = recentAgg[name];
+        if (recent.sampleCount < 1) return;
         const baseline = baselineAgg[name];
-        if (!baseline) return;
-        // 樣本數太少的不採用，避免單一極端交易造成誤判
-        if (recent.sampleCount < 3 || baseline.sampleCount < 3) return;
-        if (baseline.avgPrice <= 0) return;
-        const dropPct = ((baseline.avgPrice - recent.avgPrice) / baseline.avgPrice) * 100;
-        all.push({
+        const hasValidBaseline = baseline && recent.sampleCount >= 3 && baseline.sampleCount >= 3 && baseline.avgPrice > 0;
+        const item = {
             name,
             recentPrice: Math.round(recent.avgPrice * 100) / 100,
-            baselinePrice: Math.round(baseline.avgPrice * 100) / 100,
-            dropPct: Math.round(dropPct * 10) / 10,
-        });
+            baselinePrice: hasValidBaseline ? Math.round(baseline.avgPrice * 100) / 100 : null,
+            dropPct: hasValidBaseline ? Math.round(((baseline.avgPrice - recent.avgPrice) / baseline.avgPrice) * 1000) / 10 : null,
+        };
+        all.push(item);
     });
 
-    // 推薦清單：只取真的變便宜的（跌幅>0），依跌幅由大到小排序，取前50名，給主畫面的排行榜用
     const recommended = all
         .filter(d => d.dropPct > 0)
         .sort((a, b) => b.dropPct - a.dropPct)
         .slice(0, 50);
-
     return { all, recommended };
+}
+
+async function buildRecommendations(baseUrl, type, label) {
+    const { recentRows, baselineRows } = await fetchRecentAndBaselineRows(baseUrl, label);
+    logCategoryCodeSamples(recentRows, type, label);
+    return buildRecommendationsFromRows(recentRows, baselineRows, type, null);
+}
+
+// 農產專用：只抓一次資料，但依種類代碼拆成蔬菜(N04)/水果(N05)/花卉(N06)三個獨立分類
+// （代碼是實際跑過診斷log、由人工確認過的，不是猜的）
+const FARM_CATEGORY_CODES = {
+    vegetables: 'N04',
+    fruits: 'N05',
+    flowers: 'N06',
+};
+async function buildFarmCategorizedRecommendations(baseUrl, label) {
+    const { recentRows, baselineRows } = await fetchRecentAndBaselineRows(baseUrl, label);
+    const result = {};
+    for (const [key, code] of Object.entries(FARM_CATEGORY_CODES)) {
+        result[key] = buildRecommendationsFromRows(recentRows, baselineRows, 'farm', code);
+        console.log(`[${label}] ${key}（代碼${code}）：全部 ${result[key].all.length} 項，推薦 ${result[key].recommended.length} 項`);
+    }
+    return result;
 }
 
 // ---- 型態B：固定欄位快照（毛豬、家禽白肉雞/雞蛋、鴨鵝都是這種格式）----
@@ -306,16 +354,14 @@ async function buildColumnRecommendations(baseUrl, columns, label) {
     const all = [];
     Object.keys(recentAgg).forEach(name => {
         const recent = recentAgg[name];
+        if (recent.sampleCount < 1) return;
         const baseline = baselineAgg[name];
-        if (!baseline) return;
-        if (recent.sampleCount < 3 || baseline.sampleCount < 3) return;
-        if (baseline.avgPrice <= 0) return;
-        const dropPct = ((baseline.avgPrice - recent.avgPrice) / baseline.avgPrice) * 100;
+        const hasValidBaseline = baseline && recent.sampleCount >= 3 && baseline.sampleCount >= 3 && baseline.avgPrice > 0;
         all.push({
             name,
             recentPrice: Math.round(recent.avgPrice * 100) / 100,
-            baselinePrice: Math.round(baseline.avgPrice * 100) / 100,
-            dropPct: Math.round(dropPct * 10) / 10,
+            baselinePrice: hasValidBaseline ? Math.round(baseline.avgPrice * 100) / 100 : null,
+            dropPct: hasValidBaseline ? Math.round(((baseline.avgPrice - recent.avgPrice) / baseline.avgPrice) * 1000) / 10 : null,
         });
     });
     const recommended = all.filter(d => d.dropPct > 0).sort((a, b) => b.dropPct - a.dropPct).slice(0, 50);
@@ -353,22 +399,8 @@ const RICE_COLUMNS = [
 
 // ---- 4. 執行並寫入 Firestore ----
 async function main() {
-    console.log('開始更新市場價格推薦...(SCRIPT_VERSION: 2026-07-27-v3)');
+    console.log('開始更新市場價格推薦...(SCRIPT_VERSION: 2026-07-27-v6)');
 
-    const veg = await buildRecommendations(
-        'https://data.moa.gov.tw/Service/OpenData/FromM/FarmTransData.aspx',
-        'farm',
-        '農產'
-    );
-    const fish = await buildRecommendations(
-        'https://data.moa.gov.tw/Service/OpenData/FromM/AquaticTransData.aspx',
-        'fish',
-        '漁產'
-    );
-
-    // 這四個是新加的類別，網址除了毛豬以外都是照官方API命名慣例推測的，還沒100%確認過，
-    // 所以每個都包一層try/catch——就算某一個網址猜錯了整個抓不到資料，也不會讓其他類別/整支腳本跟著失敗，
-    // 只會在log印警告、Firestore裡那個類別存空陣列，之後確認正確網址再回頭修就好
     const emptyResult = { all: [], recommended: [] };
     async function safeBuild(fn, label) {
         try {
@@ -378,6 +410,25 @@ async function main() {
             return emptyResult;
         }
     }
+
+    // 農產：一次抓資料，依種類代碼拆成蔬菜(N04)/水果(N05)/花卉(N06)三個獨立分類
+    const farmCategorized = await safeBuild(() => buildFarmCategorizedRecommendations(
+        'https://data.moa.gov.tw/Service/OpenData/FromM/FarmTransData.aspx',
+        '農產'
+    ), '農產');
+    const veg = farmCategorized.vegetables || emptyResult;
+    const fruit = farmCategorized.fruits || emptyResult;
+    const flower = farmCategorized.flowers || emptyResult;
+
+    const fish = await safeBuild(() => buildRecommendations(
+        'https://data.moa.gov.tw/Service/OpenData/FromM/AquaticTransData.aspx',
+        'fish',
+        '漁產'
+    ), '漁產');
+
+    // 這幾個是新加的類別，網址除了毛豬以外都是照官方API命名慣例推測的，還沒100%確認過，
+    // 所以每個都包一層try/catch——就算某一個網址猜錯了整個抓不到資料，也不會讓其他類別/整支腳本跟著失敗，
+    // 只會在log印警告、Firestore裡那個類別存空陣列，之後確認正確網址再回頭修就好
     const pig = await safeBuild(() => buildColumnRecommendations(
         'https://data.moa.gov.tw/Service/OpenData/FromM/AnimalTransData.aspx',
         PIG_COLUMNS,
@@ -409,6 +460,10 @@ async function main() {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         vegetables: veg.recommended,
         vegetablesAll: veg.all, // 完整清單（不限跌幅方向），給「搜尋特定農產品」功能用
+        fruits: fruit.recommended,
+        fruitsAll: fruit.all,
+        flowers: flower.recommended,
+        flowersAll: flower.all,
         fish: fish.recommended,
         fishAll: fish.all,
         pig: pig.recommended,
@@ -423,7 +478,7 @@ async function main() {
         riceAll: rice.all,
     });
 
-    console.log(`完成！農產推薦 ${veg.recommended.length} 項（全部 ${veg.all.length} 項），漁產推薦 ${fish.recommended.length} 項（全部 ${fish.all.length} 項）`);
+    console.log(`完成！蔬菜推薦 ${veg.recommended.length} 項（全部 ${veg.all.length} 項），水果推薦 ${fruit.recommended.length} 項（全部 ${fruit.all.length} 項），花卉推薦 ${flower.recommended.length} 項（全部 ${flower.all.length} 項），漁產推薦 ${fish.recommended.length} 項（全部 ${fish.all.length} 項）`);
     console.log(`毛豬 ${pig.all.length} 項，雞肉雞蛋 ${chickenEgg.all.length} 項，鴨鵝 ${gooseDuck.all.length} 項，羊隻 ${sheep.all.length} 項，白米 ${rice.all.length} 項`);
 }
 
