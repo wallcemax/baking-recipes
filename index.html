@@ -121,6 +121,50 @@
         /* 價格/熱量這類數字，統一用等寬數字對齊，掃視比較好對齊 */
         .num-tabular { font-variant-numeric: tabular-nums; }
 
+        /* Toast提示（取代alert()）：右上角滑入，幾秒後自動淡出消失 */
+        #toast-container {
+            position: fixed; top: 1rem; right: 1rem; z-index: 9999;
+            display: flex; flex-direction: column; gap: 0.6rem;
+            max-width: min(90vw, 360px);
+        }
+        @keyframes toastSlideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .toast-item {
+            background: var(--espresso); color: #fff; padding: 0.85rem 1.15rem;
+            border-radius: 1rem; font-size: 0.9rem; line-height: 1.5;
+            box-shadow: 0 10px 24px -8px rgba(0,0,0,0.35);
+            animation: toastSlideIn .28s cubic-bezier(.2,.8,.3,1);
+            transition: opacity .25s ease, transform .25s ease;
+        }
+        .toast-item.toast-leaving { opacity: 0; transform: translateX(30px); }
+        .toast-item.toast-success { background: var(--sage); }
+        .toast-item.toast-error { background: #A6362F; }
+
+        /* 圖片淡入：img載入完成前先透明，onload時淡入，避免圖片突然彈出 */
+        .fade-img { opacity: 0; transition: opacity .45s ease; }
+        .fade-img.loaded { opacity: 1; }
+
+        /* 食譜步驟編號徽章：實心圓圈數字，取代純文字編號，比較好抓重點 */
+        .step-badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 1.75rem; height: 1.75rem; border-radius: 999px; flex-shrink: 0;
+            background: var(--jam); color: #fff; font-weight: 700; font-size: 0.85rem;
+            font-family: 'Noto Serif TC', serif;
+        }
+
+        /* 成就徽章卡片：依稀有度給不同的邊框/光暈顏色 */
+        .badge-card {
+            position: relative; border-radius: 1.25rem; padding: 1rem;
+            text-align: center; border: 2px solid var(--line); background: var(--paper);
+            transition: transform .2s ease;
+        }
+        .badge-card:hover { transform: translateY(-2px); }
+        .badge-card.locked { opacity: .45; filter: grayscale(.6); }
+        .badge-card .badge-icon { font-size: 2.25rem; margin-bottom: 0.4rem; }
+        .badge-card.rarity-common { border-color: #B8C4B8; }
+        .badge-card.rarity-rare { border-color: #6F8C6E; box-shadow: 0 0 0 1px rgba(111,140,110,0.25); }
+        .badge-card.rarity-epic { border-color: #A8324A; box-shadow: 0 0 16px -4px rgba(168,50,74,0.45); }
+        .badge-card.rarity-legendary { border-color: var(--honey); box-shadow: 0 0 20px -2px rgba(201,138,44,0.55); }
+
         .form-input {
             width: 100%; padding: 0.9rem 1.15rem;
             border: 1px solid var(--line); border-radius: 1rem;
@@ -253,6 +297,7 @@
     </style>
 </head>
 <body class="min-h-screen">
+    <div id="toast-container"></div>
     <div id="inapp-browser-banner" class="hidden px-4 py-3 text-sm flex items-center justify-between gap-3" style="background:#FCE9C8; color:var(--espresso)">
         <span>⚠️ 偵測到你可能是透過 App（如 Messenger／Instagram／Line）內建瀏覽器開啟本頁，Google 登入需要在一般瀏覽器（Chrome／Safari）中才能使用。請點右上角「⋯」選擇「在瀏覽器中開啟」。</span>
         <button onclick="this.parentElement.classList.add('hidden')" class="text-lg leading-none shrink-0" aria-label="關閉提示">×</button>
@@ -546,11 +591,11 @@
                 </div>
                 <div class="mb-8">
                     <h3 class="font-display font-semibold text-lg mb-3">已獲得的稱號</h3>
-                    <div id="profile-titles-list" class="flex flex-wrap gap-2"></div>
+                    <div id="profile-titles-list" class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));"></div>
                 </div>
                 <div>
                     <h3 class="font-display font-semibold text-lg mb-3">已獲得的成就</h3>
-                    <div id="profile-achievements-list"></div>
+                    <div id="profile-achievements-list" class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));"></div>
                 </div>
             </div>
         </div>
@@ -666,6 +711,27 @@
     </div>
 
     <script>
+        // ========== Toast提示系統（取代alert） ==========
+        // 把全站所有alert(...)呼叫，都改成從畫面右上角滑出的提示條，幾秒後自動消失，
+        // 不用逐一去改網站裡幾百個alert()呼叫的地方，直接把window.alert整個接管掉就好。
+        // 注意：只接管alert，不動confirm()／prompt()——那兩個要讓使用者做選擇/輸入文字，
+        // 需要真的暫停等待回應，沒辦法用不會擋住畫面的Toast取代
+        const NATIVE_ALERT = window.alert.bind(window); // 保留一份原生alert，萬一Toast容器不存在時可以退回使用
+        function showToast(message, type) {
+            const container = document.getElementById('toast-container');
+            if (!container) { NATIVE_ALERT(message); return; }
+            const item = document.createElement('div');
+            item.className = `toast-item${type ? ' toast-' + type : ''}`;
+            item.textContent = message;
+            container.appendChild(item);
+            const duration = Math.min(7000, Math.max(2600, message.length * 90)); // 訊息長一點的多留一點時間看完
+            setTimeout(() => {
+                item.classList.add('toast-leaving');
+                setTimeout(() => item.remove(), 260);
+            }, duration);
+        }
+        window.alert = function (message) { showToast(String(message)); };
+
         const firebaseConfig = {
           apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
           authDomain: "recipe-synchronization.firebaseapp.com",
@@ -1193,6 +1259,14 @@
             document.getElementById('profile-modal').classList.add('hidden');
             consumeModalHistoryState(fromPopState);
         }
+        // 依解鎖門檻高低，粗略分出稀有度等級，用在徽章卡片的邊框/光暈顏色
+        function getRarityClass(threshold) {
+            const t = Number(threshold) || 0;
+            if (t >= 50) return 'rarity-legendary';
+            if (t >= 10) return 'rarity-epic';
+            if (t >= 5) return 'rarity-rare';
+            return 'rarity-common';
+        }
         function renderProfileModal() {
             if (!userProgress) return;
             const unlockedTitles = ACHIEVEMENT_RULES.filter(r => r.title && userProgress.unlockedTitleIds.includes(r.id));
@@ -1205,20 +1279,21 @@
 
             const titlesList = document.getElementById('profile-titles-list');
             titlesList.innerHTML = unlockedTitles.length
-                ? unlockedTitles.map(r => `<div class="px-3 py-2 rounded-2xl text-sm" style="background:var(--cream); border:1px solid var(--line)">
-                    <p class="font-semibold">${r.title.icon} ${r.title.name}</p>
-                    <p class="text-xs mt-0.5" style="color:#B3A492">${getRuleReason(r)}</p>
+                ? unlockedTitles.map(r => `<div class="badge-card ${getRarityClass(r.threshold)}" title="${escapeHtmlAttr(getRuleReason(r))}">
+                    <div class="badge-icon">${r.title.icon}</div>
+                    <p class="text-xs font-semibold leading-snug">${r.title.name}</p>
                   </div>`).join('')
-                : `<p class="text-sm" style="color:#B3A492">還沒有獲得任何稱號，開始新增食譜、完成料理來解鎖吧！</p>`;
+                : `<p class="text-sm col-span-full" style="color:#B3A492">還沒有獲得任何稱號，開始新增食譜、完成料理來解鎖吧！</p>`;
 
             const achList = document.getElementById('profile-achievements-list');
             achList.innerHTML = unlockedAchievements.length
-                ? unlockedAchievements.map(r => `<div class="px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)">
-                    <p class="font-semibold">🎖️ ${r.achievement.name}</p>
-                    <p class="text-xs mt-1" style="color:#B3A492">達成條件：${getRuleReason(r)}</p>
+                ? unlockedAchievements.map(r => `<div class="badge-card ${getRarityClass(r.threshold)}">
+                    <div class="badge-icon">🎖️</div>
+                    <p class="text-sm font-semibold leading-snug">${r.achievement.name}</p>
+                    <p class="text-xs mt-1" style="color:#B3A492">${getRuleReason(r)}</p>
                     <p class="text-xs mt-1 italic" style="color:var(--espresso-soft)">「${r.achievement.desc}」</p>
                   </div>`).join('')
-                : `<p class="text-sm" style="color:#B3A492">還沒有獲得任何成就</p>`;
+                : `<p class="text-sm col-span-full" style="color:#B3A492">還沒有獲得任何成就</p>`;
         }
         async function equipTitle(titleId) {
             if (!userProgress) return;
@@ -11255,7 +11330,7 @@
                         <i class="${isFav ? 'fas' : 'far'} fa-heart" style="color:var(--jam)"></i>
                     </button>
                     ${r.imageUrl
-                        ? `<div class="recipe-card-image-wrap"><img src="${r.imageUrl}" loading="lazy"></div>`
+                        ? `<div class="recipe-card-image-wrap"><img class="fade-img" src="${r.imageUrl}" loading="lazy" onload="this.classList.add('loaded')"></div>`
                         : `<div class="recipe-card-image-wrap"><div class="recipe-card-image-placeholder">${icon}</div></div>`}
                     <div class="flex justify-between items-start mb-3">
                         <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${r.category}</span>
@@ -11852,6 +11927,7 @@
             if (wasChecked) checkedSteps.delete(idx); else checkedSteps.add(idx);
             const btn = document.getElementById(`step-check-${idx}`);
             const icon = btn ? btn.querySelector('i') : null;
+            const numEl = document.getElementById(`step-num-${idx}`);
             const textEl = document.getElementById(`step-text-${idx}`);
             const nowChecked = !wasChecked;
             if (btn) {
@@ -11859,6 +11935,7 @@
             }
             if (icon) icon.style.display = nowChecked ? 'inline' : 'none';
             if (icon) icon.style.color = nowChecked ? '#fff' : 'var(--jam)';
+            if (numEl) numEl.style.display = nowChecked ? 'none' : 'inline'; // 打勾時顯示勾勾、隱藏步驟編號；取消打勾則反過來
             if (textEl) {
                 textEl.style.color = nowChecked ? '#B3A492' : '';
                 textEl.style.textDecoration = nowChecked ? 'line-through' : 'none';
@@ -12076,7 +12153,7 @@
                         <button onclick="closeDetail()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
                     </div>
                 </div>
-                ${recipe.imageUrl ? `<img id="detail-image" src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover">` : ''}
+                ${recipe.imageUrl ? `<img id="detail-image" src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">` : ''}
                 <div class="px-6 sm:px-8 py-6">
                     <div id="detail-top-controls">
                     ${recipe.sizeValue ? `<p class="text-xs mb-2" style="color:#B3A492">原始：${recipe.sizeValue}${recipe.sizeUnit} × ${recipe.servings} 個。換算時會同時依尺寸（面積比）與數量計算份量</p>` : ''}
@@ -12116,6 +12193,7 @@
                             const stepImage = stepImageUrl ? `<img src="${stepImageUrl}" class="rounded-xl mt-3 max-w-[220px] w-full" loading="lazy">` : '';
                             return `<div class="flex gap-4 mb-5 step-row">
                                 <button onclick="toggleStepCheck(${i})" id="step-check-${i}" class="step-checkbox shrink-0 w-7 h-7 rounded-full border-2 flex items-center justify-center mt-0.5 transition-colors" style="border-color:var(--jam)" aria-label="標記完成">
+                                    <span id="step-num-${i}" class="text-xs font-bold font-display" style="color:var(--jam)">${i + 1}</span>
                                     <i class="fas fa-check text-xs" style="color:var(--jam); display:none"></i>
                                 </button>
                                 <div class="flex-1">
