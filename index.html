@@ -13009,6 +13009,26 @@
         function closeMyIngredientCostsModal() {
             document.getElementById('my-ingredient-costs-modal').classList.add('hidden');
         }
+        // 一次幫某個食材(品牌)設定好幾個別名，用逗號分隔，不用一個一個跑去食譜頁面套用
+        async function manageIngredientAliases(name) {
+            if (!currentUser) return;
+            const costs = await loadUserIngredientCosts();
+            const entry = costs[name];
+            const existing = (entry && entry.keywords) ? entry.keywords.join('、') : '';
+            const input = prompt(`幫「${name}」設定別名，之後食譜寫這些名稱都會自動套用這筆價格/庫存。\n用逗號分隔可以一次輸入好幾個，例如：鮮奶,牛奶,牛乳,鮮乳\n\n目前已經有的別名：${existing || '（無）'}`, existing);
+            if (input === null) return; // 按了取消
+            const newAliases = input.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+            // 先把「原本有、這次拿掉的」別名解除連結
+            const oldAliases = (entry && entry.keywords) || [];
+            for (const old of oldAliases) {
+                if (!newAliases.includes(old)) await unlinkIngredientKeyword(name, old);
+            }
+            // 再把「這次新增的」別名一個一個連結上去
+            for (const alias of newAliases) {
+                if (!oldAliases.includes(alias)) await linkIngredientAsKeyword(name, alias);
+            }
+            renderMyIngredientCostsList();
+        }
         async function renderMyIngredientCostsList() {
             const listEl = document.getElementById('my-cost-list');
             if (!listEl) return;
@@ -13029,6 +13049,7 @@
                             <p class="text-xs" style="color:#B3A492">每100克 NT$${c.pricePer100g.toFixed(2)} ${purchaseText}</p>
                             ${keywordsText}
                         </div>
+                        <button onclick="manageIngredientAliases('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--honey); color:white">別名</button>
                         <button onclick="openIngredientCostEditor('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:white">編輯</button>
                         <button onclick="removeMyIngredientCost('${escapeHtmlAttr(name)}')" class="text-xs shrink-0" style="color:#C4453F">刪除</button>
                     </div>`;
