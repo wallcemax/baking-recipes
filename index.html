@@ -309,7 +309,7 @@
                 <button onclick="closeIngredientCostModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
             </div>
             <div class="px-6 py-6">
-                <p id="ingredient-cost-modal-name" class="font-medium mb-3"></p>
+                <p class="font-medium mb-3"><span id="ingredient-cost-modal-name"></span> <span id="ingredient-cost-modal-rename-link"></span></p>
                 <div id="ingredient-cost-modal-linked" class="mb-2"></div>
                 <div id="ingredient-cost-modal-similar" class="mb-4"></div>
                 <p class="text-xs mb-2" style="color:#B3A492">照你實際買的方式填就好，例如「麵粉 59元 買1000g」、「雞蛋 85元 買1台斤」、「牛奶 120元 買1000ml」，系統會自動換算成統一的單價</p>
@@ -12369,6 +12369,34 @@
                 return false;
             }
         }
+        // 從「設定食材價格」視窗點「改名」的完整互動流程：檢查新名稱有沒有衝突、
+        // 順便把條碼字典裡指到舊名稱的紀錄更新掉，並且問一下冰箱裡如果有同名食材要不要一起改
+        async function renameIngredientCostPrompt(oldName) {
+            const newName = prompt(`幫「${oldName}」改名，新名稱：`, oldName);
+            if (newName === null) return; // 按了取消
+            const trimmedNew = newName.trim();
+            if (!trimmedNew || trimmedNew === oldName) return;
+            const costs = await loadUserIngredientCosts();
+            if (costs[trimmedNew]) { alert(`「${trimmedNew}」這個名稱已經有價格資料了，不能改成重複的名稱`); return; }
+            const ok = await renameIngredientCost(oldName, trimmedNew);
+            if (!ok) { alert('改名失敗'); return; }
+            // 條碼字典裡如果有指到舊名稱的紀錄，一併更新，不然之後掃描還是會抓到改名前的名字
+            const dict = await loadBarcodeDictionary(true);
+            for (const [code, mappedName] of Object.entries(dict)) {
+                if (mappedName === oldName) await saveBarcodeToDictionary(code, trimmedNew);
+            }
+            // 冰箱裡如果剛好有食材叫一樣的舊名稱，問一下要不要一起改，避免改名之後兩邊名稱對不起來
+            const fridgeItems = await loadFridgeItems(true);
+            const matchingItems = fridgeItems.filter(item => item.name === oldName);
+            if (matchingItems.length && confirm(`冰箱裡有${matchingItems.length}筆食材也叫「${oldName}」，要一起改名成「${trimmedNew}」嗎？`)) {
+                matchingItems.forEach(item => { item.name = trimmedNew; });
+                await saveFridgeItems(fridgeItems);
+            }
+            alert(`已改名成「${trimmedNew}」`);
+            ingredientCostModalTarget = trimmedNew;
+            await renderIngredientCostModalView(trimmedNew);
+            if (ingredientCostModalReturnToManage) renderMyIngredientCostsList();
+        }
 
         // 刪除使用者自己設定的某個食材價格（回到「尚未設定」的狀態，下次查詢會重新觸發AI估算）
         async function deleteUserIngredientCost(name) {
@@ -12960,6 +12988,9 @@
             saveBtn.disabled = true; saveBtn.style.opacity = '.4';
             const costs = await loadUserIngredientCosts(true);
             const existing = costs[name];
+            // 改名連結：只有這個名稱真的有自己獨立的價格資料時才能改名（如果是套用別人的關鍵字，要先「取消套用」才能改）
+            const renameLinkEl = document.getElementById('ingredient-cost-modal-rename-link');
+            renameLinkEl.innerHTML = existing ? `<a href="javascript:void(0)" onclick="renameIngredientCostPrompt('${escapeHtmlAttr(name)}')" class="text-xs" style="color:var(--sage); text-decoration:underline">✏️ 改名</a>` : '';
             const owner = !existing ? findKeywordOwner(name, costs) : null;
             const linkedEl = document.getElementById('ingredient-cost-modal-linked');
             if (owner) {
