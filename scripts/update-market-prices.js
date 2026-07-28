@@ -1,6 +1,6 @@
 // ============================================================
 // 市場價格專區 - 排程腳本
-// SCRIPT_VERSION: 2026-07-27-v13 （鴨鵝改用使用者查到、有2015年封存記錄佐證的網址PoultryTransGooseDuckData.aspx；欄位名稱加入中文猜測候選）
+// SCRIPT_VERSION: 2026-07-27-v14 （鴨鵝網址+3/4欄位名稱都猜對了，修正最後一個「鴨蛋」欄位的正確寫法，全部九大類終於都接上了）
 // ------------------------------------------------------------
 // 這支腳本會：
 //   1. 向農業部「農產品交易行情」「漁產品交易行情」開放資料 API 抓取：
@@ -463,7 +463,7 @@ const GOOSE_DUCK_COLUMNS = [
     { field: ['肉鵝(白羅曼)', 'Goose_WR_TaijinPrice'], name: '肉鵝(白羅曼)', unit: 'taijin' },
     { field: ['正番鴨(公)', 'Duck_M_TaijinPrice'], name: '鴨(正番鴨公)', unit: 'taijin' },
     { field: ['土番鴨(75天)', 'Duck_75D_TaijinPrice'], name: '鴨(土番鴨75天)', unit: 'taijin' },
-    { field: ['鴨蛋(新蛋台南)', 'Duckegg_TNN_TaijinPrice'], name: '鴨蛋(新蛋台南)', unit: 'taijin' },
+    { field: ['鴨蛋(新蛋)(台南)', '鴨蛋(新蛋台南)', 'Duckegg_TNN_TaijinPrice'], name: '鴨蛋(新蛋台南)', unit: 'taijin' },
 ];
 // 白米：實際欄位名稱從診斷log確認過了，pt_1xxx是零售價(元/公斤)，直接可用不用換算
 const RICE_COLUMNS = [
@@ -476,7 +476,7 @@ const RICE_COLUMNS = [
 
 // ---- 4. 執行並寫入 Firestore ----
 async function main() {
-    console.log('開始更新市場價格推薦...(SCRIPT_VERSION: 2026-07-27-v13)');
+    console.log('開始更新市場價格推薦...(SCRIPT_VERSION: 2026-07-27-v14)');
 
     const emptyResult = { all: [], recommended: [] };
     async function safeBuild(fn, label) {
