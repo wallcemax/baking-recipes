@@ -353,6 +353,7 @@
                 </div>
                 <button onclick="addMyIngredientCost()" class="btn-amber w-full mb-2">🧮 換算並新增</button>
                 <div id="my-cost-new-result" class="text-xs mb-5" style="color:#B3A492"></div>
+                <input id="my-cost-search" oninput="renderMyIngredientCostsList()" placeholder="🔍 搜尋食材名稱..." class="form-input mb-3">
                 <div id="my-cost-list" class="space-y-2"></div>
             </div>
         </div>
@@ -428,6 +429,7 @@
                 <p class="text-xs mb-2" style="color:#B3A492">💡 花費選填，填了會同步更新食材成本</p>
                 <button id="fridge-submit-btn" onclick="addFridgeItem()" class="btn-amber w-full mb-1">➕ 加入冰箱</button>
                 <p id="fridge-editing-hint" class="hidden text-xs text-center mb-4"><a href="javascript:void(0)" onclick="cancelEditFridgeItem()" style="color:#B3A492; text-decoration:underline">取消編輯，改成新增新的一筆</a></p>
+                <input id="fridge-items-search" oninput="renderFridgeItemsList()" placeholder="🔍 搜尋冰箱食材..." class="form-input mb-3">
                 <div id="fridge-items-list" class="space-y-2 mb-6"></div>
                 <div class="pt-4 pb-4 border-t" style="border-color:var(--line)">
                     <p class="font-semibold text-sm mb-1">🧂 常備食材清單</p>
@@ -13136,9 +13138,22 @@
             const listEl = document.getElementById('my-cost-list');
             if (!listEl) return;
             const costs = await loadUserIngredientCosts(true); // 強制重新讀一次，確保跟Firestore同步
-            const names = Object.keys(costs).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+            const searchInput = document.getElementById('my-cost-search');
+            const keyword = (searchInput && searchInput.value || '').trim();
+            let names = Object.keys(costs).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+            if (keyword) {
+                // 名稱本身有包含關鍵字、或者這筆資料套用的別名裡有包含關鍵字，都算符合（例如搜尋「鮮奶」
+                // 也能找到套用了「鮮奶」這個別名的「心璞鮮乳」，不用一定要打品牌名稱才搜得到）
+                names = names.filter(name => {
+                    if (name.includes(keyword)) return true;
+                    const kws = costs[name].keywords || [];
+                    return kws.some(k => k.includes(keyword));
+                });
+            }
             if (!names.length) {
-                listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">還沒有任何食材價格資料，去食譜詳細頁點食材、或用上面的表單新增一個吧</p>`;
+                listEl.innerHTML = keyword
+                    ? `<p class="text-sm text-center py-6" style="color:#B3A492">查無「${keyword}」的資料</p>`
+                    : `<p class="text-sm text-center py-6" style="color:#B3A492">還沒有任何食材價格資料，去食譜詳細頁點食材、或用上面的表單新增一個吧</p>`;
                 return;
             }
             listEl.innerHTML = names.map(name => {
@@ -13725,10 +13740,20 @@
                 listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">冰箱還是空的，把家裡現有的食材加進來吧</p>`;
                 return;
             }
+            const searchInput = document.getElementById('fridge-items-search');
+            const keyword = (searchInput && searchInput.value || '').trim();
+            // 先把每個食材配上它在原始陣列裡的index（編輯/刪除按鈕需要這個才能對到正確的那一筆），
+            // 篩選之後index要維持原本的值，不能因為篩選過就變成篩選後清單的順序
+            const indexed = items.map((item, idx) => ({ item, idx }));
+            const filtered = keyword ? indexed.filter(({ item }) => item.name.includes(keyword)) : indexed;
+            if (!filtered.length) {
+                listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">查無「${keyword}」的食材</p>`;
+                return;
+            }
             const costs = await loadUserIngredientCosts(); // 拿來顯示每個食材目前設定的成本（如果有的話）
             // 直接照陣列順序顯示，不再依到期日排序——新增食材時會自動插入到最前面（見addFridgeItem），
             // 所以「最新加的排最上面」這件事，用陣列順序本身就能達成，不需要額外排序規則
-            listEl.innerHTML = items.map((item, realIdx) => {
+            listEl.innerHTML = filtered.map(({ item, idx: realIdx }) => {
                 const expiryInfo = fridgeExpiryStatus(item.expiryDate);
                 // 先查原始名稱，查不到的話再查「名稱(規格)」這種因為規格衝突被自動分開存的格式
                 const costEntry = costs[item.name] || costs[`${item.name}(${item.amount}${item.unit})`];
