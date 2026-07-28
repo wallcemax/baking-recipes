@@ -82,7 +82,14 @@ async function main() {
 
         for (const { uid, token } of tokenOwners) {
             try {
-                await messaging.send({ token, notification: { title, body } });
+                await messaging.send({
+                    token,
+                    notification: { title, body },
+                    webpush: {
+                        notification: { title, body, requireInteraction: true },
+                        fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
+                    },
+                });
                 notifiedDevices++;
             } catch (err) {
                 // NotRegistered / InvalidArgument 這類錯誤代表權杖確定已經失效了（換裝置、清快取、解除授權…），
