@@ -21,6 +21,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
     <style>
         :root {
             --cream: #FBF3E7;
@@ -403,15 +404,39 @@
                 <button onclick="closeFridgeModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <div id="fridge-invite-banner"></div>
                 <p class="text-xs mb-4" style="color:#B3A492">記錄家裡現在有的食材，看食譜的時候會自動幫你比對「這個有」「這個沒有/不夠」。快到期的食材會用顏色提醒你。</p>
                 <div class="grid grid-cols-4 gap-2 mb-2">
                     <input id="fridge-new-name" placeholder="食材名稱" class="form-input col-span-1">
                     <input id="fridge-new-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input col-span-1">
-                    <input id="fridge-new-unit" placeholder="單位(g/顆/包)" class="form-input col-span-1">
+                    <input id="fridge-new-unit" placeholder="單位(g/顆/ml)" class="form-input col-span-1">
                     <input id="fridge-new-expiry" type="date" class="form-input col-span-1" title="有效期限（選填）">
                 </div>
                 <button onclick="addFridgeItem()" class="btn-amber w-full mb-5">➕ 加入冰箱</button>
-                <div id="fridge-items-list" class="space-y-2"></div>
+                <div id="fridge-items-list" class="space-y-2 mb-6"></div>
+                <div class="pt-4 pb-4 border-t" style="border-color:var(--line)">
+                    <p class="font-semibold text-sm mb-1">🧂 常備食材清單</p>
+                    <p class="text-xs mb-3" style="color:#B3A492">像水、鹽這種家裡一定有、不需要特別追蹤庫存的東西，加進這裡之後，看食譜時永遠當作「有」，不會被列成缺貨、也不會被扣</p>
+                    <div id="fridge-staples-list" class="flex flex-wrap gap-2 mb-2"></div>
+                    <div class="flex gap-2">
+                        <input id="fridge-staple-input" onkeydown="if(event.key==='Enter'){event.preventDefault();addFridgeStaple();}" placeholder="輸入食材名稱後按Enter" class="form-input flex-1">
+                        <button onclick="addFridgeStaple()" class="btn-secondary whitespace-nowrap">新增</button>
+                    </div>
+                </div>
+                <div class="pt-4 border-t" style="border-color:var(--line)">
+                    <p class="font-semibold text-sm mb-1">🔔 到期提醒通知</p>
+                    <p class="text-xs mb-3" style="color:#B3A492">開啟之後，食材有效期限剩3天時，就算沒有打開網站，手機/電腦也會跳出提醒通知</p>
+                    <button id="fridge-notif-btn" onclick="enableFridgeNotifications()" class="btn-secondary w-full">開啟到期提醒通知</button>
+                </div>
+                <div class="pt-4 border-t" style="border-color:var(--line)">
+                    <p class="font-semibold text-sm mb-1">👨‍👩‍👧 家庭冰箱</p>
+                    <p class="text-xs mb-3" style="color:#B3A492">邀請家人加入，大家共用同一個冰箱、一起管理庫存。對方要自己按接受才會真的加入，不會未經同意就被拉進來</p>
+                    <div id="fridge-members-list" class="mb-3"></div>
+                    <div class="flex gap-2">
+                        <input id="fridge-invite-email" type="email" placeholder="輸入家人的帳號email" class="form-input flex-1">
+                        <button onclick="inviteToHousehold()" class="btn-secondary whitespace-nowrap">送出邀請</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -888,6 +913,15 @@
                 authorTitleCache[currentUser.uid] = (equipped && equipped.title) ? equipped.title : null;
             } catch (err) {
                 console.warn('同步公開稱號資料失敗', err && err.message);
+            }
+            // email索引：故意存在獨立的collection、不是公開可讀的userProfiles，Firestore規則要設成「登入才能查」，
+            // 降低email被隨便掃描出來的風險，只給「邀請家人加入冰箱」這個功能內部查詢用
+            if (currentUser.email) {
+                try {
+                    await db.collection('userEmailIndex').doc(currentUser.uid).set({ email: currentUser.email.toLowerCase() });
+                } catch (err) {
+                    console.warn('同步email索引失敗', err && err.message);
+                }
             }
         }
 
@@ -11763,9 +11797,35 @@
             { emoji: '🎨', message: '快拿紅線圍起來，這是美術館等級的藝術品！🎨', effect: 'gallery' },
         ];
 
+        // 大功告成時呼叫：把這道食譜實際換算過的份量，從冰箱庫存扣掉
+        async function deductFridgeForRecipe(recipe, factor) {
+            if (!currentUser) return;
+            const fridgeItems = await loadFridgeItems();
+            if (!fridgeItems.length) return; // 冰箱是空的，沒東西可以扣
+            const rows = await computeFridgeMatchRows(recipe, factor, fridgeItems);
+            let changed = false;
+            rows.forEach(r => {
+                if (r.status === 'staple') return; // 常備食材不用追蹤，不扣
+                if (r.fridgeIdx < 0) return; // 冰箱裡沒有這個食材，扣不到
+                const item = fridgeItems[r.fridgeIdx];
+                if (r.status === 'unsure') return; // 單位換算不出來，不敢自動扣，避免扣錯
+                if (r.neededGrams != null && r.stockGrams != null && r.stockGrams > 0) {
+                    // 用克數的比例去扣，不管食譜跟冰箱記的是不是同一種單位，都能正確按比例扣減
+                    const usedFraction = Math.min(1, r.neededGrams / r.stockGrams);
+                    item.amount = Math.round(item.amount * (1 - usedFraction) * 100) / 100;
+                } else {
+                    // 換算不出克數但單位剛好一樣，退回原本直接相減的做法
+                    item.amount = Math.max(0, item.amount - r.needed);
+                }
+                changed = true;
+            });
+            if (changed) await saveFridgeItems(fridgeItems);
+        }
+
         function finishRecipe() {
             if (!currentDetailStepsTotal || checkedSteps.size < currentDetailStepsTotal) return;
             if (currentDetailRecipe) recordFinish(currentDetailRecipe.id, currentDetailRecipe.category);
+            if (currentDetailRecipe && currentUser) deductFridgeForRecipe(currentDetailRecipe, window.__lastScaleFactor || 1);
             const variant = CELEBRATION_VARIANTS[Math.floor(Math.random() * CELEBRATION_VARIANTS.length)];
             launchConfetti();
             playCelebrationEffect(variant.effect);
@@ -13132,18 +13192,34 @@
         }
 
         // ========== 我的冰箱 ==========
-        // Firestore結構：fridges/{uid}，欄位items是陣列：[{name, amount, unit, expiryDate}]
-        // expiryDate是選填的"YYYY-MM-DD"字串，沒填就是null
+        // Firestore結構：fridges/{fridgeId}，欄位items是陣列：[{name, amount, unit, expiryDate}]，
+        // 還有members(這個冰箱有哪些人在用)、ownerUid(建立者)
+        // 每個使用者在fridgeMemberships/{uid}裡記著自己「目前用的是哪個冰箱」，預設(沒有這份資料時)就是自己的uid，
+        // 也就是每個人一開始都是自己的個人冰箱，加入家庭之後這裡會改指向共用的那個冰箱ID
         let fridgeItemsCache = null;
-        let fridgeItemsCacheUid = null;
+        let fridgeItemsCacheKey = null; // 用fridgeId當快取的key，不是uid，這樣共用冰箱的人快取才會一致
+        let activeFridgeIdCache = null;
 
-        async function loadFridgeItems(forceRefresh) {
-            if (!currentUser) { fridgeItemsCache = []; fridgeItemsCacheUid = null; return fridgeItemsCache; }
-            if (!forceRefresh && fridgeItemsCache && fridgeItemsCacheUid === currentUser.uid) return fridgeItemsCache;
+        async function getActiveFridgeId(forceRefresh) {
+            if (!currentUser) return null;
+            if (!forceRefresh && activeFridgeIdCache) return activeFridgeIdCache;
             try {
-                const doc = await db.collection('fridges').doc(currentUser.uid).get();
+                const doc = await db.collection('fridgeMemberships').doc(currentUser.uid).get();
+                activeFridgeIdCache = (doc.exists && doc.data().fridgeId) ? doc.data().fridgeId : currentUser.uid;
+            } catch (err) {
+                console.warn('讀取冰箱歸屬失敗', err && err.message);
+                activeFridgeIdCache = currentUser.uid;
+            }
+            return activeFridgeIdCache;
+        }
+        async function loadFridgeItems(forceRefresh) {
+            if (!currentUser) { fridgeItemsCache = []; fridgeItemsCacheKey = null; return fridgeItemsCache; }
+            const fridgeId = await getActiveFridgeId(forceRefresh);
+            if (!forceRefresh && fridgeItemsCache && fridgeItemsCacheKey === fridgeId) return fridgeItemsCache;
+            try {
+                const doc = await db.collection('fridges').doc(fridgeId).get();
                 fridgeItemsCache = doc.exists ? (doc.data().items || []) : [];
-                fridgeItemsCacheUid = currentUser.uid;
+                fridgeItemsCacheKey = fridgeId;
             } catch (err) {
                 console.warn('讀取冰箱失敗', err && err.message);
                 fridgeItemsCache = fridgeItemsCache || [];
@@ -13152,8 +13228,13 @@
         }
         async function saveFridgeItems(items) {
             if (!currentUser) return false;
+            const fridgeId = await getActiveFridgeId();
             try {
-                await db.collection('fridges').doc(currentUser.uid).set({ items });
+                await db.collection('fridges').doc(fridgeId).set({
+                    items,
+                    ownerUid: fridgeId, // 冰箱文件的id本身就是建立者的uid（個人冰箱），家庭冰箱建立時另外處理
+                    members: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+                }, { merge: true });
                 fridgeItemsCache = items;
                 return true;
             } catch (err) {
@@ -13176,11 +13257,159 @@
             return { label: `${expiryDate}到期`, color: '#B3A492' };
         }
 
+        // ========== 到期提醒推播通知 ==========
+        // VAPID金鑰要去Firebase主控台「專案設定→Cloud Messaging→Web Push憑證」自己產生一組，貼在這裡才能用，
+        // 沒填之前這個功能會直接跳錯誤訊息、不會壞掉其他功能
+        const FCM_VAPID_KEY = '請填入你的VAPID金鑰';
+        async function enableFridgeNotifications() {
+            if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
+            if (FCM_VAPID_KEY === '請填入你的VAPID金鑰') {
+                alert('這個功能還沒設定完成，要先去Firebase主控台產生VAPID金鑰');
+                return;
+            }
+            if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+                alert('這個瀏覽器不支援通知功能');
+                return;
+            }
+            const btn = document.getElementById('fridge-notif-btn');
+            try {
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') { alert('沒有允許通知權限，沒辦法開啟提醒'); return; }
+                const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+                const messaging = firebase.messaging();
+                const token = await messaging.getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: registration });
+                if (!token) { alert('沒辦法取得通知權杖，請稍後再試'); return; }
+                await db.collection('fcmTokens').doc(currentUser.uid).set({
+                    tokens: firebase.firestore.FieldValue.arrayUnion(token),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+                btn.textContent = '✅ 通知已開啟';
+                btn.disabled = true;
+            } catch (err) {
+                alert('開啟通知失敗：' + err.message);
+            }
+        }
+
+        // ========== 家庭冰箱共用 ==========
+        // householdInvites/{inviteeUid} = { fromUid, fromName, fridgeId, createdAt }：一個人同一時間只會有一筆待處理邀請
+        async function inviteToHousehold() {
+            if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
+            const input = document.getElementById('fridge-invite-email');
+            const email = input.value.trim().toLowerCase();
+            if (!email) { alert('請輸入email'); return; }
+            if (email === (currentUser.email || '').toLowerCase()) { alert('不能邀請自己'); return; }
+            try {
+                const snap = await db.collection('userEmailIndex').where('email', '==', email).limit(1).get();
+                if (snap.empty) { alert('找不到這個email的使用者，對方要先登入過一次這個網站才查得到'); return; }
+                const inviteeUid = snap.docs[0].id;
+                const fridgeId = await getActiveFridgeId();
+                await db.collection('householdInvites').doc(inviteeUid).set({
+                    fromUid: currentUser.uid,
+                    fromName: currentUser.displayName || '一位使用者',
+                    fridgeId,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+                input.value = '';
+                alert('邀請已送出，對方下次打開「我的冰箱」時會看到邀請通知');
+            } catch (err) {
+                alert('邀請失敗：' + err.message);
+            }
+        }
+        // 打開冰箱時檢查有沒有人邀請自己加入他們的家庭冰箱，有的話跳出接受/拒絕的橫幅
+        async function checkPendingHouseholdInvite() {
+            const bannerEl = document.getElementById('fridge-invite-banner');
+            if (!bannerEl || !currentUser) return;
+            try {
+                const doc = await db.collection('householdInvites').doc(currentUser.uid).get();
+                if (!doc.exists) { bannerEl.innerHTML = ''; return; }
+                const invite = doc.data();
+                bannerEl.innerHTML = `
+                    <div class="px-4 py-3 rounded-2xl mb-4" style="background:#FFF3CD">
+                        <p class="text-sm mb-2">📨 <b>${invite.fromName}</b> 邀請你加入他們的家庭冰箱，接受之後會共用同一個冰箱庫存</p>
+                        <div class="flex gap-2">
+                            <button onclick="acceptHouseholdInvite('${escapeHtmlAttr(invite.fridgeId)}')" class="btn-primary text-xs">接受</button>
+                            <button onclick="declineHouseholdInvite()" class="btn-secondary text-xs">拒絕</button>
+                        </div>
+                    </div>`;
+            } catch (err) {
+                console.warn('讀取邀請失敗', err && err.message);
+            }
+        }
+        async function acceptHouseholdInvite(fridgeId) {
+            if (!currentUser) return;
+            if (!confirm('接受之後，你原本自己冰箱裡的食材會先看不到（不會被刪除，只是切換到共用的家庭冰箱），確定要接受嗎？')) return;
+            try {
+                await db.collection('fridgeMemberships').doc(currentUser.uid).set({ fridgeId });
+                await db.collection('fridges').doc(fridgeId).set({
+                    members: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+                }, { merge: true });
+                await db.collection('householdInvites').doc(currentUser.uid).delete();
+                activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null;
+                document.getElementById('fridge-invite-banner').innerHTML = '';
+                await renderFridgeItemsList();
+                await renderFridgeStaplesList();
+                await renderFridgeMembersList();
+            } catch (err) {
+                alert('接受邀請失敗：' + err.message);
+            }
+        }
+        async function declineHouseholdInvite() {
+            if (!currentUser) return;
+            try {
+                await db.collection('householdInvites').doc(currentUser.uid).delete();
+                document.getElementById('fridge-invite-banner').innerHTML = '';
+            } catch (err) {
+                console.warn('拒絕邀請失敗', err && err.message);
+            }
+        }
+        // 離開家庭冰箱，回到自己原本的個人冰箱（個人冰箱的資料一直都在，只是切換回去而已）
+        async function leaveHousehold() {
+            if (!currentUser) return;
+            if (!confirm('確定要離開這個家庭冰箱嗎？會切換回你自己的個人冰箱')) return;
+            try {
+                const fridgeId = await getActiveFridgeId();
+                await db.collection('fridgeMemberships').doc(currentUser.uid).delete();
+                await db.collection('fridges').doc(fridgeId).set({
+                    members: firebase.firestore.FieldValue.arrayRemove(currentUser.uid),
+                }, { merge: true });
+                activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null;
+                await renderFridgeItemsList();
+                await renderFridgeStaplesList();
+                await renderFridgeMembersList();
+            } catch (err) {
+                alert('離開失敗：' + err.message);
+            }
+        }
+        async function renderFridgeMembersList() {
+            const el = document.getElementById('fridge-members-list');
+            if (!el || !currentUser) return;
+            const fridgeId = await getActiveFridgeId();
+            const isShared = fridgeId !== currentUser.uid;
+            try {
+                const doc = await db.collection('fridges').doc(fridgeId).get();
+                const members = (doc.exists && doc.data().members) ? doc.data().members : [currentUser.uid];
+                const names = await Promise.all(members.map(async uid => {
+                    if (uid === currentUser.uid) return '你';
+                    try {
+                        const p = await db.collection('userProfiles').doc(uid).get();
+                        return (p.exists && p.data().displayName) ? p.data().displayName : '一位成員';
+                    } catch { return '一位成員'; }
+                }));
+                el.innerHTML = `<p class="text-xs" style="color:#B3A492">${isShared ? '目前共用成員：' : '目前是個人冰箱，還沒有加入任何家庭'}${names.length ? names.join('、') : ''}</p>
+                    ${isShared ? `<button onclick="leaveHousehold()" class="text-xs mt-1" style="color:#C4453F">離開這個家庭冰箱</button>` : ''}`;
+            } catch (err) {
+                el.innerHTML = '';
+            }
+        }
+
         async function openFridgeModal() {
             if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
             document.getElementById('fridge-modal').classList.remove('hidden');
             pushModalHistoryState();
+            await checkPendingHouseholdInvite();
             await renderFridgeItemsList();
+            await renderFridgeStaplesList();
+            await renderFridgeMembersList();
         }
         function closeFridgeModal() {
             document.getElementById('fridge-modal').classList.add('hidden');
@@ -13241,7 +13470,111 @@
             if (ok) renderFridgeItemsList();
         }
 
+        // ========== 常備食材清單 ==========
+        // 像水、鹽這種家家戶戶都有、不需要真的追蹤庫存的東西，加進這個清單之後，
+        // 冰箱比對食譜時永遠當作「有」，不會出現在缺貨清單、也不會被扣
+        const DEFAULT_STAPLE_INGREDIENTS = ['水', '開水', '冷開水', '熱水', '溫水', '冰塊', '飲用水'];
+        let fridgeStaplesCache = null;
+        async function loadFridgeStaples(forceRefresh) {
+            if (!currentUser) return DEFAULT_STAPLE_INGREDIENTS;
+            if (!forceRefresh && fridgeStaplesCache) return fridgeStaplesCache;
+            try {
+                const fridgeId = await getActiveFridgeId();
+                const doc = await db.collection('fridges').doc(fridgeId).get();
+                const custom = doc.exists ? (doc.data().staples || []) : [];
+                fridgeStaplesCache = Array.from(new Set([...DEFAULT_STAPLE_INGREDIENTS, ...custom]));
+            } catch (err) {
+                console.warn('讀取常備食材清單失敗', err && err.message);
+                fridgeStaplesCache = DEFAULT_STAPLE_INGREDIENTS;
+            }
+            return fridgeStaplesCache;
+        }
+        async function isStapleIngredient(name) {
+            const staples = await loadFridgeStaples();
+            return staples.includes(name.trim());
+        }
+        async function addFridgeStaple() {
+            if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
+            const input = document.getElementById('fridge-staple-input');
+            const val = input.value.trim();
+            if (!val) return;
+            if (DEFAULT_STAPLE_INGREDIENTS.includes(val)) { input.value = ''; return; } // 內建的不用重複加
+            try {
+                const fridgeId = await getActiveFridgeId();
+                const doc = await db.collection('fridges').doc(fridgeId).get();
+                const custom = doc.exists ? (doc.data().staples || []) : [];
+                if (!custom.includes(val)) custom.push(val);
+                await db.collection('fridges').doc(fridgeId).set({ staples: custom }, { merge: true });
+                fridgeStaplesCache = null; // 清快取，下次重新讀
+                input.value = '';
+                renderFridgeStaplesList();
+            } catch (err) {
+                alert('新增失敗：' + err.message);
+            }
+        }
+        async function removeFridgeStaple(name) {
+            if (!currentUser) return;
+            try {
+                const fridgeId = await getActiveFridgeId();
+                const doc = await db.collection('fridges').doc(fridgeId).get();
+                const custom = (doc.exists ? (doc.data().staples || []) : []).filter(s => s !== name);
+                await db.collection('fridges').doc(fridgeId).set({ staples: custom }, { merge: true });
+                fridgeStaplesCache = null;
+                renderFridgeStaplesList();
+            } catch (err) {
+                alert('刪除失敗：' + err.message);
+            }
+        }
+        async function renderFridgeStaplesList() {
+            const el = document.getElementById('fridge-staples-list');
+            if (!el) return;
+            const staples = await loadFridgeStaples(true);
+            el.innerHTML = staples.map(s => {
+                const isDefault = DEFAULT_STAPLE_INGREDIENTS.includes(s);
+                return `<span class="chip text-xs" style="display:inline-flex; align-items:center; gap:4px;">${s}${!isDefault ? `<button type="button" onclick="removeFridgeStaple('${escapeHtmlAttr(s)}')" style="color:#C4453F">×</button>` : ''}</span>`;
+            }).join('');
+        }
+
         // 食譜詳細頁：拿食譜的食材清單去比對冰箱庫存，顯示「這個有」「這個不夠/沒有」
+        // 用跟食材成本系統同一套「套用類似食材」的關鍵字對照，把食譜食材名稱轉換成使用者慣用的主要名稱，
+        // 這樣冰箱比對/扣除的時候，例如「奶粉」如果被設定套用「全脂奶粉」的價格，也會自動去對到冰箱裡的「全脂奶粉」
+        async function resolveFridgeMatchName(ingName) {
+            const costs = await loadUserIngredientCosts();
+            const trimmed = ingName.trim();
+            if (costs[trimmed]) return trimmed; // 本身就是主要名稱（有自己的價格資料）
+            const owner = findKeywordOwner(trimmed, costs);
+            if (owner) return owner[0]; // 是關鍵字，改用它套用的主要名稱去對冰箱
+            return trimmed;
+        }
+        // 算出一份食譜（依factor換算）每個食材對冰箱庫存的比對結果，updateFridgeBox（顯示）跟
+        // deductFridgeForRecipe（大功告成扣除）共用同一套邏輯，確保「畫面看到的」跟「真的扣掉的」是同一件事。
+        // 單位換算沿用食材成本/熱量系統同一套resolveGrams，不用要求食譜跟冰箱單位完全一樣，
+        // 例如食譜寫「200g」冰箱記「1顆」，都會先各自換算成克再比較
+        async function computeFridgeMatchRows(recipe, factor, fridgeItems) {
+            return Promise.all(recipe.ingredients.map(async ing => {
+                const matchName = await resolveFridgeMatchName(ing.name);
+                if (await isStapleIngredient(matchName)) {
+                    return { name: ing.name, matchName, fridgeIdx: -1, needed: 0, unit: ing.unit, status: 'staple', text: '常備食材' };
+                }
+                const needed = ing.amount * factor;
+                const fridgeIdx = fridgeItems.findIndex(item => item.name.trim() === matchName);
+                const match = fridgeIdx >= 0 ? fridgeItems[fridgeIdx] : null;
+                if (!match) return { name: ing.name, matchName, fridgeIdx: -1, needed, unit: ing.unit, status: 'missing', text: `還缺 ${needed}${ing.unit}` };
+
+                const neededGrams = await resolveGrams(needed, ing.unit, ing.name);
+                const stockGrams = await resolveGrams(match.amount, match.unit, matchName);
+                if (neededGrams === null || stockGrams === null) {
+                    // 換算不出來（太冷門的單位），退回原始的「單位要完全一樣才能比」保守做法
+                    if (match.unit === ing.unit) {
+                        if (match.amount >= needed) return { name: ing.name, matchName, fridgeIdx, needed, unit: ing.unit, status: 'ok', text: `庫存 ${match.amount}${match.unit}` };
+                        return { name: ing.name, matchName, fridgeIdx, needed, unit: ing.unit, status: 'low', text: `庫存只有 ${match.amount}${match.unit}，還缺 ${(needed - match.amount).toFixed(1)}${ing.unit}` };
+                    }
+                    return { name: ing.name, matchName, fridgeIdx, needed, unit: ing.unit, status: 'unsure', text: `庫存 ${match.amount}${match.unit}（單位換算不出來，數量請自行確認）` };
+                }
+                if (stockGrams >= neededGrams) return { name: ing.name, matchName, fridgeIdx, needed, neededGrams, stockGrams, unit: ing.unit, status: 'ok', text: `庫存 ${match.amount}${match.unit}` };
+                return { name: ing.name, matchName, fridgeIdx, needed, neededGrams, stockGrams, unit: ing.unit, status: 'low', text: `庫存 ${match.amount}${match.unit}，還缺約${Math.round(neededGrams - stockGrams)}g` };
+            }));
+        }
         async function updateFridgeBox(recipe, factor) {
             const box = document.getElementById('detail-fridge');
             if (!box) return;
@@ -13253,25 +13586,15 @@
                 liveBox.innerHTML = `<div class="px-5 py-3 rounded-2xl text-xs" style="background:var(--cream); color:#B3A492">🧊 冰箱是空的，<a href="javascript:void(0)" onclick="openFridgeModal()" style="text-decoration:underline">加一些食材進去</a>，這裡就能自動比對庫存夠不夠</div>`;
                 return;
             }
-            const rows = recipe.ingredients.map(ing => {
-                const needed = ing.amount * factor;
-                const match = fridgeItems.find(item => item.name.trim() === ing.name.trim());
-                if (!match) return { name: ing.name, status: 'missing', text: `還缺 ${needed}${ing.unit}` };
-                if (match.unit === ing.unit) {
-                    if (match.amount >= needed) return { name: ing.name, status: 'ok', text: `庫存 ${match.amount}${match.unit}` };
-                    return { name: ing.name, status: 'low', text: `庫存只有 ${match.amount}${match.unit}，還缺 ${(needed - match.amount).toFixed(1)}${ing.unit}` };
-                }
-                // 單位不一樣沒辦法直接比數量，只能告訴使用者「有這個東西」，數量自己確認
-                return { name: ing.name, status: 'unsure', text: `庫存 ${match.amount}${match.unit}（單位不同，數量請自行確認）` };
-            });
+            const rows = await computeFridgeMatchRows(recipe, factor, fridgeItems);
             const missingCount = rows.filter(r => r.status === 'missing' || r.status === 'low').length;
-            const statusColor = { ok: '#4E9F6E', low: '#D99A3D', missing: '#C4453F', unsure: '#B3A492' };
-            const statusIcon = { ok: '✅', low: '⚠️', missing: '❌', unsure: '❔' };
+            const statusColor = { ok: '#4E9F6E', low: '#D99A3D', missing: '#C4453F', unsure: '#B3A492', staple: '#B3A492' };
+            const statusIcon = { ok: '✅', low: '⚠️', missing: '❌', unsure: '❔', staple: '🧂' };
             liveBox.innerHTML = `
                 <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
                     <p class="text-sm font-medium mb-2">🧊 冰箱庫存比對${missingCount > 0 ? `<span style="color:#C4453F">（還缺 ${missingCount} 樣）</span>` : '<span style="color:#4E9F6E">（都有了！）</span>'}</p>
                     <div class="space-y-1">
-                        ${rows.map(r => `<div class="flex justify-between text-xs"><span>${statusIcon[r.status]} ${r.name}</span><span style="color:${statusColor[r.status]}">${r.text}</span></div>`).join('')}
+                        ${rows.map(r => `<div class="flex justify-between text-xs"><span>${statusIcon[r.status]} ${r.name}${r.name !== r.matchName ? `<span style="color:#B3A492">（套用${r.matchName}）</span>` : ''}</span><span style="color:${statusColor[r.status]}">${r.text}</span></div>`).join('')}
                     </div>
                 </div>`;
         }
@@ -13444,6 +13767,7 @@
                 // 沒有填尺寸：忽略尺寸欄位，單純依數量換算
                 factor = newServings / recipe.servings;
             }
+            window.__lastScaleFactor = factor; // 記住目前的換算倍率，「大功告成」扣除冰箱食材時要用實際換算過的份量，不是食譜原始份量
             const LOSS_RATE = 0.036; // 損耗率 3.6%
 
             // 若全部食材都沒有填分類，視為同一組計算總重
