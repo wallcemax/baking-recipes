@@ -14131,14 +14131,14 @@
                         return a.item.expiryDate.localeCompare(b.item.expiryDate);
                     });
 
-                if (!batchIdxs.length) return { name: ing.name, matchName, batches: [], needed, unit: ing.unit, status: 'missing', text: `還缺 ${needed}${ing.unit}` };
+                if (!batchIdxs.length) return { name: ing.name, matchName, batches: [], needed, unit: ing.unit, status: 'missing', text: `需要${needed}${ing.unit}・庫存：無` };
 
                 const neededGrams = await resolveGrams(needed, ing.unit, ing.name);
                 if (neededGrams === null) {
                     // 換算不出來（太冷門的單位），退回保守做法：加總同單位的批次直接比較數量
                     const sameUnitTotal = batchIdxs.filter(b => b.item.unit === ing.unit).reduce((sum, b) => sum + b.item.amount, 0);
-                    if (sameUnitTotal >= needed) return { name: ing.name, matchName, batches: batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: sameUnitTotal > 0 ? 'ok' : 'unsure', text: `庫存 ${sameUnitTotal}${ing.unit}` };
-                    return { name: ing.name, matchName, batches: batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: 'unsure', text: `庫存單位換算不出來，數量請自行確認` };
+                    if (sameUnitTotal >= needed) return { name: ing.name, matchName, batches: batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: sameUnitTotal > 0 ? 'ok' : 'unsure', text: `需要${needed}${ing.unit}・庫存${sameUnitTotal}${ing.unit}` };
+                    return { name: ing.name, matchName, batches: batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: 'unsure', text: `需要${needed}${ing.unit}・庫存${sameUnitTotal}${ing.unit}（單位換算不出來，數量請自行確認）` };
                 }
                 // 把每一批換算成克，加總起來，同時記住個別批次的克數（扣除的時候要照順序一批一批扣）
                 const batchGrams = await Promise.all(batchIdxs.map(async b => ({
@@ -14148,9 +14148,10 @@
                 const validBatches = batchGrams.filter(b => b.grams !== null);
                 const stockGrams = validBatches.reduce((sum, b) => sum + b.grams, 0);
                 const totalAmountText = batchIdxs.map(b => `${b.item.amount}${b.item.unit}`).join('+');
-                if (!validBatches.length) return { name: ing.name, matchName, batches: batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: 'unsure', text: `庫存 ${totalAmountText}（單位換算不出來，數量請自行確認）` };
-                if (stockGrams >= neededGrams) return { name: ing.name, matchName, batches: validBatches, needed, neededGrams, stockGrams, unit: ing.unit, status: 'ok', text: `庫存 ${totalAmountText}` };
-                return { name: ing.name, matchName, batches: validBatches, needed, neededGrams, stockGrams, unit: ing.unit, status: 'low', text: `庫存 ${totalAmountText}，還缺約${Math.round(neededGrams - stockGrams)}g` };
+                const neededText = `需要${needed}${ing.unit}`;
+                if (!validBatches.length) return { name: ing.name, matchName, batches: batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: 'unsure', text: `${neededText}・庫存${totalAmountText}（單位換算不出來，數量請自行確認）` };
+                if (stockGrams >= neededGrams) return { name: ing.name, matchName, batches: validBatches, needed, neededGrams, stockGrams, unit: ing.unit, status: 'ok', text: `${neededText}・庫存${totalAmountText}（夠用）` };
+                return { name: ing.name, matchName, batches: validBatches, needed, neededGrams, stockGrams, unit: ing.unit, status: 'low', text: `${neededText}・庫存${totalAmountText}（還缺約${Math.round(neededGrams - stockGrams)}g）` };
             }));
         }
         async function updateFridgeBox(recipe, factor) {
