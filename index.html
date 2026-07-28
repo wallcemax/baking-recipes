@@ -13477,6 +13477,38 @@
                 alert('離開失敗：' + err.message);
             }
         }
+        // 把使用者自己個人帳號底下的食材成本資料，合併進目前使用中的共用冰箱——
+        // 用來處理「舊版網頁快取還沒更新，資料不小心存到個人帳號、沒有真的存進共用冰箱」這種情況，
+        // 不用整批手動重新輸入一次。如果共用清單裡已經有同名的資料，不會覆蓋掉，直接跳過那一筆，避免蓋掉別人設定的價格
+        async function mergePersonalCostsIntoHousehold() {
+            if (!currentUser) return;
+            const fridgeId = await getActiveFridgeId();
+            if (fridgeId === currentUser.uid) { alert('你目前沒有加入任何家庭冰箱，不需要合併'); return; }
+            try {
+                const personalDoc = await db.collection('userIngredientPrices').doc(currentUser.uid).get();
+                const personalItems = personalDoc.exists ? (personalDoc.data().items || {}) : {};
+                if (!Object.keys(personalItems).length) { alert('你自己的個人帳號底下沒有任何食材成本資料，不需要合併'); return; }
+
+                const sharedDoc = await db.collection('userIngredientPrices').doc(fridgeId).get();
+                const sharedItems = sharedDoc.exists ? (sharedDoc.data().items || {}) : {};
+
+                let merged = 0, skipped = 0;
+                const toMerge = {};
+                Object.entries(personalItems).forEach(([name, entry]) => {
+                    if (sharedItems[name]) { skipped++; return; } // 共用清單已經有同名的了，不覆蓋，跳過
+                    toMerge[name] = entry;
+                    merged++;
+                });
+                if (!merged) { alert(`沒有可以合併的資料（${skipped}筆因為共用清單已經有同名資料而跳過）`); return; }
+
+                await db.collection('userIngredientPrices').doc(fridgeId).set({ items: toMerge }, { merge: true });
+                userIngredientCostCache = null; // 清快取，讓畫面重新讀取最新的共用資料
+                alert(`合併完成！新增了${merged}筆到共用冰箱${skipped > 0 ? `，${skipped}筆因為共用清單已經有同名資料而跳過` : ''}`);
+                renderFridgeItemsList();
+            } catch (err) {
+                alert('合併失敗：' + err.message);
+            }
+        }
         async function renderFridgeMembersList() {
             const el = document.getElementById('fridge-members-list');
             if (!el || !currentUser) return;
@@ -13493,7 +13525,7 @@
                     } catch { return '一位成員'; }
                 }));
                 el.innerHTML = `<p class="text-xs" style="color:#B3A492">${isShared ? '目前共用成員：' : '目前是個人冰箱，還沒有加入任何家庭'}${names.length ? names.join('、') : ''}</p>
-                    ${isShared ? `<button onclick="leaveHousehold()" class="text-xs mt-1" style="color:#C4453F">離開這個家庭冰箱</button>` : ''}`;
+                    ${isShared ? `<button onclick="leaveHousehold()" class="text-xs mt-1 mr-3" style="color:#C4453F">離開這個家庭冰箱</button><button onclick="mergePersonalCostsIntoHousehold()" class="text-xs mt-1" style="color:var(--sage)">合併我個人的食材成本進來</button>` : ''}`;
             } catch (err) {
                 el.innerHTML = '';
             }
