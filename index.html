@@ -13409,6 +13409,33 @@
                 return false;
             }
         }
+        // 用Firestore的交易(transaction)安全地修改冰箱食材清單——原本「讀取整份清單→本地端改一改→整份寫回去」
+        // 這種做法，如果兩個人（或同一人開兩個分頁）幾乎同時操作，後寫入的那次會把整份清單覆蓋掉，
+        // 害對方剛新增的食材憑空消失。改用交易之後，讀取跟寫入變成不可分割的一個動作，
+        // 中間如果偵測到文件已經被別人改過，Firestore會自動重新讀最新版本再試一次，不會再互相覆蓋
+        async function mutateFridgeItemsAtomic(mutateFn) {
+            if (!currentUser) return false;
+            const fridgeId = await getActiveFridgeId();
+            const ref = db.collection('fridges').doc(fridgeId);
+            try {
+                await db.runTransaction(async (tx) => {
+                    const doc = await tx.get(ref);
+                    const items = doc.exists ? (doc.data().items || []) : [];
+                    mutateFn(items); // mutateFn直接在items這個陣列上做修改（push/unshift/splice都可以）
+                    tx.set(ref, {
+                        items,
+                        ownerUid: fridgeId,
+                        members: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+                    }, { merge: true });
+                });
+                fridgeItemsCache = null; // 清快取，下次重新讀最新的
+                return true;
+            } catch (err) {
+                console.warn('修改冰箱失敗', err && err.message);
+                alert('儲存失敗：' + err.message);
+                return false;
+            }
+        }
         // 依有效期限算出目前的緊急程度，過期/快到期會標紅橙色提醒，null代表還早不用特別提醒
         function fridgeExpiryStatus(expiryDate) {
             if (!expiryDate) return null;
@@ -13693,15 +13720,9 @@
                 return;
             }
             const costs = await loadUserIngredientCosts(); // 拿來顯示每個食材目前設定的成本（如果有的話）
-            // 依有效期限排序：快到期的排最前面，沒填期限的排最後面
-            const sorted = [...items].sort((a, b) => {
-                if (!a.expiryDate && !b.expiryDate) return 0;
-                if (!a.expiryDate) return 1;
-                if (!b.expiryDate) return -1;
-                return a.expiryDate.localeCompare(b.expiryDate);
-            });
-            listEl.innerHTML = sorted.map(item => {
-                const realIdx = items.indexOf(item);
+            // 直接照陣列順序顯示，不再依到期日排序——新增食材時會自動插入到最前面（見addFridgeItem），
+            // 所以「最新加的排最上面」這件事，用陣列順序本身就能達成，不需要額外排序規則
+            listEl.innerHTML = items.map((item, realIdx) => {
                 const expiryInfo = fridgeExpiryStatus(item.expiryDate);
                 // 先查原始名稱，查不到的話再查「名稱(規格)」這種因為規格衝突被自動分開存的格式
                 const costEntry = costs[item.name] || costs[`${item.name}(${item.amount}${item.unit})`];
@@ -13912,15 +13933,16 @@
             if (!name) { alert('請輸入食材名稱'); return; }
             const amount = parseFloat(amountInput.value) || 0;
             const unit = unitInput.value.trim() || '份';
-            const items = await loadFridgeItems();
             const newItemData = { name, amount, unit, expiryDate: expiryInput.value || null };
-            if (fridgeEditingIndex !== null && items[fridgeEditingIndex]) {
-                items[fridgeEditingIndex] = newItemData; // 編輯模式：直接覆蓋既有那一筆，不新增
-            } else {
-                items.push(newItemData);
-            }
             const wasEditing = fridgeEditingIndex !== null;
-            const ok = await saveFridgeItems(items);
+            const editingIndex = fridgeEditingIndex;
+            const ok = await mutateFridgeItemsAtomic(items => {
+                if (editingIndex !== null && items[editingIndex]) {
+                    items[editingIndex] = newItemData; // 編輯模式：直接覆蓋既有那一筆，不新增
+                } else {
+                    items.unshift(newItemData); // 新增模式：插入到清單最前面，讓剛加的食材排在最上面，不用等排序
+                }
+            });
             if (ok) {
                 // 條碼欄位有值的話（不管是掃描帶入的、還是你自己手動打的），把「條碼→這次確認送出的名稱」
                 // 存進自建字典，下次同一個條碼就能直接沿用，等於是用這個動作順便建檔
@@ -13969,9 +13991,16 @@
         async function removeFridgeItem(idx) {
             const items = await loadFridgeItems();
             const item = items[idx];
-            if (item && !confirm(`確定要刪除「${item.name}」嗎？`)) return;
-            items.splice(idx, 1);
-            const ok = await saveFridgeItems(items);
+            if (!item) return;
+            if (!confirm(`確定要刪除「${item.name}」嗎？`)) return;
+            const itemSnapshot = JSON.stringify(item);
+            const ok = await mutateFridgeItemsAtomic(currentItems => {
+                // 優先用內容比對找到正確的那一筆再刪除，避免清單在你按刪除之前，已經被別人新增/刪除過導致位置跟著變動；
+                // 真的找不到完全一樣的內容（理論上不太可能，除非同時有兩筆一模一樣的資料）才退回用原本的index刪除
+                const matchIdx = currentItems.findIndex(i => JSON.stringify(i) === itemSnapshot);
+                if (matchIdx >= 0) currentItems.splice(matchIdx, 1);
+                else if (currentItems[idx]) currentItems.splice(idx, 1);
+            });
             if (ok) renderFridgeItemsList();
         }
 
