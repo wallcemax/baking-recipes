@@ -13268,25 +13268,55 @@
                 return;
             }
             if (!('Notification' in window) || !('serviceWorker' in navigator)) {
-                alert('這個瀏覽器不支援通知功能');
+                alert('這個瀏覽器不支援通知功能（部分手機瀏覽器，尤其iOS Safari，對網頁推播通知的支援不完整）');
                 return;
             }
             const btn = document.getElementById('fridge-notif-btn');
+            const originalText = btn.textContent;
+            btn.textContent = '設定中...';
+            btn.disabled = true;
             try {
                 const permission = await Notification.requestPermission();
-                if (permission !== 'granted') { alert('沒有允許通知權限，沒辦法開啟提醒'); return; }
+                if (permission !== 'granted') {
+                    alert('沒有允許通知權限，沒辦法開啟提醒');
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                    return;
+                }
                 const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js');
                 const messaging = firebase.messaging();
                 const token = await messaging.getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: registration });
-                if (!token) { alert('沒辦法取得通知權杖，請稍後再試'); return; }
+                if (!token) {
+                    alert('沒辦法取得通知權杖，請稍後再試');
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                    return;
+                }
                 await db.collection('fcmTokens').doc(currentUser.uid).set({
                     tokens: firebase.firestore.FieldValue.arrayUnion(token),
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 }, { merge: true });
                 btn.textContent = '✅ 通知已開啟';
                 btn.disabled = true;
+                alert('通知已成功開啟！之後食材快到期會自動推播提醒你');
             } catch (err) {
                 alert('開啟通知失敗：' + err.message);
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        }
+        // 打開冰箱時檢查「這個裝置之前是不是已經開過通知了」，讓按鈕狀態正確反映實際情況，
+        // 不然每次重新整理頁面都會顯示回「還沒開」，即使其實早就設定成功了
+        async function checkFridgeNotificationStatus() {
+            const btn = document.getElementById('fridge-notif-btn');
+            if (!btn || !currentUser) return;
+            try {
+                const doc = await db.collection('fcmTokens').doc(currentUser.uid).get();
+                const hasToken = doc.exists && Array.isArray(doc.data().tokens) && doc.data().tokens.length > 0;
+                btn.textContent = hasToken ? '✅ 通知已開啟' : '開啟到期提醒通知';
+                btn.disabled = hasToken;
+            } catch (err) {
+                console.warn('檢查通知狀態失敗', err && err.message);
             }
         }
 
@@ -13410,6 +13440,7 @@
             await renderFridgeItemsList();
             await renderFridgeStaplesList();
             await renderFridgeMembersList();
+            await checkFridgeNotificationStatus();
         }
         function closeFridgeModal() {
             document.getElementById('fridge-modal').classList.add('hidden');
