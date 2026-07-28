@@ -23,6 +23,9 @@ messaging.onBackgroundMessage((payload) => {
     self.registration.showNotification(title, {
         body,
         icon: '🧊', // 大部分瀏覽器不吃emoji當icon，之後有正式圖示可以換成圖片網址
+        // 加上固定的tag：如果同一則推播因為某種原因被觸發了不只一次（實測發現部分裝置會這樣），
+        // 瀏覽器看到同一個tag會直接「取代」前一個通知，不會顯示成兩則分開的通知
+        tag: 'fridge-expiry-reminder',
     });
 });
 
