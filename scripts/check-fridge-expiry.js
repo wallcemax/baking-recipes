@@ -86,7 +86,7 @@ async function main() {
                     token,
                     notification: { title, body },
                     webpush: {
-                        notification: { title, body, requireInteraction: true },
+                        notification: { title, body, requireInteraction: true, tag: 'fridge-expiry-reminder' },
                         fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
                     },
                 });
