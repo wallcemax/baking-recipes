@@ -13513,10 +13513,14 @@
             const el = document.getElementById('fridge-members-list');
             if (!el || !currentUser) return;
             const fridgeId = await getActiveFridgeId();
-            const isShared = fridgeId !== currentUser.uid;
+            const isOwner = fridgeId === currentUser.uid; // 我是不是這個冰箱的建立者（不代表冰箱只有我一個人，可能有別人加入我的冰箱）
             try {
                 const doc = await db.collection('fridges').doc(fridgeId).get();
                 const members = (doc.exists && doc.data().members) ? doc.data().members : [currentUser.uid];
+                // 是不是共用冰箱，要看「成員有沒有超過1個人」，不能只看「我的冰箱ID是不是等於我自己的帳號ID」——
+                // 因為邀請人（冰箱建立者）自己的冰箱ID本來就一直等於自己的帳號ID，不會因為別人加入而改變，
+                // 用ID判斷的話，邀請人永遠會被誤判成「還沒加入任何家庭」，即使成員清單其實已經有好幾個人了
+                const isShared = members.length > 1;
                 const names = await Promise.all(members.map(async uid => {
                     if (uid === currentUser.uid) return '你';
                     try {
@@ -13525,7 +13529,7 @@
                     } catch { return '一位成員'; }
                 }));
                 el.innerHTML = `<p class="text-xs" style="color:#B3A492">${isShared ? '目前共用成員：' : '目前是個人冰箱，還沒有加入任何家庭'}${names.length ? names.join('、') : ''}</p>
-                    ${isShared ? `<button onclick="leaveHousehold()" class="text-xs mt-1 mr-3" style="color:#C4453F">離開這個家庭冰箱</button><button onclick="mergePersonalCostsIntoHousehold()" class="text-xs mt-1" style="color:var(--sage)">合併我個人的食材成本進來</button>` : ''}`;
+                    ${isShared ? `<button onclick="leaveHousehold()" class="text-xs mt-1 mr-3" style="color:#C4453F">離開這個家庭冰箱</button>${!isOwner ? `<button onclick="mergePersonalCostsIntoHousehold()" class="text-xs mt-1" style="color:var(--sage)">合併我個人的食材成本進來</button>` : ''}` : ''}`;
             } catch (err) {
                 el.innerHTML = '';
             }
