@@ -15087,42 +15087,28 @@
         // 部署完Cloudflare Worker之後，把這裡換成你實際拿到的Worker網址
         const CLOUDFLARE_AI_PROXY_URL = 'https://baking-recipes-ai.wallcemax.workers.dev/';
 
-        // 免費額度對「短時間內問幾次」有限制，如果一個食譜同時有好幾個食材都要問AI（例如都沒設定過熱量/成本），
-        // 全部同時打出去很容易被限流(429錯誤)。這裡做一個排隊機制：所有AI請求串成一列、一個一個依序執行，
-        // 每一個做完之後留一點間隔才會換下一個出發，不管呼叫端是不是同時發起好幾個請求都一樣
-        let aiRequestChain = Promise.resolve();
-        const AI_REQUEST_DELAY_MS = 1500; // 每個AI請求之間至少間隔這麼多毫秒
-        function queueAIRequest(fn) {
-            const result = aiRequestChain.then(fn);
-            // 不管這次成功或失敗，都要等間隔時間到了，才能讓下一個排隊的請求出發
-            aiRequestChain = result.catch(() => {}).then(() => new Promise(resolve => setTimeout(resolve, AI_REQUEST_DELAY_MS)));
-            return result;
-        }
-
         // 統一的呼叫函式：把prompt送去Worker，Worker再去問Gemini，回傳文字內容
         async function callAIProxy(prompt) {
             if (CLOUDFLARE_AI_PROXY_URL === '請填入你的Cloudflare Worker網址') {
                 console.info('AI估算功能尚未設定Cloudflare Worker網址，這個功能目前停用中');
                 return null;
             }
-            return queueAIRequest(async () => {
-                try {
-                    const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt }),
-                    });
-                    if (!res.ok) {
-                        console.warn('AI估算呼叫失敗', await res.text());
-                        return null;
-                    }
-                    const data = await res.json();
-                    return data.text || null;
-                } catch (err) {
-                    console.warn('AI估算呼叫失敗（可能是Worker還沒部署好，或網路問題）', err && err.message);
+            try {
+                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt }),
+                });
+                if (!res.ok) {
+                    console.warn('AI估算呼叫失敗', await res.text());
                     return null;
                 }
-            });
+                const data = await res.json();
+                return data.text || null;
+            } catch (err) {
+                console.warn('AI估算呼叫失敗（可能是Worker還沒部署好，或網路問題）', err && err.message);
+                return null;
+            }
         }
 
         // 提供給其他地方呼叫的全域介面，介面/回傳格式跟之前用Firebase AI Logic時完全一樣，
