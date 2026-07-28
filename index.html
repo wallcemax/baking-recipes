@@ -498,9 +498,9 @@
                     </select>
                 </div>
                 <div class="mb-4">
-                    <label class="font-semibold block mb-2">🏷️ 標籤（選填）</label>
+                    <label class="font-semibold block mb-2">🏷️ 標籤（最多3個，選填）</label>
                     <div id="tags-container" class="flex flex-wrap gap-2 mb-2"></div>
-                    <input id="tag-input" onkeydown="if(event.key==='Enter'){event.preventDefault();addTagFromInput();}" placeholder="輸入標籤後按Enter新增，例如「快速」「素食」「宴客」" class="form-input">
+                    <input id="tag-input" oninput="handleTagInputChange()" onblur="addTagFromInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();addTagFromInput();}" placeholder="輸入標籤，用逗號分隔或按Enter新增，例如「快速,素食,宴客」" class="form-input">
                 </div>
                 <div class="mb-6">
                     <label class="font-semibold block mb-3">📷 食譜封面照片（選填）</label>
@@ -13654,6 +13654,7 @@
         }
 
         // ========== 食譜標籤 ==========
+        const MAX_RECIPE_TAGS = 3;
         let currentRecipeTags = [];
         function renderTagsContainer() {
             const el = document.getElementById('tags-container');
@@ -13664,13 +13665,32 @@
                     <button type="button" onclick="removeTagAt(${idx})" style="color:#C4453F; font-weight:bold;">×</button>
                 </span>`).join('');
         }
+        // 實際把一個標籤字串加進清單（去重、限制最多3個），有共用邏輯抽出來，逗號分割跟Enter新增都會呼叫這個
+        function addTagValue(val) {
+            val = (val || '').trim();
+            if (!val) return;
+            if (currentRecipeTags.includes(val)) return;
+            if (currentRecipeTags.length >= MAX_RECIPE_TAGS) {
+                alert(`標籤最多只能加${MAX_RECIPE_TAGS}個`);
+                return;
+            }
+            currentRecipeTags.push(val);
+            renderTagsContainer();
+        }
+        // 輸入框裡只要打出逗號（中英文都算），就把逗號前面完整的部分自動新增成標籤，
+        // 逗號後面還沒打完的留在輸入框繼續打，不用一定要按Enter才能新增
+        function handleTagInputChange() {
+            const input = document.getElementById('tag-input');
+            if (!input.value.includes(',') && !input.value.includes('，')) return;
+            const parts = input.value.split(/[,，]/);
+            const remainder = parts.pop(); // 最後一段可能還沒打完，留著
+            parts.forEach(addTagValue);
+            input.value = remainder;
+        }
         function addTagFromInput() {
             const input = document.getElementById('tag-input');
-            const val = input.value.trim();
-            if (!val) return;
-            if (!currentRecipeTags.includes(val)) currentRecipeTags.push(val);
+            addTagValue(input.value);
             input.value = '';
-            renderTagsContainer();
         }
         function removeTagAt(idx) {
             currentRecipeTags.splice(idx, 1);
