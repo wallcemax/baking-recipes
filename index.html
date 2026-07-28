@@ -22,6 +22,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
         :root {
             --cream: #FBF3E7;
@@ -406,6 +407,11 @@
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <div id="fridge-invite-banner"></div>
                 <p class="text-xs mb-4" style="color:#B3A492">記錄家裡現在有的食材，看食譜的時候會自動幫你比對「這個有」「這個沒有/不夠」。快到期的食材會用顏色提醒你。</p>
+                <button onclick="openBarcodeScanner()" class="btn-secondary w-full mb-3">📷 掃描條碼新增食材</button>
+                <div id="barcode-scanner-wrap" class="hidden mb-3">
+                    <div id="barcode-reader" style="width:100%; border-radius:1rem; overflow:hidden;"></div>
+                    <button onclick="closeBarcodeScanner()" class="text-xs w-full text-center mt-2" style="color:#B3A492">取消掃描</button>
+                </div>
                 <div class="grid grid-cols-5 gap-2 mb-2">
                     <input id="fridge-new-name" placeholder="食材名稱(可含品牌)" class="form-input col-span-1">
                     <input id="fridge-new-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input col-span-1">
@@ -13567,6 +13573,7 @@
             await checkFridgeNotificationStatus();
         }
         function closeFridgeModal() {
+            closeBarcodeScanner();
             document.getElementById('fridge-modal').classList.add('hidden');
         }
         async function renderFridgeItemsList() {
@@ -13642,6 +13649,68 @@
             document.getElementById('fridge-new-price').value = '';
             document.getElementById('fridge-new-expiry').value = '';
         }
+        // ========== 條碼掃描新增食材 ==========
+        // 用html5-qrcode這個函式庫叫出相機掃描條碼，掃到之後去查Open Food Facts（免費、不用金鑰的公開商品資料庫）
+        // 找出商品名稱，直接帶入食材名稱欄位。這個資料庫是全球共同維護的，台灣本土商品/小眾品牌不一定查得到，
+        // 查不到的話只會把條碼號碼帶進去、提醒你自己改成商品名稱，不會整個卡住不能用
+        let barcodeScannerInstance = null;
+        function openBarcodeScanner() {
+            if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
+            if (typeof Html5Qrcode === 'undefined') { alert('條碼掃描功能載入失敗，請檢查網路連線後重新整理頁面'); return; }
+            document.getElementById('barcode-scanner-wrap').classList.remove('hidden');
+            barcodeScannerInstance = new Html5Qrcode('barcode-reader');
+            barcodeScannerInstance.start(
+                { facingMode: 'environment' }, // 優先用手機後鏡頭
+                { fps: 10, qrbox: { width: 250, height: 150 } },
+                onBarcodeScanSuccess,
+                () => {} // 掃描過程中每一幀掃不到都會呼叫一次，這是正常現象，不用處理
+            ).catch(err => {
+                alert('無法開啟相機：' + err + '（請確認已允許瀏覽器使用相機權限）');
+                document.getElementById('barcode-scanner-wrap').classList.add('hidden');
+            });
+        }
+        function closeBarcodeScanner() {
+            if (barcodeScannerInstance) {
+                barcodeScannerInstance.stop().catch(() => {}).finally(() => {
+                    barcodeScannerInstance.clear();
+                    barcodeScannerInstance = null;
+                });
+            }
+            document.getElementById('barcode-scanner-wrap').classList.add('hidden');
+        }
+        async function onBarcodeScanSuccess(decodedText) {
+            closeBarcodeScanner();
+            const nameInput = document.getElementById('fridge-new-name');
+            nameInput.value = `查詢中...(條碼${decodedText})`;
+            try {
+                const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${decodedText}.json`, {
+                    headers: { 'User-Agent': 'BakingRecipesApp - Web - Version 1.0' },
+                });
+                const data = await res.json();
+                if (data.status === 1 && data.product) {
+                    const p = data.product;
+                    const productName = p.product_name_zh || p.product_name || p.generic_name || '';
+                    const brand = p.brands ? `${p.brands} ` : '';
+                    nameInput.value = productName ? `${brand}${productName}`.trim() : `條碼${decodedText}（查無商品名稱，請自己輸入）`;
+                    // 有些商品資料裡會有內容重量/容量，能抓到的話順便帶入數量/單位，抓不到就讓使用者自己填
+                    if (p.quantity) {
+                        const m = String(p.quantity).match(/([\d.]+)\s*([a-zA-Z]+)/);
+                        if (m) {
+                            document.getElementById('fridge-new-amount').value = m[1];
+                            document.getElementById('fridge-new-unit').value = m[2];
+                        }
+                    }
+                } else {
+                    nameInput.value = `條碼${decodedText}（查無商品資料，請自己輸入名稱）`;
+                }
+            } catch (err) {
+                nameInput.value = `條碼${decodedText}（查詢失敗，請自己輸入名稱）`;
+                console.warn('條碼查詢失敗', err && err.message);
+            }
+            nameInput.focus();
+            nameInput.select();
+        }
+
         async function addFridgeItem() {
             if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
             const nameInput = document.getElementById('fridge-new-name');
