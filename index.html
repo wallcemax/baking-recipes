@@ -13330,9 +13330,14 @@
         // 網頁分頁開著、在最前面的時候，FCM會把訊息當「前景訊息」處理，不會走service worker那套背景通知邏輯，
         // 要在這裡另外接住、自己決定怎麼顯示，不然使用者會覺得「明明伺服器送出了卻什麼都沒發生」
         // （只在有填VAPID金鑰、且瀏覽器支援的情況下才註冊，避免還沒設定完成時噴錯誤）
-        if (FCM_VAPID_KEY !== '請填入你的VAPID金鑰' && 'Notification' in window && firebase.messaging && firebase.messaging.isSupported) {
-            firebase.messaging.isSupported().then(supported => {
-                if (!supported) return;
+        // 整段包在try-catch裡：這是最上層、跟函式定義平行的程式碼，如果不小心丟出例外，
+        // 會讓這一行之後所有的初始化程式碼（包括後面wakeLock變數的宣告）全部中斷執行，
+        // 之前就是因為這裡沒包保護，害整個網站的「關閉視窗」都壞掉了
+        try {
+            const supported = FCM_VAPID_KEY !== '請填入你的VAPID金鑰' && 'Notification' in window
+                && firebase.messaging && typeof firebase.messaging.isSupported === 'function'
+                && firebase.messaging.isSupported(); // compat SDK的isSupported()是同步回傳true/false，不是Promise
+            if (supported) {
                 const messaging = firebase.messaging();
                 messaging.onMessage(payload => {
                     const title = (payload.notification && payload.notification.title) || '食材快到期了';
@@ -13343,7 +13348,9 @@
                         alert(`${title}\n${body}`);
                     }
                 });
-            }).catch(() => {});
+            }
+        } catch (err) {
+            console.warn('設定前景推播通知失敗（不影響其他功能）', err && err.message);
         }
 
         // ========== 家庭冰箱共用 ==========
