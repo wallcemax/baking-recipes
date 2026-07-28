@@ -237,6 +237,7 @@
                 <button id="chip-mine" class="chip" onclick="toggleMyRecipesOnly()">🙋 我的食譜</button>
                 <button id="chip-shopping-list" class="chip" onclick="openShoppingListModal()">🛒 採購清單</button>
                 <button id="chip-market-prices" class="chip" onclick="openMarketPricesModal()">📉 市場價格</button>
+                <button id="chip-fridge" class="chip" onclick="openFridgeModal()">🧊 我的冰箱</button>
             </div>
             <div id="category-chips" class="chip-row"></div>
         </div>
@@ -390,6 +391,27 @@
                 </div>
                 <div id="market-prices-list"></div>
                 <div id="market-prices-pagination" class="flex items-center justify-center gap-4 mt-4"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 我的冰箱：食材庫存管理，看食譜時可以比對家裡還有什麼 -->
+    <div id="fridge-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">🧊 我的冰箱</h2>
+                <button onclick="closeFridgeModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <p class="text-xs mb-4" style="color:#B3A492">記錄家裡現在有的食材，看食譜的時候會自動幫你比對「這個有」「這個沒有/不夠」。快到期的食材會用顏色提醒你。</p>
+                <div class="grid grid-cols-4 gap-2 mb-2">
+                    <input id="fridge-new-name" placeholder="食材名稱" class="form-input col-span-1">
+                    <input id="fridge-new-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input col-span-1">
+                    <input id="fridge-new-unit" placeholder="單位(g/顆/包)" class="form-input col-span-1">
+                    <input id="fridge-new-expiry" type="date" class="form-input col-span-1" title="有效期限（選填）">
+                </div>
+                <button onclick="addFridgeItem()" class="btn-amber w-full mb-5">➕ 加入冰箱</button>
+                <div id="fridge-items-list" class="space-y-2"></div>
             </div>
         </div>
     </div>
@@ -11895,6 +11917,7 @@
                     <div class="mb-8">
                         <div id="detail-nutrition"></div>
                         <div id="detail-cost" class="mt-3"></div>
+                        <div id="detail-fridge" class="mt-3"></div>
                     </div>
                     </div>
                     <div class="cook-split-wrap">
@@ -13108,6 +13131,151 @@
                 </div>`;
         }
 
+        // ========== 我的冰箱 ==========
+        // Firestore結構：fridges/{uid}，欄位items是陣列：[{name, amount, unit, expiryDate}]
+        // expiryDate是選填的"YYYY-MM-DD"字串，沒填就是null
+        let fridgeItemsCache = null;
+        let fridgeItemsCacheUid = null;
+
+        async function loadFridgeItems(forceRefresh) {
+            if (!currentUser) { fridgeItemsCache = []; fridgeItemsCacheUid = null; return fridgeItemsCache; }
+            if (!forceRefresh && fridgeItemsCache && fridgeItemsCacheUid === currentUser.uid) return fridgeItemsCache;
+            try {
+                const doc = await db.collection('fridges').doc(currentUser.uid).get();
+                fridgeItemsCache = doc.exists ? (doc.data().items || []) : [];
+                fridgeItemsCacheUid = currentUser.uid;
+            } catch (err) {
+                console.warn('讀取冰箱失敗', err && err.message);
+                fridgeItemsCache = fridgeItemsCache || [];
+            }
+            return fridgeItemsCache;
+        }
+        async function saveFridgeItems(items) {
+            if (!currentUser) return false;
+            try {
+                await db.collection('fridges').doc(currentUser.uid).set({ items });
+                fridgeItemsCache = items;
+                return true;
+            } catch (err) {
+                console.warn('儲存冰箱失敗', err && err.message);
+                alert('儲存失敗：' + err.message);
+                return false;
+            }
+        }
+        // 依有效期限算出目前的緊急程度，過期/快到期會標紅橙色提醒，null代表還早不用特別提醒
+        function fridgeExpiryStatus(expiryDate) {
+            if (!expiryDate) return null;
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const exp = new Date(expiryDate + 'T00:00:00');
+            if (isNaN(exp.getTime())) return null;
+            const diffDays = Math.round((exp - today) / 86400000);
+            if (diffDays < 0) return { label: `已過期${Math.abs(diffDays)}天`, color: '#C4453F' };
+            if (diffDays === 0) return { label: '今天到期', color: '#C4453F' };
+            if (diffDays <= 3) return { label: `剩${diffDays}天`, color: '#C4453F' };
+            if (diffDays <= 7) return { label: `剩${diffDays}天`, color: '#D99A3D' };
+            return { label: `${expiryDate}到期`, color: '#B3A492' };
+        }
+
+        async function openFridgeModal() {
+            if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
+            document.getElementById('fridge-modal').classList.remove('hidden');
+            pushModalHistoryState();
+            await renderFridgeItemsList();
+        }
+        function closeFridgeModal() {
+            document.getElementById('fridge-modal').classList.add('hidden');
+        }
+        async function renderFridgeItemsList() {
+            const listEl = document.getElementById('fridge-items-list');
+            if (!listEl) return;
+            const items = await loadFridgeItems(true);
+            if (!items.length) {
+                listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">冰箱還是空的，把家裡現有的食材加進來吧</p>`;
+                return;
+            }
+            // 依有效期限排序：快到期的排最前面，沒填期限的排最後面
+            const sorted = [...items].sort((a, b) => {
+                if (!a.expiryDate && !b.expiryDate) return 0;
+                if (!a.expiryDate) return 1;
+                if (!b.expiryDate) return -1;
+                return a.expiryDate.localeCompare(b.expiryDate);
+            });
+            listEl.innerHTML = sorted.map(item => {
+                const realIdx = items.indexOf(item);
+                const expiryInfo = fridgeExpiryStatus(item.expiryDate);
+                return `
+                    <div class="flex items-center gap-3 px-4 py-3 rounded-2xl" style="background:var(--cream)">
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium text-sm">${item.name}</p>
+                            <p class="text-xs" style="color:#B3A492">${item.amount}${item.unit}${expiryInfo ? ` · <span style="color:${expiryInfo.color}">${expiryInfo.label}</span>` : ''}</p>
+                        </div>
+                        <button onclick="removeFridgeItem(${realIdx})" class="text-xs shrink-0" style="color:#C4453F">刪除</button>
+                    </div>`;
+            }).join('');
+        }
+        async function addFridgeItem() {
+            if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
+            const nameInput = document.getElementById('fridge-new-name');
+            const amountInput = document.getElementById('fridge-new-amount');
+            const unitInput = document.getElementById('fridge-new-unit');
+            const expiryInput = document.getElementById('fridge-new-expiry');
+            const name = nameInput.value.trim();
+            if (!name) { alert('請輸入食材名稱'); return; }
+            const items = await loadFridgeItems();
+            items.push({
+                name,
+                amount: parseFloat(amountInput.value) || 0,
+                unit: unitInput.value.trim() || '份',
+                expiryDate: expiryInput.value || null,
+            });
+            const ok = await saveFridgeItems(items);
+            if (ok) {
+                nameInput.value = ''; amountInput.value = ''; unitInput.value = ''; expiryInput.value = '';
+                renderFridgeItemsList();
+            }
+        }
+        async function removeFridgeItem(idx) {
+            const items = await loadFridgeItems();
+            items.splice(idx, 1);
+            const ok = await saveFridgeItems(items);
+            if (ok) renderFridgeItemsList();
+        }
+
+        // 食譜詳細頁：拿食譜的食材清單去比對冰箱庫存，顯示「這個有」「這個不夠/沒有」
+        async function updateFridgeBox(recipe, factor) {
+            const box = document.getElementById('detail-fridge');
+            if (!box) return;
+            if (!currentUser) { box.innerHTML = ''; return; }
+            const fridgeItems = await loadFridgeItems();
+            const liveBox = document.getElementById('detail-fridge');
+            if (!liveBox) return;
+            if (!fridgeItems.length) {
+                liveBox.innerHTML = `<div class="px-5 py-3 rounded-2xl text-xs" style="background:var(--cream); color:#B3A492">🧊 冰箱是空的，<a href="javascript:void(0)" onclick="openFridgeModal()" style="text-decoration:underline">加一些食材進去</a>，這裡就能自動比對庫存夠不夠</div>`;
+                return;
+            }
+            const rows = recipe.ingredients.map(ing => {
+                const needed = ing.amount * factor;
+                const match = fridgeItems.find(item => item.name.trim() === ing.name.trim());
+                if (!match) return { name: ing.name, status: 'missing', text: `還缺 ${needed}${ing.unit}` };
+                if (match.unit === ing.unit) {
+                    if (match.amount >= needed) return { name: ing.name, status: 'ok', text: `庫存 ${match.amount}${match.unit}` };
+                    return { name: ing.name, status: 'low', text: `庫存只有 ${match.amount}${match.unit}，還缺 ${(needed - match.amount).toFixed(1)}${ing.unit}` };
+                }
+                // 單位不一樣沒辦法直接比數量，只能告訴使用者「有這個東西」，數量自己確認
+                return { name: ing.name, status: 'unsure', text: `庫存 ${match.amount}${match.unit}（單位不同，數量請自行確認）` };
+            });
+            const missingCount = rows.filter(r => r.status === 'missing' || r.status === 'low').length;
+            const statusColor = { ok: '#4E9F6E', low: '#D99A3D', missing: '#C4453F', unsure: '#B3A492' };
+            const statusIcon = { ok: '✅', low: '⚠️', missing: '❌', unsure: '❔' };
+            liveBox.innerHTML = `
+                <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
+                    <p class="text-sm font-medium mb-2">🧊 冰箱庫存比對${missingCount > 0 ? `<span style="color:#C4453F">（還缺 ${missingCount} 樣）</span>` : '<span style="color:#4E9F6E">（都有了！）</span>'}</p>
+                    <div class="space-y-1">
+                        ${rows.map(r => `<div class="flex justify-between text-xs"><span>${statusIcon[r.status]} ${r.name}</span><span style="color:${statusColor[r.status]}">${r.text}</span></div>`).join('')}
+                    </div>
+                </div>`;
+        }
+
         // ========== 市場價格專區 ==========
         // 每個分頁對應Firestore文件裡的欄位名稱（key跟key+'All'兩個欄位）
         const MARKET_PRICE_CATEGORIES = [
@@ -13285,6 +13453,7 @@
             // 熱量／營養素計算改成非同步（Firestore → 本地資料庫 → AI 依序查詢），不卡住下面的食材清單渲染
             updateNutritionBox(recipe, factor, newServings, LOSS_RATE);
             updateCostBox(recipe, factor, newServings);
+            updateFridgeBox(recipe, factor);
 
             // 食材清單本身（品名/份量）先同步顯示，重量小計徽章之後非同步補上
             // （大匙/茶匙等體積單位，本地表查不到密度時會改問 AI，需要時間）
@@ -13655,6 +13824,7 @@
 
         // ========== 食譜標籤 ==========
         const MAX_RECIPE_TAGS = 3;
+        const MAX_TAG_LENGTH = 8;
         let currentRecipeTags = [];
         function renderTagsContainer() {
             const el = document.getElementById('tags-container');
@@ -13669,6 +13839,10 @@
         function addTagValue(val) {
             val = (val || '').trim();
             if (!val) return;
+            if (val.length > MAX_TAG_LENGTH) {
+                alert(`單一標籤最多${MAX_TAG_LENGTH}個字，「${val}」太長了`);
+                return;
+            }
             if (currentRecipeTags.includes(val)) return;
             if (currentRecipeTags.length >= MAX_RECIPE_TAGS) {
                 alert(`標籤最多只能加${MAX_RECIPE_TAGS}個`);
