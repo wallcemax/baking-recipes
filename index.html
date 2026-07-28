@@ -397,6 +397,15 @@
         </div>
     </div>
 
+    <!-- 條碼掃描浮動視窗：獨立於各個modal之外，不管「我的冰箱」還是「我的食材成本」開著，都能疊在最上層叫出來用 -->
+    <div id="barcode-scanner-wrap" class="hidden fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="z-index:60;">
+        <div class="bg-white w-full max-w-md rounded-[2rem] overflow-hidden p-6">
+            <h3 class="font-display text-lg font-bold mb-3">📷 掃描條碼</h3>
+            <div id="barcode-reader" style="width:100%; border-radius:1rem; overflow:hidden;"></div>
+            <button onclick="closeBarcodeScanner()" class="btn-secondary w-full mt-4">取消掃描</button>
+        </div>
+    </div>
+
     <!-- 我的冰箱：食材庫存管理，看食譜時可以比對家裡還有什麼 -->
     <div id="fridge-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
         <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
@@ -408,10 +417,6 @@
                 <div id="fridge-invite-banner"></div>
                 <p class="text-xs mb-4" style="color:#B3A492">記錄家裡現在有的食材，看食譜的時候會自動幫你比對「這個有」「這個沒有/不夠」。快到期的食材會用顏色提醒你。</p>
                 <button onclick="openBarcodeScanner()" class="btn-secondary w-full mb-3">📷 掃描條碼新增食材</button>
-                <div id="barcode-scanner-wrap" class="hidden mb-3">
-                    <div id="barcode-reader" style="width:100%; border-radius:1rem; overflow:hidden;"></div>
-                    <button onclick="closeBarcodeScanner()" class="text-xs w-full text-center mt-2" style="color:#B3A492">取消掃描</button>
-                </div>
                 <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-2">
                     <input id="fridge-new-barcode" placeholder="條碼(選填)" class="form-input col-span-1">
                     <input id="fridge-new-name" placeholder="食材名稱(可含品牌)" class="form-input col-span-1">
@@ -13036,6 +13041,42 @@
             }
             renderMyIngredientCostsList();
         }
+        // 幫「我的食材成本」裡已經存在的一筆資料，補上條碼對應——用來處理「舊資料本來沒有條碼」的情況，
+        // 補上之後，之後用手機掃到這個條碼，就會直接沿用這筆既有的價格/名稱，不會跟舊資料變成兩筆各自獨立的東西
+        async function manageIngredientBarcode(name) {
+            if (!currentUser) return;
+            const dict = await loadBarcodeDictionary(true);
+            const existingCode = Object.keys(dict).find(code => dict[code] === name);
+            const useCamera = confirm(`幫「${name}」補上條碼。\n目前設定的條碼：${existingCode || '（無）'}\n\n按「確定」用相機掃描，按「取消」改成手動輸入數字`);
+            if (useCamera) {
+                openBarcodeScanner((decodedText) => onManageBarcodeScanSuccess(decodedText, name, existingCode));
+                return;
+            }
+            const input = prompt(`手動輸入「${name}」的條碼數字（可以照商品包裝上印的號碼打）：`, existingCode || '');
+            if (input === null) return; // 按了取消
+            await applyIngredientBarcodeChange(name, existingCode, input.trim());
+        }
+        // 掃描器用在「幫既有食材成本設定條碼」情境時的成功callback：跟一般冰箱新增食材的流程不一樣，
+        // 這裡掃到的條碼是要直接連結到「已經指定好的那個食材名稱」，不用查商品資料庫、不用開新的一筆
+        async function onManageBarcodeScanSuccess(decodedText, name, existingCode) {
+            closeBarcodeScanner();
+            await applyIngredientBarcodeChange(name, existingCode, decodedText);
+        }
+        // 把「條碼→名稱」的對應實際存起來的共用邏輯：新舊條碼一樣就不用清除，避免多打一次無謂的request
+        async function applyIngredientBarcodeChange(name, existingCode, newCode) {
+            // 如果原本這個名稱已經連結別的條碼、這次又換了新的，先把舊的拿掉，避免同一個名稱同時對應兩個條碼
+            if (existingCode && existingCode !== newCode) {
+                try {
+                    const fridgeId = await getActiveFridgeId();
+                    await db.collection('fridges').doc(fridgeId).update({ [`barcodeDictionary.${existingCode}`]: firebase.firestore.FieldValue.delete() });
+                    if (barcodeDictCache) delete barcodeDictCache[existingCode];
+                } catch (err) {
+                    console.warn('移除舊條碼對應失敗', err && err.message);
+                }
+            }
+            if (newCode) await saveBarcodeToDictionary(newCode, name);
+            alert(newCode ? `已設定條碼${newCode}對應「${name}」` : '已清除條碼對應');
+        }
         async function renderMyIngredientCostsList() {
             const listEl = document.getElementById('my-cost-list');
             if (!listEl) return;
@@ -13056,6 +13097,7 @@
                             <p class="text-xs" style="color:#B3A492">每100克 NT$${c.pricePer100g.toFixed(2)} ${purchaseText}</p>
                             ${keywordsText}
                         </div>
+                        <button onclick="manageIngredientBarcode('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:#8DAFC4; color:white">條碼</button>
                         <button onclick="manageIngredientAliases('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--honey); color:white">別名</button>
                         <button onclick="openIngredientCostEditor('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:white">編輯</button>
                         <button onclick="removeMyIngredientCost('${escapeHtmlAttr(name)}')" class="text-xs shrink-0" style="color:#C4453F">刪除</button>
@@ -13687,15 +13729,15 @@
             }
         }
 
-        function openBarcodeScanner() {
-            if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
+        function openBarcodeScanner(onSuccessCallback) {
+            if (!currentUser) { alert('請先登入才能使用這個功能'); return; }
             if (typeof Html5Qrcode === 'undefined') { alert('條碼掃描功能載入失敗，請檢查網路連線後重新整理頁面'); return; }
             document.getElementById('barcode-scanner-wrap').classList.remove('hidden');
             barcodeScannerInstance = new Html5Qrcode('barcode-reader');
             barcodeScannerInstance.start(
                 { facingMode: 'environment' }, // 優先用手機後鏡頭
                 { fps: 10, qrbox: { width: 250, height: 150 } },
-                onBarcodeScanSuccess,
+                onSuccessCallback || onBarcodeScanSuccess, // 沒有特別指定的話，預設走冰箱新增食材那套流程
                 () => {} // 掃描過程中每一幀掃不到都會呼叫一次，這是正常現象，不用處理
             ).catch(err => {
                 alert('無法開啟相機：' + err + '（請確認已允許瀏覽器使用相機權限）');
@@ -13829,6 +13871,8 @@
         }
         async function removeFridgeItem(idx) {
             const items = await loadFridgeItems();
+            const item = items[idx];
+            if (item && !confirm(`確定要刪除「${item.name}」嗎？`)) return;
             items.splice(idx, 1);
             const ok = await saveFridgeItems(items);
             if (ok) renderFridgeItemsList();
