@@ -239,7 +239,7 @@
                 <button id="chip-mine" class="chip" onclick="toggleMyRecipesOnly()">🙋 我的食譜</button>
                 <button id="chip-shopping-list" class="chip" onclick="openShoppingListModal()">🛒 採購清單</button>
                 <button id="chip-market-prices" class="chip" onclick="openMarketPricesModal()">📉 市場價格</button>
-                <button id="chip-fridge" class="chip" onclick="openFridgeModal()">🧊 我的冰箱</button>
+                <button id="chip-fridge" class="chip" onclick="openFridgeModal()"><span id="chip-fridge-label">🧊 我的冰箱</span></button>
             </div>
             <div id="category-chips" class="chip-row"></div>
         </div>
@@ -410,7 +410,7 @@
     <div id="fridge-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
         <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
             <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
-                <h2 class="font-display text-xl sm:text-2xl font-bold">🧊 我的冰箱</h2>
+                <h2 id="fridge-modal-title" class="font-display text-xl sm:text-2xl font-bold">🧊 我的冰箱</h2>
                 <button onclick="closeFridgeModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
@@ -10946,6 +10946,7 @@
                     db.collection('userEmailIndex').doc(user.uid).set({ email: user.email.toLowerCase() })
                         .catch(err => console.warn('同步email索引失敗', err && err.message));
                 }
+                renderFridgeMembersList(); // 一登入就先確認一次是不是家庭冰箱，篩選按鈕的標籤才會馬上顯示正確文字，不用等打開冰箱視窗
             } else {
                 info.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-sm flex items-center gap-2"><i class="fab fa-google"></i> 登入</button>`;
                 userFavorites = new Set();
@@ -13580,6 +13581,14 @@
                 alert('合併失敗：' + err.message);
             }
         }
+        // 依目前是不是共用冰箱，切換「我的冰箱」/「家庭冰箱」這個標籤文字，篩選按鈕跟視窗標題都會一起改
+        function updateFridgeLabels(isShared) {
+            const label = isShared ? '👨‍👩‍👧 家庭冰箱' : '🧊 我的冰箱';
+            const chipLabel = document.getElementById('chip-fridge-label');
+            const modalTitle = document.getElementById('fridge-modal-title');
+            if (chipLabel) chipLabel.textContent = label;
+            if (modalTitle) modalTitle.textContent = label;
+        }
         async function renderFridgeMembersList() {
             const el = document.getElementById('fridge-members-list');
             if (!el || !currentUser) return;
@@ -13592,6 +13601,7 @@
                 // 因為邀請人（冰箱建立者）自己的冰箱ID本來就一直等於自己的帳號ID，不會因為別人加入而改變，
                 // 用ID判斷的話，邀請人永遠會被誤判成「還沒加入任何家庭」，即使成員清單其實已經有好幾個人了
                 const isShared = members.length > 1;
+                updateFridgeLabels(isShared);
                 const names = await Promise.all(members.map(async uid => {
                     if (uid === currentUser.uid) return '你';
                     try {
@@ -13602,6 +13612,7 @@
                 el.innerHTML = `<p class="text-xs" style="color:#B3A492">${isShared ? '目前共用成員：' : '目前是個人冰箱，還沒有加入任何家庭'}${names.length ? names.join('、') : ''}</p>
                     ${isShared ? `<button onclick="leaveHousehold()" class="text-xs mt-1 mr-3" style="color:#C4453F">離開這個家庭冰箱</button>${!isOwner ? `<button onclick="mergePersonalCostsIntoHousehold()" class="text-xs mt-1" style="color:var(--sage)">合併我個人的食材成本進來</button>` : ''}` : ''}`;
             } catch (err) {
+                updateFridgeLabels(false); // 讀取失敗就先退回個人冰箱的預設標籤，比顯示錯的標籤安全
                 el.innerHTML = '';
             }
         }
@@ -13891,8 +13902,11 @@
             try {
                 const fridgeId = await getActiveFridgeId();
                 const doc = await db.collection('fridges').doc(fridgeId).get();
-                const custom = doc.exists ? (doc.data().staples || []) : [];
-                fridgeStaplesCache = Array.from(new Set([...DEFAULT_STAPLE_INGREDIENTS, ...custom]));
+                const data = doc.exists ? doc.data() : {};
+                const custom = data.staples || [];
+                const removedDefaults = data.removedDefaultStaples || [];
+                const effectiveDefaults = DEFAULT_STAPLE_INGREDIENTS.filter(s => !removedDefaults.includes(s));
+                fridgeStaplesCache = Array.from(new Set([...effectiveDefaults, ...custom]));
             } catch (err) {
                 console.warn('讀取常備食材清單失敗', err && err.message);
                 fridgeStaplesCache = DEFAULT_STAPLE_INGREDIENTS;
@@ -13908,13 +13922,23 @@
             const input = document.getElementById('fridge-staple-input');
             const val = input.value.trim();
             if (!val) return;
-            if (DEFAULT_STAPLE_INGREDIENTS.includes(val)) { input.value = ''; return; } // 內建的不用重複加
             try {
                 const fridgeId = await getActiveFridgeId();
                 const doc = await db.collection('fridges').doc(fridgeId).get();
-                const custom = doc.exists ? (doc.data().staples || []) : [];
-                if (!custom.includes(val)) custom.push(val);
-                await db.collection('fridges').doc(fridgeId).set({ staples: custom }, { merge: true });
+                const data = doc.exists ? doc.data() : {};
+                const custom = data.staples || [];
+                const removedDefaults = data.removedDefaultStaples || [];
+                if (DEFAULT_STAPLE_INGREDIENTS.includes(val) && removedDefaults.includes(val)) {
+                    // 這個本來是內建項目、之前被你刪掉過，現在重新加回來：只要把它從「已刪除的內建項目」名單移掉即可
+                    await db.collection('fridges').doc(fridgeId).set({
+                        removedDefaultStaples: removedDefaults.filter(s => s !== val),
+                    }, { merge: true });
+                } else if (DEFAULT_STAPLE_INGREDIENTS.includes(val)) {
+                    // 本來就是內建項目、也沒被刪過，不用重複加
+                } else if (!custom.includes(val)) {
+                    custom.push(val);
+                    await db.collection('fridges').doc(fridgeId).set({ staples: custom }, { merge: true });
+                }
                 fridgeStaplesCache = null; // 清快取，下次重新讀
                 input.value = '';
                 renderFridgeStaplesList();
@@ -13927,8 +13951,17 @@
             try {
                 const fridgeId = await getActiveFridgeId();
                 const doc = await db.collection('fridges').doc(fridgeId).get();
-                const custom = (doc.exists ? (doc.data().staples || []) : []).filter(s => s !== name);
-                await db.collection('fridges').doc(fridgeId).set({ staples: custom }, { merge: true });
+                const data = doc.exists ? doc.data() : {};
+                if (DEFAULT_STAPLE_INGREDIENTS.includes(name)) {
+                    // 內建項目：不會真的刪掉程式碼裡的定義，而是記錄「這個內建項目被這個冰箱刪除了」，
+                    // 之後算「有效常備清單」的時候會排除掉；重新加回來時（見addFridgeStaple）會自動偵測並復原
+                    const removedDefaults = data.removedDefaultStaples || [];
+                    if (!removedDefaults.includes(name)) removedDefaults.push(name);
+                    await db.collection('fridges').doc(fridgeId).set({ removedDefaultStaples: removedDefaults }, { merge: true });
+                } else {
+                    const custom = (data.staples || []).filter(s => s !== name);
+                    await db.collection('fridges').doc(fridgeId).set({ staples: custom }, { merge: true });
+                }
                 fridgeStaplesCache = null;
                 renderFridgeStaplesList();
             } catch (err) {
@@ -13939,9 +13972,9 @@
             const el = document.getElementById('fridge-staples-list');
             if (!el) return;
             const staples = await loadFridgeStaples(true);
+            // 每一項都可以刪除，不分內建/自訂——內建項目刪掉之後可以在上面的輸入框重新打一次同樣的名字加回來
             el.innerHTML = staples.map(s => {
-                const isDefault = DEFAULT_STAPLE_INGREDIENTS.includes(s);
-                return `<span class="chip text-xs" style="display:inline-flex; align-items:center; gap:4px;">${s}${!isDefault ? `<button type="button" onclick="removeFridgeStaple('${escapeHtmlAttr(s)}')" style="color:#C4453F">×</button>` : ''}</span>`;
+                return `<span class="chip text-xs" style="display:inline-flex; align-items:center; gap:4px;">${s}<button type="button" onclick="removeFridgeStaple('${escapeHtmlAttr(s)}')" style="color:#C4453F">×</button></span>`;
             }).join('');
         }
 
