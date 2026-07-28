@@ -412,7 +412,8 @@
                     <div id="barcode-reader" style="width:100%; border-radius:1rem; overflow:hidden;"></div>
                     <button onclick="closeBarcodeScanner()" class="text-xs w-full text-center mt-2" style="color:#B3A492">取消掃描</button>
                 </div>
-                <div class="grid grid-cols-5 gap-2 mb-2">
+                <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-2">
+                    <input id="fridge-new-barcode" placeholder="條碼(選填)" class="form-input col-span-1">
                     <input id="fridge-new-name" placeholder="食材名稱(可含品牌)" class="form-input col-span-1">
                     <input id="fridge-new-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input col-span-1">
                     <input id="fridge-new-unit" placeholder="單位(g/顆/ml)" class="form-input col-span-1">
@@ -13614,6 +13615,7 @@
             const items = await loadFridgeItems();
             const item = items[idx];
             if (!item) return;
+            document.getElementById('fridge-new-barcode').value = '';
             document.getElementById('fridge-new-name').value = item.name;
             document.getElementById('fridge-new-amount').value = item.amount;
             document.getElementById('fridge-new-unit').value = item.unit;
@@ -13643,6 +13645,7 @@
             fridgeEditingIndex = null;
             document.getElementById('fridge-submit-btn').textContent = '➕ 加入冰箱';
             document.getElementById('fridge-editing-hint').classList.add('hidden');
+            document.getElementById('fridge-new-barcode').value = '';
             document.getElementById('fridge-new-name').value = '';
             document.getElementById('fridge-new-amount').value = '';
             document.getElementById('fridge-new-unit').value = '';
@@ -13650,10 +13653,40 @@
             document.getElementById('fridge-new-expiry').value = '';
         }
         // ========== 條碼掃描新增食材 ==========
-        // 用html5-qrcode這個函式庫叫出相機掃描條碼，掃到之後去查Open Food Facts（免費、不用金鑰的公開商品資料庫）
-        // 找出商品名稱，直接帶入食材名稱欄位。這個資料庫是全球共同維護的，台灣本土商品/小眾品牌不一定查得到，
-        // 查不到的話只會把條碼號碼帶進去、提醒你自己改成商品名稱，不會整個卡住不能用
+        // 用html5-qrcode這個函式庫叫出相機掃描條碼/QR碼，掃到之後依序：
+        //   ①先查「自建條碼字典」（存在共用冰箱資料裡，之前手動命名過的條碼，這次直接沿用，不用再查外部API）
+        //   ②字典查不到的話，如果是QR碼而且內容本身就是可讀文字（不是網址），直接拿來當商品名稱參考
+        //   ③否則（一般條碼、或QR碼裡是網址），去查Open Food Facts這個免費公開商品資料庫
+        // 不管用哪一種方式抓到名稱，只要這次成功加進冰箱，就會把「條碼→這次使用的名稱」記進字典，下次同一個條碼直接沿用
         let barcodeScannerInstance = null;
+        let barcodeDictCache = null;
+
+        async function loadBarcodeDictionary(forceRefresh) {
+            if (!currentUser) return {};
+            if (!forceRefresh && barcodeDictCache) return barcodeDictCache;
+            try {
+                const fridgeId = await getActiveFridgeId();
+                const doc = await db.collection('fridges').doc(fridgeId).get();
+                barcodeDictCache = (doc.exists && doc.data().barcodeDictionary) ? doc.data().barcodeDictionary : {};
+            } catch (err) {
+                console.warn('讀取條碼字典失敗', err && err.message);
+                barcodeDictCache = barcodeDictCache || {};
+            }
+            return barcodeDictCache;
+        }
+        async function saveBarcodeToDictionary(code, name) {
+            if (!currentUser || !code || !name) return;
+            try {
+                const fridgeId = await getActiveFridgeId();
+                await db.collection('fridges').doc(fridgeId).set({
+                    barcodeDictionary: { [code]: name },
+                }, { merge: true });
+                if (barcodeDictCache) barcodeDictCache[code] = name;
+            } catch (err) {
+                console.warn('儲存條碼字典失敗', err && err.message);
+            }
+        }
+
         function openBarcodeScanner() {
             if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
             if (typeof Html5Qrcode === 'undefined') { alert('條碼掃描功能載入失敗，請檢查網路連線後重新整理頁面'); return; }
@@ -13678,10 +13711,43 @@
             }
             document.getElementById('barcode-scanner-wrap').classList.add('hidden');
         }
-        async function onBarcodeScanSuccess(decodedText) {
+        function isLikelyUrl(text) {
+            return /^https?:\/\//i.test(text.trim());
+        }
+        async function onBarcodeScanSuccess(decodedText, decodedResult) {
             closeBarcodeScanner();
             const nameInput = document.getElementById('fridge-new-name');
-            nameInput.value = `查詢中...(條碼${decodedText})`;
+            const barcodeInput = document.getElementById('fridge-new-barcode');
+            barcodeInput.value = decodedText; // 不管查不查得到資料，條碼欄位都先帶入這次掃到的號碼
+            const formatName = (decodedResult && decodedResult.result && decodedResult.result.format && decodedResult.result.format.formatName) || '';
+            const isQrCode = formatName === 'QR_CODE';
+
+            // ①先查自建字典，之前手動命名過的話直接沿用，不用再查外部API
+            const dict = await loadBarcodeDictionary();
+            if (dict[decodedText]) {
+                nameInput.value = dict[decodedText];
+                nameInput.focus(); nameInput.select();
+                return;
+            }
+
+            // ②QR碼如果內容本身就是可讀文字（不是網址），很多商品的QR碼會直接印品名/品項，直接拿來當名稱參考
+            if (isQrCode && !isLikelyUrl(decodedText) && decodedText.length <= 60) {
+                nameInput.value = decodedText;
+                nameInput.focus(); nameInput.select();
+                return;
+            }
+            if (isQrCode && isLikelyUrl(decodedText)) {
+                nameInput.value = '';
+                nameInput.placeholder = 'QR碼是網址，請自己輸入商品名稱';
+                alert(`掃到的QR碼是一個網址，內容是：\n${decodedText}\n\n這個沒辦法自動抓商品名稱，麻煩自己點開網址確認後手動輸入名稱`);
+                nameInput.focus();
+                return;
+            }
+
+            // ③一般條碼：去查Open Food Facts，查得到就自動帶入名稱/數量/單位；查不到的話名稱留空，
+            // 條碼號碼已經在條碼欄位裡了，直接打字輸入名稱、按加入冰箱就等於順便建檔，下次同一個條碼就查得到了
+            nameInput.value = '';
+            nameInput.placeholder = '查詢中...';
             try {
                 const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${decodedText}.json`, {
                     headers: { 'User-Agent': 'BakingRecipesApp - Web - Version 1.0' },
@@ -13691,28 +13757,33 @@
                     const p = data.product;
                     const productName = p.product_name_zh || p.product_name || p.generic_name || '';
                     const brand = p.brands ? `${p.brands} ` : '';
-                    nameInput.value = productName ? `${brand}${productName}`.trim() : `條碼${decodedText}（查無商品名稱，請自己輸入）`;
-                    // 有些商品資料裡會有內容重量/容量，能抓到的話順便帶入數量/單位，抓不到就讓使用者自己填
-                    if (p.quantity) {
-                        const m = String(p.quantity).match(/([\d.]+)\s*([a-zA-Z]+)/);
-                        if (m) {
-                            document.getElementById('fridge-new-amount').value = m[1];
-                            document.getElementById('fridge-new-unit').value = m[2];
+                    if (productName) {
+                        nameInput.value = `${brand}${productName}`.trim();
+                        // 有些商品資料裡會有內容重量/容量，能抓到的話順便帶入數量/單位，抓不到就讓使用者自己填
+                        if (p.quantity) {
+                            const m = String(p.quantity).match(/([\d.]+)\s*([a-zA-Z]+)/);
+                            if (m) {
+                                document.getElementById('fridge-new-amount').value = m[1];
+                                document.getElementById('fridge-new-unit').value = m[2];
+                            }
                         }
+                    } else {
+                        nameInput.placeholder = `查無商品名稱，條碼${decodedText}，請自己輸入`;
                     }
                 } else {
-                    nameInput.value = `條碼${decodedText}（查無商品資料，請自己輸入名稱）`;
+                    nameInput.placeholder = `查無商品資料，條碼${decodedText}，請自己輸入名稱建檔`;
                 }
             } catch (err) {
-                nameInput.value = `條碼${decodedText}（查詢失敗，請自己輸入名稱）`;
+                nameInput.placeholder = `查詢失敗，條碼${decodedText}，請自己輸入名稱`;
                 console.warn('條碼查詢失敗', err && err.message);
             }
             nameInput.focus();
-            nameInput.select();
+            if (nameInput.value) nameInput.select();
         }
 
         async function addFridgeItem() {
             if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
+            const barcodeInput = document.getElementById('fridge-new-barcode');
             const nameInput = document.getElementById('fridge-new-name');
             const amountInput = document.getElementById('fridge-new-amount');
             const unitInput = document.getElementById('fridge-new-unit');
@@ -13732,6 +13803,12 @@
             const wasEditing = fridgeEditingIndex !== null;
             const ok = await saveFridgeItems(items);
             if (ok) {
+                // 條碼欄位有值的話（不管是掃描帶入的、還是你自己手動打的），把「條碼→這次確認送出的名稱」
+                // 存進自建字典，下次同一個條碼就能直接沿用，等於是用這個動作順便建檔
+                const barcode = barcodeInput.value.trim();
+                if (barcode) {
+                    await saveBarcodeToDictionary(barcode, name);
+                }
                 // 有填花費的話，順便把這次買的價格同步更新到「我的食材成本」，之後食譜成本試算會直接用這個新價格；
                 // 如果食譜裡用的是比較通用的名稱（例如「鮮奶」而這裡打的是「心璞鮮乳」），
                 // 去食譜頁面點該食材、用「套用類似食材」把兩者連起來即可，這裡不用重複輸入
@@ -13746,7 +13823,7 @@
                 fridgeEditingIndex = null;
                 document.getElementById('fridge-submit-btn').textContent = '➕ 加入冰箱';
                 document.getElementById('fridge-editing-hint').classList.add('hidden');
-                nameInput.value = ''; amountInput.value = ''; unitInput.value = ''; priceInput.value = ''; expiryInput.value = '';
+                barcodeInput.value = ''; nameInput.value = ''; amountInput.value = ''; unitInput.value = ''; priceInput.value = ''; expiryInput.value = '';
                 renderFridgeItemsList();
             }
         }
