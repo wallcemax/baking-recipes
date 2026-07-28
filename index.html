@@ -12348,6 +12348,27 @@
                 return false;
             }
         }
+        // 把一筆食材成本資料從舊名稱搬到新名稱（用在「同名但規格不同」偵測到衝突、決定分開存的時候），
+        // 資料內容原封不動搬過去，只是換一個key，關鍵字連結（誰套用了這筆）也會一併搬過去
+        async function renameIngredientCost(oldName, newName) {
+            if (!currentUser) return false;
+            try {
+                const ownerId = await getActiveFridgeId();
+                const doc = await db.collection('userIngredientPrices').doc(ownerId).get();
+                const items = doc.exists ? (doc.data().items || {}) : {};
+                const entry = items[oldName];
+                if (!entry) return false;
+                await db.collection('userIngredientPrices').doc(ownerId).update({
+                    [`items.${newName}`]: entry,
+                    [`items.${oldName}`]: firebase.firestore.FieldValue.delete(),
+                });
+                userIngredientCostCache = null; // 清快取，下次重新讀
+                return true;
+            } catch (err) {
+                console.warn('搬移食材成本資料失敗', err && err.message);
+                return false;
+            }
+        }
 
         // 刪除使用者自己設定的某個食材價格（回到「尚未設定」的狀態，下次查詢會重新觸發AI估算）
         async function deleteUserIngredientCost(name) {
@@ -13651,7 +13672,8 @@
             listEl.innerHTML = sorted.map(item => {
                 const realIdx = items.indexOf(item);
                 const expiryInfo = fridgeExpiryStatus(item.expiryDate);
-                const costEntry = costs[item.name];
+                // 先查原始名稱，查不到的話再查「名稱(規格)」這種因為規格衝突被自動分開存的格式
+                const costEntry = costs[item.name] || costs[`${item.name}(${item.amount}${item.unit})`];
                 const purchaseText = (costEntry && costEntry.purchasePrice && costEntry.purchaseAmount) ? ` · $${costEntry.purchasePrice}/${costEntry.purchaseAmount}${costEntry.purchaseUnit || ''}` : '';
                 const costText = costEntry ? `<span style="color:var(--sage)">・$${costEntry.pricePer100g.toFixed(2)}/100g${costEntry.source === 'ai_suggested' ? ' 🤖' : ''}</span>` : '';
                 return `
@@ -13680,7 +13702,8 @@
             // 更新「目前剩多少」（不是真的又買了一次），送出時會拿這個舊價格搭配新改過的庫存數量重新計算，
             // 反而算出錯誤的單價，所以要更新價格的話，麻煩自己重新輸入這次的花費
             const costs = await loadUserIngredientCosts();
-            const costEntry = costs[item.name];
+            // 先查原始名稱，查不到的話再查「名稱(規格)」這種因為規格衝突被自動分開存的格式
+            const costEntry = costs[item.name] || costs[`${item.name}(${item.amount}${item.unit})`];
             const priceInput = document.getElementById('fridge-new-price');
             priceInput.value = '';
             if (costEntry && costEntry.purchasePrice && costEntry.purchaseAmount) {
@@ -13777,10 +13800,20 @@
             const formatName = (decodedResult && decodedResult.result && decodedResult.result.format && decodedResult.result.format.formatName) || '';
             const isQrCode = formatName === 'QR_CODE';
 
-            // ①先查自建字典，之前手動命名過的話直接沿用，不用再查外部API
+            // ①先查自建字典，之前手動命名過的話直接沿用，不用再查外部API；
+            // 順便把「我的食材成本」裡這個名稱記錄的上次購買數量/單位/價格也一起帶入，不是只帶名稱，
+            // 這樣掃一次就等於幾乎新增好一整筆，只差有效期限要你自己輸入
             const dict = await loadBarcodeDictionary();
             if (dict[decodedText]) {
-                nameInput.value = dict[decodedText];
+                const matchedName = dict[decodedText];
+                nameInput.value = matchedName;
+                const costs = await loadUserIngredientCosts();
+                const costEntry = costs[matchedName];
+                if (costEntry && costEntry.purchaseAmount && costEntry.purchaseUnit) {
+                    document.getElementById('fridge-new-amount').value = costEntry.purchaseAmount;
+                    document.getElementById('fridge-new-unit').value = costEntry.purchaseUnit;
+                    document.getElementById('fridge-new-price').value = costEntry.purchasePrice || '';
+                }
                 nameInput.focus(); nameInput.select();
                 return;
             }
@@ -13868,9 +13901,29 @@
                 // 如果食譜裡用的是比較通用的名稱（例如「鮮奶」而這裡打的是「心璞鮮乳」），
                 // 去食譜頁面點該食材、用「套用類似食材」把兩者連起來即可，這裡不用重複輸入
                 if (priceInput.value && amount > 0) {
+                    // 偵測「同名但規格（數量+單位）不一樣」的情況，例如「心樸鮮乳」之前是1858ml，這次買的是400ml——
+                    // 兩個實際上是不同商品（價格本來就不一樣），如果都存成同一個名稱會互相覆蓋掉，先問你要不要自動分開存
+                    const existingCosts = await loadUserIngredientCosts();
+                    const existingEntry = existingCosts[name];
+                    let costTargetName = name;
+                    if (existingEntry && existingEntry.purchaseAmount && existingEntry.purchaseUnit &&
+                        (existingEntry.purchaseAmount !== amount || existingEntry.purchaseUnit !== unit)) {
+                        const oldSpecName = `${name}(${existingEntry.purchaseAmount}${existingEntry.purchaseUnit})`;
+                        const newSpecName = `${name}(${amount}${unit})`;
+                        const wantSplit = confirm(
+                            `你之前已經有「${name}」規格${existingEntry.purchaseAmount}${existingEntry.purchaseUnit}的價格資料，這次是${amount}${unit}，規格不一樣（很可能是同品牌不同容量，價格本來就不同）。\n\n` +
+                            `要自動分開記錄嗎？分開之後會變成：\n・${oldSpecName}\n・${newSpecName}\n` +
+                            `（如果食譜需要認得到「${name}」這個通用寫法，兩個規格之後要各自去食譜頁面「套用類似食材」連結一次）\n\n` +
+                            `按「確定」分開存；按「取消」則維持原本方式，直接覆蓋掉舊的價格資料`
+                        );
+                        if (wantSplit) {
+                            await renameIngredientCost(name, oldSpecName);
+                            costTargetName = newSpecName;
+                        }
+                    }
                     const per100g = await calcPricePer100g(priceInput.value, amount, unit, name);
                     if (per100g !== null) {
-                        await setUserIngredientCost(name, per100g, { price: priceInput.value, amount, unit });
+                        await setUserIngredientCost(costTargetName, per100g, { price: priceInput.value, amount, unit });
                     } else {
                         alert(`冰箱食材已${wasEditing ? '更新' : '加入'}，但成本換算不出來（單位「${unit}」太冷門），成本沒有同步更新，可以之後去食譜頁面手動設定`);
                     }
