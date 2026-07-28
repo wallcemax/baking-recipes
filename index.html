@@ -12221,8 +12221,15 @@
         }
 
         // 找出costs裡有沒有哪一筆資料把name設成關鍵字（別名），回傳[主要名稱, 資料]，找不到回傳undefined
+        // （這個只回傳第一筆，給成本估算這種「只需要一個代表值」的地方用）
         function findKeywordOwner(name, costs) {
             return Object.entries(costs).find(([canon, entry]) => Array.isArray(entry.keywords) && entry.keywords.includes(name));
+        }
+        // 找出costs裡「所有」把name設成關鍵字的資料，回傳陣列[[主要名稱, 資料], ...]，可能有好幾筆——
+        // 這是為了支援「同一個通用名稱可以被好幾個品牌共用」（例如「鮮奶」同時是「心璞鮮乳」跟「貝親鮮乳」的關鍵字），
+        // 冰箱庫存比對要用這個，把好幾個品牌的庫存加總在一起看，其中一個不夠就自動扣另一個
+        function findAllKeywordOwners(name, costs) {
+            return Object.entries(costs).filter(([canon, entry]) => Array.isArray(entry.keywords) && entry.keywords.includes(name));
         }
         // 查詢順序：①使用者自己設定過的價格 → ②有沒有被設成別的食材的關鍵字（例如「黑糖」被設成「黑糖粉」的關鍵字）
         // → ③AI估一個參考價當預設值（會寫回使用者自己的Firestore文件，標記成ai_suggested，避免每次都重新問AI；
@@ -13547,7 +13554,21 @@
             document.getElementById('fridge-new-amount').value = item.amount;
             document.getElementById('fridge-new-unit').value = item.unit;
             document.getElementById('fridge-new-expiry').value = item.expiryDate || '';
-            document.getElementById('fridge-new-price').value = ''; // 花費是「這次新買」的概念，編輯時不預帶舊值，不想改價格就留空
+            // 用提示文字顯示目前記錄的成本資料（可能是自己填的，也可能是共用冰箱裡其他成員填的），
+            // 讓你看得到「上次是多少錢買的」——但故意不直接填進輸入框的值，因為如果你這次編輯只是想
+            // 更新「目前剩多少」（不是真的又買了一次），送出時會拿這個舊價格搭配新改過的庫存數量重新計算，
+            // 反而算出錯誤的單價，所以要更新價格的話，麻煩自己重新輸入這次的花費
+            const costs = await loadUserIngredientCosts();
+            const costEntry = costs[item.name];
+            const priceInput = document.getElementById('fridge-new-price');
+            priceInput.value = '';
+            if (costEntry && costEntry.purchasePrice && costEntry.purchaseAmount) {
+                priceInput.placeholder = `上次：${costEntry.purchasePrice}元/${costEntry.purchaseAmount}${costEntry.purchaseUnit || ''}`;
+            } else if (costEntry) {
+                priceInput.placeholder = `目前單價約NT$${costEntry.pricePer100g.toFixed(2)}/100g`;
+            } else {
+                priceInput.placeholder = '花費NT$(選填)';
+            }
             document.getElementById('fridge-new-alias').value = '';
             fridgeEditingIndex = idx;
             const btn = document.getElementById('fridge-submit-btn');
@@ -13689,15 +13710,16 @@
         }
 
         // 食譜詳細頁：拿食譜的食材清單去比對冰箱庫存，顯示「這個有」「這個不夠/沒有」
-        // 用跟食材成本系統同一套「套用類似食材」的關鍵字對照，把食譜食材名稱轉換成使用者慣用的主要名稱，
-        // 這樣冰箱比對/扣除的時候，例如「奶粉」如果被設定套用「全脂奶粉」的價格，也會自動去對到冰箱裡的「全脂奶粉」
-        async function resolveFridgeMatchName(ingName) {
+        // 用跟食材成本系統同一套「套用類似食材」的關鍵字對照，把食譜食材名稱轉換成使用者慣用的主要名稱（可能不只一個），
+        // 這樣冰箱比對/扣除的時候，例如「鮮奶」如果同時被設定套用「心璞鮮乳」跟「貝親鮮乳」兩個品牌的價格，
+        // 也會自動把這兩個品牌在冰箱裡的庫存加總一起比對，其中一個不夠會自動扣另一個
+        async function resolveFridgeMatchNames(ingName) {
             const costs = await loadUserIngredientCosts();
             const trimmed = ingName.trim();
-            if (costs[trimmed]) return trimmed; // 本身就是主要名稱（有自己的價格資料）
-            const owner = findKeywordOwner(trimmed, costs);
-            if (owner) return owner[0]; // 是關鍵字，改用它套用的主要名稱去對冰箱
-            return trimmed;
+            if (costs[trimmed]) return [trimmed]; // 本身就是主要名稱（有自己的價格資料）
+            const owners = findAllKeywordOwners(trimmed, costs);
+            if (owners.length) return owners.map(([canon]) => canon); // 是關鍵字，改用它套用的（可能好幾個）主要名稱去對冰箱
+            return [trimmed];
         }
         // 算出一份食譜（依factor換算）每個食材對冰箱庫存的比對結果，updateFridgeBox（顯示）跟
         // deductFridgeForRecipe（大功告成扣除）共用同一套邏輯，確保「畫面看到的」跟「真的扣掉的」是同一件事。
@@ -13705,16 +13727,18 @@
         // 例如食譜寫「200g」冰箱記「1顆」，都會先各自換算成克再比較
         async function computeFridgeMatchRows(recipe, factor, fridgeItems) {
             return Promise.all(recipe.ingredients.map(async ing => {
-                const matchName = await resolveFridgeMatchName(ing.name);
-                if (await isStapleIngredient(matchName)) {
-                    return { name: ing.name, matchName, batches: [], needed: 0, unit: ing.unit, status: 'staple', text: '常備食材' };
+                const matchNames = await resolveFridgeMatchNames(ing.name);
+                if (await isStapleIngredient(matchNames[0])) {
+                    return { name: ing.name, matchName: matchNames[0], batches: [], needed: 0, unit: ing.unit, status: 'staple', text: '常備食材' };
                 }
+                const matchName = matchNames.join('、'); // 顯示用：可能是一個名稱，也可能是好幾個品牌並列
                 const needed = ing.amount * factor;
-                // 找出所有同名的批次（可能有好幾批不同到期日/不同數量），依到期日排序，快到期的排前面，
-                // 沒填到期日的排最後面（比較不緊急），大功告成扣除的時候會照這個順序先扣快到期的
+                // 找出所有「符合任一個套用品牌名稱」的批次（可能好幾種品牌、每種又好幾批不同到期日/數量），
+                // 依到期日排序，快到期的排前面，沒填到期日的排最後面，大功告成扣除的時候會照這個順序先扣快到期的，
+                // 不分品牌，哪一批快到期就先扣哪一批
                 const batchIdxs = fridgeItems
                     .map((item, idx) => ({ item, idx }))
-                    .filter(({ item }) => item.name.trim() === matchName)
+                    .filter(({ item }) => matchNames.includes(item.name.trim()))
                     .sort((a, b) => {
                         if (!a.item.expiryDate && !b.item.expiryDate) return 0;
                         if (!a.item.expiryDate) return 1;
