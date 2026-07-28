@@ -59,17 +59,19 @@ async function main() {
         if (!soonExpiring.length) continue;
         fridgesWithExpiring++;
 
-        // 收集這個冰箱所有成員、所有裝置的推播權杖
-        const tokens = [];
+        // 收集這個冰箱所有成員、所有裝置的推播權杖（記住每個權杖是哪個uid的，等一下要清理失效權杖用）
+        const tokenOwners = []; // [{ uid, token }]
         for (const uid of members) {
             try {
                 const tDoc = await db.collection('fcmTokens').doc(uid).get();
-                if (tDoc.exists && Array.isArray(tDoc.data().tokens)) tokens.push(...tDoc.data().tokens);
+                if (tDoc.exists && Array.isArray(tDoc.data().tokens)) {
+                    tDoc.data().tokens.forEach(token => tokenOwners.push({ uid, token }));
+                }
             } catch (err) {
                 console.warn(`讀取 ${uid} 的通知權杖失敗：`, err.message);
             }
         }
-        if (!tokens.length) {
+        if (!tokenOwners.length) {
             console.log(`冰箱 ${doc.id}：有 ${soonExpiring.length} 項快到期，但沒有任何成員開啟過通知，跳過`);
             continue;
         }
@@ -78,16 +80,27 @@ async function main() {
         const title = '🧊 冰箱食材快到期了';
         const body = `${names} 快到期了，記得盡快使用`;
 
-        for (const token of tokens) {
+        for (const { uid, token } of tokenOwners) {
             try {
                 await messaging.send({ token, notification: { title, body } });
                 notifiedDevices++;
             } catch (err) {
-                // 常見原因：使用者換裝置/登出/清過快取，權杖失效了，這是正常現象，跳過就好，不用整支腳本失敗
+                // NotRegistered / InvalidArgument 這類錯誤代表權杖確定已經失效了（換裝置、清快取、解除授權…），
+                // 順手把它從使用者的權杖清單裡移除，不然會一直堆積在那裡、每次都重複噴一樣的警告
                 console.warn(`推播到某個裝置失敗（權杖可能已失效）：`, err.message);
+                if (err.code === 'messaging/registration-token-not-registered' || (err.errorInfo && err.errorInfo.code === 'messaging/invalid-argument')) {
+                    try {
+                        await db.collection('fcmTokens').doc(uid).update({
+                            tokens: admin.firestore.FieldValue.arrayRemove(token),
+                        });
+                        console.log(`已清除 ${uid} 的一個失效權杖`);
+                    } catch (cleanupErr) {
+                        console.warn('清除失效權杖失敗：', cleanupErr.message);
+                    }
+                }
             }
         }
-        console.log(`冰箱 ${doc.id}：${soonExpiring.length} 項快到期（${names}），通知了 ${tokens.length} 個裝置`);
+        console.log(`冰箱 ${doc.id}：${soonExpiring.length} 項快到期（${names}），通知了 ${tokenOwners.length} 個裝置`);
     }
 
     console.log(`完成！共 ${fridgesWithExpiring} 個冰箱有食材快到期，總共發送了 ${notifiedDevices} 則通知`);
