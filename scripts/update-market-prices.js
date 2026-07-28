@@ -1,6 +1,6 @@
 // ============================================================
 // 市場價格專區 - 排程腳本
-// SCRIPT_VERSION: 2026-07-27-v12 （鴨鵝改試新版REST API網址(/api/v1/PoultryTransType_Goose_Duck_Duckegg/)，不帶金鑰測試看看能不能用）
+// SCRIPT_VERSION: 2026-07-27-v13 （鴨鵝改用使用者查到、有2015年封存記錄佐證的網址PoultryTransGooseDuckData.aspx；欄位名稱加入中文猜測候選）
 // ------------------------------------------------------------
 // 這支腳本會：
 //   1. 向農業部「農產品交易行情」「漁產品交易行情」開放資料 API 抓取：
@@ -456,13 +456,14 @@ const CHICKEN_EGG_COLUMNS = [
     { field: '白肉雞(門市價高屏)', name: '白肉雞(門市價高屏)', unit: 'taijin' },
     { field: '雞蛋(產地)', name: '雞蛋(產地價)', unit: 'taijin' },
 ];
-// 家禽肉鵝/番鴨/鴨蛋：目前用的網址（跟雞肉雞蛋共用同一個）實測證實抓不到這份資料
-// （回傳的其實是雞肉雞蛋那份資料，不是真正的鴨鵝資料），還沒找到正確的介接網址，先保留設定但知道目前是抓不到的狀態
+// 家禽肉鵝/番鴨/鴨蛋：舊網址猜錯過一次、新版REST API不帶金鑰也抓不到，這次改用使用者查到、有封存記錄佐證的網址；
+// 欄位名稱比照雞肉雞蛋的規律（實測發現是純中文命名，不是文件上寫的英文），先猜可能的中文寫法當候選，
+// 猜錯也沒關係，log的診斷會印出真正的欄位名稱，之後再對照修正
 const GOOSE_DUCK_COLUMNS = [
-    { field: 'Goose_WR_TaijinPrice', name: '肉鵝(白羅曼)', unit: 'taijin' },
-    { field: 'Duck_M_TaijinPrice', name: '鴨(正番鴨公)', unit: 'taijin' },
-    { field: 'Duck_75D_TaijinPrice', name: '鴨(土番鴨75天)', unit: 'taijin' },
-    { field: 'Duckegg_TNN_TaijinPrice', name: '鴨蛋(新蛋台南)', unit: 'taijin' },
+    { field: ['肉鵝(白羅曼)', 'Goose_WR_TaijinPrice'], name: '肉鵝(白羅曼)', unit: 'taijin' },
+    { field: ['正番鴨(公)', 'Duck_M_TaijinPrice'], name: '鴨(正番鴨公)', unit: 'taijin' },
+    { field: ['土番鴨(75天)', 'Duck_75D_TaijinPrice'], name: '鴨(土番鴨75天)', unit: 'taijin' },
+    { field: ['鴨蛋(新蛋台南)', 'Duckegg_TNN_TaijinPrice'], name: '鴨蛋(新蛋台南)', unit: 'taijin' },
 ];
 // 白米：實際欄位名稱從診斷log確認過了，pt_1xxx是零售價(元/公斤)，直接可用不用換算
 const RICE_COLUMNS = [
@@ -475,7 +476,7 @@ const RICE_COLUMNS = [
 
 // ---- 4. 執行並寫入 Firestore ----
 async function main() {
-    console.log('開始更新市場價格推薦...(SCRIPT_VERSION: 2026-07-27-v12)');
+    console.log('開始更新市場價格推薦...(SCRIPT_VERSION: 2026-07-27-v13)');
 
     const emptyResult = { all: [], recommended: [] };
     async function safeBuild(fn, label) {
@@ -516,7 +517,7 @@ async function main() {
         '雞肉雞蛋'
     ), '雞肉雞蛋');
     const gooseDuck = await safeBuild(() => buildColumnRecommendations(
-        'https://data.moa.gov.tw/api/v1/PoultryTransType_Goose_Duck_Duckegg/',
+        'https://data.moa.gov.tw/Service/OpenData/FromM/PoultryTransGooseDuckData.aspx',
         GOOSE_DUCK_COLUMNS,
         '鴨鵝'
     ), '鴨鵝');
