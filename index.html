@@ -15079,104 +15079,83 @@
     </script>
 
     <!--
-        Firebase AI Logic（Gemini，前端直接呼叫，金鑰不外洩）
-        ------------------------------------------------------------
-        用途：本地食材熱量對照表查不到的食材，改用這裡呼叫 Gemini 估算。
-        這段程式碼「還沒設定好之前完全不會出錯」——只是安靜地不啟用，網站其他功能不受影響。
-
-        ⚠️ 這裡刻意用「獨立的第二個 Firebase App 實例」來跑 AI Logic / App Check，
-        跟主要的 firebase.app()（Auth／Firestore 用的那個）完全分開。
-        這樣不管 AI Logic 或 App Check 那邊出什麼問題（例如尚未完成主控台設定、
-        權杖刷新失敗等），都只會讓 AI 估算功能停用，絕對不會拖累到食譜讀取、登入
-        等核心功能——這是先前「AI Logic 一出錯，連食譜都讀不到」問題的修正。
-
-        部署前，你需要先在 Firebase 主控台完成這些步驟：
-        1. 主控台 > AI Logic > 開始使用 (Get started)，選擇「Gemini Developer API」，
-           依照畫面指示註冊你的 Web App
-        2. 主控台 > App Check，替你的 Web App 選擇「reCAPTCHA v3」提供者：
-           - 先到 https://www.google.com/recaptcha/admin 註冊網站，網域填
-             wallcemax.github.io，取得一組「網站金鑰 (Site Key)」
-           - 回到 Firebase 主控台 App Check 頁面，貼上這組網站金鑰完成註冊
-           - 確認 App Check > API 分頁裡，「Firebase AI Logic」那一列狀態是「已強制」，
-             「Cloud Firestore」跟「Authentication」建議維持「監控中」或「未強制」即可
-        3. 把下面的 RECAPTCHA_SITE_KEY 換成你在步驟 2 拿到的網站金鑰
-        4. 型號名稱 (model) 請以 Firebase 主控台「開始使用」流程實際顯示的建議型號為準
-           （AI 模型名稱常常更新，目前用的是 gemini-3.5-flash，部署前請對照主控台/官方文件確認是否有更新的型號）
+        AI估算功能：透過Cloudflare Worker當跳板去呼叫Gemini API，API金鑰藏在Cloudflare後端不會外洩，
+        也不用綁定Firebase AI Logic那組配額比較小的免費額度。
+        部署步驟看cloudflare-ai-proxy資料夾裡的worker.js檔案開頭註解。
     -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-        import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app-check.js";
-        import { getAI, GoogleAIBackend, getGenerativeModel } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-ai.js";
+    <script>
+        // 部署完Cloudflare Worker之後，把這裡換成你實際拿到的Worker網址
+        const CLOUDFLARE_AI_PROXY_URL = '請填入你的Cloudflare Worker網址';
 
-        const RECAPTCHA_SITE_KEY = '6LdhikwtAAAAABB_qD-K1UOHUL3pOZFt2M7FuYyh';
-
-        // 跟主要網站用的是同一組 Firebase 專案設定，只是另外開一個「具名的 App 實例」，
-        // 讓 App Check／AI Logic 的初始化跟主要 App（Auth／Firestore）互不影響
-        const firebaseConfigForAI = {
-            apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
-            authDomain: "recipe-synchronization.firebaseapp.com",
-            projectId: "recipe-synchronization",
-            storageBucket: "recipe-synchronization.firebasestorage.app",
-            messagingSenderId: "559668909743",
-            appId: "1:559668909743:web:63dc34572b98839479265a"
-        };
-
-        let aiModel = null;
-        try {
-            if (RECAPTCHA_SITE_KEY && !RECAPTCHA_SITE_KEY.startsWith('請填入')) {
-                const aiApp = initializeApp(firebaseConfigForAI, 'aiLogicSecondaryApp');
-                initializeAppCheck(aiApp, {
-                    provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY),
-                    isTokenAutoRefreshEnabled: true
-                });
-                const ai = getAI(aiApp, { backend: new GoogleAIBackend() });
-                // tools: googleSearch 讓 Gemini 在估算時可以先搜尋網路上的真實資料，
-                // 而不是單純憑訓練記憶亂猜，對冷門食材的準確度會有幫助
-                aiModel = getGenerativeModel(ai, { model: 'gemini-3.5-flash', tools: [{ googleSearch: {} }] });
-            } else {
-                console.info('Firebase AI Logic 尚未設定 reCAPTCHA 網站金鑰，AI 食材熱量估算功能目前停用中');
+        // 統一的呼叫函式：把prompt送去Worker，Worker再去問Gemini，回傳文字內容
+        async function callAIProxy(prompt) {
+            if (CLOUDFLARE_AI_PROXY_URL === '請填入你的Cloudflare Worker網址') {
+                console.info('AI估算功能尚未設定Cloudflare Worker網址，這個功能目前停用中');
+                return null;
             }
-        } catch (err) {
-            console.warn('Firebase AI Logic 初始化失敗（可能尚未完成主控台設定，不影響網站其他功能）', err);
+            try {
+                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt }),
+                });
+                if (!res.ok) {
+                    console.warn('AI估算呼叫失敗', await res.text());
+                    return null;
+                }
+                const data = await res.json();
+                return data.text || null;
+            } catch (err) {
+                console.warn('AI估算呼叫失敗（可能是Worker還沒部署好，或網路問題）', err && err.message);
+                return null;
+            }
         }
 
-        // 提供給下方一般 <script>（非 module）呼叫的全域介面
+        // 提供給其他地方呼叫的全域介面，介面/回傳格式跟之前用Firebase AI Logic時完全一樣，
+        // 其他呼叫這幾個函式的地方（食材成本、熱量、密度估算）都不用跟著改
         window.__fetchGeminiIngredientNutrition = async function (name) {
-            if (!aiModel) return null;
             const prompt = `請估算食材「${name}」（繁體中文，烘焙／料理食譜情境）每 100 克的營養數據。只回傳一個 JSON 物件，不要有其他文字、不要用 markdown code block，格式：{"kcal":數字,"protein":數字,"fat":數字,"carb":數字,"sodium":數字}`;
-            const result = await aiModel.generateContent(prompt);
-            const text = result.response.text().replace(/```json|```/g, '').trim();
-            const parsed = JSON.parse(text);
-            return {
-                kcal: Number(parsed.kcal) || 0,
-                protein: Number(parsed.protein) || 0,
-                fat: Number(parsed.fat) || 0,
-                carb: Number(parsed.carb) || 0,
-                sodium: Number(parsed.sodium) || 0,
-            };
+            const text = await callAIProxy(prompt);
+            if (!text) return null;
+            try {
+                const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+                return {
+                    kcal: Number(parsed.kcal) || 0,
+                    protein: Number(parsed.protein) || 0,
+                    fat: Number(parsed.fat) || 0,
+                    carb: Number(parsed.carb) || 0,
+                    sodium: Number(parsed.sodium) || 0,
+                };
+            } catch (err) {
+                console.warn('解析AI熱量估算回應失敗', err && err.message);
+                return null;
+            }
         };
 
         // 估算食材密度（g/ml），用於「大匙/tbsp/茶匙/tsp/ml/毫升」等體積單位換算成公克，
         // 本地密度表查不到時才會用到
         window.__fetchGeminiIngredientDensity = async function (name) {
-            if (!aiModel) return null;
             const prompt = `請估算食材「${name}」（繁體中文，烘焙／料理食譜情境）的密度，單位為公克/毫升(g/ml)。只回傳一個數字，不要有任何其他文字、不要有單位、不要用 JSON 或 markdown，例如：0.96`;
-            const result = await aiModel.generateContent(prompt);
-            const text = result.response.text().trim();
-            const match = text.match(/[\d.]+/);
+            const text = await callAIProxy(prompt);
+            if (!text) return null;
+            const match = text.trim().match(/[\d.]+/);
             const num = match ? parseFloat(match[0]) : NaN;
             return isNaN(num) ? null : num;
         };
         // 估算食材參考市價（新台幣／每100克），用於個人食材成本系統：使用者還沒自己設定過價格時，
         // 先用這個給一個參考預設值，使用者可以再自己修改覆蓋
         window.__fetchGeminiIngredientCost = async function (name) {
-            if (!aiModel) return null;
             const prompt = `請估算食材「${name}」（繁體中文，台灣一般超市或傳統市場的常見零售價格，新台幣）每100克的大約參考價格。只回傳一個JSON物件，不要有其他文字、不要用markdown code block，格式：{"pricePer100g":數字}`;
-            const result = await aiModel.generateContent(prompt);
-            const text = result.response.text().replace(/```json|```/g, '').trim();
-            const parsed = JSON.parse(text);
-            const price = Number(parsed.pricePer100g);
-            return isNaN(price) ? null : { pricePer100g: price };
+            const text = await callAIProxy(prompt);
+            if (!text) return null;
+            try {
+                const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+                const price = Number(parsed.pricePer100g);
+                return isNaN(price) ? null : { pricePer100g: price };
+            } catch (err) {
+                console.warn('解析AI成本估算回應失敗', err && err.message);
+                return null;
+            }
         };
     </script>
 </body>
