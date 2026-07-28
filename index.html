@@ -12273,42 +12273,59 @@
         }
         // 把aliasName設成canonicalName的關鍵字（別名）：之後查aliasName的價格會直接沿用canonicalName這筆資料，
         // 不會另外存成一筆獨立資料；如果aliasName原本自己有一筆獨立資料，會先刪掉，避免同時存在兩種狀態
-        async function linkIngredientAsKeyword(canonicalName, aliasName) {
+        // 用Firestore交易(transaction)安全地修改整份食材成本資料(items這個map)——
+        // 跟冰箱食材那個bug是同一類問題：如果兩個裝置（例如手機開著同一頁沒關、電腦在操作）幾乎同時
+        // 各自「讀一次→改一改→寫回去」，後寫的會把先寫的蓋掉。改用交易之後，讀取+寫入變成不可分割的
+        // 一個動作，中間如果偵測到文件已經被別人改過，會自動重新讀最新版本再試一次
+        // 特別注意：items是一個map(物件)不是陣列，Firestore的merge:true對map欄位是「深層合併」，
+        // 不會真的移除你在本地端刪掉的key（合併只會新增/覆蓋你有給的欄位，不會處理你沒給的欄位），
+        // 所以這裡改用update()整份取代items欄位，才能確保「改名」「刪除」這類需要真的拿掉某個key的操作有效
+        async function mutateIngredientCostsAtomic(mutateFn) {
             if (!currentUser) return false;
-            const costs = await loadUserIngredientCosts();
-            const entry = costs[canonicalName];
-            if (!entry) return false;
-            const hadOwnEntry = !!costs[aliasName];
-            entry.keywords = Array.from(new Set([...(entry.keywords || []), aliasName]));
-            delete costs[aliasName];
+            const ownerId = await getActiveFridgeId();
+            const ref = db.collection('userIngredientPrices').doc(ownerId);
             try {
-                const payload = { [`items.${canonicalName}.keywords`]: entry.keywords };
-                if (hadOwnEntry) payload[`items.${aliasName}`] = firebase.firestore.FieldValue.delete();
-                const ownerId = await getActiveFridgeId();
-                await db.collection('userIngredientPrices').doc(ownerId).update(payload);
+                await db.runTransaction(async (tx) => {
+                    const doc = await tx.get(ref);
+                    const items = doc.exists ? Object.assign({}, doc.data().items || {}) : {};
+                    mutateFn(items);
+                    if (doc.exists) {
+                        tx.update(ref, { items }); // update會整個取代items欄位，刪除的key才會真的消失
+                    } else {
+                        tx.set(ref, { items });
+                    }
+                });
+                userIngredientCostCache = null; // 清快取，下次強制重新讀最新的
                 return true;
             } catch (err) {
-                console.warn('連結食材關鍵字失敗', err && err.message);
+                console.warn('修改食材成本失敗', err && err.message);
                 return false;
             }
+        }
+        async function linkIngredientAsKeyword(canonicalName, aliasName) {
+            if (!currentUser) return false;
+            let success = false;
+            await mutateIngredientCostsAtomic(items => {
+                const entry = items[canonicalName];
+                if (!entry) return;
+                entry.keywords = Array.from(new Set([...(entry.keywords || []), aliasName]));
+                delete items[aliasName]; // 如果alias本身原本有獨立的價格資料，拿掉，避免同時存在兩種狀態
+                success = true;
+            });
+            if (!success) console.warn('連結食材關鍵字失敗：找不到主要名稱', canonicalName);
+            return success;
         }
         // 取消aliasName是canonicalName的關鍵字（拿掉連結，回到「尚未設定」的狀態）
         async function unlinkIngredientKeyword(canonicalName, aliasName) {
             if (!currentUser) return false;
-            const costs = await loadUserIngredientCosts();
-            const entry = costs[canonicalName];
-            if (!entry || !entry.keywords) return false;
-            entry.keywords = entry.keywords.filter(k => k !== aliasName);
-            try {
-                const ownerId = await getActiveFridgeId();
-                await db.collection('userIngredientPrices').doc(ownerId).update({
-                    [`items.${canonicalName}.keywords`]: entry.keywords,
-                });
-                return true;
-            } catch (err) {
-                console.warn('移除食材關鍵字失敗', err && err.message);
-                return false;
-            }
+            let success = false;
+            await mutateIngredientCostsAtomic(items => {
+                const entry = items[canonicalName];
+                if (!entry || !entry.keywords) return;
+                entry.keywords = entry.keywords.filter(k => k !== aliasName);
+                success = true;
+            });
+            return success;
         }
 
         // 使用者自己輸入/修改一個食材的價格（第二階段的介面會呼叫這個），一律標記成user_set，
@@ -12327,47 +12344,35 @@
             const trimmedName = name.trim();
             const price = Number(pricePer100g);
             if (!trimmedName || !(price >= 0)) return false;
-            const costs = await loadUserIngredientCosts();
-            // 如果這個名稱原本是套用別的食材的關鍵字，現在手動存了自己的價格，就要先把關鍵字連結拿掉，
-            // 不然會同時存在「是別人的關鍵字」又「有自己獨立資料」兩種狀態，查詢的時候會搞混
-            const owner = findKeywordOwner(trimmedName, costs);
-            if (owner) await unlinkIngredientKeyword(owner[0], trimmedName);
             // purchaseInfo（選填）：使用者實際輸入的「花多少錢買多少數量」，記下來方便下次編輯時直接帶回原本填的內容，
             // 不用每次都重新換算成每100克多少錢再回推
             const extra = purchaseInfo ? { purchasePrice: Number(purchaseInfo.price) || 0, purchaseAmount: Number(purchaseInfo.amount) || 0, purchaseUnit: purchaseInfo.unit || '' } : {};
-            costs[trimmedName] = { pricePer100g: price, source: 'user_set', updatedAt: Date.now(), ...extra };
-            try {
-                const ownerId = await getActiveFridgeId();
-                await db.collection('userIngredientPrices').doc(ownerId).set({
-                    items: { [trimmedName]: { pricePer100g: price, source: 'user_set', updatedAt: firebase.firestore.FieldValue.serverTimestamp(), ...extra } }
-                }, { merge: true });
-                return true;
-            } catch (err) {
-                console.warn('儲存食材成本失敗', err && err.message);
-                alert('儲存失敗：' + err.message);
-                return false;
-            }
+            const ok = await mutateIngredientCostsAtomic(items => {
+                // 如果這個名稱原本是套用別的食材的關鍵字，現在手動存了自己的價格，就要先把關鍵字連結拿掉，
+                // 不然會同時存在「是別人的關鍵字」又「有自己獨立資料」兩種狀態，查詢的時候會搞混
+                Object.values(items).forEach(entry => {
+                    if (Array.isArray(entry.keywords) && entry.keywords.includes(trimmedName)) {
+                        entry.keywords = entry.keywords.filter(k => k !== trimmedName);
+                    }
+                });
+                items[trimmedName] = { pricePer100g: price, source: 'user_set', updatedAt: Date.now(), ...extra };
+            });
+            if (!ok) alert('儲存失敗，請稍後再試一次');
+            return ok;
         }
         // 把一筆食材成本資料從舊名稱搬到新名稱（用在「同名但規格不同」偵測到衝突、決定分開存的時候），
         // 資料內容原封不動搬過去，只是換一個key，關鍵字連結（誰套用了這筆）也會一併搬過去
         async function renameIngredientCost(oldName, newName) {
             if (!currentUser) return false;
-            try {
-                const ownerId = await getActiveFridgeId();
-                const doc = await db.collection('userIngredientPrices').doc(ownerId).get();
-                const items = doc.exists ? (doc.data().items || {}) : {};
+            let success = false;
+            await mutateIngredientCostsAtomic(items => {
                 const entry = items[oldName];
-                if (!entry) return false;
-                await db.collection('userIngredientPrices').doc(ownerId).update({
-                    [`items.${newName}`]: entry,
-                    [`items.${oldName}`]: firebase.firestore.FieldValue.delete(),
-                });
-                userIngredientCostCache = null; // 清快取，下次重新讀
-                return true;
-            } catch (err) {
-                console.warn('搬移食材成本資料失敗', err && err.message);
-                return false;
-            }
+                if (!entry) return;
+                items[newName] = entry;
+                delete items[oldName];
+                success = true;
+            });
+            return success;
         }
         // 從「設定食材價格」視窗點「改名」的完整互動流程：檢查新名稱有沒有衝突、
         // 順便把條碼字典裡指到舊名稱的紀錄更新掉，並且問一下冰箱裡如果有同名食材要不要一起改
@@ -12376,7 +12381,7 @@
             if (newName === null) return; // 按了取消
             const trimmedNew = newName.trim();
             if (!trimmedNew || trimmedNew === oldName) return;
-            const costs = await loadUserIngredientCosts();
+            const costs = await loadUserIngredientCosts(true);
             if (costs[trimmedNew]) { alert(`「${trimmedNew}」這個名稱已經有價格資料了，不能改成重複的名稱`); return; }
             const ok = await renameIngredientCost(oldName, trimmedNew);
             if (!ok) { alert('改名失敗'); return; }
@@ -12402,18 +12407,9 @@
         async function deleteUserIngredientCost(name) {
             if (!currentUser) return false;
             const trimmedName = name.trim();
-            const costs = await loadUserIngredientCosts();
-            delete costs[trimmedName];
-            try {
-                const ownerId = await getActiveFridgeId();
-                await db.collection('userIngredientPrices').doc(ownerId).update({
-                    [`items.${trimmedName}`]: firebase.firestore.FieldValue.delete()
-                });
-                return true;
-            } catch (err) {
-                console.warn('刪除食材成本失敗', err && err.message);
-                return false;
-            }
+            return await mutateIngredientCostsAtomic(items => {
+                delete items[trimmedName];
+            });
         }
 
         // 計算一份食譜（依servings倍率）的總成本；沿用熱量系統的resolveGrams做單位換算，兩邊邏輯保持一致
