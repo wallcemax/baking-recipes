@@ -226,7 +226,7 @@
             <div class="flex gap-3">
                 <div class="relative flex-1">
                     <i class="fas fa-search absolute left-5 top-1/2 -translate-y-1/2" style="color:#B3A492"></i>
-                    <input id="search-input" onkeyup="filterRecipes()" placeholder="搜尋食譜名稱..." class="form-input pl-12">
+                    <input id="search-input" onkeyup="filterRecipes()" placeholder="搜尋食譜名稱、標籤或食材..." class="form-input pl-12">
                 </div>
                 <button id="add-recipe-btn-desktop" onclick="showAddModal()" class="btn-primary hidden md:flex items-center gap-2 whitespace-nowrap">
                     <i class="fas fa-plus"></i> 新增食譜
@@ -496,6 +496,11 @@
                         <option value="private">🔒 私人（只有我自己看得到）</option>
                         <option value="draft">📝 草稿（尚未完成，只有我看得到）</option>
                     </select>
+                </div>
+                <div class="mb-4">
+                    <label class="font-semibold block mb-2">🏷️ 標籤（選填）</label>
+                    <div id="tags-container" class="flex flex-wrap gap-2 mb-2"></div>
+                    <input id="tag-input" onkeydown="if(event.key==='Enter'){event.preventDefault();addTagFromInput();}" placeholder="輸入標籤後按Enter新增，例如「快速」「素食」「宴客」" class="form-input">
                 </div>
                 <div class="mb-6">
                     <label class="font-semibold block mb-3">📷 食譜封面照片（選填）</label>
@@ -11059,6 +11064,17 @@
             });
         }
 
+        // 點卡片上的標籤，直接用這個標籤當關鍵字搜尋
+        function searchByTag(tag) {
+            document.getElementById('search-input').value = tag;
+            filterRecipes();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        // 從食譜詳細頁點標籤搜尋：先關掉詳細頁，再套用搜尋
+        function searchByTagFromDetail(tag) {
+            closeDetail();
+            searchByTag(tag);
+        }
         function renderRecipes(recipes) {
             const grid = document.getElementById('recipes-grid');
             const pagination = document.getElementById('pagination');
@@ -11096,6 +11112,7 @@
                     </div>
                     <h3 class="font-display font-bold text-xl mb-1.5 leading-snug">${r.name}${visBadge}</h3>
                     <p class="text-sm" style="color:var(--espresso-soft)">${r.sizeValue ? `${r.sizeValue}${r.sizeUnit} · ` : ''}${r.servings} 個 • <span id="author-title-${r.id}"></span>${r.authorName||''}</p>
+                    ${r.tags && r.tags.length ? `<div class="flex flex-wrap gap-1 mt-2">${r.tags.map(t => `<span onclick="event.stopPropagation(); searchByTag('${escapeHtmlAttr(t)}')" class="text-xs px-2 py-0.5 rounded-full cursor-pointer" style="background:var(--cream); color:var(--espresso-soft)">#${t}</span>`).join('')}</div>` : ''}
                 `;
                 div.onclick = () => showDetail(r);
                 div.onkeydown = (e) => { if (e.key === 'Enter') showDetail(r); };
@@ -11129,9 +11146,12 @@
 
         function filterRecipes(resetPage = true) {
             if (resetPage) currentPage = 1;
-            const term = document.getElementById('search-input').value.toLowerCase();
+            const term = document.getElementById('search-input').value.toLowerCase().trim();
             const filtered = allRecipes.filter(r => {
-                const matchesTerm = r.name.toLowerCase().includes(term);
+                const matchesTerm = !term
+                    || r.name.toLowerCase().includes(term)
+                    || (r.tags || []).some(tag => tag.toLowerCase().includes(term))
+                    || (r.ingredients || []).some(ing => (ing.name || '').toLowerCase().includes(term));
                 const matchesCategory = selectedCategory === '全部' || r.category === selectedCategory;
                 const matchesFav = !showFavoritesOnly || userFavorites.has(r.id);
                 const matchesMine = !showMyRecipesOnly || (currentUser && r.authorId === currentUser.uid);
@@ -11851,6 +11871,7 @@
                     <div class="min-w-0">
                         <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${recipe.category}</span>${visBadge}
                         <h2 class="font-display text-2xl sm:text-3xl font-bold mt-3 leading-snug">${recipe.name}</h2>
+                        ${recipe.tags && recipe.tags.length ? `<div class="flex flex-wrap gap-1 mt-2">${recipe.tags.map(t => `<span onclick="searchByTagFromDetail('${escapeHtmlAttr(t)}')" class="text-xs px-2 py-0.5 rounded-full cursor-pointer" style="background:var(--cream); color:var(--espresso-soft)">#${t}</span>`).join('')}</div>` : ''}
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
                         <button onclick="addToShoppingList(${recipeJson})" class="fav-btn" style="background:var(--cream)" aria-label="加入採購清單" title="加入採購清單">
@@ -13547,6 +13568,8 @@
             document.getElementById('size-unit').value = recipe.sizeUnit || '吋';
             document.getElementById('visibility').value = recipe.visibility || 'public';
             document.getElementById('youtube-url').value = recipe.youtubeUrl || '';
+            currentRecipeTags = [...(recipe.tags || [])];
+            renderTagsContainer();
             resetImageField();
             if (recipe.imageUrl) {
                 currentImageUrl = recipe.imageUrl;
@@ -13577,6 +13600,8 @@
             document.getElementById('size-unit').value = recipe.sizeUnit || '吋';
             document.getElementById('visibility').value = 'public';
             document.getElementById('youtube-url').value = recipe.youtubeUrl || '';
+            currentRecipeTags = [...(recipe.tags || [])];
+            renderTagsContainer();
             resetImageField();
             if (recipe.imageUrl) {
                 currentImageUrl = recipe.imageUrl;
@@ -13621,9 +13646,35 @@
             document.getElementById('youtube-url').value = '';
             document.getElementById('ingredients-container').innerHTML = '';
             document.getElementById('steps-container').innerHTML = '';
+            currentRecipeTags = [];
+            renderTagsContainer();
             resetImageField();
             addIngredientField(); addStepField();
             pushModalHistoryState();
+        }
+
+        // ========== 食譜標籤 ==========
+        let currentRecipeTags = [];
+        function renderTagsContainer() {
+            const el = document.getElementById('tags-container');
+            if (!el) return;
+            el.innerHTML = currentRecipeTags.map((tag, idx) => `
+                <span class="chip text-xs" style="display:inline-flex; align-items:center; gap:6px;">
+                    #${tag}
+                    <button type="button" onclick="removeTagAt(${idx})" style="color:#C4453F; font-weight:bold;">×</button>
+                </span>`).join('');
+        }
+        function addTagFromInput() {
+            const input = document.getElementById('tag-input');
+            const val = input.value.trim();
+            if (!val) return;
+            if (!currentRecipeTags.includes(val)) currentRecipeTags.push(val);
+            input.value = '';
+            renderTagsContainer();
+        }
+        function removeTagAt(idx) {
+            currentRecipeTags.splice(idx, 1);
+            renderTagsContainer();
         }
 
         function resetImageField() {
@@ -13856,6 +13907,7 @@
                 sizeValue: sizeValueRaw !== '' ? parseFloat(sizeValueRaw) : null,
                 sizeUnit: sizeValueRaw !== '' ? (document.getElementById('size-unit').value || '吋') : null,
                 visibility: document.getElementById('visibility').value || 'public',
+                tags: currentRecipeTags,
                 ingredients,
                 steps,
                 youtubeUrl: document.getElementById('youtube-url').value.trim(),
