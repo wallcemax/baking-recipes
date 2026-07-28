@@ -10925,6 +10925,12 @@
                 loadRecipes();
                 loadFavorites();
                 loadUserProgress();
+                // email索引：每次登入都直接同步，不要卡在recordLogin那個「一天只記一次」的邏輯裡，
+                // 不然剛裝上這個功能的當天、已經登入過的人要等到隔天才會補寫進去，邀請家人時會查不到
+                if (user.email) {
+                    db.collection('userEmailIndex').doc(user.uid).set({ email: user.email.toLowerCase() })
+                        .catch(err => console.warn('同步email索引失敗', err && err.message));
+                }
             } else {
                 info.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-sm flex items-center gap-2"><i class="fab fa-google"></i> 登入</button>`;
                 userFavorites = new Set();
