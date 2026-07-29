@@ -468,7 +468,7 @@
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p id="my-cost-back-to-shopping" class="hidden text-sm mb-3"><a href="javascript:void(0)" onclick="closeMyIngredientCostsModal()" style="color:var(--chambray); text-decoration:underline">← 返回採購清單</a></p>
-                <p class="text-xs mb-4" style="color:#B3A492">這裡設定的價格只有你自己看得到，計算食譜成本時會優先使用；還沒設定過的食材，系統會先用AI幫你估一個參考價（標示🤖），你可以隨時修改成自己實際買到的價格。新增/修改都是照你實際購買的方式填（例如「雞蛋 85元 買1台斤」），系統會自動換算成統一單價。</p>
+                <p class="text-xs mb-4" style="color:#B3A492">這裡設定的價格只有你自己看得到，計算食譜成本時會優先使用；還沒設定過價格的食材不會計入成本試算。新增/修改都是照你實際購買的方式填（例如「雞蛋 85元 買1台斤」），系統會自動換算成統一單價。</p>
                 <p class="text-xs mb-3" style="color:var(--chambray)">💡 條碼選填：可以在賣場先掃條碼、把看到的標價記下來建檔比價，不用真的買、也不會影響冰箱庫存，之後回來掃同一個條碼就能直接比對之前記錄的價格</p>
                 <div class="grid grid-cols-3 gap-2 mb-2">
                     <div class="col-span-3 flex gap-2">
@@ -12378,23 +12378,7 @@
             if (costs[trimmedName]) return costs[trimmedName];
             const owner = findKeywordOwner(trimmedName, costs);
             if (owner) return owner[1];
-            if (!currentUser) return null; // 沒登入就不主動問AI（避免未登入訪客也一直打AI額度），只查得到已經有的資料
-
-            try {
-                if (typeof window.__fetchGeminiIngredientCost !== 'function') return null;
-                const data = await window.__fetchGeminiIngredientCost(trimmedName);
-                if (!data || !data.pricePer100g) return null;
-                const record = { pricePer100g: data.pricePer100g, source: 'ai_suggested', updatedAt: Date.now() };
-                costs[trimmedName] = record; // 先更新本地快取，讓同一次瀏覽不會重複問AI
-                const ownerId = await getActiveFridgeId();
-                db.collection('userIngredientPrices').doc(ownerId).set({
-                    items: { [trimmedName]: { pricePer100g: data.pricePer100g, source: 'ai_suggested', updatedAt: firebase.firestore.FieldValue.serverTimestamp() } }
-                }, { merge: true }).catch(err => console.warn('寫入食材成本快取失敗', err && err.message));
-                return record;
-            } catch (err) {
-                console.warn('AI 成本估算暫時無法使用（可能尚未完成 Firebase AI Logic 設定）', err && err.message);
-                return null;
-            }
+            return null; // 查不到使用者自己設定過的價格，直接回傳null，不會再問AI估價
         }
         // 把aliasName設成canonicalName的關鍵字（別名）：之後查aliasName的價格會直接沿用canonicalName這筆資料，
         // 不會另外存成一筆獨立資料；如果aliasName原本自己有一筆獨立資料，會先刪掉，避免同時存在兩種狀態
@@ -15527,21 +15511,6 @@
             const match = text.trim().match(/[\d.]+/);
             const num = match ? parseFloat(match[0]) : NaN;
             return isNaN(num) ? null : num;
-        };
-        // 估算食材參考市價（新台幣／每100克），用於個人食材成本系統：使用者還沒自己設定過價格時，
-        // 先用這個給一個參考預設值，使用者可以再自己修改覆蓋
-        window.__fetchGeminiIngredientCost = async function (name) {
-            const prompt = `請估算食材「${name}」（繁體中文，台灣一般超市或傳統市場的常見零售價格，新台幣）每100克的大約參考價格。只回傳一個JSON物件，不要有其他文字、不要用markdown code block，格式：{"pricePer100g":數字}`;
-            const text = await callAIProxy(prompt);
-            if (!text) return null;
-            try {
-                const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
-                const price = Number(parsed.pricePer100g);
-                return isNaN(price) ? null : { pricePer100g: price };
-            } catch (err) {
-                console.warn('解析AI成本估算回應失敗', err && err.message);
-                return null;
-            }
         };
     </script>
 </body>
