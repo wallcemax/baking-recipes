@@ -12877,8 +12877,15 @@
                 await db.collection('ingredientNutrition').doc(docId).set(data);
                 // 立即更新這次瀏覽的暫存：主要名稱 + 所有關聯關鍵字都指到同一份資料，不用等重新整理就能生效
                 keywords.forEach(k => { aiNutritionCache[k] = data; });
+                // 這筆資料的名稱／別名，如果剛好也是孤兒清單裡卡著的項目，順便清掉——不然孤兒會一直留在
+                // 清單裡不會消失，即使這個食材其實已經透過手動建檔／編輯解決掉了
+                await Promise.all(keywords.map(k => {
+                    const orphanDocId = k.replace(/\//g, '_').slice(0, 200);
+                    return db.collection('nutritionOrphans').doc(orphanDocId).delete().catch(() => {});
+                }));
                 alert('已儲存！之後計算熱量時會優先使用這筆資料，AI 不會再重新估算這些名稱');
                 loadAdminNutritionList();
+                loadNutritionOrphansList();
             } catch (err) {
                 alert('儲存失敗：' + err.message);
             }
