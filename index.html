@@ -12214,23 +12214,88 @@
         // 依食材名稱關鍵字，猜測常見烘焙／烹飪食材的密度 (g/ml)，
         // 用來把「大匙、tbsp、茶匙、tsp、ml、毫升」等體積單位自動換算成公克
         const INGREDIENT_DENSITY_MAP = [
-            { keywords: ['鮮奶油', '動物性', 'whipping cream', 'heavy cream', 'cream'], density: 1.01 },
+            // ↓↓↓ 使用者提供的完整烘焙食材密度對照表（70種），比原本詳細很多，之後這些幾乎都不用問AI了
+            { keywords: ['低筋麵粉', '中筋麵粉', '高筋麵粉', '麵粉', 'flour'], density: 0.50 },
+            { keywords: ['全麥麵粉', 'whole wheat flour'], density: 0.54 },
+            { keywords: ['糖粉', 'icing sugar', 'powdered sugar'], density: 0.50 },
+            { keywords: ['糯米粉', '在來米粉'], density: 0.53 },
+            { keywords: ['玉米澱粉', '太白粉', 'corn starch', 'cornstarch'], density: 0.62 },
+            { keywords: ['奶粉', 'milk powder'], density: 0.46 },
+            { keywords: ['可可粉', 'cocoa'], density: 0.42 },
+            { keywords: ['細砂糖', '白砂糖', '砂糖', 'sugar'], density: 0.83 },
+            { keywords: ['二號砂糖', '黃砂糖', '二砂'], density: 0.88 },
+            { keywords: ['黑糖', 'brown sugar'], density: 0.92 },
+            { keywords: ['無鹽奶油', '有鹽奶油', '奶油', 'butter'], density: 0.95 },
+            { keywords: ['水', 'water'], density: 1.00 },
             { keywords: ['牛奶', '鮮奶', 'milk'], density: 1.03 },
-            { keywords: ['煉乳', 'condensed milk'], density: 1.30 },
-            { keywords: ['優格', '優酪乳', 'yogurt'], density: 1.03 },
-            { keywords: ['蜂蜜', 'honey'], density: 1.42 },
-            { keywords: ['楓糖', 'maple syrup'], density: 1.32 },
+            { keywords: ['動物性鮮奶油', '鮮奶油', 'whipping cream', 'heavy cream', 'cream'], density: 0.98 },
+            { keywords: ['全蛋液', '蛋液'], density: 1.02 },
+            { keywords: ['橄欖油', '沙拉油', '植物油', '葵花油', '椰子油', '油', 'oil'], density: 0.92 },
+            { keywords: ['蜂蜜', 'honey', '楓糖', '楓糖漿', 'maple syrup'], density: 1.42 },
+            { keywords: ['轉化糖漿', '水麥芽'], density: 1.40 },
+            { keywords: ['鹽', 'salt'], density: 1.20 },
+            { keywords: ['泡打粉', 'baking powder'], density: 0.90 },
+            { keywords: ['小蘇打粉', 'baking soda'], density: 0.96 },
+            { keywords: ['速發乾酵母', '速發酵母', '乾酵母', '酵母'], density: 0.60 },
+            { keywords: ['塔塔粉', 'cream of tartar'], density: 0.60 },
+            { keywords: ['杏仁粉', 'almond flour'], density: 0.40 },
+            { keywords: ['椰子粉', 'coconut flour'], density: 0.53 },
+            { keywords: ['燕麥片', 'rolled oats'], density: 0.33 },
+            { keywords: ['黑麥粉', '裸麥粉', 'rye flour'], density: 0.43 },
+            { keywords: ['糕仔粉', '熟糯米粉'], density: 0.48 },
+            { keywords: ['花生醬', '堅果醬', 'peanut butter'], density: 1.06 },
+            { keywords: ['糖蜜', 'molasses'], density: 1.42 },
+            { keywords: ['煉乳', 'condensed milk'], density: 1.29 },
+            { keywords: ['酸奶油', 'sour cream', '希臘優格', '優格', '優酪乳', 'yogurt'], density: 0.96 },
+            { keywords: ['酪乳', 'buttermilk'], density: 1.03 },
+            { keywords: ['豬油', '酥油', 'lard', 'shortening'], density: 0.86 },
+            { keywords: ['巧克力豆', 'chocolate chips'], density: 0.71 },
+            { keywords: ['葡萄乾', 'raisin'], density: 0.71 },
+            { keywords: ['核桃碎', '榛果碎'], density: 0.48 },
+            { keywords: ['杏仁片'], density: 0.36 },
+            { keywords: ['椰絲', '椰子風味絲'], density: 0.31 },
+            { keywords: ['吉利丁粉', 'gelatin'], density: 0.60 },
+            { keywords: ['寒天粉', '洋菜粉', 'agar'], density: 0.40 },
+            { keywords: ['香草精', 'vanilla extract', 'vanilla'], density: 0.84 },
+            { keywords: ['速溶咖啡粉', 'instant coffee'], density: 0.40 },
+            { keywords: ['抹茶粉', 'matcha'], density: 0.50 },
+            { keywords: ['杜蘭小麥粉', 'semolina'], density: 0.69 },
+            { keywords: ['燕麥粉', 'oat flour'], density: 0.38 },
+            { keywords: ['蕎麥粉', 'buckwheat flour'], density: 0.50 },
+            { keywords: ['大麥粉', 'barley flour'], density: 0.41 },
+            { keywords: ['米糠', '小麥胚芽'], density: 0.28 },
+            { keywords: ['豆漿', 'soy milk'], density: 1.03 },
+            { keywords: ['杏仁奶', '燕麥奶'], density: 1.01 },
+            { keywords: ['椰奶', 'coconut milk'], density: 1.02 },
+            { keywords: ['馬斯卡彭', 'mascarpone'], density: 0.96 },
+            { keywords: ['純蛋白液', '蛋白'], density: 1.01 },
+            { keywords: ['純蛋黃液', '蛋黃'], density: 1.03 },
+            { keywords: ['龍舌蘭糖漿', 'agave nectar'], density: 1.40 },
+            { keywords: ['糙米糖漿', 'brown rice syrup'], density: 1.41 },
+            { keywords: ['焦糖醬', 'caramel sauce'], density: 1.34 },
+            { keywords: ['草莓醬', '藍莓醬', '果醬', 'jam'], density: 1.33 },
+            { keywords: ['酪梨油', 'avocado oil'], density: 0.91 },
+            { keywords: ['南瓜子', '葵花子仁'], density: 0.54 },
+            { keywords: ['奇亞籽', 'chia seeds'], density: 0.67 },
+            { keywords: ['黑芝麻', '白芝麻', '芝麻'], density: 0.63 },
+            { keywords: ['蔓越莓乾'], density: 0.54 },
+            { keywords: ['香蕉泥', 'mashed banana'], density: 0.95 },
+            { keywords: ['新鮮藍莓', '藍莓'], density: 0.58 },
+            { keywords: ['肉桂粉', 'cinnamon'], density: 0.52 },
+            { keywords: ['果膠粉', 'pectin'], density: 0.60 },
+            { keywords: ['乾酪素鈉', '乳清蛋白粉', 'whey protein'], density: 0.36 },
+            { keywords: ['洋蔥粉', '大蒜粉', 'garlic powder', 'onion powder'], density: 0.64 },
+            { keywords: ['細鹽'], density: 1.26 },
+            // ↑↑↑ 以上是使用者提供的完整資料表，以下是額外補充的幾樣（不在上面清單裡的）
             { keywords: ['醬油', 'soy sauce'], density: 1.15 },
             { keywords: ['白醋', '烏醋', '醋', 'vinegar'], density: 1.01 },
-            { keywords: ['橄欖油', '沙拉油', '植物油', '葵花油', '油', 'oil'], density: 0.92 },
-            { keywords: ['細砂糖', '砂糖', '白糖', '二砂', 'sugar'], density: 0.85 },
-            { keywords: ['糖粉', 'icing sugar', 'powdered sugar'], density: 0.56 },
-            { keywords: ['高筋麵粉', '低筋麵粉', '中筋麵粉', '麵粉', 'flour'], density: 0.53 },
-            { keywords: ['可可粉', 'cocoa'], density: 0.51 },
-            { keywords: ['無鹽奶油', '有鹽奶油', '奶油', 'butter'], density: 0.96 },
-            { keywords: ['鹽', 'salt'], density: 1.20 },
-            { keywords: ['水', 'water'], density: 1.00 },
-            { keywords: ['白米', '在來米', '糯米', '香米', '米', 'rice'], density: 0.85 },
+            { keywords: ['白米', '在來米', '糯米', '糙米', '香米', '米', 'rice'], density: 0.85 },
+            { keywords: ['檸檬汁', 'lemon juice'], density: 1.03 },
+            { keywords: ['萊姆酒', '蘭姆酒', 'rum'], density: 0.94 },
+            { keywords: ['威士忌', 'whisky', 'whiskey'], density: 0.94 },
+            { keywords: ['白蘭地', 'brandy'], density: 0.94 },
+            { keywords: ['卡魯哇', '咖啡酒', 'kahlua'], density: 1.10 },
+            { keywords: ['濃縮咖啡', 'espresso', '咖啡'], density: 1.00 },
         ];
 
         // 依食材名稱關鍵字比對密度；雙向比對（名稱包含關鍵字，或關鍵字包含名稱），
@@ -14456,12 +14521,22 @@
         // 單位換算沿用食材成本/熱量系統同一套resolveGrams，不用要求食譜跟冰箱單位完全一樣，
         // 例如食譜寫「200g」冰箱記「1顆」，都會先各自換算成克再比較
         async function computeFridgeMatchRows(recipe, factor, fridgeItems) {
+            // 用來記錄「體積單位查不到密度、AI密度估算也失敗，改用預設密度概算」的食材名稱，
+            // 讓畫面上能明確告訴使用者是哪個食材觸發的，不會像之前一樣完全看不出蛛絲馬跡
+            const densityFallbackNames = new Set();
+            function checkDensityFallback(unit, name) {
+                if (convertToMilliliters(1, unit) !== null &&
+                    Object.prototype.hasOwnProperty.call(densityCache, name) && densityCache[name] === null) {
+                    densityFallbackNames.add(name);
+                }
+            }
             // 第一階段：算出每個食材各自套用的品牌名稱、是不是常備食材、需要多少
             const perIngredient = await Promise.all(recipe.ingredients.map(async ing => {
                 const matchNames = await resolveFridgeMatchNames(ing.name);
                 const staple = await isStapleIngredient(matchNames[0]);
                 const needed = ing.amount * factor;
                 const neededGrams = await resolveGrams(needed, ing.unit, ing.name);
+                checkDensityFallback(ing.unit, ing.name);
                 return { ing, matchNames, staple, needed, neededGrams };
             }));
 
@@ -14490,17 +14565,18 @@
                     });
                 group.batchIdxs = batchIdxs;
                 if (!batchIdxs.length) { group.stockGrams = 0; group.totalAmountText = ''; group.validBatches = []; return; }
-                const batchGrams = await Promise.all(batchIdxs.map(async b => ({
-                    idx: b.idx,
-                    grams: await resolveGrams(b.item.amount, b.item.unit, group.matchNames[0]),
-                })));
+                const batchGrams = await Promise.all(batchIdxs.map(async b => {
+                    const grams = await resolveGrams(b.item.amount, b.item.unit, group.matchNames[0]);
+                    checkDensityFallback(b.item.unit, group.matchNames[0]);
+                    return { idx: b.idx, grams };
+                }));
                 group.validBatches = batchGrams.filter(b => b.grams !== null);
                 group.stockGrams = group.validBatches.reduce((sum, b) => sum + b.grams, 0);
                 group.totalAmountText = batchIdxs.map(b => `${b.item.amount}${b.item.unit}`).join('+');
             }));
 
             // 第四階段：組裝每個食材各自要顯示的那一列，庫存夠不夠是看「整組加起來需要多少」去判斷，不是只看自己這一列
-            return perIngredient.map(p => {
+            const rows = perIngredient.map(p => {
                 const { ing, matchNames, staple, needed, neededGrams } = p;
                 if (staple) return { name: ing.name, matchName: matchNames[0], batches: [], needed: 0, unit: ing.unit, status: 'staple', text: '常備食材' };
                 const key = [...matchNames].sort().join('|');
@@ -14519,6 +14595,8 @@
                 const status = group.stockGrams >= group.totalNeededGrams ? 'ok' : 'low';
                 return { name: ing.name, matchName, batches: group.validBatches, needed, neededGrams, stockGrams: group.stockGrams, unit: ing.unit, status, text: `${neededText}・庫存${group.totalAmountText}`, groupKey: key, groupTotalNeededGrams: group.totalNeededGrams };
             });
+            rows.densityFallbackNames = Array.from(densityFallbackNames); // 附掛在陣列上，updateFridgeBox可以直接拿到，不用改動回傳格式
+            return rows;
         }
         async function updateFridgeBox(recipe, factor) {
             const box = document.getElementById('detail-fridge');
@@ -14560,12 +14638,14 @@
             const missingCount = merged.filter(r => r.status === 'missing' || r.status === 'low').length;
             const statusColor = { ok: '#4E9F6E', low: '#C4453F', missing: '#C4453F', unsure: '#B3A492', staple: '#B3A492' };
             const statusIcon = { ok: '✅', low: '⚠️', missing: '❌', unsure: '❔', staple: '🧂' };
+            const densityFallbackNames = rows.densityFallbackNames || [];
             liveBox.innerHTML = `
                 <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
                     <p class="text-sm font-medium mb-2">🧊 冰箱庫存比對${missingCount > 0 ? `<span style="color:#C4453F">（還缺 ${missingCount} 樣）</span>` : '<span style="color:#4E9F6E">（都有了！）</span>'}</p>
                     <div class="space-y-1">
                         ${merged.map(r => `<div class="flex justify-between text-xs"><span>${statusIcon[r.status]} ${r.names.join('、')}${r.names[0] !== r.matchName ? `<span style="color:#B3A492">（套用${r.matchName}）</span>` : ''}</span><span style="color:${statusColor[r.status]}">${r.displayText}</span></div>`).join('')}
                     </div>
+                    ${densityFallbackNames.length > 0 ? `<p class="text-xs mt-2" style="color:#B3A492">🧪 以下食材（體積單位）查不到密度、AI密度估算暫時也失敗，改用預設密度概算重量，準確度可能有落差：${densityFallbackNames.join('、')}</p>` : ''}
                 </div>`;
         }
 
