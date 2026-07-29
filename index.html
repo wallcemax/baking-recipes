@@ -12645,6 +12645,10 @@
             await mutateIngredientCostsAtomic(items => {
                 const entry = items[oldName];
                 if (!entry) return;
+                // 改名前的舊名稱，自動變成新名稱的別名之一——不然食譜/冰箱裡原本用舊名稱寫的地方，
+                // 改名之後會完全斷開連結（因為舊名稱從來沒被存成「誰的別名」，只是單純的主要名稱本身，
+                // 改名後這個名稱就變成孤兒，靠完全比對也找不到、也不是任何人的關鍵字）
+                entry.keywords = Array.from(new Set([...(entry.keywords || []), oldName]));
                 items[newName] = entry;
                 delete items[oldName];
                 success = true;
@@ -12683,7 +12687,7 @@
                 matchingItems.forEach(item => { item.name = trimmedNew; });
                 await saveFridgeItems(fridgeItems);
             }
-            alert(`已改名成「${trimmedNew}」`);
+            alert(`已改名成「${trimmedNew}」，原本的「${oldName}」自動變成新名稱的別名，食譜/冰箱裡用舊名稱寫的地方還是找得到這筆資料`);
             ingredientCostModalTarget = trimmedNew;
             await renderIngredientCostModalView(trimmedNew);
             if (ingredientCostModalReturnToManage) renderMyIngredientCostsList();
