@@ -15247,7 +15247,7 @@
         // 食材/步驟欄位id用的計數器：只會一直往上加，不會因為插入/刪除而重複或跳號，
         // 確保每一列的id永遠獨一無二（跟畫面上的視覺順序無關，順序改用DOM實際排列去讀取，不是靠這個編號）
         let fieldUidCounter = 0;
-        function addIngredientField(group='', name='', amt=100, unit='g', insertAfterEl=null) {
+        function addIngredientField(group='', name='', amt=100, unit='g', insertBeforeEl=null) {
             const container = document.getElementById('ingredients-container');
             const idx = fieldUidCounter++; // 用一個永遠遞增、不會重複的編號，不受插入/刪除影響，只用來組成獨一無二的id
             const div = document.createElement('div');
@@ -15258,19 +15258,20 @@
                 <input value="${amt}" type="number" data-role="ing-amt" class="form-input col-span-5 sm:col-span-2 !px-1.5 !py-2.5 text-sm">
                 <input value="${unit}" data-role="ing-unit" class="form-input col-span-5 sm:col-span-2 !px-1 !py-2.5 text-xs">
                 <div class="col-span-2 sm:col-span-1 flex flex-col items-center justify-center gap-0.5">
-                    <button type="button" onclick="insertIngredientFieldAfter(this.closest('.ing-row'))" class="text-sm leading-none" style="color:var(--sage)" title="在這一行下面插入新的一行">➕</button>
+                    <button type="button" onclick="insertIngredientFieldBefore(this.closest('.ing-row'))" class="text-sm leading-none" style="color:var(--sage)" title="在這一行上面插入新的一行">➕</button>
                     <button type="button" onclick="this.closest('.ing-row').remove()" class="text-lg leading-none" style="color:#C4453F" title="刪除這一行">×</button>
                 </div>
             `;
-            if (insertAfterEl) insertAfterEl.insertAdjacentElement('afterend', div);
+            if (insertBeforeEl) insertBeforeEl.insertAdjacentElement('beforebegin', div);
             else container.appendChild(div);
         }
-        // 在指定的那一行食材下面，插入一行新的空白食材列——不用整個刪除重排，直接點想插入位置那一行旁邊的➕就好
-        function insertIngredientFieldAfter(rowEl) {
+        // 在指定的那一行食材上面，插入一行新的空白食材列——最後面要新增的話本來就有「+新增」按鈕了，
+        // 這個➕的重點是能插到「任何一行的上面」，包含第一行的上面，不然沒辦法在第一行前面加東西
+        function insertIngredientFieldBefore(rowEl) {
             addIngredientField('', '', 100, 'g', rowEl);
         }
 
-        function addStepField(text='', timestamp='', duration='', imageUrl='', insertAfterEl=null) {
+        function addStepField(text='', timestamp='', duration='', imageUrl='', insertBeforeEl=null) {
             const container = document.getElementById('steps-container');
             const idx = fieldUidCounter++; // 用一個永遠遞增、不會重複的編號，不受插入/刪除影響，只用來組成獨一無二的id
             const div = document.createElement('div');
@@ -15290,7 +15291,7 @@
                         </button>
                         <input type="file" id="step-image-file-${idx}" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="handleStepImageSelect(event, ${idx})">
                         <input type="hidden" data-role="step-image" id="step-image-${idx}" value="${imageUrl}">
-                        <button type="button" onclick="insertStepFieldAfter(this.closest('.step-row-wrap'))" class="text-sm shrink-0" style="color:var(--sage)" title="在這一步下面插入新的一步">➕</button>
+                        <button type="button" onclick="insertStepFieldBefore(this.closest('.step-row-wrap'))" class="text-sm shrink-0" style="color:var(--sage)" title="在這一步上面插入新的一步">➕</button>
                         <button type="button" onclick="this.closest('.step-row-wrap').remove(); renumberStepLabels();" class="text-lg shrink-0" style="color:#C4453F" title="刪除這一步">×</button>
                     </div>
                 </div>
@@ -15299,12 +15300,13 @@
                     <button type="button" onclick="removeStepImage(${idx})" class="text-xs" style="color:#C4453F">移除圖片</button>
                 </div>
             `;
-            if (insertAfterEl) insertAfterEl.insertAdjacentElement('afterend', div);
+            if (insertBeforeEl) insertBeforeEl.insertAdjacentElement('beforebegin', div);
             else container.appendChild(div);
             renumberStepLabels();
         }
-        // 在指定的那一步下面，插入一步新的空白步驟——不用整個刪除重排，直接點想插入位置那一步旁邊的➕就好
-        function insertStepFieldAfter(rowEl) {
+        // 在指定的那一步上面，插入一步新的空白步驟——最後面要新增的話本來就有「+新增」按鈕了，
+        // 這個➕的重點是能插到「任何一步的上面」，包含第一步的上面，不然沒辦法在第一步前面加東西
+        function insertStepFieldBefore(rowEl) {
             addStepField('', '', '', '', rowEl);
         }
         // 因為現在步驟可以在中間插入/刪除，畫面上每一步前面的編號（1. 2. 3....）要照「目前實際排列順序」重新編一次，
