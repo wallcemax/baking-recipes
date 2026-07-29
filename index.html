@@ -12982,22 +12982,35 @@
             const row = document.getElementById(`orphan-row-${docId}`);
             if (row) row.style.opacity = '.5';
             try {
-                const [nutrition, density, pieceWeight] = await Promise.all([
-                    (typeof window.__fetchGeminiIngredientNutrition === 'function') ? window.__fetchGeminiIngredientNutrition(name) : null,
-                    (typeof window.__fetchGeminiIngredientDensity === 'function') ? window.__fetchGeminiIngredientDensity(name) : null,
-                    (typeof window.__fetchGeminiIngredientPieceWeight === 'function') ? window.__fetchGeminiIngredientPieceWeight(name) : null,
-                ]);
-                if (!nutrition) {
-                    alert(`AI暫時查不到「${name}」的熱量資料，可能是查詢失敗或額度限制，稍後再試一次，或者直接在上面手動輸入`);
+                // 一次問齊熱量+密度+單顆重量，合併成「一個」AI請求，不要像之前那樣同時發送三個獨立請求——
+                // 按一次「AI補充」，之前背地裡其實打了3次API，完全違背手動觸發減少同時大量請求的用意
+                const prompt = `請估算食材「${name}」（繁體中文，烘焙／料理食譜情境）的營養與物理資料，只回傳一個JSON物件，不要有其他文字、不要用markdown code block，格式：{"kcal":每100克大卡,"protein":每100克蛋白質公克,"fat":每100克脂肪公克,"carb":每100克碳水化合物公克,"sodium":每100克鈉毫克,"density":密度公克/毫升(如果不是液體/膏狀，這裡填null),"pieceWeight":如果這個食材常用「顆/根/條/片」等計量單位，一份大概重量公克(不適用的話填null)}`;
+                const text = await callAIProxy(prompt);
+                if (!text) {
+                    alert(`AI暫時查不到「${name}」的資料，可能是查詢失敗或額度限制，稍後再試一次，或者直接在上面手動輸入`);
+                    if (row) row.style.opacity = '1';
+                    return;
+                }
+                let parsed;
+                try {
+                    parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+                } catch (parseErr) {
+                    alert(`AI回傳的格式無法解析，稍後再試一次，或者直接在上面手動輸入\n\n原始回應：${text.slice(0, 200)}`);
+                    if (row) row.style.opacity = '1';
+                    return;
+                }
+                if (typeof parsed.kcal !== 'number') {
+                    alert(`AI暫時查不到「${name}」的熱量資料，稍後再試一次，或者直接在上面手動輸入`);
                     if (row) row.style.opacity = '1';
                     return;
                 }
                 const docRefId = name.replace(/\//g, '_').slice(0, 200);
                 await db.collection('ingredientNutrition').doc(docRefId).set({
                     name, keywords: [name],
-                    ...nutrition, source: 'ai_estimated',
-                    ...(density !== null ? { density } : {}),
-                    ...(pieceWeight !== null ? { pieceWeight } : {}),
+                    kcal: parsed.kcal, protein: parsed.protein || 0, fat: parsed.fat || 0, carb: parsed.carb || 0, sodium: parsed.sodium || 0,
+                    source: 'ai_estimated',
+                    ...(typeof parsed.density === 'number' ? { density: parsed.density } : {}),
+                    ...(typeof parsed.pieceWeight === 'number' ? { pieceWeight: parsed.pieceWeight } : {}),
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 }, { merge: true });
                 await db.collection('nutritionOrphans').doc(docId).delete();
