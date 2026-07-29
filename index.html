@@ -12576,6 +12576,14 @@
         function findKeywordOwner(name, costs) {
             return Object.entries(costs).find(([canon, entry]) => Array.isArray(entry.keywords) && entry.keywords.includes(name));
         }
+        // 查一個食材的成本資料：先查有沒有自己獨立的資料，查不到的話再查有沒有套用到別的通用名稱當別名
+        // （例如「三井三溫糖」設定成套用「二砂」的價格），這樣冰箱清單/編輯視窗才不會因為這個名稱本身
+        // 沒有獨立資料，就顯示「尚未設定價格」，明明其實已經套用了別人的價格
+        function resolveCostEntryForDisplay(name, costs) {
+            if (costs[name]) return costs[name];
+            const owner = findKeywordOwner(name, costs);
+            return owner ? owner[1] : null;
+        }
         // 找出costs裡「所有」把name設成關鍵字的資料，回傳陣列[[主要名稱, 資料], ...]，可能有好幾筆——
         // 這是為了支援「同一個通用名稱可以被好幾個品牌共用」（例如「鮮奶」同時是「心璞鮮乳」跟「貝親鮮乳」的關鍵字），
         // 冰箱庫存比對要用這個，把好幾個品牌的庫存加總在一起看，其中一個不夠就自動扣另一個
@@ -14537,7 +14545,7 @@
             // 所以「最新加的排最上面」這件事，用陣列順序本身就能達成，不需要額外排序規則
             listEl.innerHTML = filtered.map(({ item, idx: realIdx }) => {
                 const expiryInfo = fridgeExpiryStatus(item.expiryDate);
-                const costEntry = costs[item.name];
+                const costEntry = resolveCostEntryForDisplay(item.name, costs);
                 // 從這個名稱底下的「規格清單」裡，找出跟這一筆冰箱庫存單位一樣的規格，取最近更新過的一筆當作
                 // 對照顯示用（同一個名稱可能同時有好幾種規格，例如1858ml跟980ml都叫「心璞鮮乳」）
                 let matchedSpec = null;
@@ -14604,7 +14612,7 @@
             // 這樣「規格」欄位延續原本的規格設定，只要改「份數」就好；查不到規格資料的話，
             // 才退回帶入目前庫存的量當參考，你可以自己改成這次實際買的量
             const costs = await loadUserIngredientCosts();
-            const costEntry = costs[item.name];
+            const costEntry = resolveCostEntryForDisplay(item.name, costs);
             if (costEntry && costEntry.purchaseAmount && costEntry.purchaseUnit === item.unit) {
                 amountInput.value = costEntry.purchaseAmount;
                 priceInput.value = costEntry.purchasePrice; // 規格帶得到的話，花費直接填入實際金額（對應份數1），不用只顯示提示文字
@@ -14633,7 +14641,7 @@
             document.getElementById('fridge-new-count').value = '1';
             // 規格/花費欄位帶入原本記錄過的採買資料當對照參考（鎖住不能改），查不到的話就留空
             const costs = await loadUserIngredientCosts();
-            const costEntry = costs[item.name];
+            const costEntry = resolveCostEntryForDisplay(item.name, costs);
             let matchedSpec = null;
             if (costEntry && Array.isArray(costEntry.specs) && costEntry.specs.length) {
                 const sameUnitSpecs = costEntry.specs.filter(s => s.unit === item.unit).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
