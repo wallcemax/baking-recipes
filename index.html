@@ -848,9 +848,40 @@
         const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
         // 這個網站的圖片是用「unsigned upload preset」直接從瀏覽器上傳到 Cloudinary，沒有後端伺服器。
-        // Cloudinary 刪除圖片一定要用 API Secret 簽名的請求，這個 Secret 絕對不能放進前端程式碼（放了誰都能刪光整個帳號的圖），
-        // 所以沒辦法在這個純前端網站裡直接、安全地在使用者刪圖時同步刪除 Cloudinary 上的檔案。
-        // 折衷做法：把「被移除掉的圖片網址」記錄下來，方便之後手動或用有 Secret 保護的後端批次清掉。
+        // Cloudinary 刪除圖片一定要用 API Secret 簽名的請求，這個 Secret 絕對不能放進前端程式碼，
+        // 所以改用跟AI估算同一支Cloudflare Worker代管：Worker驗證使用者真的有登入之後，
+        // 才用存在Worker環境變數裡的Secret去幫忙簽名、呼叫Cloudinary刪除圖片。
+        // 從Cloudinary的圖片網址中取出public_id（刪除API需要的識別碼），
+        // 網址格式通常是 .../upload/v版本號/資料夾/檔名.副檔名，取「版本號後面到副檔名前面」這一段
+        function extractCloudinaryPublicId(url) {
+            if (!url) return null;
+            const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[a-zA-Z0-9]+)?$/);
+            return match ? match[1] : null;
+        }
+        // 移除一張圖片：先嘗試透過Worker真的從Cloudinary刪掉，成功的話使用者自己就能清乾淨、
+        // 不用管理員手動介入；如果失敗（例如網路問題、Worker還沒設定好），退回原本「記錄成孤兒」的
+        // 做法，管理員之後還是能在「孤兒圖片清單」看到、手動處理，當作一層保險
+        async function deleteCloudinaryImage(url, reason) {
+            if (!url) return;
+            const publicId = extractCloudinaryPublicId(url);
+            if (!publicId || !currentUser) { logOrphanedCloudinaryImage(url, reason); return; }
+            try {
+                const idToken = await currentUser.getIdToken();
+                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'delete_image', public_id: publicId, idToken }),
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    console.warn('刪除Cloudinary圖片失敗，記錄成孤兒等待後續處理', data.error || res.status);
+                    logOrphanedCloudinaryImage(url, reason);
+                }
+            } catch (err) {
+                console.warn('刪除Cloudinary圖片時發生錯誤，記錄成孤兒等待後續處理', err && err.message);
+                logOrphanedCloudinaryImage(url, reason);
+            }
+        }
         function logOrphanedCloudinaryImage(url, reason) {
             if (!url || !db) return;
             try {
@@ -15659,10 +15690,10 @@
         function deleteRecipe(recipe) {
             if (!canEditRecipe(recipe)) { alert("你沒有權限刪除這個食譜"); return; }
             if (confirm("確定刪除此食譜？")) {
-                if (recipe.imageUrl) logOrphanedCloudinaryImage(recipe.imageUrl, '刪除食譜（主圖）');
+                if (recipe.imageUrl) deleteCloudinaryImage(recipe.imageUrl, '刪除食譜（主圖）');
                 (recipe.steps || []).forEach(s => {
                     const stepImageUrl = typeof s === 'string' ? null : (s && s.imageUrl);
-                    if (stepImageUrl) logOrphanedCloudinaryImage(stepImageUrl, '刪除食譜（步驟圖片）');
+                    if (stepImageUrl) deleteCloudinaryImage(stepImageUrl, '刪除食譜（步驟圖片）');
                 });
                 db.collection("recipes").doc(recipe.id).delete().then(() => {
                     alert("食譜已刪除");
@@ -15773,7 +15804,7 @@
         }
 
         function removeSelectedImage() {
-            if (currentImageUrl) logOrphanedCloudinaryImage(currentImageUrl, '使用者移除食譜主圖');
+            if (currentImageUrl) deleteCloudinaryImage(currentImageUrl, '使用者移除食譜主圖');
             selectedImageFile = null;
             currentImageUrl = '';
             document.getElementById('image-file-input').value = '';
@@ -15933,7 +15964,7 @@
             uploadImageToCloudinary(file).then(url => {
                 document.getElementById(`step-image-${idx}`).value = url;
                 previewImg.src = url;
-                if (oldStepImageUrl) logOrphanedCloudinaryImage(oldStepImageUrl, '使用者換掉步驟圖片');
+                if (oldStepImageUrl) deleteCloudinaryImage(oldStepImageUrl, '使用者換掉步驟圖片');
             }).catch(err => {
                 alert('步驟圖片上傳失敗：' + err.message);
             });
@@ -15941,7 +15972,7 @@
 
         function removeStepImage(idx) {
             const oldUrl = document.getElementById(`step-image-${idx}`).value;
-            if (oldUrl) logOrphanedCloudinaryImage(oldUrl, '使用者移除步驟圖片');
+            if (oldUrl) deleteCloudinaryImage(oldUrl, '使用者移除步驟圖片');
             document.getElementById(`step-image-${idx}`).value = '';
             document.getElementById(`step-image-file-${idx}`).value = '';
             document.getElementById(`step-image-preview-wrap-${idx}`).classList.add('hidden');
@@ -15990,7 +16021,7 @@
                 const oldImageUrl = currentImageUrl; // 先記住舊圖網址，等一下上傳成功、確定要換掉了才記錄成孤兒圖片
                 try {
                     imageUrl = await uploadImageToCloudinary(selectedImageFile);
-                    if (oldImageUrl) logOrphanedCloudinaryImage(oldImageUrl, '使用者換掉食譜主圖');
+                    if (oldImageUrl) deleteCloudinaryImage(oldImageUrl, '使用者換掉食譜主圖');
                 } catch (err) {
                     alert('圖片上傳失敗：' + err.message);
                     saveBtn.textContent = originalBtnText;
