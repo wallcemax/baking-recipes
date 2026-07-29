@@ -772,7 +772,7 @@
                         </div>
                         <div class="flex-1">
                             <input type="file" id="image-file-input" accept="image/jpeg,image/png,image/webp" onchange="handleImageSelect(event)" class="hidden">
-                            <button type="button" onclick="triggerMainImageInput()" class="btn-secondary text-sm">選擇圖片</button>
+                            <label for="image-file-input" onclick="prepareFileInputBeforePick('image-file-input')" class="btn-secondary text-sm cursor-pointer inline-block">選擇圖片</label>
                             <button type="button" id="remove-image-btn" onclick="removeSelectedImage()" class="hidden text-sm ml-2" style="color:#C4453F">移除圖片</button>
                             <p class="text-xs mt-2" style="color:#B3A492">支援 jpg / png / webp，檔案大小上限 5MB</p>
                         </div>
@@ -15784,12 +15784,31 @@
             document.getElementById('image-preview').src = '';
         }
 
-        function triggerMainImageInput() {
-            const input = document.getElementById('image-file-input');
-            // 觸發選圖之前先清空欄位值：有些手機瀏覽器如果欄位裡還殘留著上一次的值，
-            // 第一次點擊選圖有時候不會正常觸發change事件，要選第二次才有反應，清空可以避免這個狀況
+        // 手機瀏覽器第一次要求存取相簿/相機權限時，系統跳出來的授權視窗常常會打斷選圖的事件流程，
+        // 導致change事件沒有正確觸發，看起來像「選了圖片卻沒反應」。這裡在畫面從選圖器切回前景之後，
+        // 如果發現這個欄位還是沒有任何檔案，顯示一個小提示讓使用者知道可以再點一次重選，
+        // 不用自己猜到底發生了什麼事、也不用整個重新整理頁面
+        function watchFileInputForSilentFailure(input) {
+            const onFocusBack = () => {
+                window.removeEventListener('focus', onFocusBack);
+                // 留一點緩衝時間，讓真的有選到圖片的change事件有機會先跑完，避免這裡誤判
+                setTimeout(() => {
+                    if (!input.files || input.files.length === 0) {
+                        showToast('沒有選到圖片嗎？可以再點一次「選擇圖片/相機」重選一次看看', 'error');
+                    }
+                }, 700);
+            };
+            window.addEventListener('focus', onFocusBack, { once: true });
+        }
+        // 點擊<label>的當下（早於瀏覽器實際開啟選圖器之前）先清空欄位值、設定失敗偵測——
+        // 改用<label for="...">讓瀏覽器原生處理「點擊後開啟選圖器」這件事，不再用JavaScript呼叫
+        // input.click()，因為手機瀏覽器對動態產生的檔案欄位用JS觸發click()，第一次常常不可靠，
+        // 用label原生關聯機制是業界標準、最穩定的做法
+        function prepareFileInputBeforePick(inputId) {
+            const input = document.getElementById(inputId);
+            if (!input) return;
             input.value = '';
-            input.click();
+            watchFileInputForSilentFailure(input);
         }
         function handleImageSelect(event) {
             const file = event.target.files[0];
@@ -15941,9 +15960,9 @@
                     <div class="flex gap-2 items-center pl-7 sm:pl-0 shrink-0">
                         <input value="${timestamp}" data-role="step-ts" placeholder="跳影片00:00" title="影片時間點 (mm:ss)" class="form-input w-20 shrink-0 !px-1 !py-2.5 text-xs text-center">
                         <input value="${duration}" type="number" min="0" step="0.5" data-role="step-duration" placeholder="計時分鐘" title="這個步驟大約需要幾分鐘（選填，用來啟動計時器）" class="form-input w-16 shrink-0 !px-1 !py-2.5 text-xs text-center">
-                        <button type="button" onclick="triggerStepImageInput(${idx})" title="新增這個步驟的圖片" class="shrink-0 w-9 h-9 rounded-full flex items-center justify-center" style="background:var(--cream)">
+                        <label for="step-image-file-${idx}" onclick="prepareFileInputBeforePick('step-image-file-${idx}')" title="新增這個步驟的圖片" class="shrink-0 w-9 h-9 rounded-full flex items-center justify-center cursor-pointer" style="background:var(--cream)">
                             <i class="fas fa-camera text-sm" style="color:var(--espresso-soft)"></i>
-                        </button>
+                        </label>
                         <input type="file" id="step-image-file-${idx}" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="handleStepImageSelect(event, ${idx})">
                         <input type="hidden" data-role="step-image" id="step-image-${idx}" value="${imageUrl}">
                         <button type="button" onclick="insertStepFieldBefore(this.closest('.step-row-wrap'))" class="text-sm shrink-0" style="color:var(--sage)" title="在這一步上面插入新的一步">➕</button>
@@ -15971,14 +15990,6 @@
                 const label = row.querySelector('.step-num-label');
                 if (label) label.textContent = `${i + 1}.`;
             });
-        }
-
-        function triggerStepImageInput(idx) {
-            const input = document.getElementById(`step-image-file-${idx}`);
-            // 觸發選圖之前先清空欄位值：有些手機瀏覽器如果欄位裡還殘留著上一次的值，
-            // 第一次點擊選圖有時候不會正常觸發change事件，要選第二次才有反應，清空可以避免這個狀況
-            input.value = '';
-            input.click();
         }
 
         function handleStepImageSelect(event, idx) {
