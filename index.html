@@ -13560,62 +13560,99 @@
                 groups[groupKey].rawNames.push(rawName);
             }));
 
-            // 第三階段：每一組用推薦候選實際的整包價格/包裝量去推算要買幾份、大概要花多少錢——
-            // 比起直接拿零星克數乘單價，這樣算出來的總額才符合實際採買的樣子（不會有人只買20g鮮奶油這種事）
+            // 第三階段：先扣掉冰箱現有庫存，只針對「扣完還缺的量」去推算要買幾份、大概花多少錢——
+            // 常備食材（水、鹽這種）不算庫存也不算購買量，永遠視為「有」，清單上只標示常備品
+            const fridgeItems = await loadFridgeItems();
             await Promise.all(Object.values(groups).map(async g => {
-                if (g.noData) return;
+                const staple = await isStapleIngredient(g.recommendedName || g.rawNames[0]);
+                if (staple) { g.isStaple = true; return; }
+                // 把這一組所有原始名稱各自能對到的冰箱庫存全部加總起來
+                const matchNamesSet = new Set();
+                for (const rawName of g.rawNames) {
+                    (await resolveFridgeMatchNames(rawName)).forEach(n => matchNamesSet.add(n));
+                }
+                let stockGrams = 0;
+                for (const item of fridgeItems) {
+                    if (matchNamesSet.has(item.name.trim())) {
+                        const g2 = await resolveGrams(item.amount, item.unit, item.name);
+                        if (g2 !== null) stockGrams += g2;
+                    }
+                }
+                g.stockGrams = stockGrams;
+                g.shortfallGrams = Math.max(0, g.grams - stockGrams);
+                if (g.shortfallGrams <= 0) { g.sufficientStock = true; return; } // 庫存已經夠了，不用買，不算進清單/總花費
+
+                if (g.noData) return; // 沒有價格資料，缺多少只能顯示克數，沒辦法算要買幾份/多少錢
                 if (g.recommendedEntry.purchaseAmount && g.recommendedEntry.purchaseUnit && g.recommendedEntry.purchasePrice) {
                     const packageGrams = await resolveGrams(g.recommendedEntry.purchaseAmount, g.recommendedEntry.purchaseUnit, g.recommendedName);
                     if (packageGrams && packageGrams > 0) {
-                        g.unitsNeeded = Math.max(1, Math.ceil(g.grams / packageGrams));
+                        g.unitsNeeded = Math.max(1, Math.ceil(g.shortfallGrams / packageGrams));
                         g.cost = g.unitsNeeded * g.recommendedEntry.purchasePrice;
                     }
                 }
                 if (g.cost === undefined) {
-                    // 沒有完整的包裝資訊（例如只有AI估算的每100克單價，沒記錄實際包裝），退回用零星克數概算，
+                    // 沒有完整的包裝資訊（例如只有AI估算的每100克單價，沒記錄實際包裝），退回用缺的克數概算，
                     // 比較不真實，但至少有個參考數字
-                    g.cost = g.grams / 100 * g.recommendedEntry.pricePer100g;
+                    g.cost = g.shortfallGrams / 100 * g.recommendedEntry.pricePer100g;
                     g.fallbackEstimate = true;
                 }
             }));
             const grandTotal = Object.values(groups).reduce((sum, g) => sum + (g.cost || 0), 0);
-            // 個別食譜的花費，用零星克數概算當參考值（因為「整份」是跨食譜、跨食材加總後才推算得出來的，
+            // 個別食譜的花費，用「扣完庫存後還缺的量」概算當參考值（因為「整份」是跨食譜、跨食材加總後才推算得出來的，
             // 沒辦法乾淨地拆回單一食譜身上，所以這裡跟下面的總計數字不會完全對得起來，只當作參考）
             const groupList = Object.values(groups);
             const perRecipeCosts = perRecipeGrams.map(r => {
                 let cost = 0;
                 Object.entries(r.grams).forEach(([rawName, grams]) => {
                     const group = groupList.find(g => g.rawNames.includes(rawName));
-                    if (group && group.recommendedEntry) cost += grams / 100 * group.recommendedEntry.pricePer100g;
+                    if (group && group.recommendedEntry && !group.isStaple && !group.sufficientStock && group.grams > 0) {
+                        // 這篇食譜用掉的量，佔這一組「還缺的量」的比例，乘上還缺的量的花費，算出這篇食譜的份額
+                        const shareOfShortfall = Math.min(grams, group.shortfallGrams * (grams / group.grams));
+                        cost += shareOfShortfall / 100 * group.recommendedEntry.pricePer100g;
+                    }
                 });
                 return { name: r.name, cost };
             });
 
             const liveSummaryEl = document.getElementById('shopping-list-summary');
             if (!liveSummaryEl) return;
-            const groupKeys = Object.keys(groups).sort((a, b) => (groups[b].cost || 0) - (groups[a].cost || 0));
+            // 常備品排最後面（不用特別採買，優先度低），其他照花費高低排序
+            const visibleGroupKeys = Object.keys(groups).filter(key => !groups[key].sufficientStock); // 庫存已經夠的不顯示
+            visibleGroupKeys.sort((a, b) => {
+                if (groups[a].isStaple !== groups[b].isStaple) return groups[a].isStaple ? 1 : -1;
+                return (groups[b].cost || 0) - (groups[a].cost || 0);
+            });
+            const sufficientCount = Object.values(groups).filter(g => g.sufficientStock).length;
             liveSummaryEl.innerHTML = `
                 <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
                     <div class="flex items-baseline gap-2 mb-3">
                         <span class="font-display font-bold text-2xl num-tabular" style="color:var(--jam)">NT$${grandTotal.toFixed(0)}</span>
-                        <span class="text-sm" style="color:var(--espresso-soft)">這次採購預估總花費（共 ${list.length} 篇食譜）</span>
+                        <span class="text-sm" style="color:var(--espresso-soft)">這次採購預估總花費（共 ${list.length} 篇食譜，已扣除冰箱現有庫存）</span>
                     </div>
                     ${perRecipeCosts.length ? `<div class="text-xs mb-3 num-tabular" style="color:#B3A492">${perRecipeCosts.map(r => `${r.name} NT$${r.cost.toFixed(0)}`).join('　')}</div>` : ''}
                     ${missingRecipes.length ? `<p class="text-xs mb-3" style="color:#C4453F">⚠️ 找不到這些食譜的最新資料，沒有算進總花費：${missingRecipes.join('、')}</p>` : ''}
-                    <h3 class="font-display font-semibold text-sm mb-2 mt-4">食材加總清單<span class="text-xs font-normal" style="color:#B3A492">（點一下代表已經買了）</span></h3>
+                    ${sufficientCount > 0 ? `<p class="text-xs mb-3" style="color:var(--sage)">✅ 另有 ${sufficientCount} 項冰箱庫存已經夠用，不用買，沒有列在下面</p>` : ''}
+                    <h3 class="font-display font-semibold text-sm mb-2 mt-4">還需要買的食材<span class="text-xs font-normal" style="color:#B3A492">（點一下代表已經買了）</span></h3>
                     <div class="space-y-2">
-                        ${groupKeys.map((key, idx) => {
+                        ${visibleGroupKeys.map((key, idx) => {
                             const g = groups[key];
                             const displayName = g.rawNames.join('、'); // 同一組裡如果有好幾個寫法不同的原始名稱，全部列出來
                             const bought = !!shoppingListPurchasedCache[key];
+                            if (g.isStaple) {
+                                return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
+                                    <div class="flex justify-between"><span data-ing-label>${bought ? '✅ ' : ''}${displayName} <span style="color:#B3A492">常備品</span></span></div>
+                                </div>`;
+                            }
+                            const stockLine = `<p class="text-xs mt-0.5 num-tabular" style="color:#B3A492">需要${g.grams.toFixed(0)}g，庫存${(g.stockGrams || 0).toFixed(0)}g，還缺${g.shortfallGrams.toFixed(0)}g</p>`;
                             const recLine = g.recommendedEntry
-                                ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🕐 之前使用：${g.recommendedName}（${g.recommendedEntry.purchasePrice ? `${g.recommendedEntry.purchasePrice}元／${g.recommendedEntry.purchaseAmount}${g.recommendedEntry.purchaseUnit}` : `約NT$${g.recommendedEntry.pricePer100g.toFixed(1)}/100g`}）${g.unitsNeeded ? `・需${g.unitsNeeded}份` : ''}${g.fallbackEstimate ? '（沒有完整包裝資訊，用零星單價概算）' : ''}</p>`
+                                ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🕐 之前使用：${g.recommendedName}（${g.recommendedEntry.purchasePrice ? `${g.recommendedEntry.purchasePrice}元／${g.recommendedEntry.purchaseAmount}${g.recommendedEntry.purchaseUnit}` : `約NT$${g.recommendedEntry.pricePer100g.toFixed(1)}/100g`}）${g.unitsNeeded ? `・需${g.unitsNeeded}份` : ''}${g.fallbackEstimate ? '（沒有完整包裝資訊，用缺的克數概算）' : ''}</p>`
                                 : `<p class="text-xs mt-0.5" style="color:#B3A492">尚未設定價格，成本沒有算進總計裡</p>`;
                             return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
-                                <div class="flex justify-between"><span data-ing-label>${bought ? '✅ ' : ''}${displayName}</span><span class="num-tabular" style="color:#B3A492">需要${g.grams.toFixed(0)}g</span></div>
+                                <span data-ing-label>${bought ? '✅ ' : ''}${displayName}</span>
+                                ${stockLine}
                                 ${recLine}
                             </div>`;
-                        }).join('') || `<p class="text-xs" style="color:#B3A492">目前沒有任何食材（可能食譜還沒抓到資料）</p>`}
+                        }).join('') || `<p class="text-xs" style="color:#B3A492">冰箱庫存都夠用，不用特別採買！</p>`}
                     </div>
                 </div>`;
         }
