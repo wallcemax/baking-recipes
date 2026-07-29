@@ -15839,7 +15839,15 @@
         function compressImageForUpload(file, maxDim = 1600, quality = 0.82) {
             return new Promise((resolve) => {
                 let settled = false;
-                const finish = (result) => { if (!settled) { settled = true; resolve(result); } };
+                // 逾時保護那條路徑之前忘記釋放Object URL，如果連續處理很多張圖片、一直卡到逾時，
+                // 會累積沒被釋放的資源，讓瀏覽器記憶體壓力越來越大，導致後面的操作更容易隨機失敗——
+                // finish統一在這裡處理釋放，不管走哪條路徑結束都會確實清乾淨
+                const finish = (result) => {
+                    if (settled) return;
+                    settled = true;
+                    URL.revokeObjectURL(url);
+                    resolve(result);
+                };
                 // 逾時保護：某些手機瀏覽器遇到特殊圖片格式（例如部分iPhone的HEIC）解碼失敗時，
                 // 可能既不觸發onload也不觸發onerror，導致整個卡住不動、畫面看起來「沒反應」。
                 // 8秒還沒處理完，直接放棄壓縮、改用原始檔案繼續走上傳流程，不要讓使用者一直卡住等待
@@ -15847,7 +15855,6 @@
                 const img = new Image();
                 const url = URL.createObjectURL(file);
                 img.onload = () => {
-                    URL.revokeObjectURL(url);
                     // canvas繪圖這一段包進try/catch：如果這張照片解析度太高、細節太複雜，觸發某些手機
                     // 瀏覽器的記憶體或畫布尺寸限制而拋出例外，之前的寫法會導致整個流程卡死（因為逾時保護
                     // 已經在上面被清除掉了，例外發生後沒有任何東西會讓Promise resolve）。
@@ -15865,6 +15872,10 @@
                         ctx.drawImage(img, 0, 0, width, height);
                         canvas.toBlob(blob => {
                             clearTimeout(timeoutId);
+                            // 用完的canvas跟img主動清空，幫助瀏覽器盡快釋放這些解碼過的圖片記憶體，
+                            // 連續處理好幾張圖片的時候比較不會累積記憶體壓力
+                            canvas.width = 0; canvas.height = 0;
+                            img.src = '';
                             if (blob && blob.size < file.size) {
                                 finish(new File([blob], file.name.replace(/\.(png|webp)$/i, '.jpg'), { type: 'image/jpeg' }));
                             } else {
@@ -15877,7 +15888,7 @@
                         finish(file);
                     }
                 };
-                img.onerror = () => { clearTimeout(timeoutId); URL.revokeObjectURL(url); finish(file); };
+                img.onerror = () => { clearTimeout(timeoutId); finish(file); };
                 img.src = url;
             });
         }
@@ -16076,10 +16087,15 @@
                 showSaveProgress(`📤 步驟照片上傳中...（共${pendingStepImageFiles.size}張）`);
                 let failedStepIdx = null;
                 try {
+                    let processedCount = 0;
                     for (const [stepIdx, file] of pendingStepImageFiles) {
                         failedStepIdx = stepIdx; // 先記住正在處理哪一步，萬一失敗才知道是哪一張
+                        // 連續處理好幾張圖片的時候，每張中間留一點緩衝時間，讓瀏覽器有機會釋放剛剛
+                        // 解碼過的圖片資料、做記憶體回收，減少「處理越多張、後面越容易隨機失敗」的資源壓力
+                        if (processedCount > 0) await new Promise(r => setTimeout(r, 400));
                         const url = await uploadImageToCloudinary(file);
                         uploadedStepImageUrls.set(stepIdx, url);
+                        processedCount++;
                     }
                 } catch (err) {
                     hideSaveProgress();
