@@ -15244,42 +15244,54 @@
             consumeModalHistoryState(fromPopState);
         }
 
-        function addIngredientField(group='', name='', amt=100, unit='g') {
+        // 食材/步驟欄位id用的計數器：只會一直往上加，不會因為插入/刪除而重複或跳號，
+        // 確保每一列的id永遠獨一無二（跟畫面上的視覺順序無關，順序改用DOM實際排列去讀取，不是靠這個編號）
+        let fieldUidCounter = 0;
+        function addIngredientField(group='', name='', amt=100, unit='g', insertAfterEl=null) {
             const container = document.getElementById('ingredients-container');
-            const idx = container.children.length;
+            const idx = fieldUidCounter++; // 用一個永遠遞增、不會重複的編號，不受插入/刪除影響，只用來組成獨一無二的id
             const div = document.createElement('div');
-            div.className = "grid grid-cols-12 gap-2";
+            div.className = "grid grid-cols-12 gap-2 ing-row";
             div.innerHTML = `
-                <input value="${group}" id="ing-group-${idx}" placeholder="分類(如 A 餅皮)" class="form-input col-span-4 sm:col-span-2 !px-2 !py-2.5 text-xs" style="color:var(--jam)">
-                <input value="${name}" id="ing-name-${idx}" placeholder="食材" class="form-input col-span-8 sm:col-span-5 !px-3 !py-2.5 text-base">
-                <input value="${amt}" type="number" id="ing-amt-${idx}" class="form-input col-span-5 sm:col-span-2 !px-1.5 !py-2.5 text-sm">
-                <input value="${unit}" id="ing-unit-${idx}" class="form-input col-span-5 sm:col-span-2 !px-1 !py-2.5 text-xs">
-                <button type="button" onclick="this.parentElement.remove()" class="col-span-2 sm:col-span-1 text-lg" style="color:#C4453F">×</button>
+                <input value="${group}" data-role="ing-group" placeholder="分類(如 A 餅皮)" class="form-input col-span-4 sm:col-span-2 !px-2 !py-2.5 text-xs" style="color:var(--jam)">
+                <input value="${name}" data-role="ing-name" placeholder="食材" class="form-input col-span-8 sm:col-span-5 !px-3 !py-2.5 text-base">
+                <input value="${amt}" type="number" data-role="ing-amt" class="form-input col-span-5 sm:col-span-2 !px-1.5 !py-2.5 text-sm">
+                <input value="${unit}" data-role="ing-unit" class="form-input col-span-5 sm:col-span-2 !px-1 !py-2.5 text-xs">
+                <div class="col-span-2 sm:col-span-1 flex flex-col items-center justify-center gap-0.5">
+                    <button type="button" onclick="insertIngredientFieldAfter(this.closest('.ing-row'))" class="text-sm leading-none" style="color:var(--sage)" title="在這一行下面插入新的一行">➕</button>
+                    <button type="button" onclick="this.closest('.ing-row').remove()" class="text-lg leading-none" style="color:#C4453F" title="刪除這一行">×</button>
+                </div>
             `;
-            container.appendChild(div);
+            if (insertAfterEl) insertAfterEl.insertAdjacentElement('afterend', div);
+            else container.appendChild(div);
+        }
+        // 在指定的那一行食材下面，插入一行新的空白食材列——不用整個刪除重排，直接點想插入位置那一行旁邊的➕就好
+        function insertIngredientFieldAfter(rowEl) {
+            addIngredientField('', '', 100, 'g', rowEl);
         }
 
-        function addStepField(text='', timestamp='', duration='', imageUrl='') {
+        function addStepField(text='', timestamp='', duration='', imageUrl='', insertAfterEl=null) {
             const container = document.getElementById('steps-container');
-            const idx = container.children.length;
+            const idx = fieldUidCounter++; // 用一個永遠遞增、不會重複的編號，不受插入/刪除影響，只用來組成獨一無二的id
             const div = document.createElement('div');
             div.className = "step-row-wrap rounded-2xl p-2.5";
             div.style.border = "1px solid var(--line)";
             div.innerHTML = `
                 <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
                     <div class="flex gap-2 items-center flex-1 min-w-0">
-                        <span class="font-medium shrink-0" style="color:var(--jam)">${idx+1}.</span>
-                        <input value="${text}" id="step-${idx}" placeholder="說明這個步驟..." class="form-input flex-1 !px-3 !py-3 text-base">
+                        <span class="font-medium shrink-0 step-num-label" style="color:var(--jam)">?.</span>
+                        <input value="${text}" data-role="step-text" placeholder="說明這個步驟..." class="form-input flex-1 !px-3 !py-3 text-base">
                     </div>
                     <div class="flex gap-2 items-center pl-7 sm:pl-0 shrink-0">
-                        <input value="${timestamp}" id="step-ts-${idx}" placeholder="跳影片00:00" title="影片時間點 (mm:ss)" class="form-input w-20 shrink-0 !px-1 !py-2.5 text-xs text-center">
-                        <input value="${duration}" type="number" min="0" step="0.5" id="step-duration-${idx}" placeholder="計時分鐘" title="這個步驟大約需要幾分鐘（選填，用來啟動計時器）" class="form-input w-16 shrink-0 !px-1 !py-2.5 text-xs text-center">
+                        <input value="${timestamp}" data-role="step-ts" placeholder="跳影片00:00" title="影片時間點 (mm:ss)" class="form-input w-20 shrink-0 !px-1 !py-2.5 text-xs text-center">
+                        <input value="${duration}" type="number" min="0" step="0.5" data-role="step-duration" placeholder="計時分鐘" title="這個步驟大約需要幾分鐘（選填，用來啟動計時器）" class="form-input w-16 shrink-0 !px-1 !py-2.5 text-xs text-center">
                         <button type="button" onclick="triggerStepImageInput(${idx})" title="新增這個步驟的圖片" class="shrink-0 w-9 h-9 rounded-full flex items-center justify-center" style="background:var(--cream)">
                             <i class="fas fa-camera text-sm" style="color:var(--espresso-soft)"></i>
                         </button>
                         <input type="file" id="step-image-file-${idx}" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="handleStepImageSelect(event, ${idx})">
-                        <input type="hidden" id="step-image-${idx}" value="${imageUrl}">
-                        <button type="button" onclick="this.closest('.step-row-wrap').remove()" class="text-lg shrink-0" style="color:#C4453F">×</button>
+                        <input type="hidden" data-role="step-image" id="step-image-${idx}" value="${imageUrl}">
+                        <button type="button" onclick="insertStepFieldAfter(this.closest('.step-row-wrap'))" class="text-sm shrink-0" style="color:var(--sage)" title="在這一步下面插入新的一步">➕</button>
+                        <button type="button" onclick="this.closest('.step-row-wrap').remove(); renumberStepLabels();" class="text-lg shrink-0" style="color:#C4453F" title="刪除這一步">×</button>
                     </div>
                 </div>
                 <div id="step-image-preview-wrap-${idx}" class="${imageUrl ? '' : 'hidden'} mt-2 ml-7 flex items-center gap-2">
@@ -15287,7 +15299,21 @@
                     <button type="button" onclick="removeStepImage(${idx})" class="text-xs" style="color:#C4453F">移除圖片</button>
                 </div>
             `;
-            container.appendChild(div);
+            if (insertAfterEl) insertAfterEl.insertAdjacentElement('afterend', div);
+            else container.appendChild(div);
+            renumberStepLabels();
+        }
+        // 在指定的那一步下面，插入一步新的空白步驟——不用整個刪除重排，直接點想插入位置那一步旁邊的➕就好
+        function insertStepFieldAfter(rowEl) {
+            addStepField('', '', '', '', rowEl);
+        }
+        // 因為現在步驟可以在中間插入/刪除，畫面上每一步前面的編號（1. 2. 3....）要照「目前實際排列順序」重新編一次，
+        // 不能用建立當下的固定編號，不然中間插入之後，編號會亂掉、跟畫面上下順序對不起來
+        function renumberStepLabels() {
+            document.querySelectorAll('#steps-container .step-row-wrap').forEach((row, i) => {
+                const label = row.querySelector('.step-num-label');
+                if (label) label.textContent = `${i + 1}.`;
+            });
         }
 
         function triggerStepImageInput(idx) {
@@ -15339,28 +15365,33 @@
             const name = document.getElementById('name').value.trim();
             if (!name) return alert("請輸入食譜名稱");
 
+            // 改成照畫面上「實際排列順序」去收集資料（用data-role屬性去抓每一列裡對應的欄位），
+            // 不再依賴「編號一定是0到29按順序排好」這個假設——這樣不管是用「新增」加到最後面、
+            // 還是用「➕在下面插入」插到中間，收集到的順序都會跟畫面上看到的排列一致
             const ingredients = [], steps = [];
-            for (let i = 0; i < 30; i++) {
-                const n = document.getElementById(`ing-name-${i}`);
-                if (n && n.value.trim()) ingredients.push({
-                    group: (document.getElementById(`ing-group-${i}`)?.value || '').trim(),
-                    name: n.value.trim(),
-                    amount: parseFloat(document.getElementById(`ing-amt-${i}`).value) || 0,
-                    unit: document.getElementById(`ing-unit-${i}`).value || ''
-                });
-            }
-            for (let i = 0; i < 30; i++) {
-                const s = document.getElementById(`step-${i}`);
-                if (s && s.value.trim()) {
-                    const tsInput = document.getElementById(`step-ts-${i}`);
-                    const durInput = document.getElementById(`step-duration-${i}`);
-                    const imgInput = document.getElementById(`step-image-${i}`);
+            document.querySelectorAll('#ingredients-container > .ing-row').forEach(row => {
+                const nameInput = row.querySelector('[data-role="ing-name"]');
+                if (nameInput && nameInput.value.trim()) {
+                    ingredients.push({
+                        group: (row.querySelector('[data-role="ing-group"]')?.value || '').trim(),
+                        name: nameInput.value.trim(),
+                        amount: parseFloat(row.querySelector('[data-role="ing-amt"]')?.value) || 0,
+                        unit: row.querySelector('[data-role="ing-unit"]')?.value || ''
+                    });
+                }
+            });
+            document.querySelectorAll('#steps-container > .step-row-wrap').forEach(row => {
+                const textInput = row.querySelector('[data-role="step-text"]');
+                if (textInput && textInput.value.trim()) {
+                    const tsInput = row.querySelector('[data-role="step-ts"]');
+                    const durInput = row.querySelector('[data-role="step-duration"]');
+                    const imgInput = row.querySelector('[data-role="step-image"]');
                     const timestamp = tsInput ? parseTimestamp(tsInput.value) : null;
                     const durationMinutes = (durInput && durInput.value !== '') ? parseFloat(durInput.value) : null;
                     const imageUrl = (imgInput && imgInput.value) ? imgInput.value : null;
-                    steps.push({ text: s.value.trim(), timestamp: timestamp, durationMinutes: durationMinutes, imageUrl: imageUrl });
+                    steps.push({ text: textInput.value.trim(), timestamp: timestamp, durationMinutes: durationMinutes, imageUrl: imageUrl });
                 }
-            }
+            });
 
             const saveBtn = document.querySelector('#add-modal .btn-primary');
             const originalBtnText = saveBtn.textContent;
