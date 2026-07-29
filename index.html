@@ -448,8 +448,6 @@
                         <input id="ingredient-cost-modal-unit" placeholder="g/台斤/顆/ml" class="form-input">
                     </div>
                 </div>
-                <button onclick="calcIngredientCostModal()" class="btn-secondary w-full mb-3 text-sm">🧮 換算單價</button>
-                <div id="ingredient-cost-modal-result" class="text-sm mb-3" style="color:var(--espresso-soft)"></div>
                 <p id="ingredient-cost-modal-hint" class="text-xs mb-4" style="color:#B3A492"></p>
                 <div class="mb-4">
                     <label class="text-xs block mb-1" style="color:#B3A492">別名（逗號分隔，例如：鮮奶,牛奶,牛乳，食譜寫這些名稱都會自動套用這筆價格）</label>
@@ -12474,11 +12472,19 @@
                         entry.keywords = entry.keywords.filter(k => k !== trimmedName);
                     }
                 });
-                // 記住上一次的單價（如果跟這次不一樣的話），讓清單可以顯示漲跌幅百分比，
-                // 一樣的話就不用記，避免每次點「儲存」都被當成一次漲跌
+                // 只有「這次真的跟上次不一樣」才記錄漲跌用的比較基準；如果這次價格跟上次一樣，就清空之前殘留的
+                // 比較值，不然只要連續好幾次都是同樣的價格，會一直卡著顯示上一次真正變動時的百分比不會消失
                 const prevEntry = items[trimmedName];
-                const previousPricePer100g = (prevEntry && prevEntry.pricePer100g !== price) ? prevEntry.pricePer100g : (prevEntry ? prevEntry.previousPricePer100g : undefined);
-                items[trimmedName] = { pricePer100g: price, source: 'user_set', updatedAt: Date.now(), ...(previousPricePer100g !== undefined ? { previousPricePer100g } : {}), ...extra };
+                const priceChanged = prevEntry && prevEntry.pricePer100g !== price;
+                const previousPricePer100g = priceChanged ? prevEntry.pricePer100g : undefined;
+                // 重點：這裡是「更新價格」不是「整筆重建」，原本設定過的別名(keywords)一定要延續下去，
+                // 不然每次存新價格就會把別名清空，之後食譜/冰箱靠別名去找這筆資料就會突然找不到
+                items[trimmedName] = {
+                    pricePer100g: price, source: 'user_set', updatedAt: Date.now(),
+                    ...(prevEntry && prevEntry.keywords ? { keywords: prevEntry.keywords } : {}),
+                    ...(previousPricePer100g !== undefined ? { previousPricePer100g } : {}),
+                    ...extra,
+                };
             });
             if (!ok) alert('儲存失敗，請稍後再試一次');
             return ok;
@@ -13037,7 +13043,6 @@
         }
 
         // 點某個食材，跳出快速編輯小視窗（可以設定/修改這個食材的參考價）
-        let ingredientCostModalComputed = null; // 換算按鈕算出來的每100克單價，按「儲存」的時候會用這個
         let ingredientCostModalReturnToManage = false; // 如果是從「我的食材成本」管理頁面點進來的，關閉時要恢復顯示那個頁面
         // 找出使用者已經設定過價格、名稱裡有共同字的食材（例如「糖」會比對到「細砂糖」「二砂糖」，「蛋」會比對到「雞蛋」「全蛋」），
         // 依共同字數量排序，最多回傳20個，方便使用者直接套用類似食材的價格，不用重新輸入
@@ -13103,11 +13108,9 @@
         // （視窗已經開著、只是狀態變了）都會呼叫這個，不用重複寫一次
         async function renderIngredientCostModalView(name) {
             ingredientCostModalTarget = name;
-            ingredientCostModalComputed = null;
             document.getElementById('ingredient-cost-modal-name').textContent = name;
-            document.getElementById('ingredient-cost-modal-result').textContent = '';
             const saveBtn = document.getElementById('ingredient-cost-modal-save-btn');
-            saveBtn.disabled = false; saveBtn.style.opacity = '1'; // 現在按儲存會自動先換算單價，不用像以前一定要先按過「換算單價」才能存
+            saveBtn.disabled = false; saveBtn.style.opacity = '1'; // 按儲存會自動先換算單價，不用另外按「換算單價」才能存
             const costs = await loadUserIngredientCosts(true);
             const existing = costs[name];
             // 改名連結：只有這個名稱真的有自己獨立的價格資料時才能改名（如果是套用別人的關鍵字，要先「取消套用」才能改）
@@ -13147,31 +13150,10 @@
         function closeIngredientCostModal() {
             document.getElementById('ingredient-cost-modal').classList.add('hidden');
             ingredientCostModalTarget = null;
-            ingredientCostModalComputed = null;
             if (ingredientCostModalReturnToManage) {
                 document.getElementById('my-ingredient-costs-modal').classList.remove('hidden');
                 ingredientCostModalReturnToManage = false;
             }
-        }
-        // 「換算單價」按鈕：把使用者填的「花NT$price買amount個unit」換算成每100克多少錢，換算成功才能按儲存
-        async function calcIngredientCostModal() {
-            const price = document.getElementById('ingredient-cost-modal-price').value;
-            const amount = document.getElementById('ingredient-cost-modal-amount').value;
-            const unit = document.getElementById('ingredient-cost-modal-unit').value;
-            const resultEl = document.getElementById('ingredient-cost-modal-result');
-            const saveBtn = document.getElementById('ingredient-cost-modal-save-btn');
-            if (!price || !amount || !unit) { resultEl.textContent = '⚠️ 三格都要填喔'; return; }
-            resultEl.textContent = '換算中…（單位如果需要AI幫忙估算重量/密度，可能要等一下）';
-            const per100g = await calcPricePer100g(price, amount, unit, ingredientCostModalTarget);
-            if (per100g === null) {
-                resultEl.innerHTML = `⚠️ 沒辦法辨識「${unit}」這個單位，換算不出來，試試看g、kg、台斤、ml、顆這類常見單位`;
-                saveBtn.disabled = true; saveBtn.style.opacity = '.4';
-                ingredientCostModalComputed = null;
-                return;
-            }
-            ingredientCostModalComputed = per100g;
-            resultEl.innerHTML = `✅ 換算結果：每100克約 <b>NT$${per100g.toFixed(2)}</b>`;
-            saveBtn.disabled = false; saveBtn.style.opacity = '1';
         }
         async function saveIngredientCostModal() {
             if (!ingredientCostModalTarget) return;
@@ -13358,7 +13340,7 @@
                     const pct = ((c.pricePer100g - c.previousPricePer100g) / c.previousPricePer100g) * 100;
                     if (Math.abs(pct) >= 0.5) {
                         const up = pct > 0;
-                        changeText = ` <span class="num-tabular" style="color:${up ? '#C4453F' : 'var(--sage)'}">${up ? '↑' : '↓'}${Math.abs(pct).toFixed(0)}%</span>`;
+                        changeText = ` <span class="num-tabular" style="color:${up ? '#C4453F' : 'var(--sage)'}">${up ? '↑' : '↓'}${Math.abs(pct).toFixed(1)}%</span>`;
                     }
                 }
                 return `
@@ -14236,6 +14218,7 @@
                     const existingCosts = await loadUserIngredientCosts();
                     const existingEntry = existingCosts[name];
                     let costTargetName = name;
+                    let inheritedAliases = null;
                     if (existingEntry && existingEntry.purchaseAmount && existingEntry.purchaseUnit &&
                         (existingEntry.purchaseAmount !== amount || existingEntry.purchaseUnit !== unit)) {
                         const oldSpecName = `${name}(${existingEntry.purchaseAmount}${existingEntry.purchaseUnit})`;
@@ -14243,17 +14226,22 @@
                         const wantSplit = confirm(
                             `你之前已經有「${name}」規格${existingEntry.purchaseAmount}${existingEntry.purchaseUnit}的價格資料，這次是${amount}${unit}，規格不一樣（很可能是同品牌不同容量，價格本來就不同）。\n\n` +
                             `要自動分開記錄嗎？分開之後會變成：\n・${oldSpecName}\n・${newSpecName}\n` +
-                            `（如果食譜需要認得到「${name}」這個通用寫法，兩個規格之後要各自去食譜頁面「套用類似食材」連結一次）\n\n` +
+                            `（原本設定過的別名兩邊都會保留，套用同一個通用名稱時兩個規格會一起被找到、庫存自動加總）\n\n` +
                             `按「確定」分開存；按「取消」則維持原本方式，直接覆蓋掉舊的價格資料`
                         );
                         if (wantSplit) {
                             await renameIngredientCost(name, oldSpecName);
                             costTargetName = newSpecName;
+                            // 舊資料原本設定過的別名，新分出來的這筆也要一併繼承，不然只有舊規格找得到、新規格反而找不到
+                            if (existingEntry.keywords && existingEntry.keywords.length) inheritedAliases = existingEntry.keywords;
                         }
                     }
                     const per100g = await calcPricePer100g(priceInput.value, amount, unit, name);
                     if (per100g !== null) {
                         await setUserIngredientCost(costTargetName, per100g, { price: priceInput.value, amount, unit });
+                        if (inheritedAliases) {
+                            for (const alias of inheritedAliases) await linkIngredientAsKeyword(costTargetName, alias);
+                        }
                     } else {
                         alert(`冰箱食材已${wasEditing ? '更新' : '加入'}，但成本換算不出來（單位「${unit}」太冷門），成本沒有同步更新，可以之後去食譜頁面手動設定`);
                     }
