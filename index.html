@@ -12942,9 +12942,18 @@
             let tfndUsedCount = 0, manualUsedCount = 0, aiUsedCount = 0;
             const unitIssueNames = []; // 單位算不出來多少克（例如「少許」「適量」這種非重量/體積單位）
             const noDataNames = []; // 有算出克數，但查不到熱量資料（資料庫沒收錄、AI也估不出來或暫時查詢失敗）
+            const densityFallbackNames = []; // 體積單位(ml/大匙/杯...)查不到密度、AI密度估算也失敗，
+            // resolveGrams內部會偷偷改用預設密度1.00繼續算，熱量看起來有算出來，但其實是概算，準確度可能有落差
             await Promise.all(recipe.ingredients.map(async ing => {
                 const grams = await resolveGrams(ing.amount * factor, ing.unit, ing.name);
                 if (grams === null) { unitIssueNames.push(ing.name); return; }
+                // resolveGrams剛剛內部已經呼叫過一次resolveIngredientDensity了（如果這個食材是體積單位的話），
+                // 這裡直接檢查快取結果就好，不會又重新呼叫一次AI：如果快取裡是null，代表密度查不到/AI估算失敗，
+                // 剛剛的克數其實是用預設密度1.00算出來的，不是真正查到的密度
+                if (convertToMilliliters(1, ing.unit) !== null &&
+                    Object.prototype.hasOwnProperty.call(densityCache, ing.name) && densityCache[ing.name] === null) {
+                    densityFallbackNames.push(ing.name);
+                }
                 const nutri = await resolveIngredientNutrition(ing.name);
                 if (!nutri) { noDataNames.push(ing.name); return; }
                 totalKcal += grams / 100 * nutri.kcal;
@@ -12997,6 +13006,7 @@
                             ).join('')}
                         </div>
                     </div>` : ''}
+                    ${densityFallbackNames.length > 0 ? `<p class="text-xs mt-2" style="color:#B3A492">🧪 以下食材（體積單位）查不到密度、AI密度估算暫時也失敗，改用預設密度概算重量，準確度可能有落差：${densityFallbackNames.join('、')}</p>` : ''}
                 </div>`;
         }
 
