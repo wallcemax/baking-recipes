@@ -13954,7 +13954,7 @@
                 <div class="flex items-center gap-3 px-4 py-3 rounded-2xl" style="background:var(--cream)">
                     <span class="flex-1 font-medium text-sm min-w-0 truncate">${item.recipeName}</span>
                     <span class="text-xs shrink-0" style="color:#B3A492">這次做</span>
-                    <input type="number" min="1" value="${item.servings}" onchange="updateShoppingListServings('${escapeHtmlAttr(item.recipeId)}', this.value); renderShoppingListModal();" class="form-input !py-1.5 text-sm shrink-0" style="width:64px">
+                    <input type="number" min="1" value="${item.servings}" onchange="updateShoppingListServings('${escapeHtmlAttr(item.recipeId)}', this.value); renderShoppingListModal();" class="form-input !py-1.5 text-sm shrink-0" style="width:88px">
                     <span class="text-xs shrink-0" style="color:#B3A492">份</span>
                     <button onclick="removeFromShoppingList('${escapeHtmlAttr(item.recipeId)}')" class="text-xs shrink-0" style="color:#C4453F">移除</button>
                 </div>`).join('');
@@ -14747,13 +14747,15 @@
             const expiryInput = document.getElementById('fridge-new-expiry');
             const name = nameInput.value.trim();
             if (!name) { alert('請輸入食材名稱'); return; }
-            const specAmount = parseFloat(amountInput.value) || 0; // 「規格數量」：固定的參考單位，例如麵粉都用600g當一份
+            const specAmount = parseFloat(amountInput.value) || 0; // 「規格」：固定的參考單位，例如麵粉都用600g當一份
             const unit = unitInput.value.trim() || '份';
             const count = Math.max(1, parseInt(countInput.value) || 1); // 這次買了幾份，例如買3份600g的麵粉
-            const totalAmount = specAmount * count; // 實際要加進冰箱庫存的總量
-            const newItemData = { name, amount: totalAmount, unit, expiryDate: expiryInput.value || null };
             const wasEditing = fridgeEditingIndex !== null;
             const editingIndex = fridgeEditingIndex;
+            // 編輯模式下，「規格」欄位帶入的其實是目前庫存已經被扣除過的剩餘總量（不是固定的規格大小），
+            // 直接當成新的庫存總量使用，不用乘以份數——編輯是在修正「目前還剩多少」，不是「這次又買了幾份」
+            const totalAmount = wasEditing ? specAmount : specAmount * count;
+            const newItemData = { name, amount: totalAmount, unit, expiryDate: expiryInput.value || null };
             const ok = await mutateFridgeItemsAtomic(items => {
                 if (editingIndex !== null && items[editingIndex]) {
                     items[editingIndex] = newItemData; // 編輯模式：直接覆蓋既有那一筆，不新增
@@ -14774,6 +14776,16 @@
                 // 如果食譜裡用的是比較通用的名稱（例如「鮮奶」而這裡打的是「心璞鮮乳」），
                 // 去食譜頁面點該食材、用「套用類似食材」把兩者連起來即可，這裡不用重複輸入
                 if (priceInput.value && specAmount > 0) {
+                    if (wasEditing) {
+                        // 編輯模式：規格欄位是目前剩餘庫存，不是真正的採買規格，跳過規格衝突偵測，
+                        // 直接用這次填的數字換算單價存檔（份數在編輯模式沒有意義，固定當作1份）
+                        const per100g = await calcPricePer100g(priceInput.value, specAmount, unit, name);
+                        if (per100g !== null) {
+                            await setUserIngredientCost(name, per100g, { price: priceInput.value, amount: specAmount, unit });
+                        } else {
+                            alert(`冰箱食材已更新，但成本換算不出來（單位「${unit}」太冷門），成本沒有同步更新，可以之後去食譜頁面手動設定`);
+                        }
+                    } else {
                     const pricePerSpec = parseFloat(priceInput.value) / count; // 換算成「每一份規格」的價格
                     // 偵測「同名但規格（數量+單位）不一樣」的情況，例如「心樸鮮乳」之前規格是1858ml，這次是400ml——
                     // 兩個實際上是不同商品（價格本來就不一樣），如果都存成同一個名稱會互相覆蓋掉，先問你要不要自動分開存
@@ -14805,7 +14817,8 @@
                             for (const alias of inheritedAliases) await linkIngredientAsKeyword(costTargetName, alias);
                         }
                     } else {
-                        alert(`冰箱食材已${wasEditing ? '更新' : '加入'}，但成本換算不出來（單位「${unit}」太冷門），成本沒有同步更新，可以之後去食譜頁面手動設定`);
+                        alert(`冰箱食材已加入，但成本換算不出來（單位「${unit}」太冷門），成本沒有同步更新，可以之後去食譜頁面手動設定`);
+                    }
                     }
                 }
                 fridgeEditingIndex = null;
