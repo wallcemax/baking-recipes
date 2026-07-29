@@ -427,6 +427,13 @@
                 <div id="ingredient-cost-modal-linked" class="mb-2"></div>
                 <div id="ingredient-cost-modal-similar" class="mb-4"></div>
                 <p class="text-xs mb-2" style="color:#B3A492">照你實際買的方式填就好，例如「麵粉 59元 買1000g」、「雞蛋 85元 買1台斤」、「牛奶 120元 買1000ml」，系統會自動換算成統一的單價</p>
+                <div class="mb-2">
+                    <label class="text-xs block mb-1" style="color:#B3A492">條碼（選填）</label>
+                    <div class="flex gap-2">
+                        <input id="ingredient-cost-modal-barcode" placeholder="條碼(選填)" class="form-input flex-1">
+                        <button onclick="scanIntoBarcodeField('ingredient-cost-modal-barcode')" class="btn-sage shrink-0 !px-3 !py-0" style="border-radius:0.75rem" aria-label="鏡頭掃碼" title="鏡頭掃碼">📷</button>
+                    </div>
+                </div>
                 <div class="grid grid-cols-3 gap-2 mb-2">
                     <div class="col-span-1">
                         <label class="text-xs block mb-1" style="color:#B3A492">花費</label>
@@ -444,6 +451,10 @@
                 <button onclick="calcIngredientCostModal()" class="btn-secondary w-full mb-3 text-sm">🧮 換算單價</button>
                 <div id="ingredient-cost-modal-result" class="text-sm mb-3" style="color:var(--espresso-soft)"></div>
                 <p id="ingredient-cost-modal-hint" class="text-xs mb-4" style="color:#B3A492"></p>
+                <div class="mb-4">
+                    <label class="text-xs block mb-1" style="color:#B3A492">別名（逗號分隔，例如：鮮奶,牛奶,牛乳，食譜寫這些名稱都會自動套用這筆價格）</label>
+                    <input id="ingredient-cost-modal-aliases" placeholder="別名，用逗號分隔" class="form-input">
+                </div>
                 <button id="ingredient-cost-modal-save-btn" onclick="saveIngredientCostModal()" class="btn-primary w-full mb-2" disabled style="opacity:.4">💾 儲存（存到我自己的價格清單）</button>
                 <button onclick="openMyIngredientCostsModal()" class="text-xs w-full text-center" style="color:#B3A492">前往「我的食材成本」管理全部食材 →</button>
             </div>
@@ -460,9 +471,12 @@
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p class="text-xs mb-4" style="color:#B3A492">這裡設定的價格只有你自己看得到，計算食譜成本時會優先使用；還沒設定過的食材，系統會先用AI幫你估一個參考價（標示🤖），你可以隨時修改成自己實際買到的價格。新增/修改都是照你實際購買的方式填（例如「雞蛋 85元 買1台斤」），系統會自動換算成統一單價。</p>
                 <p class="text-xs mb-3" style="color:var(--chambray)">💡 條碼選填：可以在賣場先掃條碼、把看到的標價記下來建檔比價，不用真的買、也不會影響冰箱庫存，之後回來掃同一個條碼就能直接比對之前記錄的價格</p>
-                <div class="grid grid-cols-5 gap-2 mb-2">
-                    <input id="my-cost-new-barcode" placeholder="條碼(選填)" class="form-input col-span-1">
-                    <input id="my-cost-new-name" placeholder="名稱" class="form-input col-span-1">
+                <div class="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-2">
+                    <div class="col-span-3 sm:col-span-1 flex gap-2">
+                        <input id="my-cost-new-barcode" placeholder="條碼(選填)" class="form-input flex-1">
+                        <button onclick="scanIntoBarcodeField('my-cost-new-barcode')" class="btn-sage shrink-0 !px-3 !py-0" style="border-radius:0.75rem" aria-label="鏡頭掃碼" title="鏡頭掃碼">📷</button>
+                    </div>
+                    <input id="my-cost-new-name" placeholder="名稱" class="form-input col-span-3 sm:col-span-1">
                     <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="花費" class="form-input col-span-1">
                     <input id="my-cost-new-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input col-span-1">
                     <input id="my-cost-new-unit" placeholder="單位" class="form-input col-span-1">
@@ -537,7 +551,7 @@
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <div id="fridge-invite-banner"></div>
                 <p class="text-xs mb-4" style="color:#B3A492">記錄家裡現在有的食材，看食譜的時候會自動幫你比對「這個有」「這個沒有/不夠」。快到期的食材會用顏色提醒你。</p>
-                <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-2">
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">
                     <input id="fridge-new-barcode" placeholder="條碼(選填)" class="form-input col-span-1">
                     <input id="fridge-new-name" placeholder="食材名稱(可含品牌)" class="form-input col-span-1">
                     <input id="fridge-new-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input col-span-1">
@@ -12459,7 +12473,11 @@
                         entry.keywords = entry.keywords.filter(k => k !== trimmedName);
                     }
                 });
-                items[trimmedName] = { pricePer100g: price, source: 'user_set', updatedAt: Date.now(), ...extra };
+                // 記住上一次的單價（如果跟這次不一樣的話），讓清單可以顯示漲跌幅百分比，
+                // 一樣的話就不用記，避免每次點「儲存」都被當成一次漲跌
+                const prevEntry = items[trimmedName];
+                const previousPricePer100g = (prevEntry && prevEntry.pricePer100g !== price) ? prevEntry.pricePer100g : (prevEntry ? prevEntry.previousPricePer100g : undefined);
+                items[trimmedName] = { pricePer100g: price, source: 'user_set', updatedAt: Date.now(), ...(previousPricePer100g !== undefined ? { previousPricePer100g } : {}), ...extra };
             });
             if (!ok) alert('儲存失敗，請稍後再試一次');
             return ok;
@@ -13107,6 +13125,11 @@
             document.getElementById('ingredient-cost-modal-price').value = existing && existing.purchaseAmount ? existing.purchasePrice : (existing ? existing.pricePer100g : '');
             document.getElementById('ingredient-cost-modal-amount').value = existing && existing.purchaseAmount ? existing.purchaseAmount : (existing ? 100 : '');
             document.getElementById('ingredient-cost-modal-unit').value = existing && existing.purchaseUnit ? existing.purchaseUnit : (existing ? 'g' : '');
+            document.getElementById('ingredient-cost-modal-aliases').value = existing && existing.keywords ? existing.keywords.join(',') : '';
+            // 條碼欄位：反查字典裡有沒有條碼指到這個名稱
+            const dict = await loadBarcodeDictionary();
+            const existingCode = Object.keys(dict).find(code => dict[code] === name);
+            document.getElementById('ingredient-cost-modal-barcode').value = existingCode || '';
             document.getElementById('ingredient-cost-modal-hint').textContent = existing && existing.source === 'ai_suggested'
                 ? '目前是AI估算的參考價，改成你自己知道的價格吧'
                 : (existing ? '這是你之前設定過的價格，可以直接按「換算單價」確認' : (owner ? '目前是套用其他食材的價格，下面填寫並儲存可以改成自己獨立設定' : '這個食材還沒有價格資料，填好左邊三格再按換算'));
@@ -13151,13 +13174,34 @@
         }
         async function saveIngredientCostModal() {
             if (!ingredientCostModalTarget || ingredientCostModalComputed === null) return;
+            const name = ingredientCostModalTarget;
             const purchaseInfo = {
                 price: document.getElementById('ingredient-cost-modal-price').value,
                 amount: document.getElementById('ingredient-cost-modal-amount').value,
                 unit: document.getElementById('ingredient-cost-modal-unit').value,
             };
-            const ok = await setUserIngredientCost(ingredientCostModalTarget, ingredientCostModalComputed, purchaseInfo);
+            const ok = await setUserIngredientCost(name, ingredientCostModalComputed, purchaseInfo);
             if (ok) {
+                // 條碼：跟原本記錄的不一樣才需要更新（先拿掉舊的、再存新的），一樣的話不用重複寫入
+                const newCode = document.getElementById('ingredient-cost-modal-barcode').value.trim();
+                const dict = await loadBarcodeDictionary(true);
+                const oldCode = Object.keys(dict).find(code => dict[code] === name);
+                if (oldCode !== newCode) {
+                    if (oldCode) {
+                        const fridgeId = await getActiveFridgeId();
+                        await db.collection('fridges').doc(fridgeId).update({ [`barcodeDictionary.${oldCode}`]: firebase.firestore.FieldValue.delete() }).catch(() => {});
+                        if (barcodeDictCache) delete barcodeDictCache[oldCode];
+                    }
+                    if (newCode) await saveBarcodeToDictionary(newCode, name);
+                }
+                // 別名：比對這次輸入的跟原本的差異，多的連結上去、少的解除連結
+                const newAliases = document.getElementById('ingredient-cost-modal-aliases').value
+                    .split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+                const freshCosts = await loadUserIngredientCosts(true);
+                const oldAliases = (freshCosts[name] && freshCosts[name].keywords) || [];
+                for (const old of oldAliases) if (!newAliases.includes(old)) await unlinkIngredientKeyword(name, old);
+                for (const alias of newAliases) if (!oldAliases.includes(alias)) await linkIngredientAsKeyword(name, alias);
+
                 closeIngredientCostModal();
                 // 存完之後，如果食譜詳細頁還開著，重新整理一次成本顯示
                 if (window.__lastOpenRecipe) scaleRecipe(window.__lastOpenRecipe);
@@ -13206,6 +13250,15 @@
         //   有找到 → 自動填進搜尋欄、篩選出那筆資料看到之前的價格，等於用相機代替手動打字搜尋
         //   沒找到 → 直接把條碼號碼帶進上面新增表單的條碼欄位，你可以馬上填名稱/價格建檔，
         //           不用真的買、也不影響冰箱庫存，等於順手在賣場先記錄比價，下次同一個條碼就查得到了
+        // 通用的「鏡頭掃碼」小按鈕邏輯：掃到什麼就直接填進指定的輸入框，不做任何查詢/比對，
+        // 純粹是拿相機取代打字輸入條碼數字這件事，讓使用者自己選要手動打還是用掃的
+        function scanIntoBarcodeField(inputId) {
+            openBarcodeScanner((decodedText) => {
+                closeBarcodeScanner();
+                const input = document.getElementById(inputId);
+                if (input) { input.value = decodedText; input.focus(); }
+            });
+        }
         function scanBarcodeForPriceInquiry() {
             openBarcodeScanner(async (decodedText) => {
                 closeBarcodeScanner();
@@ -13281,19 +13334,31 @@
                     : `<div class="empty-state"><div class="empty-state-icon">💰</div><p>還沒有任何食材價格資料，去食譜詳細頁點食材、或用上面的表單新增一個吧</p></div>`;
                 return;
             }
+            const dict = await loadBarcodeDictionary(true);
+            const barcodeByName = {}; // 反查一次：名稱→條碼，避免每筆資料都重新掃一次整個字典
+            Object.entries(dict).forEach(([code, n]) => { barcodeByName[n] = code; });
             listEl.innerHTML = names.map(name => {
                 const c = costs[name];
                 const purchaseText = c.purchaseAmount ? `（${c.purchasePrice}元／${c.purchaseAmount}${c.purchaseUnit}）` : '';
                 const keywordsText = (c.keywords && c.keywords.length) ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🔗 也套用：${c.keywords.join('、')}</p>` : '';
+                const barcodeText = barcodeByName[name] ? `<p class="text-xs mt-0.5" style="color:#B3A492">🏷️ 條碼：${barcodeByName[name]}</p>` : '';
+                // 漲跌幅：跟上一次記錄的單價比較，漲了顯示紅色↑、跌了顯示綠色↓
+                let changeText = '';
+                if (c.previousPricePer100g && c.previousPricePer100g > 0) {
+                    const pct = ((c.pricePer100g - c.previousPricePer100g) / c.previousPricePer100g) * 100;
+                    if (Math.abs(pct) >= 0.5) {
+                        const up = pct > 0;
+                        changeText = ` <span class="num-tabular" style="color:${up ? '#C4453F' : 'var(--sage)'}">${up ? '↑' : '↓'}${Math.abs(pct).toFixed(0)}%</span>`;
+                    }
+                }
                 return `
                     <div class="flex items-center gap-3 px-4 py-3 rounded-2xl" style="background:var(--cream)">
                         <div class="flex-1 min-w-0">
                             <p class="font-medium text-sm">${name}${c.source === 'ai_suggested' ? ' <span class="text-xs" style="color:var(--sage)">🤖 AI估算</span>' : ''}</p>
-                            <p class="text-xs" style="color:#B3A492">每100克 NT$${c.pricePer100g.toFixed(2)} ${purchaseText}</p>
+                            <p class="text-xs num-tabular" style="color:#B3A492">每100克 NT$${c.pricePer100g.toFixed(2)}${changeText} ${purchaseText}</p>
+                            ${barcodeText}
                             ${keywordsText}
                         </div>
-                        <button onclick="manageIngredientBarcode('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:#8DAFC4; color:white">條碼</button>
-                        <button onclick="manageIngredientAliases('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--honey); color:white">別名</button>
                         <button onclick="openIngredientCostEditor('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:white">編輯</button>
                         <button onclick="removeMyIngredientCost('${escapeHtmlAttr(name)}')" class="text-xs shrink-0" style="color:#C4453F">刪除</button>
                     </div>`;
