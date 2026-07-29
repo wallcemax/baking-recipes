@@ -12847,9 +12847,17 @@
             { keywords: ['香蕉'], gramsPerUnit: 120 },
             { keywords: ['蘋果'], gramsPerUnit: 180 },
             { keywords: ['大蒜', '蒜頭', '蒜瓣'], gramsPerUnit: 5 },
+            { keywords: ['洋蔥'], gramsPerUnit: 200 },
+            { keywords: ['青蔥', '蔥'], gramsPerUnit: 15 },
+            { keywords: ['小黃瓜'], gramsPerUnit: 100 },
+            { keywords: ['紅蘿蔔', '胡蘿蔔'], gramsPerUnit: 150 },
+            { keywords: ['番茄', '蕃茄'], gramsPerUnit: 150 },
+            { keywords: ['馬鈴薯', '洋芋'], gramsPerUnit: 150 },
+            { keywords: ['地瓜', '番薯'], gramsPerUnit: 200 },
+            { keywords: ['辣椒'], gramsPerUnit: 10 },
         ];
-        // 會被視為「計量單位」而嘗試比對食材個別重量的單位（顆/粒/個等）
-        const COUNT_UNIT_WORDS = ['顆', '粒', '個', '顆粒'];
+        // 會被視為「計量單位」而嘗試比對食材個別重量的單位（顆/根/條/片...等常見中文量詞）
+        const COUNT_UNIT_WORDS = ['顆', '粒', '個', '顆粒', '根', '條', '片', '球', '把', '串', '瓣', '塊', '朵', '支', '尾', '隻'];
 
         function guessPieceWeight(name) {
             if (!name) return null;
@@ -12858,6 +12866,65 @@
                 if (entry.keywords.some(k => { const kl = k.toLowerCase(); return lower.includes(kl) || kl.includes(lower); })) return entry.gramsPerUnit;
             }
             return null;
+        }
+        let pieceWeightCache = {}; // 同一次瀏覽期間的暫存，避免同個食材重複問 Firestore／AI
+        // 「1顆/1根/1條...這類食材，平均一份大概多重」查詢的完整版本（含AI）：
+        // 先查Firestore共用快取（跟熱量/密度資料共用同一份文件的pieceWeight欄位）、
+        // 再查本地寫死的常見食材表（guessPieceWeight），最後才問AI，順序邏輯跟密度/熱量估算一致
+        async function resolveIngredientPieceWeight(name) {
+            if (Object.prototype.hasOwnProperty.call(pieceWeightCache, name)) return pieceWeightCache[name];
+            const trimmedName = name.trim();
+            const docId = trimmedName.replace(/\//g, '_').slice(0, 200);
+
+            // ① 優先查 Firestore（跟熱量/密度資料共用同一份文件的 pieceWeight 欄位）
+            try {
+                const cacheDoc = await db.collection('ingredientNutrition').doc(docId).get();
+                if (cacheDoc.exists && typeof cacheDoc.data().pieceWeight === 'number') {
+                    pieceWeightCache[name] = cacheDoc.data().pieceWeight;
+                    return pieceWeightCache[name];
+                }
+            } catch (err) {
+                console.warn('讀取食材單顆重量快取失敗', err && err.message);
+            }
+
+            // ①-2 查「關聯關鍵字」（同一套別名機制）
+            try {
+                const aliasSnap = await db.collection('ingredientNutrition')
+                    .where('keywords', 'array-contains', trimmedName)
+                    .limit(1)
+                    .get();
+                if (!aliasSnap.empty && typeof aliasSnap.docs[0].data().pieceWeight === 'number') {
+                    pieceWeightCache[name] = aliasSnap.docs[0].data().pieceWeight;
+                    return pieceWeightCache[name];
+                }
+            } catch (err) {
+                console.warn('讀取食材單顆重量關聯關鍵字失敗', err && err.message);
+            }
+
+            // ② Firestore 沒有 → 查本地寫死的常見食材表
+            const local = guessPieceWeight(name);
+            if (local !== null) {
+                pieceWeightCache[name] = local;
+                return local;
+            }
+
+            // ③ 都查不到 → 呼叫 AI 估算，並寫回 Firestore（用 merge，避免蓋掉同一份文件裡已有的熱量/密度資料）
+            try {
+                if (typeof window.__fetchGeminiIngredientPieceWeight !== 'function') { pieceWeightCache[name] = null; return null; }
+                const weight = await window.__fetchGeminiIngredientPieceWeight(name);
+                pieceWeightCache[name] = weight;
+                if (weight !== null && currentUser) {
+                    db.collection('ingredientNutrition').doc(docId).set({
+                        name, keywords: [name], pieceWeight: weight,
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true }).catch(err => console.warn('寫入單顆重量快取失敗', err && err.message));
+                }
+                return weight;
+            } catch (err) {
+                console.warn('AI 單顆重量估算暫時無法使用', err && err.message);
+                pieceWeightCache[name] = null;
+                return null;
+            }
         }
 
         // 將常見體積單位換算成 ml；支援 大匙／tbsp／茶匙／tsp／ml／毫升／l／公升／杯／cup
@@ -12978,7 +13045,7 @@
                 return ml * (density !== null ? density : 1.00);
             }
             if (COUNT_UNIT_WORDS.includes(u)) {
-                const pieceWeight = guessPieceWeight(name);
+                const pieceWeight = await resolveIngredientPieceWeight(name);
                 if (pieceWeight !== null) return amount * pieceWeight;
             }
             return null;
@@ -15621,6 +15688,17 @@
         // 本地密度表查不到時才會用到
         window.__fetchGeminiIngredientDensity = async function (name) {
             const prompt = `請估算食材「${name}」（繁體中文，烘焙／料理食譜情境）的密度，單位為公克/毫升(g/ml)。只回傳一個數字，不要有任何其他文字、不要有單位、不要用 JSON 或 markdown，例如：0.96`;
+            const text = await callAIProxy(prompt);
+            if (!text) return null;
+            const match = text.trim().match(/[\d.]+/);
+            const num = match ? parseFloat(match[0]) : NaN;
+            return isNaN(num) ? null : num;
+        };
+
+        // 估算「1顆/1根/1條/1片...」這類計量單位食材，平均一份大概多重（公克），
+        // 用於食譜寫「大蔥 1根」「小黃瓜 2條」這種本地對照表沒收錄的食材，本地表查不到時才會用到
+        window.__fetchGeminiIngredientPieceWeight = async function (name) {
+            const prompt = `請估算食材「${name}」（繁體中文，烘焙／料理食譜情境）常見的「一份／一顆／一根／一條／一片」等計量單位平均重量，單位為公克(g)。只回傳一個數字，不要有任何其他文字、不要有單位、不要用 JSON 或 markdown，例如：85`;
             const text = await callAIProxy(prompt);
             if (!text) return null;
             const match = text.trim().match(/[\d.]+/);
