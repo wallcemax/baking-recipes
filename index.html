@@ -15792,33 +15792,7 @@
             document.getElementById('image-preview').src = '';
         }
 
-        // 手機瀏覽器第一次要求存取相簿/相機權限時，系統跳出來的授權視窗常常會打斷選圖的事件流程，
-        // 導致change事件沒有正確觸發，看起來像「選了圖片卻沒反應」。這裡在畫面從選圖器切回前景之後，
-        // 如果發現這個欄位還是沒有任何檔案，顯示一個小提示讓使用者知道可以再點一次重選，
-        // 不用自己猜到底發生了什麼事、也不用整個重新整理頁面。
-        // 用兩種方式偵測「回到前景」：window的focus事件、以及document.visibilitychange，
-        // 因為不同手機瀏覽器/PWA模式下，這兩種事件的可靠度不太一樣，兩個一起用比較保險，
-        // 不管哪一個先觸發，之後都會把另一個的監聽器清掉，不會重複跳出提示
-        function watchFileInputForSilentFailure(input) {
-            let triggered = false;
-            const check = () => {
-                if (triggered) return;
-                triggered = true;
-                window.removeEventListener('focus', onFocusBack);
-                document.removeEventListener('visibilitychange', onVisibilityChange);
-                // 留一點緩衝時間，讓真的有選到圖片的change事件有機會先跑完，避免這裡誤判
-                setTimeout(() => {
-                    if (!input.files || input.files.length === 0) {
-                        showToast('沒有選到圖片嗎？可以再點一次「選擇圖片/相機」重選一次看看', 'error');
-                    }
-                }, 700);
-            };
-            const onFocusBack = () => check();
-            const onVisibilityChange = () => { if (document.visibilityState === 'visible') check(); };
-            window.addEventListener('focus', onFocusBack, { once: true });
-            document.addEventListener('visibilitychange', onVisibilityChange);
-        }
-        // 點擊<label>的當下（早於瀏覽器實際開啟選圖器之前）先清空欄位值、設定失敗偵測——
+        // 點擊<label>的當下（早於瀏覽器實際開啟選圖器之前）先清空欄位值——
         // 改用<label for="...">讓瀏覽器原生處理「點擊後開啟選圖器」這件事，不再用JavaScript呼叫
         // input.click()，因為手機瀏覽器對動態產生的檔案欄位用JS觸發click()，第一次常常不可靠，
         // 用label原生關聯機制是業界標準、最穩定的做法
@@ -15826,7 +15800,6 @@
             const input = document.getElementById(inputId);
             if (!input) return;
             input.value = '';
-            watchFileInputForSilentFailure(input);
         }
         function handleImageSelect(event) {
             const file = event.target.files[0];
@@ -15874,25 +15847,35 @@
                 const img = new Image();
                 const url = URL.createObjectURL(file);
                 img.onload = () => {
-                    clearTimeout(timeoutId);
                     URL.revokeObjectURL(url);
-                    let { width, height } = img;
-                    if (width > maxDim || height > maxDim) {
-                        const scale = maxDim / Math.max(width, height);
-                        width = Math.round(width * scale);
-                        height = Math.round(height * scale);
-                    }
-                    const canvas = document.createElement('canvas');
-                    canvas.width = width; canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, width, height);
-                    canvas.toBlob(blob => {
-                        if (blob && blob.size < file.size) {
-                            finish(new File([blob], file.name.replace(/\.(png|webp)$/i, '.jpg'), { type: 'image/jpeg' }));
-                        } else {
-                            finish(file); // 少數情況壓縮後反而變大（例如原本檔案就很小），就直接用原始檔案
+                    // canvas繪圖這一段包進try/catch：如果這張照片解析度太高、細節太複雜，觸發某些手機
+                    // 瀏覽器的記憶體或畫布尺寸限制而拋出例外，之前的寫法會導致整個流程卡死（因為逾時保護
+                    // 已經在上面被清除掉了，例外發生後沒有任何東西會讓Promise resolve）。
+                    // 這裡改成失敗的話直接退回用原始檔案，不會卡住
+                    try {
+                        let { width, height } = img;
+                        if (width > maxDim || height > maxDim) {
+                            const scale = maxDim / Math.max(width, height);
+                            width = Math.round(width * scale);
+                            height = Math.round(height * scale);
                         }
-                    }, 'image/jpeg', quality);
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width; canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        canvas.toBlob(blob => {
+                            clearTimeout(timeoutId);
+                            if (blob && blob.size < file.size) {
+                                finish(new File([blob], file.name.replace(/\.(png|webp)$/i, '.jpg'), { type: 'image/jpeg' }));
+                            } else {
+                                finish(file); // 少數情況壓縮後反而變大（例如原本檔案就很小），就直接用原始檔案
+                            }
+                        }, 'image/jpeg', quality);
+                    } catch (err) {
+                        clearTimeout(timeoutId);
+                        console.warn('圖片壓縮失敗，改用原始檔案繼續上傳', err && err.message);
+                        finish(file);
+                    }
                 };
                 img.onerror = () => { clearTimeout(timeoutId); URL.revokeObjectURL(url); finish(file); };
                 img.src = url;
