@@ -13430,10 +13430,10 @@
             }
         }
         // 點食材加總清單裡的某一項，切換「已購買」的劃掉狀態
-        function toggleIngredientPurchased(name, idx) {
-            shoppingListPurchasedCache[name] = !shoppingListPurchasedCache[name];
-            if (!shoppingListPurchasedCache[name]) delete shoppingListPurchasedCache[name];
-            const bought = !!shoppingListPurchasedCache[name];
+        function toggleIngredientPurchased(key, idx, displayName) {
+            shoppingListPurchasedCache[key] = !shoppingListPurchasedCache[key];
+            if (!shoppingListPurchasedCache[key]) delete shoppingListPurchasedCache[key];
+            const bought = !!shoppingListPurchasedCache[key];
             // 只直接更新這一列的畫面，不整個重新呼叫renderShoppingListModal()——
             // 那個函式要重新抓所有食譜、重新算一次成本，很慢，如果連續點好幾個食材，
             // 舊的那次重算比較慢跑完的話會晚一步蓋掉畫面，看起來就像「點了沒反應」
@@ -13442,7 +13442,10 @@
                 row.style.textDecoration = bought ? 'line-through' : 'none';
                 row.style.opacity = bought ? '.45' : '1';
                 const labelEl = row.querySelector('[data-ing-label]');
-                if (labelEl) labelEl.textContent = (bought ? '✅ ' : '') + name;
+                // 顯示文字要用原本的displayName（可能是好幾個原始食材名稱合併起來的），
+                // 不能用key（key只是內部用來記錄「有沒有買過」的識別碼，可能是推薦品牌名稱、
+                // 也可能是像"__nodata__可可粉"這種內部格式，不是給使用者看的）
+                if (labelEl) labelEl.textContent = (bought ? '✅ ' : '') + (displayName || key);
             }
             if (currentUser) {
                 db.collection('userShoppingLists').doc(currentUser.uid).set({ purchased: shoppingListPurchasedCache }, { merge: true })
@@ -13532,10 +13535,10 @@
                 perRecipeGrams.push({ name: item.recipeName, grams: thisRecipeGrams });
             }));
 
-            // 第二階段：每個原始食材名稱，先各自找出「這個名稱本身 + 所有套用這個名稱當別名的品牌」裡單價最低的
-            // 當推薦候選，再依「推薦候選的名稱」重新分組——這一步很重要：像「全蛋液」「雞蛋」「蛋黃」這種寫法不同
-            // 的食材，如果背後其實都套用到同一筆成本資料，不分組的話會被拆成好幾筆各自獨立算「要買幾份」，
-            // 造成明明是同一樣東西、卻被算成要分開買好幾次
+            // 第二階段：每個原始食材名稱，先各自找出「這個名稱本身 + 所有套用這個名稱當別名的品牌」裡最近更新過的
+            // 當「之前使用」的候選（提醒使用者上次買的是哪個牌子），再依這個候選的名稱重新分組——這一步很重要：
+            // 像「全蛋液」「雞蛋」「蛋黃」這種寫法不同的食材，如果背後其實都套用到同一筆成本資料，不分組的話
+            // 會被拆成好幾筆各自獨立算「要買幾份」，造成明明是同一樣東西、卻被算成要分開買好幾次
             const costs = await loadUserIngredientCosts();
             const groups = {}; // key = 推薦候選名稱（查不到候選的話用原始名稱自己一組）
             await Promise.all(Object.keys(ingredientTotals).map(async rawName => {
@@ -13543,7 +13546,7 @@
                 const candidates = [];
                 if (costs[rawName]) candidates.push([rawName, costs[rawName]]);
                 findAllKeywordOwners(rawName, costs).forEach(([canon, entry]) => candidates.push([canon, entry]));
-                candidates.sort((a, b) => a[1].pricePer100g - b[1].pricePer100g); // 單價最低的排第一個，當推薦
+                candidates.sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0)); // 最近更新過的排第一個，代表「上次用的是這個」
                 const groupKey = candidates.length ? candidates[0][0] : `__nodata__${rawName}`;
                 if (!groups[groupKey]) {
                     groups[groupKey] = {
@@ -13606,9 +13609,9 @@
                             const displayName = g.rawNames.join('、'); // 同一組裡如果有好幾個寫法不同的原始名稱，全部列出來
                             const bought = !!shoppingListPurchasedCache[key];
                             const recLine = g.recommendedEntry
-                                ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🏆 常用/推薦：${g.recommendedName}（${g.recommendedEntry.purchasePrice ? `${g.recommendedEntry.purchasePrice}元／${g.recommendedEntry.purchaseAmount}${g.recommendedEntry.purchaseUnit}` : `約NT$${g.recommendedEntry.pricePer100g.toFixed(1)}/100g`}）${g.unitsNeeded ? `・需${g.unitsNeeded}份` : ''}${g.fallbackEstimate ? '（沒有完整包裝資訊，用零星單價概算）' : ''}</p>`
+                                ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🕐 之前使用：${g.recommendedName}（${g.recommendedEntry.purchasePrice ? `${g.recommendedEntry.purchasePrice}元／${g.recommendedEntry.purchaseAmount}${g.recommendedEntry.purchaseUnit}` : `約NT$${g.recommendedEntry.pricePer100g.toFixed(1)}/100g`}）${g.unitsNeeded ? `・需${g.unitsNeeded}份` : ''}${g.fallbackEstimate ? '（沒有完整包裝資訊，用零星單價概算）' : ''}</p>`
                                 : `<p class="text-xs mt-0.5" style="color:#B3A492">尚未設定價格，成本沒有算進總計裡</p>`;
-                            return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx})" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
+                            return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
                                 <div class="flex justify-between"><span data-ing-label>${bought ? '✅ ' : ''}${displayName}</span><span class="num-tabular" style="color:#B3A492">需要${g.grams.toFixed(0)}g</span></div>
                                 ${recLine}
                             </div>`;
