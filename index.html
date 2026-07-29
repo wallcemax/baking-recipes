@@ -409,6 +409,10 @@
                     </div>
                 </div>
                 <button onclick="saveAdminNutrition()" class="btn-primary w-full mb-8">💾 儲存這筆食材資料</button>
+                <h3 class="font-display font-semibold text-lg mb-1">🧸 食材熱量孤兒<span class="text-xs font-normal" style="color:#B3A492">（食譜裡有用到、但查無熱量資料的食材）</span></h3>
+                <p class="text-xs mb-3" style="color:#B3A492">開啟食譜時不會再自動問AI了，避免一次觸發太多請求撞到限流；改成把查不到的食材記錄在這裡，你可以自己決定要不要點下面的按鈕、一次一個手動觸發AI查詢</p>
+                <div id="admin-nutri-orphans" class="space-y-2 mb-8"></div>
+                <input id="admin-nutri-search" oninput="loadAdminNutritionList()" placeholder="🔍 搜尋已收錄的食材..." class="form-input mb-3">
                 <h3 class="font-display font-semibold text-lg mb-3">目前已收錄／AI 估算過的食材</h3>
                 <div id="admin-nutri-list" class="space-y-2"></div>
             </div>
@@ -12756,26 +12760,23 @@
                 return local;
             }
 
-            // ③ 都查不到 → 呼叫 Gemini（可搭配網路搜尋）估算，並寫回 Firestore 共用快取
-            try {
-                if (typeof window.__fetchGeminiIngredientNutrition !== 'function') { aiNutritionCache[name] = null; return null; }
-                const data = await window.__fetchGeminiIngredientNutrition(name);
-                if (data) data.source = 'ai_estimated'; // 統一標記來源，畫面上才能正確顯示「AI 估算」徽章
-                aiNutritionCache[name] = data;
-                if (data && currentUser) {
-                    // 只有登入使用者的查詢會寫入共用快取，降低被惡意寫入垃圾資料的風險；
-                    // 未登入者一樣能查詢／看到結果，只是不會幫忙寫快取
-                    db.collection('ingredientNutrition').doc(docId).set({
-                        name, keywords: [name], ...data,
-                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                    }).catch(err => console.warn('寫入食材熱量快取失敗', err && err.message));
-                }
-                return data;
-            } catch (err) {
-                console.warn('AI 熱量估算暫時無法使用（可能尚未完成 Firebase AI Logic 設定）', err && err.message);
-                aiNutritionCache[name] = null;
-                return null;
-            }
+            // ③ 都查不到 → 不再自動問AI了（開啟食譜就自動打AI，很容易一次同時觸發好幾個食材、
+            // 一下子就撞到免費額度的429限流）。改成把這個食材記錄成「熱量孤兒」，
+            // 讓管理員之後去「食材熱量管理」面板裡看到清單，手動一個一個點按鈕才觸發AI查詢，
+            // 一次只問一個、由人主動決定時機，比較不會被限流卡住
+            aiNutritionCache[name] = null;
+            logNutritionOrphan(trimmedName);
+            return null;
+        }
+        // 把「查不到熱量資料」的食材記錄下來，讓管理員可以在「食材熱量管理」面板看到、手動觸發AI查詢
+        function logNutritionOrphan(name) {
+            if (!currentUser) return; // 沒登入的訪客不記錄，避免被亂寫垃圾資料
+            const docId = name.replace(/\//g, '_').slice(0, 200);
+            db.collection('nutritionOrphans').doc(docId).set({
+                name,
+                lastSeenAt: firebase.firestore.FieldValue.serverTimestamp(),
+                seenCount: firebase.firestore.FieldValue.increment(1),
+            }, { merge: true }).catch(err => console.warn('記錄熱量孤兒失敗', err && err.message));
         }
 
         // ---------- 管理者專屬：食材熱量資料手動管理 ----------
@@ -12795,6 +12796,7 @@
                 if (el) el.value = '';
             });
             loadAdminNutritionList();
+            loadNutritionOrphansList();
             pushModalHistoryState();
         }
 
@@ -12909,11 +12911,22 @@
         async function loadAdminNutritionList() {
             const listEl = document.getElementById('admin-nutri-list');
             if (!listEl) return;
+            const keyword = (document.getElementById('admin-nutri-search')?.value || '').trim();
             listEl.innerHTML = '<p class="text-sm" style="color:#B3A492">載入中…</p>';
             try {
-                const snap = await db.collection('ingredientNutrition').orderBy('updatedAt', 'desc').limit(50).get();
-                if (snap.empty) { listEl.innerHTML = '<p class="text-sm" style="color:#B3A492">目前還沒有任何資料</p>'; return; }
-                listEl.innerHTML = snap.docs.map(doc => {
+                // 抓多一點筆數(200)回來，搜尋用關鍵字在前端過濾——Firestore沒辦法直接做「名稱裡有包含」
+                // 這種模糊搜尋，抓一批夠大的資料量在瀏覽器這邊篩選是比較實際的做法
+                const snap = await db.collection('ingredientNutrition').orderBy('updatedAt', 'desc').limit(200).get();
+                let docs = snap.docs;
+                if (keyword) {
+                    docs = docs.filter(doc => {
+                        const d = doc.data();
+                        if ((d.name || doc.id).includes(keyword)) return true;
+                        return (d.keywords || []).some(k => k.includes(keyword));
+                    });
+                }
+                if (!docs.length) { listEl.innerHTML = `<p class="text-sm" style="color:#B3A492">${keyword ? `查無「${keyword}」的資料` : '目前還沒有任何資料'}</p>`; return; }
+                listEl.innerHTML = docs.map(doc => {
                     const d = doc.data();
                     const badge = d.source === 'admin_manual'
                         ? `<span style="color:var(--sage)">✅ 管理者輸入</span>`
@@ -12935,6 +12948,72 @@
             } catch (err) {
                 listEl.innerHTML = `<p class="text-sm" style="color:#C4453F">載入失敗：${err.message}</p>`;
             }
+        }
+
+        // 讀取「食材熱量孤兒」清單（食譜裡用過、但查無熱量資料的食材），讓管理員決定要不要手動觸發AI查詢
+        async function loadNutritionOrphansList() {
+            const listEl = document.getElementById('admin-nutri-orphans');
+            if (!listEl) return;
+            listEl.innerHTML = '<p class="text-sm" style="color:#B3A492">載入中…</p>';
+            try {
+                const snap = await db.collection('nutritionOrphans').orderBy('lastSeenAt', 'desc').limit(100).get();
+                if (snap.empty) { listEl.innerHTML = '<p class="text-sm" style="color:#B3A492">目前沒有查無資料的食材，都收錄好了！</p>'; return; }
+                listEl.innerHTML = snap.docs.map(doc => {
+                    const d = doc.data();
+                    const safeName = (d.name || doc.id).replace(/'/g, "\\'");
+                    return `<div id="orphan-row-${doc.id}" class="flex justify-between items-center px-4 py-3 rounded-2xl" style="background:var(--cream)">
+                        <div class="min-w-0">
+                            <p class="font-medium truncate">${d.name || doc.id}</p>
+                            <p class="text-xs" style="color:#B3A492">被查詢過 ${d.seenCount || 1} 次</p>
+                        </div>
+                        <div class="flex gap-2 shrink-0">
+                            <button onclick="triggerAINutritionForOrphan('${doc.id}', '${safeName}')" class="text-sm font-medium px-3 py-1.5 rounded-full" style="background:var(--honey); color:white">🤖 AI補充</button>
+                            <button onclick="dismissNutritionOrphan('${doc.id}')" class="text-sm" style="color:#B3A492">忽略</button>
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch (err) {
+                listEl.innerHTML = `<p class="text-sm" style="color:#C4453F">載入失敗：${err.message}</p>`;
+            }
+        }
+        // 管理員手動點按鈕，針對「這一個」孤兒食材觸發AI查詢（熱量+密度+單顆重量一次問齊），
+        // 因為是人主動一次點一個、不是開啟食譜自動一次問好幾個，比較不容易撞到免費額度限流
+        async function triggerAINutritionForOrphan(docId, name) {
+            const row = document.getElementById(`orphan-row-${docId}`);
+            if (row) row.style.opacity = '.5';
+            try {
+                const [nutrition, density, pieceWeight] = await Promise.all([
+                    (typeof window.__fetchGeminiIngredientNutrition === 'function') ? window.__fetchGeminiIngredientNutrition(name) : null,
+                    (typeof window.__fetchGeminiIngredientDensity === 'function') ? window.__fetchGeminiIngredientDensity(name) : null,
+                    (typeof window.__fetchGeminiIngredientPieceWeight === 'function') ? window.__fetchGeminiIngredientPieceWeight(name) : null,
+                ]);
+                if (!nutrition) {
+                    alert(`AI暫時查不到「${name}」的熱量資料，可能是查詢失敗或額度限制，稍後再試一次，或者直接在上面手動輸入`);
+                    if (row) row.style.opacity = '1';
+                    return;
+                }
+                const docRefId = name.replace(/\//g, '_').slice(0, 200);
+                await db.collection('ingredientNutrition').doc(docRefId).set({
+                    name, keywords: [name],
+                    ...nutrition, source: 'ai_estimated',
+                    ...(density !== null ? { density } : {}),
+                    ...(pieceWeight !== null ? { pieceWeight } : {}),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+                await db.collection('nutritionOrphans').doc(docId).delete();
+                delete aiNutritionCache[name]; delete densityCache[name]; delete pieceWeightCache[name]; // 清快取，下次重新讀到剛補上的資料
+                alert(`已補上「${name}」的資料`);
+                loadNutritionOrphansList();
+                loadAdminNutritionList();
+            } catch (err) {
+                alert('AI查詢失敗：' + err.message);
+                if (row) row.style.opacity = '1';
+            }
+        }
+        // 忽略這個孤兒（例如不是真的食材、或名稱打錯字了），單純從清單移除，不會建立任何熱量資料
+        async function dismissNutritionOrphan(docId) {
+            await db.collection('nutritionOrphans').doc(docId).delete().catch(() => {});
+            loadNutritionOrphansList();
         }
 
         // 常見「以顆／粒／個」計量的食材，內建每單位大約幾公克，讓這類食材也能換算成公克計算熱量。
@@ -13012,23 +13091,10 @@
                 return local;
             }
 
-            // ③ 都查不到 → 呼叫 AI 估算，並寫回 Firestore（用 merge，避免蓋掉同一份文件裡已有的熱量/密度資料）
-            try {
-                if (typeof window.__fetchGeminiIngredientPieceWeight !== 'function') { pieceWeightCache[name] = null; return null; }
-                const weight = await window.__fetchGeminiIngredientPieceWeight(name);
-                pieceWeightCache[name] = weight;
-                if (weight !== null && currentUser) {
-                    db.collection('ingredientNutrition').doc(docId).set({
-                        name, keywords: [name], pieceWeight: weight,
-                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                    }, { merge: true }).catch(err => console.warn('寫入單顆重量快取失敗', err && err.message));
-                }
-                return weight;
-            } catch (err) {
-                console.warn('AI 單顆重量估算暫時無法使用', err && err.message);
-                pieceWeightCache[name] = null;
-                return null;
-            }
+            // ③ 都查不到 → 不再自動問AI了（原因跟熱量估算一樣，避免開啟食譜就自動觸發一堆AI呼叫撞到429限流），
+            // 直接回傳null，這個食材就會被列入「單位換算不出來」，不會列入熱量/成本計算
+            pieceWeightCache[name] = null;
+            return null;
         }
 
         // 將常見體積單位換算成 ml；支援 大匙／tbsp／茶匙／tsp／ml／毫升／l／公升／杯／cup
@@ -13117,23 +13183,10 @@
                 return categoryGuess;
             }
 
-            // ③ 都查不到 → 呼叫 AI 估算密度，並寫回 Firestore（用 merge，避免蓋掉同一份文件裡已有的熱量資料）
-            try {
-                if (typeof window.__fetchGeminiIngredientDensity !== 'function') { densityCache[name] = null; return null; }
-                const density = await window.__fetchGeminiIngredientDensity(name);
-                densityCache[name] = density;
-                if (density !== null && currentUser) {
-                    db.collection('ingredientNutrition').doc(docId).set({
-                        name, keywords: [name], density,
-                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                    }, { merge: true }).catch(err => console.warn('寫入密度快取失敗', err && err.message));
-                }
-                return density;
-            } catch (err) {
-                console.warn('AI 密度估算暫時無法使用（可能尚未完成 Firebase AI Logic 設定）', err && err.message);
-                densityCache[name] = null;
-                return null;
-            }
+            // ③ 本地表、型態猜測都查不到 → 不再自動問AI了（原因跟熱量估算一樣，避免開啟食譜就自動
+            // 觸發一堆AI呼叫撞到429限流），直接回傳null，resolveGrams會用水的密度1.00當最後的保守估算
+            densityCache[name] = null;
+            return null;
         }
 
         // 將食材份量換算成公克（非同步版本，體積單位查不到密度時會依序查 Firestore／本地表／AI）。
