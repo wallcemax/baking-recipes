@@ -12956,24 +12956,63 @@
             if (!listEl) return;
             listEl.innerHTML = '<p class="text-sm" style="color:#B3A492">載入中…</p>';
             try {
-                const snap = await db.collection('nutritionOrphans').orderBy('lastSeenAt', 'desc').limit(100).get();
-                if (snap.empty) { listEl.innerHTML = '<p class="text-sm" style="color:#B3A492">目前沒有查無資料的食材，都收錄好了！</p>'; return; }
-                listEl.innerHTML = snap.docs.map(doc => {
+                const [orphanSnap, existingSnap] = await Promise.all([
+                    db.collection('nutritionOrphans').orderBy('lastSeenAt', 'desc').limit(100).get(),
+                    db.collection('ingredientNutrition').limit(500).get(),
+                ]);
+                if (orphanSnap.empty) { listEl.innerHTML = '<p class="text-sm" style="color:#B3A492">目前沒有查無資料的食材，都收錄好了！</p>'; return; }
+                // 抓一批已經收錄過的資料，等一下用跟「我的食材成本」套用類似食材同一套字元加權比對演算法，
+                // 找出跟每個孤兒名稱相似的既有資料，讓管理員可以直接套用既有資料的別名，不用問AI
+                const existingMap = {};
+                existingSnap.docs.forEach(doc => { const d = doc.data(); existingMap[d.name || doc.id] = d; });
+                listEl.innerHTML = orphanSnap.docs.map(doc => {
                     const d = doc.data();
-                    const safeName = (d.name || doc.id).replace(/'/g, "\\'");
-                    return `<div id="orphan-row-${doc.id}" class="flex justify-between items-center px-4 py-3 rounded-2xl" style="background:var(--cream)">
-                        <div class="min-w-0">
-                            <p class="font-medium truncate">${d.name || doc.id}</p>
-                            <p class="text-xs" style="color:#B3A492">被查詢過 ${d.seenCount || 1} 次</p>
+                    const orphanName = d.name || doc.id;
+                    const safeName = orphanName.replace(/'/g, "\\'");
+                    const similar = findSimilarIngredientCosts(orphanName, existingMap);
+                    const applyRow = similar.length ? `
+                        <div class="flex gap-2 mt-2">
+                            <select id="orphan-apply-select-${doc.id}" class="form-input flex-1 !py-1.5 !text-xs">
+                                ${similar.map(s => `<option value="${escapeHtmlAttr(s.name)}">${s.name}（${(s.info.kcal || 0).toFixed ? s.info.kcal.toFixed(0) : s.info.kcal} kcal/100g）</option>`).join('')}
+                            </select>
+                            <button onclick="applyNutritionOrphanToExisting('${doc.id}', '${safeName}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:white">套用</button>
+                        </div>` : '';
+                    return `<div id="orphan-row-${doc.id}" class="px-4 py-3 rounded-2xl" style="background:var(--cream)">
+                        <div class="flex justify-between items-center">
+                            <div class="min-w-0">
+                                <p class="font-medium truncate">${orphanName}</p>
+                                <p class="text-xs" style="color:#B3A492">被查詢過 ${d.seenCount || 1} 次</p>
+                            </div>
+                            <div class="flex gap-2 shrink-0">
+                                <button onclick="triggerAINutritionForOrphan('${doc.id}', '${safeName}')" class="text-sm font-medium px-3 py-1.5 rounded-full" style="background:var(--honey); color:white">🤖 AI補充</button>
+                                <button onclick="dismissNutritionOrphan('${doc.id}')" class="text-sm" style="color:#B3A492">忽略</button>
+                            </div>
                         </div>
-                        <div class="flex gap-2 shrink-0">
-                            <button onclick="triggerAINutritionForOrphan('${doc.id}', '${safeName}')" class="text-sm font-medium px-3 py-1.5 rounded-full" style="background:var(--honey); color:white">🤖 AI補充</button>
-                            <button onclick="dismissNutritionOrphan('${doc.id}')" class="text-sm" style="color:#B3A492">忽略</button>
-                        </div>
+                        ${applyRow}
                     </div>`;
                 }).join('');
             } catch (err) {
                 listEl.innerHTML = `<p class="text-sm" style="color:#C4453F">載入失敗：${err.message}</p>`;
+            }
+        }
+        // 把孤兒名稱套用成既有資料的別名（例如「濃縮咖啡」查無資料，但套用選單裡找到已經收錄過的「即溶咖啡」），
+        // 這樣就不用問AI，直接沿用既有資料，之後食譜寫這個孤兒名稱也會直接對應到套用的那筆資料
+        async function applyNutritionOrphanToExisting(orphanDocId, orphanName) {
+            const select = document.getElementById(`orphan-apply-select-${orphanDocId}`);
+            const targetName = select ? select.value : null;
+            if (!targetName) return;
+            const targetDocId = targetName.replace(/\//g, '_').slice(0, 200);
+            try {
+                await db.collection('ingredientNutrition').doc(targetDocId).update({
+                    keywords: firebase.firestore.FieldValue.arrayUnion(orphanName),
+                });
+                await db.collection('nutritionOrphans').doc(orphanDocId).delete();
+                delete aiNutritionCache[orphanName]; delete densityCache[orphanName]; delete pieceWeightCache[orphanName]; // 清快取
+                alert(`已把「${orphanName}」套用到「${targetName}」的資料`);
+                loadNutritionOrphansList();
+                loadAdminNutritionList();
+            } catch (err) {
+                alert('套用失敗：' + err.message);
             }
         }
         // 管理員手動點按鈕，針對「這一個」孤兒食材觸發AI查詢（熱量+密度+單顆重量一次問齊），
