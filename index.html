@@ -14518,14 +14518,39 @@
                 return;
             }
             const rows = await computeFridgeMatchRows(recipe, factor, fridgeItems);
-            const missingCount = rows.filter(r => r.status === 'missing' || r.status === 'low').length;
+            // 同一組（套用同一個品牌/通用名稱）的食材合併成一行顯示，不要重複列出——
+            // 例如食譜裡「黑糖粉」出現兩次（麵團一次、內餡一次），畫面上應該顯示成一行「黑糖粉 需要150g」，
+            // 不是分開兩行各自顯示50g跟100g，庫存加總跟扣除本來就已經是共用同一份計算了，畫面顯示也要一致
+            const merged = [];
+            const mergedByKey = {};
+            rows.forEach(r => {
+                const key = r.groupKey || `${r.status}__${r.name}`; // staple/missing/unsure這幾種沒有groupKey，各自獨立一行
+                if (!mergedByKey[key]) {
+                    mergedByKey[key] = { ...r, names: [r.name] };
+                    merged.push(mergedByKey[key]);
+                } else if (!mergedByKey[key].names.includes(r.name)) {
+                    mergedByKey[key].names.push(r.name);
+                }
+            });
+            merged.forEach(m => {
+                if (m.status === 'staple') { m.displayText = '常備食材'; return; }
+                if (m.groupTotalNeededGrams != null) {
+                    // 有算出整組總共需要多少克的話，直接用這個克數當「需要」的數字，比較準確，
+                    // 不用擔心食譜裡同一個食材兩個地方寫的單位不一樣（例如一個寫g、一個寫kg）
+                    const stockPart = m.text.split('・')[1] || '';
+                    m.displayText = `需要${Math.round(m.groupTotalNeededGrams)}g・${stockPart}`;
+                } else {
+                    m.displayText = m.text; // missing/unsure這幾種情況算不出整組總克數，維持原本單一食材算出來的文字
+                }
+            });
+            const missingCount = merged.filter(r => r.status === 'missing' || r.status === 'low').length;
             const statusColor = { ok: '#4E9F6E', low: '#C4453F', missing: '#C4453F', unsure: '#B3A492', staple: '#B3A492' };
             const statusIcon = { ok: '✅', low: '⚠️', missing: '❌', unsure: '❔', staple: '🧂' };
             liveBox.innerHTML = `
                 <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
                     <p class="text-sm font-medium mb-2">🧊 冰箱庫存比對${missingCount > 0 ? `<span style="color:#C4453F">（還缺 ${missingCount} 樣）</span>` : '<span style="color:#4E9F6E">（都有了！）</span>'}</p>
                     <div class="space-y-1">
-                        ${rows.map(r => `<div class="flex justify-between text-xs"><span>${statusIcon[r.status]} ${r.name}${r.name !== r.matchName ? `<span style="color:#B3A492">（套用${r.matchName}）</span>` : ''}</span><span style="color:${statusColor[r.status]}">${r.text}</span></div>`).join('')}
+                        ${merged.map(r => `<div class="flex justify-between text-xs"><span>${statusIcon[r.status]} ${r.names.join('、')}${r.names[0] !== r.matchName ? `<span style="color:#B3A492">（套用${r.matchName}）</span>` : ''}</span><span style="color:${statusColor[r.status]}">${r.displayText}</span></div>`).join('')}
                     </div>
                 </div>`;
         }
