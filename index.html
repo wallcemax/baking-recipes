@@ -12610,6 +12610,14 @@
         }
 
         // ---------- 管理者專屬：食材熱量資料手動管理 ----------
+        // 從食譜熱量試算那邊的「查無資料」清單，直接點名稱旁邊的「去設定」跳過來，
+        // 順便把名稱帶進「名稱」欄位，管理員不用自己重打一次；如果這個名稱其實是別的食材的別名寫法，
+        // 也可以改填「關聯關鍵字」那欄，把它連結到既有的那一筆，不用整個重新建一筆新資料
+        function openAdminNutritionModalFor(name) {
+            showAdminNutritionModal();
+            const nameInput = document.getElementById('admin-nutri-name');
+            if (nameInput) { nameInput.value = name; nameInput.focus(); }
+        }
         function showAdminNutritionModal() {
             if (!isAdmin()) return;
             document.getElementById('admin-nutrition-modal').classList.remove('hidden');
@@ -12930,13 +12938,15 @@
             if (!nutritionBox) return;
             nutritionBox.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">熱量計算中…</div>`;
 
-            let totalKcal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, totalSodium = 0, uncountedNames = [];
+            let totalKcal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, totalSodium = 0;
             let tfndUsedCount = 0, manualUsedCount = 0, aiUsedCount = 0;
+            const unitIssueNames = []; // 單位算不出來多少克（例如「少許」「適量」這種非重量/體積單位）
+            const noDataNames = []; // 有算出克數，但查不到熱量資料（資料庫沒收錄、AI也估不出來或暫時查詢失敗）
             await Promise.all(recipe.ingredients.map(async ing => {
                 const grams = await resolveGrams(ing.amount * factor, ing.unit, ing.name);
-                if (grams === null) { uncountedNames.push(ing.name); return; }
+                if (grams === null) { unitIssueNames.push(ing.name); return; }
                 const nutri = await resolveIngredientNutrition(ing.name);
-                if (!nutri) { uncountedNames.push(ing.name); return; }
+                if (!nutri) { noDataNames.push(ing.name); return; }
                 totalKcal += grams / 100 * nutri.kcal;
                 totalProtein += grams / 100 * nutri.protein;
                 totalFat += grams / 100 * nutri.fat;
@@ -12946,6 +12956,7 @@
                 else if (nutri.source === 'admin_manual') manualUsedCount++;
                 else if (nutri.source === 'ai_estimated') aiUsedCount++;
             }));
+            const uncountedNames = [...unitIssueNames, ...noDataNames]; // 給下面「全部都算不出來」那個判斷式用
 
             // 若 modal 在等待期間被關閉／換了別的食譜，這個節點可能已經不在畫面上了，
             // 這裡再抓一次目前畫面上實際存在的節點，避免蓋到別的食譜的結果
@@ -12961,6 +12972,7 @@
             const perFat = (totalFat * (1 - LOSS_RATE)) / newServings;
             const perCarb = (totalCarb * (1 - LOSS_RATE)) / newServings;
             const perSodium = (totalSodium * (1 - LOSS_RATE)) / newServings;
+            const admin = isAdmin();
             liveBox.innerHTML = `
                 <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
                     <div class="flex items-baseline gap-2 mb-2">
@@ -12976,7 +12988,15 @@
                     ${tfndUsedCount > 0 ? `<p class="text-xs mt-2" style="color:var(--sage)">📚 有 ${tfndUsedCount} 項食材使用衛福部食品營養成分資料庫官方數據</p>` : ''}
                     ${manualUsedCount > 0 ? `<p class="text-xs mt-2" style="color:var(--sage)">✅ 有 ${manualUsedCount} 項食材使用管理者確認過的數據</p>` : ''}
                     ${aiUsedCount > 0 ? `<p class="text-xs mt-2" style="color:var(--sage)">🤖 有 ${aiUsedCount} 項食材是由 AI 即時估算（尚未收錄於資料庫），準確度僅供參考</p>` : ''}
-                    ${uncountedNames.length > 0 ? `<p class="text-xs mt-2" style="color:#B3A492">⚠️ 以下食材未列入熱量計算：${uncountedNames.join('、')}（非重量/體積單位，或無法辨識），實際熱量僅供參考</p>` : ''}
+                    ${unitIssueNames.length > 0 ? `<p class="text-xs mt-2" style="color:#B3A492">⚠️ 以下食材份量寫法無法辨識重量/體積，沒有列入熱量計算：${unitIssueNames.join('、')}</p>` : ''}
+                    ${noDataNames.length > 0 ? `<div class="text-xs mt-2" style="color:#B3A492">❔ 以下食材查無熱量資料（資料庫沒收錄，AI暫時也估不出來，可能是額度限制或查詢失敗），沒有列入熱量計算：
+                        <div class="flex flex-wrap gap-x-2 gap-y-1 mt-1">
+                            ${noDataNames.map(n => admin
+                                ? `<span>${n}<a href="javascript:void(0)" onclick="openAdminNutritionModalFor('${escapeHtmlAttr(n)}')" class="ml-1" style="color:var(--chambray); text-decoration:underline">去設定</a></span>`
+                                : `<span>${n}</span>`
+                            ).join('')}
+                        </div>
+                    </div>` : ''}
                 </div>`;
         }
 
