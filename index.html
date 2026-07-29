@@ -12227,7 +12227,7 @@
             { keywords: ['黑糖', 'brown sugar'], density: 0.92 },
             { keywords: ['無鹽奶油', '有鹽奶油', '奶油', 'butter'], density: 0.95 },
             { keywords: ['水', 'water'], density: 1.00 },
-            { keywords: ['牛奶', '鮮奶', 'milk'], density: 1.03 },
+            { keywords: ['牛奶', '鮮奶', '鮮乳', '牛乳', 'milk'], density: 1.03 },
             { keywords: ['動物性鮮奶油', '鮮奶油', 'whipping cream', 'heavy cream', 'cream'], density: 0.98 },
             { keywords: ['全蛋液', '蛋液'], density: 1.02 },
             { keywords: ['橄欖油', '沙拉油', '植物油', '葵花油', '椰子油', '油', 'oil'], density: 0.92 },
@@ -12340,7 +12340,7 @@
             { keywords: ['奶油', 'butter'], kcal: 717, protein: 0.9, fat: 81.1, carb: 0.1, sodium: 11 },
             { keywords: ['全蛋', '雞蛋', '蛋黃', '蛋白', 'egg'], kcal: 143, protein: 12.6, fat: 9.9, carb: 0.7, sodium: 124 },
             { keywords: ['鮮奶油', '動物性', 'whipping cream', 'heavy cream', 'cream'], kcal: 340, protein: 2.1, fat: 36.1, carb: 2.8, sodium: 38 },
-            { keywords: ['牛奶', '鮮奶', 'milk'], kcal: 61, protein: 3.2, fat: 3.3, carb: 4.8, sodium: 44 },
+            { keywords: ['牛奶', '鮮奶', '鮮乳', '牛乳', 'milk'], kcal: 61, protein: 3.2, fat: 3.3, carb: 4.8, sodium: 44 },
             { keywords: ['煉乳', 'condensed milk'], kcal: 321, protein: 7.9, fat: 8.7, carb: 54.9, sodium: 127 },
             { keywords: ['優格', '優酪乳', 'yogurt'], kcal: 61, protein: 3.5, fat: 3.3, carb: 4.7, sodium: 46 },
             { keywords: ['巧克力', '苦甜巧克力', '黑巧克力', 'chocolate'], kcal: 546, protein: 4.9, fat: 31.3, carb: 61.2, sodium: 24 },
@@ -14547,7 +14547,8 @@
             perIngredient.forEach(p => {
                 if (p.staple) return;
                 const key = [...p.matchNames].sort().join('|');
-                if (!groups[key]) groups[key] = { matchNames: p.matchNames, totalNeededGrams: 0, hasNullGrams: false };
+                if (!groups[key]) groups[key] = { matchNames: p.matchNames, originalNames: [], totalNeededGrams: 0, hasNullGrams: false };
+                if (!groups[key].originalNames.includes(p.ing.name)) groups[key].originalNames.push(p.ing.name);
                 if (p.neededGrams === null) groups[key].hasNullGrams = true;
                 else groups[key].totalNeededGrams += p.neededGrams;
             });
@@ -14565,9 +14566,13 @@
                     });
                 group.batchIdxs = batchIdxs;
                 if (!batchIdxs.length) { group.stockGrams = 0; group.totalAmountText = ''; group.validBatches = []; return; }
+                // 換算冰箱庫存的克數時，密度查詢優先用「食譜原本寫的通用名稱」（例如「牛奶」），
+                // 不是冰箱裡實際商品的品牌名稱（例如「心璞鮮乳」）——品牌名稱在密度對照表裡通常查不到，
+                // 每次都要問AI；改成優先用通用名稱查，本地表通常就能直接命中，不用再問AI
+                const densityHintName = group.originalNames[0] || group.matchNames[0];
                 const batchGrams = await Promise.all(batchIdxs.map(async b => {
-                    const grams = await resolveGrams(b.item.amount, b.item.unit, group.matchNames[0]);
-                    checkDensityFallback(b.item.unit, group.matchNames[0]);
+                    const grams = await resolveGrams(b.item.amount, b.item.unit, densityHintName);
+                    checkDensityFallback(b.item.unit, densityHintName);
                     return { idx: b.idx, grams };
                 }));
                 group.validBatches = batchGrams.filter(b => b.grams !== null);
