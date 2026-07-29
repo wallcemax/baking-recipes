@@ -351,7 +351,7 @@
     <!-- 手機版底部固定導覽列：常用功能一排放在最下面，不用每次都滑到最上面找 -->
     <nav id="mobile-bottom-nav" class="md:hidden fixed bottom-0 left-0 right-0 z-40 flex items-end justify-around px-2" style="background:var(--paper); border-top:1px solid var(--line); padding-top:.4rem; padding-bottom:calc(.4rem + env(safe-area-inset-bottom));">
         <button onclick="openShoppingListModal()" class="flex flex-col items-center gap-0.5 py-1 px-2 text-xs" style="color:var(--espresso-soft)" aria-label="採購清單">
-            <i class="fas fa-cart-shopping text-lg"></i>採購
+            <i class="fas fa-cart-shopping text-lg"></i>採購/成本
         </button>
         <button onclick="openFridgeModal()" class="flex flex-col items-center gap-0.5 py-1 px-2 text-xs" style="color:var(--espresso-soft)" aria-label="我的冰箱">
             <i class="fas fa-cube text-lg"></i>冰箱
@@ -469,14 +469,15 @@
                 <button onclick="closeMyIngredientCostsModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <p id="my-cost-back-to-shopping" class="hidden text-sm mb-3"><a href="javascript:void(0)" onclick="closeMyIngredientCostsModal()" style="color:var(--chambray); text-decoration:underline">← 返回採購清單</a></p>
                 <p class="text-xs mb-4" style="color:#B3A492">這裡設定的價格只有你自己看得到，計算食譜成本時會優先使用；還沒設定過的食材，系統會先用AI幫你估一個參考價（標示🤖），你可以隨時修改成自己實際買到的價格。新增/修改都是照你實際購買的方式填（例如「雞蛋 85元 買1台斤」），系統會自動換算成統一單價。</p>
                 <p class="text-xs mb-3" style="color:var(--chambray)">💡 條碼選填：可以在賣場先掃條碼、把看到的標價記下來建檔比價，不用真的買、也不會影響冰箱庫存，之後回來掃同一個條碼就能直接比對之前記錄的價格</p>
-                <div class="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-2">
-                    <div class="col-span-3 sm:col-span-1 flex gap-2">
+                <div class="grid grid-cols-3 gap-2 mb-2">
+                    <div class="col-span-3 flex gap-2">
                         <input id="my-cost-new-barcode" placeholder="條碼(選填)" class="form-input flex-1">
                         <button onclick="scanIntoBarcodeField('my-cost-new-barcode')" class="btn-sage shrink-0 !px-3 !py-0" style="border-radius:0.75rem" aria-label="鏡頭掃碼" title="鏡頭掃碼">📷</button>
                     </div>
-                    <input id="my-cost-new-name" placeholder="名稱" class="form-input col-span-3 sm:col-span-1">
+                    <input id="my-cost-new-name" placeholder="名稱" class="form-input col-span-3">
                     <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="花費" class="form-input col-span-1">
                     <input id="my-cost-new-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input col-span-1">
                     <input id="my-cost-new-unit" placeholder="單位" class="form-input col-span-1">
@@ -501,7 +502,7 @@
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p class="text-xs mb-4" style="color:#B3A492">在食譜詳細頁點🛒可以加入這裡；每篇食譜可以自己調整這次要做幾份，下面會統一把所有食材加總，估算這次採買總共要花多少錢。</p>
-                <p class="text-xs mb-4"><a href="javascript:void(0)" onclick="closeShoppingListModal(); openMyIngredientCostsModal();" style="color:var(--sage); text-decoration:underline">💰 前往「我的食材成本」查看/管理個別食材價格 →</a></p>
+                <p class="text-xs mb-4"><a href="javascript:void(0)" onclick="closeShoppingListModal(); openMyIngredientCostsModal(true);" style="color:var(--sage); text-decoration:underline">💰 前往「我的食材成本」查看/管理個別食材價格 →</a></p>
                 <div id="shopping-list-recipes" class="space-y-2 mb-6"></div>
                 <div id="shopping-list-summary"></div>
             </div>
@@ -13106,7 +13107,7 @@
             document.getElementById('ingredient-cost-modal-name').textContent = name;
             document.getElementById('ingredient-cost-modal-result').textContent = '';
             const saveBtn = document.getElementById('ingredient-cost-modal-save-btn');
-            saveBtn.disabled = true; saveBtn.style.opacity = '.4';
+            saveBtn.disabled = false; saveBtn.style.opacity = '1'; // 現在按儲存會自動先換算單價，不用像以前一定要先按過「換算單價」才能存
             const costs = await loadUserIngredientCosts(true);
             const existing = costs[name];
             // 改名連結：只有這個名稱真的有自己獨立的價格資料時才能改名（如果是套用別人的關鍵字，要先「取消套用」才能改）
@@ -13173,14 +13174,16 @@
             saveBtn.disabled = false; saveBtn.style.opacity = '1';
         }
         async function saveIngredientCostModal() {
-            if (!ingredientCostModalTarget || ingredientCostModalComputed === null) return;
+            if (!ingredientCostModalTarget) return;
             const name = ingredientCostModalTarget;
-            const purchaseInfo = {
-                price: document.getElementById('ingredient-cost-modal-price').value,
-                amount: document.getElementById('ingredient-cost-modal-amount').value,
-                unit: document.getElementById('ingredient-cost-modal-unit').value,
-            };
-            const ok = await setUserIngredientCost(name, ingredientCostModalComputed, purchaseInfo);
+            const price = document.getElementById('ingredient-cost-modal-price').value;
+            const amount = document.getElementById('ingredient-cost-modal-amount').value;
+            const unit = document.getElementById('ingredient-cost-modal-unit').value;
+            if (!price || !amount || !unit) { alert('花費、數量、單位都要填喔'); return; }
+            const per100g = await calcPricePer100g(price, amount, unit, name);
+            if (per100g === null) { alert(`沒辦法辨識「${unit}」這個單位，換算不出來，試試看g、kg、台斤、ml、顆這類常見單位`); return; }
+            const purchaseInfo = { price, amount, unit };
+            const ok = await setUserIngredientCost(name, per100g, purchaseInfo);
             if (ok) {
                 // 條碼：跟原本記錄的不一樣才需要更新（先拿掉舊的、再存新的），一樣的話不用重複寫入
                 const newCode = document.getElementById('ingredient-cost-modal-barcode').value.trim();
@@ -13212,16 +13215,23 @@
         }
 
         // 「我的食材成本」管理頁面
-        async function openMyIngredientCostsModal() {
+        let myCostsModalReturnToShoppingList = false;
+        async function openMyIngredientCostsModal(fromShoppingList) {
             if (!currentUser) { alert('請先登入才能管理食材成本'); return; }
             document.getElementById('ingredient-cost-modal').classList.add('hidden'); // 如果是從快速編輯那邊點過來的，先關掉那個小視窗
             ingredientCostModalReturnToManage = false; // 這是主動切換過來的，不是「編輯完要自動回去」的情境
+            myCostsModalReturnToShoppingList = !!fromShoppingList;
+            document.getElementById('my-cost-back-to-shopping').classList.toggle('hidden', !fromShoppingList);
             document.getElementById('my-ingredient-costs-modal').classList.remove('hidden');
             await renderMyIngredientCostsList();
             pushModalHistoryState();
         }
         function closeMyIngredientCostsModal() {
             document.getElementById('my-ingredient-costs-modal').classList.add('hidden');
+            if (myCostsModalReturnToShoppingList) {
+                myCostsModalReturnToShoppingList = false;
+                openShoppingListModal();
+            }
         }
         // 一次幫某個食材(品牌)設定好幾個別名，用逗號分隔，不用一個一個跑去食譜頁面套用
         async function manageIngredientAliases(name) {
@@ -13513,10 +13523,10 @@
 
             summaryEl.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:#B3A492">加總計算中…</div>`;
 
-            // 逐篇食譜去抓最新的食材資料（怕食譜後來被編輯過），再依這次要做的份數比例縮放，全部加總
-            const ingredientTotals = {}; // 依食材名稱加總：{克數, 成本, 是否有任何一項沒算到}
-            let grandTotal = 0;
-            const perRecipeCosts = [];
+            // 逐篇食譜去抓最新的食材資料（怕食譜後來被編輯過），再依這次要做的份數比例縮放，
+            // 先只加總「總共需要多少克」，成本要等下面第二階段才算（因為成本要用「整包多少錢」去推算，不是用零星克數概算）
+            const ingredientTotals = {}; // 依食材名稱加總：{grams}
+            const perRecipeGrams = []; // 記錄每篇食譜各自用了哪些食材多少克，用來估算「這篇食譜大概花多少錢」的參考值
             const missingRecipes = [];
             await Promise.all(list.map(async item => {
                 let recipeDoc;
@@ -13529,40 +13539,81 @@
                 if (!recipeDoc.exists) { missingRecipes.push(item.recipeName); return; }
                 const recipe = { id: recipeDoc.id, ...recipeDoc.data() };
                 const factor = item.servings / (recipe.servings || 1);
-                let recipeCost = 0;
+                const thisRecipeGrams = {};
                 await Promise.all((recipe.ingredients || []).map(async ing => {
                     const grams = await resolveGrams(ing.amount * factor, ing.unit, ing.name);
                     if (grams === null) return;
-                    const costInfo = await resolveIngredientCost(ing.name);
-                    if (!costInfo) return;
-                    const cost = grams / 100 * costInfo.pricePer100g;
-                    recipeCost += cost;
-                    if (!ingredientTotals[ing.name]) ingredientTotals[ing.name] = { grams: 0, cost: 0 };
+                    if (!ingredientTotals[ing.name]) ingredientTotals[ing.name] = { grams: 0 };
                     ingredientTotals[ing.name].grams += grams;
-                    ingredientTotals[ing.name].cost += cost;
+                    thisRecipeGrams[ing.name] = (thisRecipeGrams[ing.name] || 0) + grams;
                 }));
-                grandTotal += recipeCost;
-                perRecipeCosts.push({ name: item.recipeName, cost: recipeCost });
+                perRecipeGrams.push({ name: item.recipeName, grams: thisRecipeGrams });
             }));
+
+            // 第二階段：每個食材，找出「這個名稱本身 + 所有套用這個名稱當別名的品牌」裡單價最低的那個當推薦，
+            // 用它實際的整包價格/包裝量去推算要買幾包、大概要花多少錢——比起直接拿零星克數乘單價，
+            // 這樣算出來的總額才符合實際採買的樣子（不會有人只買20g鮮奶油這種事）
+            const costs = await loadUserIngredientCosts();
+            await Promise.all(Object.keys(ingredientTotals).map(async name => {
+                const t = ingredientTotals[name];
+                const candidates = [];
+                if (costs[name]) candidates.push([name, costs[name]]);
+                findAllKeywordOwners(name, costs).forEach(([canon, entry]) => candidates.push([canon, entry]));
+                if (!candidates.length) { t.noData = true; return; }
+                candidates.sort((a, b) => a[1].pricePer100g - b[1].pricePer100g); // 單價最低的排第一個，當推薦
+                const [recName, recEntry] = candidates[0];
+                t.recommendedName = recName;
+                t.recommendedEntry = recEntry;
+                if (recEntry.purchaseAmount && recEntry.purchaseUnit && recEntry.purchasePrice) {
+                    const packageGrams = await resolveGrams(recEntry.purchaseAmount, recEntry.purchaseUnit, recName);
+                    if (packageGrams && packageGrams > 0) {
+                        t.packagesNeeded = Math.max(1, Math.ceil(t.grams / packageGrams));
+                        t.cost = t.packagesNeeded * recEntry.purchasePrice;
+                    }
+                }
+                if (t.cost === undefined) {
+                    // 沒有完整的包裝資訊（例如只有AI估算的每100克單價，沒記錄實際包裝），退回用零星克數概算，
+                    // 比較不真實，但至少有個參考數字
+                    t.cost = t.grams / 100 * recEntry.pricePer100g;
+                    t.fallbackEstimate = true;
+                }
+            }));
+            const grandTotal = Object.values(ingredientTotals).reduce((sum, t) => sum + (t.cost || 0), 0);
+            // 個別食譜的花費，用零星克數概算當參考值（因為「整包」是跨食譜、跨食材加總後才推算得出來的，
+            // 沒辦法乾淨地拆回單一食譜身上，所以這裡跟下面的總計數字不會完全對得起來，只當作參考）
+            const perRecipeCosts = perRecipeGrams.map(r => {
+                let cost = 0;
+                Object.entries(r.grams).forEach(([name, grams]) => {
+                    const t = ingredientTotals[name];
+                    if (t && t.recommendedEntry) cost += grams / 100 * t.recommendedEntry.pricePer100g;
+                });
+                return { name: r.name, cost };
+            });
 
             const liveSummaryEl = document.getElementById('shopping-list-summary');
             if (!liveSummaryEl) return;
-            const ingredientNames = Object.keys(ingredientTotals).sort((a, b) => ingredientTotals[b].cost - ingredientTotals[a].cost);
+            const ingredientNames = Object.keys(ingredientTotals).sort((a, b) => (ingredientTotals[b].cost || 0) - (ingredientTotals[a].cost || 0));
             liveSummaryEl.innerHTML = `
                 <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
                     <div class="flex items-baseline gap-2 mb-3">
-                        <span class="font-display font-bold text-2xl" style="color:var(--jam)">NT$${grandTotal.toFixed(0)}</span>
+                        <span class="font-display font-bold text-2xl num-tabular" style="color:var(--jam)">NT$${grandTotal.toFixed(0)}</span>
                         <span class="text-sm" style="color:var(--espresso-soft)">這次採購預估總花費（共 ${list.length} 篇食譜）</span>
                     </div>
-                    ${perRecipeCosts.length ? `<div class="text-xs mb-3" style="color:#B3A492">${perRecipeCosts.map(r => `${r.name} NT$${r.cost.toFixed(0)}`).join('　')}</div>` : ''}
+                    ${perRecipeCosts.length ? `<div class="text-xs mb-3 num-tabular" style="color:#B3A492">${perRecipeCosts.map(r => `${r.name} NT$${r.cost.toFixed(0)}`).join('　')}</div>` : ''}
                     ${missingRecipes.length ? `<p class="text-xs mb-3" style="color:#C4453F">⚠️ 找不到這些食譜的最新資料，沒有算進總花費：${missingRecipes.join('、')}</p>` : ''}
                     <h3 class="font-display font-semibold text-sm mb-2 mt-4">食材加總清單<span class="text-xs font-normal" style="color:#B3A492">（點一下代表已經買了）</span></h3>
-                    <div class="space-y-1">
+                    <div class="space-y-2">
                         ${ingredientNames.map((name, idx) => {
                             const t = ingredientTotals[name];
                             const bought = !!shoppingListPurchasedCache[name];
-                            return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(name)}', ${idx})" class="flex justify-between text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}"><span data-ing-label>${bought ? '✅ ' : ''}${name}</span><span style="color:#B3A492">${t.grams.toFixed(0)}g・NT$${t.cost.toFixed(0)}</span></div>`;
-                        }).join('') || `<p class="text-xs" style="color:#B3A492">目前沒有任何食材能算出成本（可能都還沒設定價格）</p>`}
+                            const recLine = t.recommendedEntry
+                                ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🏆 常用/推薦：${t.recommendedName}（${t.recommendedEntry.purchasePrice ? `${t.recommendedEntry.purchasePrice}元／${t.recommendedEntry.purchaseAmount}${t.recommendedEntry.purchaseUnit}` : `約NT$${t.recommendedEntry.pricePer100g.toFixed(1)}/100g`}）${t.packagesNeeded ? `・約需${t.packagesNeeded}包` : ''}${t.fallbackEstimate ? '（沒有完整包裝資訊，用零星單價概算）' : ''}</p>`
+                                : `<p class="text-xs mt-0.5" style="color:#B3A492">尚未設定價格，成本沒有算進總計裡</p>`;
+                            return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(name)}', ${idx})" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
+                                <div class="flex justify-between"><span data-ing-label>${bought ? '✅ ' : ''}${name}</span><span class="num-tabular" style="color:#B3A492">需要${t.grams.toFixed(0)}g</span></div>
+                                ${recLine}
+                            </div>`;
+                        }).join('') || `<p class="text-xs" style="color:#B3A492">目前沒有任何食材（可能食譜還沒抓到資料）</p>`}
                     </div>
                 </div>`;
         }
