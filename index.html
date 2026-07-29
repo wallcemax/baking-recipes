@@ -15863,23 +15863,6 @@
 
         // 上傳前先在瀏覽器端壓縮/縮小圖片，節省上傳流量跟 Cloudinary 儲存空間：
         // 手機拍照原始檔案常常好幾 MB，壓縮後通常只剩幾百 KB，網頁顯示用幾乎看不出畫質差異
-        // 驗證檔案是不是真的能正常解碼成圖片：試著把它讀成一張Image，能成功載入而且有正常的寬高才算通過。
-        // 用來擋掉那種「格式/大小檢查都過關，但實際上是不完整或損毀檔案」的情況（例如iPhone iCloud照片
-        // 還沒下載完成本地端只有一個殘缺的暫存檔），這種檔案上傳到Cloudinary或壓縮的時候會失敗
-        function validateImageFileReadable(file) {
-            return new Promise(resolve => {
-                const img = new Image();
-                const url = URL.createObjectURL(file);
-                const timeoutId = setTimeout(() => { URL.revokeObjectURL(url); resolve(false); }, 6000);
-                img.onload = () => {
-                    clearTimeout(timeoutId);
-                    URL.revokeObjectURL(url);
-                    resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
-                };
-                img.onerror = () => { clearTimeout(timeoutId); URL.revokeObjectURL(url); resolve(false); };
-                img.src = url;
-            });
-        }
         function compressImageForUpload(file, maxDim = 1600, quality = 0.82) {
             return new Promise((resolve) => {
                 let settled = false;
@@ -16102,32 +16085,23 @@
 
             showSaveProgress('處理中...');
 
-            // 把所有「選好但還沒上傳」的步驟圖片，在這裡真正驗證+上傳到Cloudinary——跟食譜主圖的做法一致，
+            // 把所有「選好但還沒上傳」的步驟圖片，在這裡真正上傳到Cloudinary——跟食譜主圖的做法一致，
             // 圖片只有在真的要存檔的這一刻才會處理，如果使用者選了圖片卻按「取消編輯」，
-            // 這些圖片根本不會被送出去，不會產生沒有任何食譜連結到的孤兒圖片。
-            // 驗證也延後到這裡才做（不是選圖片的當下），讓iPhone上還在iCloud下載中的照片，
-            // 有更多時間在背景下載完成，比選圖片當下立刻驗證更不容易誤判失敗
+            // 這些圖片根本不會被送出去，不會產生沒有任何食譜連結到的孤兒圖片
             const uploadedStepImageUrls = new Map(); // idx -> 剛上傳好的網址
             if (pendingStepImageFiles.size > 0) {
-                showSaveProgress(`🔍 驗證步驟照片中...（共${pendingStepImageFiles.size}張）`);
-                for (const [stepIdx, file] of pendingStepImageFiles) {
-                    const ok = await validateImageFileReadable(file);
-                    if (!ok) {
-                        hideSaveProgress();
-                        const stepNum = findStepNumberByIdx(stepIdx);
-                        alert(`第${stepNum || '?'}步的照片好像沒辦法正常讀取，如果是iPhone、且照片還存在iCloud上(相簿裡顯示雲朵圖示)，麻煩先打開「照片」App點一下這張照片，等它下載完成到手機本機之後再回來重新選取一次\n\n食譜還沒有存檔`);
-                        return;
-                    }
-                }
                 showSaveProgress(`📤 步驟照片上傳中...（共${pendingStepImageFiles.size}張）`);
+                let failedStepIdx = null;
                 try {
                     for (const [stepIdx, file] of pendingStepImageFiles) {
+                        failedStepIdx = stepIdx; // 先記住正在處理哪一步，萬一失敗才知道是哪一張
                         const url = await uploadImageToCloudinary(file);
                         uploadedStepImageUrls.set(stepIdx, url);
                     }
                 } catch (err) {
                     hideSaveProgress();
-                    alert('步驟圖片上傳失敗：' + err.message + '\n\n（已經自動重試了幾次還是失敗，很可能是網路訊號不穩定）食譜還沒有存檔，建議切換到訊號較穩定的WiFi或行動網路後，再按一次儲存');
+                    const stepNum = failedStepIdx !== null ? findStepNumberByIdx(failedStepIdx) : '';
+                    alert(`第${stepNum || '?'}步的照片上傳失敗：${err.message}\n\n（已經自動重試了幾次還是失敗，很可能是網路訊號不穩定）食譜還沒有存檔，建議切換到訊號較穩定的WiFi或行動網路後，再按一次儲存`);
                     return;
                 }
             }
@@ -16169,13 +16143,6 @@
 
             let imageUrl = currentImageUrl; // 若沒有選新圖片，保留原本的（或編輯時移除後的空字串）
             if (selectedImageFile) {
-                showSaveProgress('🔍 驗證食譜照片中...');
-                const okMain = await validateImageFileReadable(selectedImageFile);
-                if (!okMain) {
-                    hideSaveProgress();
-                    alert('這張食譜照片好像沒辦法正常讀取，如果是iPhone、且照片還存在iCloud上(相簿裡顯示雲朵圖示)，麻煩先打開「照片」App點一下這張照片，等它下載完成到手機本機之後再回來重新選取一次\n\n食譜還沒有存檔');
-                    return;
-                }
                 showSaveProgress('📤 食譜照片上傳中...');
                 const oldImageUrl = currentImageUrl; // 先記住舊圖網址，等一下上傳成功、確定要換掉了才記錄成孤兒圖片
                 try {
