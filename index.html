@@ -440,10 +440,6 @@
                 </div>
                 <div class="grid grid-cols-4 gap-2 mb-2">
                     <div class="col-span-1">
-                        <label class="text-xs block mb-1" style="color:#B3A492">這次總花費</label>
-                        <input id="ingredient-cost-modal-price" type="number" step="0.1" min="0" placeholder="NT$" class="form-input">
-                    </div>
-                    <div class="col-span-1">
                         <label class="text-xs block mb-1" style="color:#B3A492">規格數量</label>
                         <input id="ingredient-cost-modal-amount" type="number" step="0.1" min="0" placeholder="數量" class="form-input">
                     </div>
@@ -454,6 +450,10 @@
                     <div class="col-span-1">
                         <label class="text-xs block mb-1" style="color:#B3A492">份數</label>
                         <input id="ingredient-cost-modal-count" type="number" step="1" min="1" value="1" placeholder="份數" class="form-input">
+                    </div>
+                    <div class="col-span-1">
+                        <label class="text-xs block mb-1" style="color:#B3A492">這次總花費</label>
+                        <input id="ingredient-cost-modal-price" type="number" step="0.1" min="0" placeholder="NT$" class="form-input">
                     </div>
                 </div>
                 <p class="text-xs mb-2" style="color:#B3A492">💡 「規格數量」是固定的參考單位（例如麵粉都用600g/1台斤當一份），下次不管買1份還是3份，規格數量都填一樣，只要改「份數」就好</p>
@@ -487,10 +487,10 @@
                     <input id="my-cost-new-name" placeholder="名稱" class="form-input col-span-3">
                 </div>
                 <div class="grid grid-cols-4 gap-2 mb-2">
-                    <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="這次總花費" class="form-input col-span-1">
                     <input id="my-cost-new-amount" type="number" step="0.1" min="0" placeholder="規格數量" class="form-input col-span-1">
                     <input id="my-cost-new-unit" placeholder="單位" class="form-input col-span-1">
                     <input id="my-cost-new-count" type="number" step="1" min="1" value="1" placeholder="份數" class="form-input col-span-1">
+                    <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="這次總花費" class="form-input col-span-1">
                 </div>
                 <p class="text-xs mb-2" style="color:#B3A492">💡 「規格數量」是固定的參考單位（例如麵粉都用600g/1台斤當一份），下次不管買1份還是3份，規格數量都填一樣，只要改「份數」，系統會自動用「這次總花費÷份數」換算成每份的單價</p>
                 <button onclick="addMyIngredientCost()" class="btn-amber w-full mb-2">🧮 換算並新增</button>
@@ -14448,12 +14448,47 @@
                             <p class="font-medium text-sm">${item.name}</p>
                             <p class="text-xs" style="color:#B3A492">${item.amount}${item.unit}${purchaseText}${expiryInfo ? ` · <span style="color:${expiryInfo.color}">${expiryInfo.label}</span>` : ''}${costText}</p>
                         </div>
+                        <button onclick="importFridgeItemToForm(${realIdx})" class="text-xs shrink-0" style="color:var(--chambray)" title="把這個食材的資料帶進上面表單，改一改存成新的一筆（不會覆蓋這筆）">帶入</button>
                         <button onclick="editFridgeItem(${realIdx})" class="text-xs shrink-0" style="color:var(--sage)">編輯</button>
                         <button onclick="removeFridgeItem(${realIdx})" class="text-xs shrink-0" style="color:#C4453F">刪除</button>
                     </div>`;
             }).join('');
         }
         let fridgeEditingIndex = null; // null代表現在是「新增」模式，數字代表正在編輯冰箱裡的第幾筆
+        // 「帶入」：把這個食材的資料帶進上面的表單，方便沒有條碼可以掃描的食材也能快速填寫——
+        // 跟「編輯」不一樣的地方是，這裡不會設定fridgeEditingIndex，儲存的時候是新增一筆、加進庫存，
+        // 不是覆蓋掉原本這一筆，適合用在「同一個食材又買了一次」的情境
+        async function importFridgeItemToForm(idx) {
+            const items = await loadFridgeItems();
+            const item = items[idx];
+            if (!item) return;
+            document.getElementById('fridge-new-barcode').value = '';
+            document.getElementById('fridge-new-name').value = item.name;
+            document.getElementById('fridge-new-unit').value = item.unit;
+            document.getElementById('fridge-new-expiry').value = ''; // 這是新的一次購買，有效期限不一定跟舊的一樣，不帶入
+            document.getElementById('fridge-new-count').value = '1';
+            const priceInput = document.getElementById('fridge-new-price');
+            priceInput.value = '';
+            const amountInput = document.getElementById('fridge-new-amount');
+            // 規格數量優先帶入這個食材已經記錄過的「規格」（我的食材成本裡的purchaseAmount），
+            // 這樣「規格數量」欄位延續原本的規格設定，只要改「份數」就好；查不到規格資料的話，
+            // 才退回帶入目前庫存的量當參考，你可以自己改成這次實際買的量
+            const costs = await loadUserIngredientCosts();
+            const costEntry = costs[item.name];
+            if (costEntry && costEntry.purchaseAmount && costEntry.purchaseUnit === item.unit) {
+                amountInput.value = costEntry.purchaseAmount;
+                priceInput.placeholder = `這份規格上次是$${costEntry.purchasePrice}`;
+            } else {
+                amountInput.value = item.amount;
+                priceInput.placeholder = '這次總花費$';
+            }
+            // 這是「帶入」不是「編輯」：保持新增模式，儲存時會新增一筆、加進庫存，不會覆蓋原本這一筆
+            fridgeEditingIndex = null;
+            document.getElementById('fridge-submit-btn').textContent = '➕ 加入冰箱';
+            document.getElementById('fridge-editing-hint').classList.add('hidden');
+            amountInput.focus();
+            amountInput.select();
+        }
         async function editFridgeItem(idx) {
             const items = await loadFridgeItems();
             const item = items[idx];
