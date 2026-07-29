@@ -563,16 +563,20 @@
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <div id="fridge-invite-banner"></div>
                 <p class="text-xs mb-4" style="color:#B3A492">記錄家裡現在有的食材，看食譜的時候會自動幫你比對「這個有」「這個沒有/不夠」。快到期的食材會用顏色提醒你。</p>
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
-                    <input id="fridge-new-barcode" placeholder="條碼(選填)" class="form-input col-span-1">
-                    <input id="fridge-new-name" placeholder="食材名稱(可含品牌)" class="form-input col-span-1">
-                    <input id="fridge-new-amount" type="number" step="0.1" min="0" placeholder="規格數量" class="form-input col-span-1">
+                <div class="grid grid-cols-2 gap-2 mb-2">
+                    <input id="fridge-new-barcode" placeholder="條碼(選填)" class="form-input col-span-2">
+                    <input id="fridge-new-name" placeholder="食材名稱(可含品牌)" class="form-input col-span-2">
+                </div>
+                <div class="grid grid-cols-4 gap-2 mb-2">
+                    <input id="fridge-new-amount" type="number" step="0.1" min="0" placeholder="規格" class="form-input col-span-1">
                     <input id="fridge-new-unit" placeholder="單位(g/顆/ml)" class="form-input col-span-1">
                     <input id="fridge-new-count" type="number" step="1" min="1" value="1" placeholder="份數" class="form-input col-span-1">
-                    <input id="fridge-new-price" type="number" step="0.1" min="0" placeholder="這次總花費$" class="form-input col-span-1">
-                    <input id="fridge-new-expiry" type="date" class="form-input col-span-2 sm:col-span-2" title="有效期限（選填）">
+                    <input id="fridge-new-price" type="number" step="0.1" min="0" placeholder="花費$" class="form-input col-span-1">
                 </div>
-                <p class="text-xs mb-2" style="color:#B3A492">💡 「規格數量」是固定的參考單位（例如麵粉都用600g/1台斤當一份），之後不管買1份還是3份，規格數量都填一樣的600g，只要改「份數」就好，庫存會自動算成規格數量×份數；花費選填，填了會同步更新食材成本（用「這次總花費÷份數」換算成每份的單價）</p>
+                <div class="grid grid-cols-1 gap-2 mb-2">
+                    <input id="fridge-new-expiry" type="date" class="form-input" title="有效期限（選填）">
+                </div>
+                <p class="text-xs mb-2" style="color:#B3A492">💡 「規格」是固定的參考單位（例如麵粉都用600g/1台斤當一份），之後不管買1份還是3份，規格都填一樣的600g，只要改「份數」就好，庫存會自動算成規格×份數；花費選填，填了會同步更新食材成本（用「這次總花費÷份數」換算成每份的單價）</p>
                 <button id="fridge-submit-btn" onclick="addFridgeItem()" class="btn-amber w-full mb-1">➕ 加入冰箱</button>
                 <p id="fridge-editing-hint" class="hidden text-xs text-center mb-4"><a href="javascript:void(0)" onclick="cancelEditFridgeItem()" style="color:#B3A492; text-decoration:underline">取消編輯，改成新增新的一筆</a></p>
                 <input id="fridge-items-search" oninput="renderFridgeItemsList()" placeholder="🔍 搜尋冰箱食材..." class="form-input mb-3">
@@ -14509,10 +14513,11 @@
             const costEntry = costs[item.name];
             if (costEntry && costEntry.purchaseAmount && costEntry.purchaseUnit === item.unit) {
                 amountInput.value = costEntry.purchaseAmount;
-                priceInput.placeholder = `$${costEntry.purchasePrice}/${costEntry.purchaseAmount}${costEntry.purchaseUnit}`;
+                priceInput.value = costEntry.purchasePrice; // 規格帶得到的話，花費直接填入實際金額（對應份數1），不用只顯示提示文字
+                priceInput.placeholder = '花費$';
             } else {
                 amountInput.value = item.amount;
-                priceInput.placeholder = '這次總花費$';
+                priceInput.placeholder = '花費$';
             }
             // 這是「帶入」不是「編輯」：保持新增模式，儲存時會新增一筆、加進庫存，不會覆蓋原本這一筆
             fridgeEditingIndex = null;
@@ -14882,7 +14887,14 @@
             // 不管本身有沒有獨立價格資料，都要一併查有沒有套用到別的品牌，兩邊不是二選一——
             // 避免像「高筋麵粉」自己剛好留有一筆舊的AI估價資料，導致就算後來套用了「水手牌高筋麵粉」，
             // 冰箱比對還是只認本身那筆、完全查不到已經套用的品牌庫存
-            findAllKeywordOwners(trimmed, costs).forEach(([canon]) => names.add(canon));
+            findAllKeywordOwners(trimmed, costs).forEach(([canon]) => {
+                names.add(canon);
+                // 如果這筆成本資料的名稱是「利倉高筋麵粉(600g)」這種因為規格衝突自動分開存的格式，
+                // 冰箱裡實際的食材通常還是存成不含規格的「利倉高筋麵粉」（冰箱食材名稱從來不會自動加規格後綴），
+                // 要把「去掉規格」的版本也加進比對名單，不然冰箱庫存比對永遠找不到實際庫存、一直顯示「無」
+                const stripped = canon.replace(/\([^)]*\)$/, '').trim();
+                if (stripped && stripped !== canon) names.add(stripped);
+            });
             if (!names.size) names.add(trimmed); // 什麼線索都沒有，至少用原名去對
             return Array.from(names);
         }
