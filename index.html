@@ -13532,49 +13532,65 @@
                 perRecipeGrams.push({ name: item.recipeName, grams: thisRecipeGrams });
             }));
 
-            // 第二階段：每個食材，找出「這個名稱本身 + 所有套用這個名稱當別名的品牌」裡單價最低的那個當推薦，
-            // 用它實際的整包價格/包裝量去推算要買幾包、大概要花多少錢——比起直接拿零星克數乘單價，
-            // 這樣算出來的總額才符合實際採買的樣子（不會有人只買20g鮮奶油這種事）
+            // 第二階段：每個原始食材名稱，先各自找出「這個名稱本身 + 所有套用這個名稱當別名的品牌」裡單價最低的
+            // 當推薦候選，再依「推薦候選的名稱」重新分組——這一步很重要：像「全蛋液」「雞蛋」「蛋黃」這種寫法不同
+            // 的食材，如果背後其實都套用到同一筆成本資料，不分組的話會被拆成好幾筆各自獨立算「要買幾份」，
+            // 造成明明是同一樣東西、卻被算成要分開買好幾次
             const costs = await loadUserIngredientCosts();
-            await Promise.all(Object.keys(ingredientTotals).map(async name => {
-                const t = ingredientTotals[name];
+            const groups = {}; // key = 推薦候選名稱（查不到候選的話用原始名稱自己一組）
+            await Promise.all(Object.keys(ingredientTotals).map(async rawName => {
+                const grams = ingredientTotals[rawName].grams;
                 const candidates = [];
-                if (costs[name]) candidates.push([name, costs[name]]);
-                findAllKeywordOwners(name, costs).forEach(([canon, entry]) => candidates.push([canon, entry]));
-                if (!candidates.length) { t.noData = true; return; }
+                if (costs[rawName]) candidates.push([rawName, costs[rawName]]);
+                findAllKeywordOwners(rawName, costs).forEach(([canon, entry]) => candidates.push([canon, entry]));
                 candidates.sort((a, b) => a[1].pricePer100g - b[1].pricePer100g); // 單價最低的排第一個，當推薦
-                const [recName, recEntry] = candidates[0];
-                t.recommendedName = recName;
-                t.recommendedEntry = recEntry;
-                if (recEntry.purchaseAmount && recEntry.purchaseUnit && recEntry.purchasePrice) {
-                    const packageGrams = await resolveGrams(recEntry.purchaseAmount, recEntry.purchaseUnit, recName);
+                const groupKey = candidates.length ? candidates[0][0] : `__nodata__${rawName}`;
+                if (!groups[groupKey]) {
+                    groups[groupKey] = {
+                        grams: 0, rawNames: [],
+                        recommendedName: candidates.length ? candidates[0][0] : null,
+                        recommendedEntry: candidates.length ? candidates[0][1] : null,
+                        noData: !candidates.length,
+                    };
+                }
+                groups[groupKey].grams += grams;
+                groups[groupKey].rawNames.push(rawName);
+            }));
+
+            // 第三階段：每一組用推薦候選實際的整包價格/包裝量去推算要買幾份、大概要花多少錢——
+            // 比起直接拿零星克數乘單價，這樣算出來的總額才符合實際採買的樣子（不會有人只買20g鮮奶油這種事）
+            await Promise.all(Object.values(groups).map(async g => {
+                if (g.noData) return;
+                if (g.recommendedEntry.purchaseAmount && g.recommendedEntry.purchaseUnit && g.recommendedEntry.purchasePrice) {
+                    const packageGrams = await resolveGrams(g.recommendedEntry.purchaseAmount, g.recommendedEntry.purchaseUnit, g.recommendedName);
                     if (packageGrams && packageGrams > 0) {
-                        t.packagesNeeded = Math.max(1, Math.ceil(t.grams / packageGrams));
-                        t.cost = t.packagesNeeded * recEntry.purchasePrice;
+                        g.unitsNeeded = Math.max(1, Math.ceil(g.grams / packageGrams));
+                        g.cost = g.unitsNeeded * g.recommendedEntry.purchasePrice;
                     }
                 }
-                if (t.cost === undefined) {
+                if (g.cost === undefined) {
                     // 沒有完整的包裝資訊（例如只有AI估算的每100克單價，沒記錄實際包裝），退回用零星克數概算，
                     // 比較不真實，但至少有個參考數字
-                    t.cost = t.grams / 100 * recEntry.pricePer100g;
-                    t.fallbackEstimate = true;
+                    g.cost = g.grams / 100 * g.recommendedEntry.pricePer100g;
+                    g.fallbackEstimate = true;
                 }
             }));
-            const grandTotal = Object.values(ingredientTotals).reduce((sum, t) => sum + (t.cost || 0), 0);
-            // 個別食譜的花費，用零星克數概算當參考值（因為「整包」是跨食譜、跨食材加總後才推算得出來的，
+            const grandTotal = Object.values(groups).reduce((sum, g) => sum + (g.cost || 0), 0);
+            // 個別食譜的花費，用零星克數概算當參考值（因為「整份」是跨食譜、跨食材加總後才推算得出來的，
             // 沒辦法乾淨地拆回單一食譜身上，所以這裡跟下面的總計數字不會完全對得起來，只當作參考）
+            const groupList = Object.values(groups);
             const perRecipeCosts = perRecipeGrams.map(r => {
                 let cost = 0;
-                Object.entries(r.grams).forEach(([name, grams]) => {
-                    const t = ingredientTotals[name];
-                    if (t && t.recommendedEntry) cost += grams / 100 * t.recommendedEntry.pricePer100g;
+                Object.entries(r.grams).forEach(([rawName, grams]) => {
+                    const group = groupList.find(g => g.rawNames.includes(rawName));
+                    if (group && group.recommendedEntry) cost += grams / 100 * group.recommendedEntry.pricePer100g;
                 });
                 return { name: r.name, cost };
             });
 
             const liveSummaryEl = document.getElementById('shopping-list-summary');
             if (!liveSummaryEl) return;
-            const ingredientNames = Object.keys(ingredientTotals).sort((a, b) => (ingredientTotals[b].cost || 0) - (ingredientTotals[a].cost || 0));
+            const groupKeys = Object.keys(groups).sort((a, b) => (groups[b].cost || 0) - (groups[a].cost || 0));
             liveSummaryEl.innerHTML = `
                 <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
                     <div class="flex items-baseline gap-2 mb-3">
@@ -13585,14 +13601,15 @@
                     ${missingRecipes.length ? `<p class="text-xs mb-3" style="color:#C4453F">⚠️ 找不到這些食譜的最新資料，沒有算進總花費：${missingRecipes.join('、')}</p>` : ''}
                     <h3 class="font-display font-semibold text-sm mb-2 mt-4">食材加總清單<span class="text-xs font-normal" style="color:#B3A492">（點一下代表已經買了）</span></h3>
                     <div class="space-y-2">
-                        ${ingredientNames.map((name, idx) => {
-                            const t = ingredientTotals[name];
-                            const bought = !!shoppingListPurchasedCache[name];
-                            const recLine = t.recommendedEntry
-                                ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🏆 常用/推薦：${t.recommendedName}（${t.recommendedEntry.purchasePrice ? `${t.recommendedEntry.purchasePrice}元／${t.recommendedEntry.purchaseAmount}${t.recommendedEntry.purchaseUnit}` : `約NT$${t.recommendedEntry.pricePer100g.toFixed(1)}/100g`}）${t.packagesNeeded ? `・約需${t.packagesNeeded}包` : ''}${t.fallbackEstimate ? '（沒有完整包裝資訊，用零星單價概算）' : ''}</p>`
+                        ${groupKeys.map((key, idx) => {
+                            const g = groups[key];
+                            const displayName = g.rawNames.join('、'); // 同一組裡如果有好幾個寫法不同的原始名稱，全部列出來
+                            const bought = !!shoppingListPurchasedCache[key];
+                            const recLine = g.recommendedEntry
+                                ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🏆 常用/推薦：${g.recommendedName}（${g.recommendedEntry.purchasePrice ? `${g.recommendedEntry.purchasePrice}元／${g.recommendedEntry.purchaseAmount}${g.recommendedEntry.purchaseUnit}` : `約NT$${g.recommendedEntry.pricePer100g.toFixed(1)}/100g`}）${g.unitsNeeded ? `・需${g.unitsNeeded}份` : ''}${g.fallbackEstimate ? '（沒有完整包裝資訊，用零星單價概算）' : ''}</p>`
                                 : `<p class="text-xs mt-0.5" style="color:#B3A492">尚未設定價格，成本沒有算進總計裡</p>`;
-                            return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(name)}', ${idx})" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
-                                <div class="flex justify-between"><span data-ing-label>${bought ? '✅ ' : ''}${name}</span><span class="num-tabular" style="color:#B3A492">需要${t.grams.toFixed(0)}g</span></div>
+                            return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx})" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
+                                <div class="flex justify-between"><span data-ing-label>${bought ? '✅ ' : ''}${displayName}</span><span class="num-tabular" style="color:#B3A492">需要${g.grams.toFixed(0)}g</span></div>
                                 ${recLine}
                             </div>`;
                         }).join('') || `<p class="text-xs" style="color:#B3A492">目前沒有任何食材（可能食譜還沒抓到資料）</p>`}
@@ -14416,8 +14433,8 @@
                 const totalAmountText = batchIdxs.map(b => `${b.item.amount}${b.item.unit}`).join('+');
                 const neededText = `需要${needed}${ing.unit}`;
                 if (!validBatches.length) return { name: ing.name, matchName, batches: batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: 'unsure', text: `${neededText}・庫存${totalAmountText}（單位換算不出來，數量請自行確認）` };
-                if (stockGrams >= neededGrams) return { name: ing.name, matchName, batches: validBatches, needed, neededGrams, stockGrams, unit: ing.unit, status: 'ok', text: `${neededText}・庫存${totalAmountText}（夠用）` };
-                return { name: ing.name, matchName, batches: validBatches, needed, neededGrams, stockGrams, unit: ing.unit, status: 'low', text: `${neededText}・庫存${totalAmountText}（還缺約${Math.round(neededGrams - stockGrams)}g）` };
+                if (stockGrams >= neededGrams) return { name: ing.name, matchName, batches: validBatches, needed, neededGrams, stockGrams, unit: ing.unit, status: 'ok', text: `${neededText}・庫存${totalAmountText}` };
+                return { name: ing.name, matchName, batches: validBatches, needed, neededGrams, stockGrams, unit: ing.unit, status: 'low', text: `${neededText}・庫存${totalAmountText}` };
             }));
         }
         async function updateFridgeBox(recipe, factor) {
@@ -14433,7 +14450,7 @@
             }
             const rows = await computeFridgeMatchRows(recipe, factor, fridgeItems);
             const missingCount = rows.filter(r => r.status === 'missing' || r.status === 'low').length;
-            const statusColor = { ok: '#4E9F6E', low: '#D99A3D', missing: '#C4453F', unsure: '#B3A492', staple: '#B3A492' };
+            const statusColor = { ok: '#4E9F6E', low: '#C4453F', missing: '#C4453F', unsure: '#B3A492', staple: '#B3A492' };
             const statusIcon = { ok: '✅', low: '⚠️', missing: '❌', unsure: '❔', staple: '🧂' };
             liveBox.innerHTML = `
                 <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
