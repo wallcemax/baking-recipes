@@ -14099,14 +14099,7 @@
                         ${visibleGroupKeys.map((key, idx) => {
                             const g = groups[key];
                             const displayName = g.rawNames.join('、'); // 同一組裡如果有好幾個寫法不同的原始名稱，全部列出來
-                            let bought = !!shoppingListPurchasedCache[key];
-                            // 自動修正：如果之前標記過「已購買」，但重新計算庫存後發現其實還缺貨（代表買來的
-                            // 已經用完、需要再買一次），舊的勾選標記已經不合時宜了，自動視為「未購買」並清掉，
-                            // 不用等使用者自己按「重設已購買標記」才會發現
-                            if (bought && !g.isStaple && g.shortfallGrams > 0) {
-                                bought = false;
-                                delete shoppingListPurchasedCache[key];
-                            }
+                            const bought = !!shoppingListPurchasedCache[key];
                             if (g.isStaple) {
                                 return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
                                     <div class="flex justify-between"><span data-ing-label>${bought ? '✅ ' : ''}${displayName} <span style="color:#B3A492">常備品</span></span></div>
@@ -14124,12 +14117,6 @@
                         }).join('') || `<p class="text-xs" style="color:#B3A492">冰箱庫存都夠用，不用特別採買！</p>`}
                     </div>
                 </div>`;
-            // 剛剛在畫面渲染時，可能自動修正掉了一些過期的「已購買」標記（庫存又不夠了），
-            // 把清理後的狀態同步回Firestore，避免下次讀取又抓到舊的過期標記
-            if (currentUser) {
-                db.collection('userShoppingLists').doc(currentUser.uid).set({ purchased: shoppingListPurchasedCache }, { merge: true })
-                    .catch(err => console.warn('同步採購狀態失敗', err && err.message));
-            }
         }
 
         // ========== 我的冰箱 ==========
