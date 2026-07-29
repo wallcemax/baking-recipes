@@ -421,7 +421,7 @@
 
     <!-- 單一食材成本快速編輯（從食譜詳細頁點食材縮圖跳出） -->
     <div id="ingredient-cost-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
-        <div class="bg-white w-full md:max-w-sm rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+        <div class="bg-white w-full md:max-w-lg rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
             <div class="flex items-center justify-between px-6 py-5 border-b shrink-0" style="border-color:var(--line)">
                 <h2 class="font-display text-lg font-bold">💰 設定食材價格</h2>
                 <button onclick="closeIngredientCostModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
@@ -490,7 +490,7 @@
                     <input id="my-cost-new-amount" type="number" step="0.1" min="0" placeholder="規格數量" class="form-input col-span-1">
                     <input id="my-cost-new-unit" placeholder="單位" class="form-input col-span-1">
                     <input id="my-cost-new-count" type="number" step="1" min="1" value="1" placeholder="份數" class="form-input col-span-1">
-                    <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="這次總花費" class="form-input col-span-1">
+                    <input id="my-cost-new-price" type="number" step="0.1" min="0" placeholder="花費$" class="form-input col-span-1">
                 </div>
                 <p class="text-xs mb-2" style="color:#B3A492">💡 「規格數量」是固定的參考單位（例如麵粉都用600g/1台斤當一份），下次不管買1份還是3份，規格數量都填一樣，只要改「份數」，系統會自動用「這次總花費÷份數」換算成每份的單價</p>
                 <button onclick="addMyIngredientCost()" class="btn-amber w-full mb-2">🧮 換算並新增</button>
@@ -13850,6 +13850,19 @@
                     .catch(err => console.warn('更新採購狀態失敗', err && err.message));
             }
         }
+        // 「已購買」的勾選狀態原本會一直卡著，不會因為庫存狀況改變自動重置——例如上次買過的食材已經用完了，
+        // 之後補貨進冰箱又用完，需要再買一次，但因為之前勾選過「已買」的標記還留著，
+        // 採購清單看起來會一直顯示「已經買了」而看不出來其實現在又該買了。這裡讓使用者自己決定
+        // 何時要清空這些舊的勾選記號（例如開始一趟新的採買行程之前先按一次）
+        async function resetShoppingListPurchased() {
+            if (!confirm('確定要把所有「已購買」的勾選記號都清掉嗎？（不會影響採購清單裡的食譜跟冰箱庫存，只是重設打勾狀態）')) return;
+            shoppingListPurchasedCache = {};
+            if (currentUser) {
+                await db.collection('userShoppingLists').doc(currentUser.uid).set({ purchased: {} }, { merge: true })
+                    .catch(err => console.warn('重設採購狀態失敗', err && err.message));
+            }
+            renderShoppingListModal();
+        }
         async function addToShoppingList(recipe) {
             if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
             const list = await loadShoppingList();
@@ -14030,12 +14043,22 @@
                     ${perRecipeCosts.length ? `<div class="text-xs mb-3 num-tabular" style="color:#B3A492">${perRecipeCosts.map(r => `${r.name} NT$${r.cost.toFixed(0)}`).join('　')}</div>` : ''}
                     ${missingRecipes.length ? `<p class="text-xs mb-3" style="color:#C4453F">⚠️ 找不到這些食譜的最新資料，沒有算進總花費：${missingRecipes.join('、')}</p>` : ''}
                     ${sufficientCount > 0 ? `<p class="text-xs mb-3" style="color:var(--sage)">✅ 另有 ${sufficientCount} 項冰箱庫存已經夠用，不用買，沒有列在下面</p>` : ''}
-                    <h3 class="font-display font-semibold text-sm mb-2 mt-4">還需要買的食材<span class="text-xs font-normal" style="color:#B3A492">（點一下代表已經買了）</span></h3>
+                    <h3 class="font-display font-semibold text-sm mb-2 mt-4 flex items-center justify-between">
+                        <span>還需要買的食材<span class="text-xs font-normal" style="color:#B3A492">（點一下代表已經買了）</span></span>
+                        <a href="javascript:void(0)" onclick="resetShoppingListPurchased()" class="text-xs font-normal" style="color:var(--chambray); text-decoration:underline">重設已購買標記</a>
+                    </h3>
                     <div class="space-y-2">
                         ${visibleGroupKeys.map((key, idx) => {
                             const g = groups[key];
                             const displayName = g.rawNames.join('、'); // 同一組裡如果有好幾個寫法不同的原始名稱，全部列出來
-                            const bought = !!shoppingListPurchasedCache[key];
+                            let bought = !!shoppingListPurchasedCache[key];
+                            // 自動修正：如果之前標記過「已購買」，但重新計算庫存後發現其實還缺貨（代表買來的
+                            // 已經用完、需要再買一次），舊的勾選標記已經不合時宜了，自動視為「未購買」並清掉，
+                            // 不用等使用者自己按「重設已購買標記」才會發現
+                            if (bought && !g.isStaple && g.shortfallGrams > 0) {
+                                bought = false;
+                                delete shoppingListPurchasedCache[key];
+                            }
                             if (g.isStaple) {
                                 return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
                                     <div class="flex justify-between"><span data-ing-label>${bought ? '✅ ' : ''}${displayName} <span style="color:#B3A492">常備品</span></span></div>
@@ -14053,6 +14076,12 @@
                         }).join('') || `<p class="text-xs" style="color:#B3A492">冰箱庫存都夠用，不用特別採買！</p>`}
                     </div>
                 </div>`;
+            // 剛剛在畫面渲染時，可能自動修正掉了一些過期的「已購買」標記（庫存又不夠了），
+            // 把清理後的狀態同步回Firestore，避免下次讀取又抓到舊的過期標記
+            if (currentUser) {
+                db.collection('userShoppingLists').doc(currentUser.uid).set({ purchased: shoppingListPurchasedCache }, { merge: true })
+                    .catch(err => console.warn('同步採購狀態失敗', err && err.message));
+            }
         }
 
         // ========== 我的冰箱 ==========
@@ -14462,7 +14491,10 @@
             const items = await loadFridgeItems();
             const item = items[idx];
             if (!item) return;
-            document.getElementById('fridge-new-barcode').value = '';
+            // 反查條碼字典：如果這個食材之前掃描過、有記錄對應的條碼，一併帶入條碼欄位
+            const dict = await loadBarcodeDictionary();
+            const existingCode = Object.keys(dict).find(code => dict[code] === item.name);
+            document.getElementById('fridge-new-barcode').value = existingCode || '';
             document.getElementById('fridge-new-name').value = item.name;
             document.getElementById('fridge-new-unit').value = item.unit;
             document.getElementById('fridge-new-expiry').value = ''; // 這是新的一次購買，有效期限不一定跟舊的一樣，不帶入
@@ -14477,7 +14509,7 @@
             const costEntry = costs[item.name];
             if (costEntry && costEntry.purchaseAmount && costEntry.purchaseUnit === item.unit) {
                 amountInput.value = costEntry.purchaseAmount;
-                priceInput.placeholder = `這份規格上次是$${costEntry.purchasePrice}`;
+                priceInput.placeholder = `$${costEntry.purchasePrice}/${costEntry.purchaseAmount}${costEntry.purchaseUnit}`;
             } else {
                 amountInput.value = item.amount;
                 priceInput.placeholder = '這次總花費$';
