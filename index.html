@@ -190,6 +190,8 @@
         .btn-danger:hover { background: #A6362F; }
         .btn-amber { background: var(--honey); color: #fff; border-radius: 999px; padding: 0.95rem 1.75rem; font-weight: 600; transition: background .2s; }
         .btn-amber:hover { background: #AC7420; }
+        .btn-sage { background: var(--sage); color: #fff; border-radius: 999px; padding: 0.95rem 1.75rem; font-weight: 600; transition: background .2s; }
+        .btn-sage:hover { background: #5A745A; }
 
         .chip {
             padding: 0.55rem 1.1rem; border-radius: 999px; border: 1px solid var(--line);
@@ -467,6 +469,9 @@
                 <input id="my-cost-search" oninput="renderMyIngredientCostsList()" placeholder="🔍 搜尋食材名稱..." class="form-input mb-3">
                 <div id="my-cost-list" class="space-y-2"></div>
             </div>
+            <div class="sticky bottom-0 px-6 sm:px-8 py-4 border-t bg-white shrink-0" style="border-color:var(--line)">
+                <button onclick="scanBarcodeForPriceInquiry()" class="btn-amber w-full">📷 掃條碼詢價</button>
+            </div>
         </div>
     </div>
 
@@ -479,6 +484,7 @@
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p class="text-xs mb-4" style="color:#B3A492">在食譜詳細頁點🛒可以加入這裡；每篇食譜可以自己調整這次要做幾份，下面會統一把所有食材加總，估算這次採買總共要花多少錢。</p>
+                <p class="text-xs mb-4"><a href="javascript:void(0)" onclick="closeShoppingListModal(); openMyIngredientCostsModal();" style="color:var(--sage); text-decoration:underline">💰 前往「我的食材成本」查看/管理個別食材價格 →</a></p>
                 <div id="shopping-list-recipes" class="space-y-2 mb-6"></div>
                 <div id="shopping-list-summary"></div>
             </div>
@@ -567,7 +573,7 @@
                 </div>
             </div>
             <div class="sticky bottom-0 px-6 sm:px-8 py-4 border-t bg-white shrink-0" style="border-color:var(--line)">
-                <button onclick="openBarcodeScanner()" class="btn-secondary w-full">📷 掃描條碼新增食材</button>
+                <button onclick="openBarcodeScanner()" class="btn-sage w-full">📷 掃描條碼新增食材</button>
             </div>
         </div>
     </div>
@@ -13192,6 +13198,24 @@
         }
         // 幫「我的食材成本」裡已經存在的一筆資料，補上條碼對應——用來處理「舊資料本來沒有條碼」的情況，
         // 補上之後，之後用手機掃到這個條碼，就會直接沿用這筆既有的價格/名稱，不會跟舊資料變成兩筆各自獨立的東西
+        // 「掃條碼詢價」：跟冰箱那邊「掃描新增」不一樣，這個純粹是查價格用的，不會新增任何資料。
+        // 掃到條碼後，直接拿去查自建字典，找到對應名稱就自動填進搜尋欄、篩選出那筆資料看到之前的價格，
+        // 等於用相機代替手動打字搜尋
+        function scanBarcodeForPriceInquiry() {
+            openBarcodeScanner(async (decodedText) => {
+                closeBarcodeScanner();
+                const dict = await loadBarcodeDictionary(true);
+                const name = dict[decodedText];
+                const searchInput = document.getElementById('my-cost-search');
+                if (!name) {
+                    if (searchInput) { searchInput.value = ''; renderMyIngredientCostsList(); }
+                    alert(`條碼${decodedText}還沒有建檔過，查不到之前的價格（可以去「我的冰箱」掃描新增，順便建檔）`);
+                    return;
+                }
+                if (searchInput) searchInput.value = name;
+                renderMyIngredientCostsList();
+            });
+        }
         async function manageIngredientBarcode(name) {
             if (!currentUser) return;
             const dict = await loadBarcodeDictionary(true);
