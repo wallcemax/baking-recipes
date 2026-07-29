@@ -15841,21 +15841,14 @@
                 event.target.value = '';
                 return;
             }
-            validateImageFileReadable(file).then(ok => {
-                if (!ok) {
-                    alert('這張照片好像沒辦法正常讀取，如果是iPhone、且照片還存在iCloud上(相簿裡顯示雲朵圖示)，麻煩先打開「照片」App點一下這張照片，等它下載完成到手機本機之後再回來選取一次');
-                    event.target.value = '';
-                    return;
-                }
-                selectedImageFile = file;
-                const reader = new FileReader();
-                reader.onload = e => {
-                    document.getElementById('image-preview').src = e.target.result;
-                    document.getElementById('image-preview-wrap').classList.remove('hidden');
-                    document.getElementById('remove-image-btn').classList.remove('hidden');
-                };
-                reader.readAsDataURL(file);
-            });
+            selectedImageFile = file;
+            const reader = new FileReader();
+            reader.onload = e => {
+                document.getElementById('image-preview').src = e.target.result;
+                document.getElementById('image-preview-wrap').classList.remove('hidden');
+                document.getElementById('remove-image-btn').classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
         }
 
         function removeSelectedImage() {
@@ -15930,7 +15923,7 @@
         // 手機網路（WiFi/行動網路切換、訊號不穩、切去相機App導致頁面被瀏覽器暫停）常常會讓上傳中途斷掉，
         // 出現「Failed to fetch」這種網路層級的錯誤（不是Cloudinary真的拒絕上傳內容），這種情況值得
         // 自動重試幾次，不用使用者自己發現失敗、手動重選一次圖片
-        async function uploadCompressedWithRetry(compressed, retriesLeft = 2) {
+        async function uploadCompressedWithRetry(compressed, retriesLeft = 4, attempt = 0) {
             const formData = new FormData();
             formData.append('file', compressed);
             formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
@@ -15948,8 +15941,10 @@
                 clearTimeout(timeoutId);
                 const isNetworkError = err instanceof TypeError || err.name === 'AbortError'; // fetch連不上網路是TypeError，逾時中斷是AbortError
                 if (isNetworkError && retriesLeft > 0) {
-                    await new Promise(r => setTimeout(r, 1200)); // 稍等一下讓網路有機會恢復，不要立刻連續重試
-                    return uploadCompressedWithRetry(compressed, retriesLeft - 1);
+                    // 手機網路（WiFi/行動網路切換、訊號不穩）常常需要幾秒鐘才會恢復，每次重試間隔漸漸拉長
+                    // （1.5秒、3秒、4.5秒...），比每次都固定等一樣久更有機會撐過真正不穩定的網路狀況
+                    await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+                    return uploadCompressedWithRetry(compressed, retriesLeft - 1, attempt + 1);
                 }
                 throw err;
             }
@@ -16035,6 +16030,18 @@
                 if (label) label.textContent = `${i + 1}.`;
             });
         }
+        // 把內部用的idx（不會照畫面順序排的獨立編號）對應回畫面上實際顯示的步驟編號（例如「5.」），
+        // 方便錯誤訊息可以明確指出是哪一步的照片有問題，不用讓使用者自己猜
+        function findStepNumberByIdx(stepIdx) {
+            const rows = document.querySelectorAll('#steps-container .step-row-wrap');
+            for (const row of rows) {
+                if (Number(row.dataset.stepIdx) === stepIdx) {
+                    const label = row.querySelector('.step-num-label');
+                    return label ? label.textContent.replace('.', '') : '';
+                }
+            }
+            return '';
+        }
 
         function handleStepImageSelect(event, idx) {
             const file = event.target.files[0];
@@ -16051,29 +16058,17 @@
             }
             const wrap = document.getElementById(`step-image-preview-wrap-${idx}`);
             const previewImg = document.getElementById(`step-image-preview-${idx}`);
+            const reader = new FileReader();
+            reader.onload = e => {
+                previewImg.src = e.target.result;
+                wrap.classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
 
-            // 驗證這個檔案是不是真的可以正常解碼成圖片——iPhone如果開了「最佳化儲存空間」，相簿裡有些照片
-            // 只存在iCloud上、手機本地只有縮圖，選這種照片時瀏覽器有時候會先拿到一個還沒下載完成的不完整
-            // 檔案，基本的格式/大小檢查會通過，但實際解碼會失敗。這裡先試著把它讀成一張圖片確認可以正常
-            // 顯示，驗證失敗的話提早擋下來、給明確提示，不用等到按下儲存才發現上傳失敗
-            validateImageFileReadable(file).then(ok => {
-                if (!ok) {
-                    alert('這張照片好像沒辦法正常讀取，如果是iPhone、且照片還存在iCloud上(相簿裡顯示雲朵圖示)，麻煩先打開「照片」App點一下這張照片，等它下載完成到手機本機之後再回來選取一次');
-                    event.target.value = '';
-                    return;
-                }
-                const reader = new FileReader();
-                reader.onload = e => {
-                    previewImg.src = e.target.result;
-                    wrap.classList.remove('hidden');
-                };
-                reader.readAsDataURL(file);
-
-                // 只先記住這個檔案，不立即上傳——真正上傳要等按下「儲存」才會發生（跟食譜主圖的做法一致），
-                // 這樣如果選了圖片卻按「取消編輯」，這張圖片根本不會被送到Cloudinary，不會產生
-                // 從來沒有任何食譜用到、卻永遠不會被偵測成孤兒的圖片
-                pendingStepImageFiles.set(idx, file);
-            });
+            // 只先記住這個檔案，不立即上傳、也不在這裡驗證檔案可不可讀——選圖片跟按儲存中間通常會間隔
+            // 一段時間（填食材、步驟等），如果這是iPhone上還在iCloud下載中的照片，留給它多一點時間在
+            // 背景下載完成，等真的要儲存的時候才驗證+上傳，比選圖片當下立刻驗證更不容易誤判失敗
+            pendingStepImageFiles.set(idx, file);
         }
 
         function removeStepImage(idx) {
@@ -16107,11 +16102,23 @@
 
             showSaveProgress('處理中...');
 
-            // 把所有「選好但還沒上傳」的步驟圖片，在這裡真正上傳到Cloudinary——跟食譜主圖的做法一致，
-            // 圖片只有在真的要存檔的這一刻才會上傳，如果使用者選了圖片卻按「取消編輯」，
-            // 這些圖片根本不會被送出去，不會產生沒有任何食譜連結到的孤兒圖片
+            // 把所有「選好但還沒上傳」的步驟圖片，在這裡真正驗證+上傳到Cloudinary——跟食譜主圖的做法一致，
+            // 圖片只有在真的要存檔的這一刻才會處理，如果使用者選了圖片卻按「取消編輯」，
+            // 這些圖片根本不會被送出去，不會產生沒有任何食譜連結到的孤兒圖片。
+            // 驗證也延後到這裡才做（不是選圖片的當下），讓iPhone上還在iCloud下載中的照片，
+            // 有更多時間在背景下載完成，比選圖片當下立刻驗證更不容易誤判失敗
             const uploadedStepImageUrls = new Map(); // idx -> 剛上傳好的網址
             if (pendingStepImageFiles.size > 0) {
+                showSaveProgress(`🔍 驗證步驟照片中...（共${pendingStepImageFiles.size}張）`);
+                for (const [stepIdx, file] of pendingStepImageFiles) {
+                    const ok = await validateImageFileReadable(file);
+                    if (!ok) {
+                        hideSaveProgress();
+                        const stepNum = findStepNumberByIdx(stepIdx);
+                        alert(`第${stepNum || '?'}步的照片好像沒辦法正常讀取，如果是iPhone、且照片還存在iCloud上(相簿裡顯示雲朵圖示)，麻煩先打開「照片」App點一下這張照片，等它下載完成到手機本機之後再回來重新選取一次\n\n食譜還沒有存檔`);
+                        return;
+                    }
+                }
                 showSaveProgress(`📤 步驟照片上傳中...（共${pendingStepImageFiles.size}張）`);
                 try {
                     for (const [stepIdx, file] of pendingStepImageFiles) {
@@ -16120,7 +16127,7 @@
                     }
                 } catch (err) {
                     hideSaveProgress();
-                    alert('步驟圖片上傳失敗：' + err.message + '\n\n食譜還沒有存檔，請確認網路狀況後再按一次儲存');
+                    alert('步驟圖片上傳失敗：' + err.message + '\n\n（已經自動重試了幾次還是失敗，很可能是網路訊號不穩定）食譜還沒有存檔，建議切換到訊號較穩定的WiFi或行動網路後，再按一次儲存');
                     return;
                 }
             }
@@ -16162,6 +16169,13 @@
 
             let imageUrl = currentImageUrl; // 若沒有選新圖片，保留原本的（或編輯時移除後的空字串）
             if (selectedImageFile) {
+                showSaveProgress('🔍 驗證食譜照片中...');
+                const okMain = await validateImageFileReadable(selectedImageFile);
+                if (!okMain) {
+                    hideSaveProgress();
+                    alert('這張食譜照片好像沒辦法正常讀取，如果是iPhone、且照片還存在iCloud上(相簿裡顯示雲朵圖示)，麻煩先打開「照片」App點一下這張照片，等它下載完成到手機本機之後再回來重新選取一次\n\n食譜還沒有存檔');
+                    return;
+                }
                 showSaveProgress('📤 食譜照片上傳中...');
                 const oldImageUrl = currentImageUrl; // 先記住舊圖網址，等一下上傳成功、確定要換掉了才記錄成孤兒圖片
                 try {
