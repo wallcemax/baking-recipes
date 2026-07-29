@@ -798,7 +798,7 @@
                 </div>
             </div>
             <div class="flex gap-3 px-6 sm:px-8 py-4 border-t shrink-0" style="border-color:var(--line)">
-                <button onclick="saveRecipe()" class="btn-primary flex-1">💾 儲存</button>
+                <button id="save-recipe-btn" onclick="saveRecipe()" class="btn-primary flex-1">💾 儲存</button>
                 <button onclick="closeAddModal()" class="btn-secondary flex-1">取消</button>
             </div>
         </div>
@@ -894,6 +894,10 @@
         }
 
         let selectedImageFile = null; // 使用者本次選擇要上傳的新圖片
+        // 追蹤還在背景進行中的「步驟圖片」上傳——選圖片的當下就會立刻背景上傳，跟「儲存」按鈕的時機
+        // 完全脫鉤；如果網路/裝置比較慢，使用者提早按下儲存，圖片網址還沒抓到就已經存檔，圖片後來雖然
+        // 上傳成功卻變成孤兒。存檔前要先確認這些上傳都真的做完了，key是步驟的idx，value是upload的Promise
+        let pendingStepImageUploads = new Map();
         let currentImageUrl = '';     // 目前食譜的圖片網址(編輯時保留舊圖用)
 
         let currentUser = null;
@@ -15817,9 +15821,16 @@
         // 手機拍照原始檔案常常好幾 MB，壓縮後通常只剩幾百 KB，網頁顯示用幾乎看不出畫質差異
         function compressImageForUpload(file, maxDim = 1600, quality = 0.82) {
             return new Promise((resolve) => {
+                let settled = false;
+                const finish = (result) => { if (!settled) { settled = true; resolve(result); } };
+                // 逾時保護：某些手機瀏覽器遇到特殊圖片格式（例如部分iPhone的HEIC）解碼失敗時，
+                // 可能既不觸發onload也不觸發onerror，導致整個卡住不動、畫面看起來「沒反應」。
+                // 8秒還沒處理完，直接放棄壓縮、改用原始檔案繼續走上傳流程，不要讓使用者一直卡住等待
+                const timeoutId = setTimeout(() => finish(file), 8000);
                 const img = new Image();
                 const url = URL.createObjectURL(file);
                 img.onload = () => {
+                    clearTimeout(timeoutId);
                     URL.revokeObjectURL(url);
                     let { width, height } = img;
                     if (width > maxDim || height > maxDim) {
@@ -15833,26 +15844,47 @@
                     ctx.drawImage(img, 0, 0, width, height);
                     canvas.toBlob(blob => {
                         if (blob && blob.size < file.size) {
-                            resolve(new File([blob], file.name.replace(/\.(png|webp)$/i, '.jpg'), { type: 'image/jpeg' }));
+                            finish(new File([blob], file.name.replace(/\.(png|webp)$/i, '.jpg'), { type: 'image/jpeg' }));
                         } else {
-                            resolve(file); // 少數情況壓縮後反而變大（例如原本檔案就很小），就直接用原始檔案
+                            finish(file); // 少數情況壓縮後反而變大（例如原本檔案就很小），就直接用原始檔案
                         }
                     }, 'image/jpeg', quality);
                 };
-                img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+                img.onerror = () => { clearTimeout(timeoutId); URL.revokeObjectURL(url); finish(file); };
                 img.src = url;
             });
         }
 
         async function uploadImageToCloudinary(file) {
             const compressed = await compressImageForUpload(file);
+            return await uploadCompressedWithRetry(compressed);
+        }
+        // 手機網路（WiFi/行動網路切換、訊號不穩、切去相機App導致頁面被瀏覽器暫停）常常會讓上傳中途斷掉，
+        // 出現「Failed to fetch」這種網路層級的錯誤（不是Cloudinary真的拒絕上傳內容），這種情況值得
+        // 自動重試幾次，不用使用者自己發現失敗、手動重選一次圖片
+        async function uploadCompressedWithRetry(compressed, retriesLeft = 2) {
             const formData = new FormData();
             formData.append('file', compressed);
             formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-            const res = await fetch(CLOUDINARY_UPLOAD_URL, { method: 'POST', body: formData });
-            const data = await res.json();
-            if (data.secure_url) return data.secure_url;
-            throw new Error(data.error?.message || '圖片上傳失敗');
+            const controller = new AbortController();
+            // 上傳逾時保護：手機網路狀況不好的時候，fetch有可能卡住很久都不會resolve也不會reject，
+            // 20秒還沒回應就主動中斷，讓下面的重試機制可以介入，不會讓使用者無限期等待
+            const timeoutId = setTimeout(() => controller.abort(), 20000);
+            try {
+                const res = await fetch(CLOUDINARY_UPLOAD_URL, { method: 'POST', body: formData, signal: controller.signal });
+                clearTimeout(timeoutId);
+                const data = await res.json();
+                if (data.secure_url) return data.secure_url;
+                throw new Error(data.error?.message || '圖片上傳失敗');
+            } catch (err) {
+                clearTimeout(timeoutId);
+                const isNetworkError = err instanceof TypeError || err.name === 'AbortError'; // fetch連不上網路是TypeError，逾時中斷是AbortError
+                if (isNetworkError && retriesLeft > 0) {
+                    await new Promise(r => setTimeout(r, 1200)); // 稍等一下讓網路有機會恢復，不要立刻連續重試
+                    return uploadCompressedWithRetry(compressed, retriesLeft - 1);
+                }
+                throw err;
+            }
         }
 
         function closeAddModal(fromPopState) {
@@ -15961,13 +15993,16 @@
             };
             reader.readAsDataURL(file);
 
-            uploadImageToCloudinary(file).then(url => {
+            const uploadPromise = uploadImageToCloudinary(file).then(url => {
                 document.getElementById(`step-image-${idx}`).value = url;
                 previewImg.src = url;
                 if (oldStepImageUrl) deleteCloudinaryImage(oldStepImageUrl, '使用者換掉步驟圖片');
             }).catch(err => {
                 alert('步驟圖片上傳失敗：' + err.message);
+            }).finally(() => {
+                pendingStepImageUploads.delete(idx); // 不管成功失敗，這個上傳都結束了，從追蹤清單移除
             });
+            pendingStepImageUploads.set(idx, uploadPromise);
         }
 
         function removeStepImage(idx) {
@@ -15982,6 +16017,17 @@
             const id = document.getElementById('recipe-id').value;
             const name = document.getElementById('name').value.trim();
             if (!name) return alert("請輸入食譜名稱");
+
+            // 如果還有步驟圖片正在背景上傳中（選了圖片但網路比較慢，還沒抓到網址），
+            // 先等它們全部完成再繼續存檔，不然會漏掉還沒抓到的圖片網址，變成圖片有上傳成功、
+            // 但食譜完全沒有連結到這張圖的情況
+            const saveBtnEl = document.getElementById('save-recipe-btn');
+            if (pendingStepImageUploads.size > 0) {
+                const originalText = saveBtnEl ? saveBtnEl.textContent : null;
+                if (saveBtnEl) { saveBtnEl.textContent = '📤 步驟圖片上傳中，請稍候...'; saveBtnEl.disabled = true; }
+                await Promise.allSettled([...pendingStepImageUploads.values()]);
+                if (saveBtnEl) { saveBtnEl.textContent = originalText; saveBtnEl.disabled = false; }
+            }
 
             // 改成照畫面上「實際排列順序」去收集資料（用data-role屬性去抓每一列裡對應的欄位），
             // 不再依賴「編號一定是0到29按順序排好」這個假設——這樣不管是用「新增」加到最後面、
