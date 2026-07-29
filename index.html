@@ -129,6 +129,7 @@
             max-width: min(90vw, 360px);
         }
         @keyframes toastSlideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .toast-item {
             background: var(--espresso); color: #fff; padding: 0.85rem 1.15rem;
             border-radius: 1rem; font-size: 0.9rem; line-height: 1.5;
@@ -719,7 +720,14 @@
 
     <!-- 新增/編輯 Modal -->
     <div id="add-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
-        <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+        <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel" style="position:relative">
+            <!-- 存檔進度覆蓋層：按下儲存之後蓋在整個編輯視窗上面，直到全部（圖片上傳+資料寫入）都真的完成才會消失，
+                 讓「編輯/新增食譜」這件事有清楚的開始到結束，不會讓人搞不清楚現在存到哪裡了 -->
+            <div id="save-progress-overlay" class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center gap-4" style="background:rgba(255,255,255,0.97)">
+                <div id="save-progress-spinner" class="w-12 h-12 rounded-full" style="border:4px solid var(--cream); border-top-color:var(--jam); animation:spin 0.8s linear infinite"></div>
+                <div id="save-progress-check" class="hidden text-5xl" style="color:var(--sage)">✅</div>
+                <p id="save-progress-text" class="text-sm font-medium px-6 text-center" style="color:var(--espresso)">處理中...</p>
+            </div>
             <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
                 <h2 class="font-display text-xl sm:text-2xl font-bold" id="modal-title">新增食譜</h2>
                 <button onclick="closeAddModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
@@ -894,10 +902,10 @@
         }
 
         let selectedImageFile = null; // 使用者本次選擇要上傳的新圖片
-        // 追蹤還在背景進行中的「步驟圖片」上傳——選圖片的當下就會立刻背景上傳，跟「儲存」按鈕的時機
-        // 完全脫鉤；如果網路/裝置比較慢，使用者提早按下儲存，圖片網址還沒抓到就已經存檔，圖片後來雖然
-        // 上傳成功卻變成孤兒。存檔前要先確認這些上傳都真的做完了，key是步驟的idx，value是upload的Promise
-        let pendingStepImageUploads = new Map();
+        // 追蹤每個步驟「選好但還沒上傳」的檔案——選圖片的當下只會先在本地預覽，不會立刻上傳到Cloudinary，
+        // 要等按下「儲存」才會真的上傳，這樣如果使用者選了圖片卻按「取消編輯」，不會產生從來沒被任何
+        // 食譜用到的孤兒圖片。key是步驟的idx（對應div.dataset.stepIdx），value是選到的File物件
+        let pendingStepImageFiles = new Map();
         let currentImageUrl = '';     // 目前食譜的圖片網址(編輯時保留舊圖用)
 
         let currentUser = null;
@@ -15787,10 +15795,17 @@
         // 手機瀏覽器第一次要求存取相簿/相機權限時，系統跳出來的授權視窗常常會打斷選圖的事件流程，
         // 導致change事件沒有正確觸發，看起來像「選了圖片卻沒反應」。這裡在畫面從選圖器切回前景之後，
         // 如果發現這個欄位還是沒有任何檔案，顯示一個小提示讓使用者知道可以再點一次重選，
-        // 不用自己猜到底發生了什麼事、也不用整個重新整理頁面
+        // 不用自己猜到底發生了什麼事、也不用整個重新整理頁面。
+        // 用兩種方式偵測「回到前景」：window的focus事件、以及document.visibilitychange，
+        // 因為不同手機瀏覽器/PWA模式下，這兩種事件的可靠度不太一樣，兩個一起用比較保險，
+        // 不管哪一個先觸發，之後都會把另一個的監聽器清掉，不會重複跳出提示
         function watchFileInputForSilentFailure(input) {
-            const onFocusBack = () => {
+            let triggered = false;
+            const check = () => {
+                if (triggered) return;
+                triggered = true;
                 window.removeEventListener('focus', onFocusBack);
+                document.removeEventListener('visibilitychange', onVisibilityChange);
                 // 留一點緩衝時間，讓真的有選到圖片的change事件有機會先跑完，避免這裡誤判
                 setTimeout(() => {
                     if (!input.files || input.files.length === 0) {
@@ -15798,7 +15813,10 @@
                     }
                 }, 700);
             };
+            const onFocusBack = () => check();
+            const onVisibilityChange = () => { if (document.visibilityState === 'visible') check(); };
             window.addEventListener('focus', onFocusBack, { once: true });
+            document.addEventListener('visibilitychange', onVisibilityChange);
         }
         // 點擊<label>的當下（早於瀏覽器實際開啟選圖器之前）先清空欄位值、設定失敗偵測——
         // 改用<label for="...">讓瀏覽器原生處理「點擊後開啟選圖器」這件事，不再用JavaScript呼叫
@@ -15915,6 +15933,7 @@
 
         function closeAddModal(fromPopState) {
             document.getElementById('add-modal').classList.add('hidden');
+            pendingStepImageFiles.clear(); // 取消編輯的話，選過還沒上傳的步驟圖片檔案直接丟掉，本來就沒有真的送到Cloudinary過
             consumeModalHistoryState(fromPopState);
         }
 
@@ -15950,6 +15969,7 @@
             const idx = fieldUidCounter++; // 用一個永遠遞增、不會重複的編號，不受插入/刪除影響，只用來組成獨一無二的id
             const div = document.createElement('div');
             div.className = "step-row-wrap rounded-2xl p-2.5";
+            div.dataset.stepIdx = idx; // 方便存檔時，從畫面上的這一列對照回pendingStepImageFiles裡有沒有還沒上傳的檔案
             div.style.border = "1px solid var(--line)";
             div.innerHTML = `
                 <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
@@ -16007,7 +16027,6 @@
             }
             const wrap = document.getElementById(`step-image-preview-wrap-${idx}`);
             const previewImg = document.getElementById(`step-image-preview-${idx}`);
-            const oldStepImageUrl = document.getElementById(`step-image-${idx}`).value; // 先記住舊的，等新圖上傳成功才記錄成孤兒圖片
             const reader = new FileReader();
             reader.onload = e => {
                 previewImg.src = e.target.result;
@@ -16015,19 +16034,14 @@
             };
             reader.readAsDataURL(file);
 
-            const uploadPromise = uploadImageToCloudinary(file).then(url => {
-                document.getElementById(`step-image-${idx}`).value = url;
-                previewImg.src = url;
-                if (oldStepImageUrl) deleteCloudinaryImage(oldStepImageUrl, '使用者換掉步驟圖片');
-            }).catch(err => {
-                alert('步驟圖片上傳失敗：' + err.message);
-            }).finally(() => {
-                pendingStepImageUploads.delete(idx); // 不管成功失敗，這個上傳都結束了，從追蹤清單移除
-            });
-            pendingStepImageUploads.set(idx, uploadPromise);
+            // 只先記住這個檔案，不立即上傳——真正上傳要等按下「儲存」才會發生（跟食譜主圖的做法一致），
+            // 這樣如果選了圖片卻按「取消編輯」，這張圖片根本不會被送到Cloudinary，不會產生
+            // 從來沒有任何食譜用到、卻永遠不會被偵測成孤兒的圖片
+            pendingStepImageFiles.set(idx, file);
         }
 
         function removeStepImage(idx) {
+            pendingStepImageFiles.delete(idx); // 如果這一步還有選了但還沒上傳的檔案，直接丟掉、不用管它
             const oldUrl = document.getElementById(`step-image-${idx}`).value;
             if (oldUrl) deleteCloudinaryImage(oldUrl, '使用者移除步驟圖片');
             document.getElementById(`step-image-${idx}`).value = '';
@@ -16035,20 +16049,44 @@
             document.getElementById(`step-image-preview-wrap-${idx}`).classList.add('hidden');
         }
 
+        // 控制存檔進度覆蓋層：處理中顯示旋轉圈圈+說明文字，完成的時候換成打勾圖示
+        function showSaveProgress(text) {
+            document.getElementById('save-progress-overlay').classList.remove('hidden');
+            document.getElementById('save-progress-spinner').classList.remove('hidden');
+            document.getElementById('save-progress-check').classList.add('hidden');
+            document.getElementById('save-progress-text').textContent = text;
+        }
+        function showSaveComplete(text) {
+            document.getElementById('save-progress-spinner').classList.add('hidden');
+            document.getElementById('save-progress-check').classList.remove('hidden');
+            document.getElementById('save-progress-text').textContent = text;
+        }
+        function hideSaveProgress() {
+            document.getElementById('save-progress-overlay').classList.add('hidden');
+        }
         async function saveRecipe() {
             const id = document.getElementById('recipe-id').value;
             const name = document.getElementById('name').value.trim();
             if (!name) return alert("請輸入食譜名稱");
 
-            // 如果還有步驟圖片正在背景上傳中（選了圖片但網路比較慢，還沒抓到網址），
-            // 先等它們全部完成再繼續存檔，不然會漏掉還沒抓到的圖片網址，變成圖片有上傳成功、
-            // 但食譜完全沒有連結到這張圖的情況
-            const saveBtnEl = document.getElementById('save-recipe-btn');
-            if (pendingStepImageUploads.size > 0) {
-                const originalText = saveBtnEl ? saveBtnEl.textContent : null;
-                if (saveBtnEl) { saveBtnEl.textContent = '📤 步驟圖片上傳中，請稍候...'; saveBtnEl.disabled = true; }
-                await Promise.allSettled([...pendingStepImageUploads.values()]);
-                if (saveBtnEl) { saveBtnEl.textContent = originalText; saveBtnEl.disabled = false; }
+            showSaveProgress('處理中...');
+
+            // 把所有「選好但還沒上傳」的步驟圖片，在這裡真正上傳到Cloudinary——跟食譜主圖的做法一致，
+            // 圖片只有在真的要存檔的這一刻才會上傳，如果使用者選了圖片卻按「取消編輯」，
+            // 這些圖片根本不會被送出去，不會產生沒有任何食譜連結到的孤兒圖片
+            const uploadedStepImageUrls = new Map(); // idx -> 剛上傳好的網址
+            if (pendingStepImageFiles.size > 0) {
+                showSaveProgress(`📤 步驟照片上傳中...（共${pendingStepImageFiles.size}張）`);
+                try {
+                    for (const [stepIdx, file] of pendingStepImageFiles) {
+                        const url = await uploadImageToCloudinary(file);
+                        uploadedStepImageUrls.set(stepIdx, url);
+                    }
+                } catch (err) {
+                    hideSaveProgress();
+                    alert('步驟圖片上傳失敗：' + err.message + '\n\n食譜還沒有存檔，請確認網路狀況後再按一次儲存');
+                    return;
+                }
             }
 
             // 改成照畫面上「實際排列順序」去收集資料（用data-role屬性去抓每一列裡對應的欄位），
@@ -16074,26 +16112,28 @@
                     const imgInput = row.querySelector('[data-role="step-image"]');
                     const timestamp = tsInput ? parseTimestamp(tsInput.value) : null;
                     const durationMinutes = (durInput && durInput.value !== '') ? parseFloat(durInput.value) : null;
-                    const imageUrl = (imgInput && imgInput.value) ? imgInput.value : null;
+                    // 這一步如果剛剛才上傳好新圖片，優先用新網址；沒有換圖的話，沿用原本就存在的舊網址
+                    const stepIdx = Number(row.dataset.stepIdx); // dataset讀出來是字串，要轉成數字才能對到Map裡用數字存的key
+                    const freshUrl = uploadedStepImageUrls.get(stepIdx);
+                    const oldUrl = (imgInput && imgInput.value) ? imgInput.value : null;
+                    const imageUrl = freshUrl || oldUrl;
+                    // 如果這一步是「換掉舊圖片」的情況（原本有網址，這次又上傳了新的），舊圖片要記錄成孤兒清掉
+                    if (freshUrl && oldUrl && freshUrl !== oldUrl) deleteCloudinaryImage(oldUrl, '使用者換掉步驟圖片');
                     steps.push({ text: textInput.value.trim(), timestamp: timestamp, durationMinutes: durationMinutes, imageUrl: imageUrl });
                 }
             });
-
-            const saveBtn = document.querySelector('#add-modal .btn-primary');
-            const originalBtnText = saveBtn.textContent;
+            pendingStepImageFiles.clear(); // 這次存檔已經處理完了，清空追蹤清單
 
             let imageUrl = currentImageUrl; // 若沒有選新圖片，保留原本的（或編輯時移除後的空字串）
             if (selectedImageFile) {
-                saveBtn.textContent = '📤 圖片上傳中...';
-                saveBtn.disabled = true;
+                showSaveProgress('📤 食譜照片上傳中...');
                 const oldImageUrl = currentImageUrl; // 先記住舊圖網址，等一下上傳成功、確定要換掉了才記錄成孤兒圖片
                 try {
                     imageUrl = await uploadImageToCloudinary(selectedImageFile);
                     if (oldImageUrl) deleteCloudinaryImage(oldImageUrl, '使用者換掉食譜主圖');
                 } catch (err) {
+                    hideSaveProgress();
                     alert('圖片上傳失敗：' + err.message);
-                    saveBtn.textContent = originalBtnText;
-                    saveBtn.disabled = false;
                     return;
                 }
             }
@@ -16114,25 +16154,27 @@
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             };
 
-            saveBtn.textContent = '💾 儲存中...';
-            saveBtn.disabled = true;
+            showSaveProgress('💾 食譜資料儲存中...');
 
-            const finish = () => { saveBtn.textContent = originalBtnText; saveBtn.disabled = false; };
-
-            if (id) {
-                // 編輯模式：不覆寫原作者資訊與建立時間，避免管理員編輯他人食譜後，
-                // 原作者反而無法再編輯自己的食譜；但會更新 updatedAt，讓首頁排序反映最新編輯
-                db.collection("recipes").doc(id).update(baseData).then(() => { alert("更新成功！"); closeAddModal(); finish(); }).catch(err => { alert('更新失敗：' + err.message); finish(); });
-            } else {
-                baseData.authorName = currentUser.displayName;
-                baseData.authorId = currentUser.uid;
-                baseData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
-                db.collection("recipes").add(baseData).then(() => {
-                    alert("食譜已上傳！");
-                    closeAddModal();
-                    finish();
+            try {
+                if (id) {
+                    // 編輯模式：不覆寫原作者資訊與建立時間，避免管理員編輯他人食譜後，
+                    // 原作者反而無法再編輯自己的食譜；但會更新 updatedAt，讓首頁排序反映最新編輯
+                    await db.collection("recipes").doc(id).update(baseData);
+                } else {
+                    baseData.authorName = currentUser.displayName;
+                    baseData.authorId = currentUser.uid;
+                    baseData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+                    await db.collection("recipes").add(baseData);
                     recordRecipeCreated(baseData.category, ingredients); // 只有「新增」才算，編輯不算，避免灌水
-                }).catch(err => { alert('上傳失敗：' + err.message); finish(); });
+                }
+                // 全部（圖片上傳+資料寫入）都真的完成了，顯示完成打勾後直接關閉，不用刻意停留等待
+                showSaveComplete(id ? '✅ 更新完成！' : '✅ 食譜已上傳！');
+                hideSaveProgress();
+                closeAddModal();
+            } catch (err) {
+                hideSaveProgress();
+                alert((id ? '更新失敗：' : '上傳失敗：') + err.message);
             }
         }
 
