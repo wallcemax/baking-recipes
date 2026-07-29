@@ -12565,6 +12565,10 @@
         }
         async function linkIngredientAsKeyword(canonicalName, aliasName) {
             if (!currentUser) return false;
+            // 如果別名剛好跟主要名稱打一樣（例如「醬油」設定成「醬油」自己的別名），這個設定本身沒有意義，
+            // 直接當作無事發生跳過就好——不然下面「刪除別名原本獨立的資料」那一步，會因為兩個名稱其實是
+            // 同一個key，把主要名稱自己剛存好的資料整筆刪掉，變成怎麼存都存不進去
+            if (canonicalName === aliasName) return true;
             let success = false;
             await mutateIngredientCostsAtomic(items => {
                 const entry = items[canonicalName];
@@ -12656,6 +12660,15 @@
             if (!trimmedNew || trimmedNew === oldName) return;
             const costs = await loadUserIngredientCosts(true);
             if (costs[trimmedNew]) { alert(`「${trimmedNew}」這個名稱已經有價格資料了，不能改成重複的名稱`); return; }
+
+            // 如果這個名稱還沒有任何自己的價格資料（例如你是從食譜點進來、還沒填過價格），
+            // 表示Firestore裡根本沒有東西可以搬，直接把編輯目標換成新名稱繼續填就好，不用真的搬移資料
+            if (!costs[oldName]) {
+                ingredientCostModalTarget = trimmedNew;
+                await renderIngredientCostModalView(trimmedNew);
+                return;
+            }
+
             const ok = await renameIngredientCost(oldName, trimmedNew);
             if (!ok) { alert('改名失敗'); return; }
             // 條碼字典裡如果有指到舊名稱的紀錄，一併更新，不然之後掃描還是會抓到改名前的名字
@@ -13363,9 +13376,11 @@
             saveBtn.disabled = false; saveBtn.style.opacity = '1'; // 按儲存會自動先換算單價，不用另外按「換算單價」才能存
             const costs = await loadUserIngredientCosts(true);
             const existing = costs[name];
-            // 改名連結：只有這個名稱真的有自己獨立的價格資料時才能改名（如果是套用別人的關鍵字，要先「取消套用」才能改）
+            // 改名連結：不管這個食材有沒有價格資料都顯示，讓使用者可以在填寫之前先修正名稱打錯字這種情況；
+            // 如果已經有自己獨立的價格資料，改名會連同資料一起搬到新名稱；如果還沒有資料，改名只是單純
+            // 換一個目標名稱繼續填寫，不用搬移任何東西。套用別人關鍵字的情況，要先「取消套用」才能改名
             const renameLinkEl = document.getElementById('ingredient-cost-modal-rename-link');
-            renameLinkEl.innerHTML = existing ? `<a href="javascript:void(0)" onclick="renameIngredientCostPrompt('${escapeHtmlAttr(name)}')" class="text-xs" style="color:var(--sage); text-decoration:underline">✏️ 改名</a>` : '';
+            renameLinkEl.innerHTML = `<a href="javascript:void(0)" onclick="renameIngredientCostPrompt('${escapeHtmlAttr(name)}')" class="text-xs" style="color:var(--sage); text-decoration:underline">✏️ 改名</a>`;
             const owner = !existing ? findKeywordOwner(name, costs) : null;
             const linkedEl = document.getElementById('ingredient-cost-modal-linked');
             if (owner) {
@@ -13430,8 +13445,9 @@
                     if (newCode) await saveBarcodeToDictionary(newCode, name);
                 }
                 // 別名：比對這次輸入的跟原本的差異，多的連結上去、少的解除連結
+                // （先濾掉打得跟主要名稱一樣的別名，例如「醬油」自己設定成「醬油」的別名沒有意義，直接忽略）
                 const newAliases = document.getElementById('ingredient-cost-modal-aliases').value
-                    .split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+                    .split(/[,，、]/).map(s => s.trim()).filter(s => s && s !== name);
                 const freshCosts = await loadUserIngredientCosts(true);
                 const oldAliases = (freshCosts[name] && freshCosts[name].keywords) || [];
                 for (const old of oldAliases) if (!newAliases.includes(old)) await unlinkIngredientKeyword(name, old);
@@ -14450,41 +14466,27 @@
                 return;
             }
 
-            // ③一般條碼：去查Open Food Facts，查得到就自動帶入名稱/數量/單位；查不到的話名稱留空，
-            // 條碼號碼已經在條碼欄位裡了，直接打字輸入名稱、按加入冰箱就等於順便建檔，下次同一個條碼就查得到了
+            // ③一般條碼：直接用AI搭配網路搜尋去查這個條碼對應的商品是什麼——原本這裡有先查Open Food Facts，
+            // 但那個資料庫是全球共用的，查到的商品名稱常常是外文，對台灣商品不好用，拿掉改成統一用AI搜尋，
+            // AI回答時可以直接指定要繁體中文的商品名稱，比較實用
             nameInput.value = '';
             nameInput.placeholder = '查詢中...';
-            try {
-                const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${decodedText}.json`, {
-                    headers: { 'User-Agent': 'BakingRecipesApp - Web - Version 1.0' },
-                });
-                const data = await res.json();
-                if (data.status === 1 && data.product) {
-                    const p = data.product;
-                    const productName = p.product_name_zh || p.product_name || p.generic_name || '';
-                    const brand = p.brands ? `${p.brands} ` : '';
-                    if (productName) {
-                        nameInput.value = `${brand}${productName}`.trim();
-                        // 有些商品資料裡會有內容重量/容量，能抓到的話順便帶入數量/單位，抓不到就讓使用者自己填
-                        if (p.quantity) {
-                            const m = String(p.quantity).match(/([\d.]+)\s*([a-zA-Z]+)/);
-                            if (m) {
-                                document.getElementById('fridge-new-amount').value = m[1];
-                                document.getElementById('fridge-new-unit').value = m[2];
-                            }
-                        }
-                    } else {
-                        nameInput.placeholder = `查無商品名稱，條碼${decodedText}，請自己輸入`;
-                    }
-                } else {
-                    nameInput.placeholder = `查無商品資料，條碼${decodedText}，請自己輸入名稱建檔`;
-                }
-            } catch (err) {
-                nameInput.placeholder = `查詢失敗，條碼${decodedText}，請自己輸入名稱`;
-                console.warn('條碼查詢失敗', err && err.message);
-            }
+            await tryAIBarcodeSearch(decodedText, nameInput);
             nameInput.focus();
             if (nameInput.value) nameInput.select();
+        }
+        // 掃到一般條碼，讓AI搭配網路搜尋去查這個條碼號碼對應的商品是什麼
+        // （跟你自己上網搜尋條碼號碼是同樣的動作，交給AI代勞），這裡查不到才會真的放棄、讓使用者自己輸入
+        async function tryAIBarcodeSearch(code, nameInput) {
+            nameInput.placeholder = `查詢中...（AI搜尋中，請稍候）`;
+            const prompt = `請搜尋台灣商品條碼「${code}」對應的商品名稱是什麼（可能是食品/食材/調味料類）。找到的話只回傳商品的完整繁體中文名稱（含品牌跟規格，例如「金蘭醬油 590ml」），不要用英文或其他語言、不要有其他文字說明；如果搜尋不到任何結果，只回傳「查無資料」這四個字，不要猜測或編造名稱。`;
+            const text = await callAIProxy(prompt);
+            const cleaned = (text || '').trim().replace(/["「」]/g, '');
+            if (cleaned && !cleaned.includes('查無資料') && cleaned.length <= 60) {
+                nameInput.value = cleaned;
+            } else {
+                nameInput.placeholder = `查無商品資料，條碼${code}，請自己輸入名稱建檔`;
+            }
         }
 
         async function addFridgeItem() {
