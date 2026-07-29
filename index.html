@@ -11942,13 +11942,20 @@
             if (!fridgeItems.length) return; // 冰箱是空的，沒東西可以扣
             const rows = await computeFridgeMatchRows(recipe, factor, fridgeItems);
             let changed = false;
+            // 同一個groupKey（套用同一個品牌/通用名稱的食材們）只處理一次，用整組加總的需求量去扣，
+            // 不要每個食材列各自扣一次，不然同一批庫存會被重複扣好幾次
+            const processedGroups = new Set();
             rows.forEach(r => {
                 if (r.status === 'staple' || r.status === 'missing' || r.status === 'unsure') return; // 常備/沒有/單位不明都不自動扣，避免扣錯
                 if (!r.batches || !r.batches.length) return;
+                if (r.groupKey) {
+                    if (processedGroups.has(r.groupKey)) return; // 這一組已經處理過了，跳過
+                    processedGroups.add(r.groupKey);
+                }
                 if (r.neededGrams != null) {
-                    // 依到期日順序（快到期的優先）一批一批扣，直到扣滿需要的克數為止，
+                    // 依到期日順序（快到期的優先）一批一批扣，直到扣滿整組需要的克數為止，
                     // 這樣「舊的先用完」符合實際廚房邏輯，不會明明有新的一批卻先動到快過期的那批的克數比例
-                    let remainingGrams = r.neededGrams;
+                    let remainingGrams = r.groupTotalNeededGrams != null ? r.groupTotalNeededGrams : r.neededGrams;
                     r.batches.forEach(b => {
                         if (remainingGrams <= 0) return;
                         const item = fridgeItems[b.idx];
@@ -11961,7 +11968,8 @@
                         changed = true;
                     });
                 } else {
-                    // 換算不出克數，但單位剛好一樣的情況：一批一批直接相減
+                    // 換算不出克數，但單位剛好一樣的情況：一批一批直接相減（這種情況沒辦法正確分組加總，
+                    // 只能用這一列自己的需求量，比較保守）
                     let remaining = r.needed;
                     r.batches.forEach(idx => {
                         if (remaining <= 0) return;
@@ -14434,48 +14442,69 @@
         // 單位換算沿用食材成本/熱量系統同一套resolveGrams，不用要求食譜跟冰箱單位完全一樣，
         // 例如食譜寫「200g」冰箱記「1顆」，都會先各自換算成克再比較
         async function computeFridgeMatchRows(recipe, factor, fridgeItems) {
-            return Promise.all(recipe.ingredients.map(async ing => {
+            // 第一階段：算出每個食材各自套用的品牌名稱、是不是常備食材、需要多少
+            const perIngredient = await Promise.all(recipe.ingredients.map(async ing => {
                 const matchNames = await resolveFridgeMatchNames(ing.name);
-                if (await isStapleIngredient(matchNames[0])) {
-                    return { name: ing.name, matchName: matchNames[0], batches: [], needed: 0, unit: ing.unit, status: 'staple', text: '常備食材' };
-                }
-                const matchName = matchNames.join('、'); // 顯示用：可能是一個名稱，也可能是好幾個品牌並列
+                const staple = await isStapleIngredient(matchNames[0]);
                 const needed = ing.amount * factor;
-                // 找出所有「符合任一個套用品牌名稱」的批次（可能好幾種品牌、每種又好幾批不同到期日/數量），
-                // 依到期日排序，快到期的排前面，沒填到期日的排最後面，大功告成扣除的時候會照這個順序先扣快到期的，
-                // 不分品牌，哪一批快到期就先扣哪一批
+                const neededGrams = await resolveGrams(needed, ing.unit, ing.name);
+                return { ing, matchNames, staple, needed, neededGrams };
+            }));
+
+            // 第二階段：把「套用品牌名稱完全一樣」的食材分成同一組——這一步很重要，例如「全蛋液」「蛋黃」
+            // 如果都套用到同一筆「雞蛋」，不分組的話，兩個食材列會各自把冰箱裡同一批雞蛋庫存都當成「我自己的」，
+            // 結果同一批庫存被重複認列成兩份都夠用，但實際上加起來根本不夠
+            const groups = {};
+            perIngredient.forEach(p => {
+                if (p.staple) return;
+                const key = [...p.matchNames].sort().join('|');
+                if (!groups[key]) groups[key] = { matchNames: p.matchNames, totalNeededGrams: 0, hasNullGrams: false };
+                if (p.neededGrams === null) groups[key].hasNullGrams = true;
+                else groups[key].totalNeededGrams += p.neededGrams;
+            });
+
+            // 第三階段：每一組只去查一次冰箱庫存，組內所有食材共用同一份庫存資訊，不重複計算
+            await Promise.all(Object.values(groups).map(async group => {
                 const batchIdxs = fridgeItems
                     .map((item, idx) => ({ item, idx }))
-                    .filter(({ item }) => matchNames.includes(item.name.trim()))
+                    .filter(({ item }) => group.matchNames.includes(item.name.trim()))
                     .sort((a, b) => {
                         if (!a.item.expiryDate && !b.item.expiryDate) return 0;
                         if (!a.item.expiryDate) return 1;
                         if (!b.item.expiryDate) return -1;
                         return a.item.expiryDate.localeCompare(b.item.expiryDate);
                     });
-
-                if (!batchIdxs.length) return { name: ing.name, matchName, batches: [], needed, unit: ing.unit, status: 'missing', text: `需要${needed}${ing.unit}・庫存：無` };
-
-                const neededGrams = await resolveGrams(needed, ing.unit, ing.name);
-                if (neededGrams === null) {
-                    // 換算不出來（太冷門的單位），退回保守做法：加總同單位的批次直接比較數量
-                    const sameUnitTotal = batchIdxs.filter(b => b.item.unit === ing.unit).reduce((sum, b) => sum + b.item.amount, 0);
-                    if (sameUnitTotal >= needed) return { name: ing.name, matchName, batches: batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: sameUnitTotal > 0 ? 'ok' : 'unsure', text: `需要${needed}${ing.unit}・庫存${sameUnitTotal}${ing.unit}` };
-                    return { name: ing.name, matchName, batches: batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: 'unsure', text: `需要${needed}${ing.unit}・庫存${sameUnitTotal}${ing.unit}（單位換算不出來，數量請自行確認）` };
-                }
-                // 把每一批換算成克，加總起來，同時記住個別批次的克數（扣除的時候要照順序一批一批扣）
+                group.batchIdxs = batchIdxs;
+                if (!batchIdxs.length) { group.stockGrams = 0; group.totalAmountText = ''; group.validBatches = []; return; }
                 const batchGrams = await Promise.all(batchIdxs.map(async b => ({
                     idx: b.idx,
-                    grams: await resolveGrams(b.item.amount, b.item.unit, matchName),
+                    grams: await resolveGrams(b.item.amount, b.item.unit, group.matchNames[0]),
                 })));
-                const validBatches = batchGrams.filter(b => b.grams !== null);
-                const stockGrams = validBatches.reduce((sum, b) => sum + b.grams, 0);
-                const totalAmountText = batchIdxs.map(b => `${b.item.amount}${b.item.unit}`).join('+');
-                const neededText = `需要${needed}${ing.unit}`;
-                if (!validBatches.length) return { name: ing.name, matchName, batches: batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: 'unsure', text: `${neededText}・庫存${totalAmountText}（單位換算不出來，數量請自行確認）` };
-                if (stockGrams >= neededGrams) return { name: ing.name, matchName, batches: validBatches, needed, neededGrams, stockGrams, unit: ing.unit, status: 'ok', text: `${neededText}・庫存${totalAmountText}` };
-                return { name: ing.name, matchName, batches: validBatches, needed, neededGrams, stockGrams, unit: ing.unit, status: 'low', text: `${neededText}・庫存${totalAmountText}` };
+                group.validBatches = batchGrams.filter(b => b.grams !== null);
+                group.stockGrams = group.validBatches.reduce((sum, b) => sum + b.grams, 0);
+                group.totalAmountText = batchIdxs.map(b => `${b.item.amount}${b.item.unit}`).join('+');
             }));
+
+            // 第四階段：組裝每個食材各自要顯示的那一列，庫存夠不夠是看「整組加起來需要多少」去判斷，不是只看自己這一列
+            return perIngredient.map(p => {
+                const { ing, matchNames, staple, needed, neededGrams } = p;
+                if (staple) return { name: ing.name, matchName: matchNames[0], batches: [], needed: 0, unit: ing.unit, status: 'staple', text: '常備食材' };
+                const key = [...matchNames].sort().join('|');
+                const group = groups[key];
+                const matchName = matchNames.join('、');
+                const neededText = `需要${needed}${ing.unit}`;
+                if (!group.batchIdxs.length) return { name: ing.name, matchName, batches: [], needed, unit: ing.unit, status: 'missing', text: `${neededText}・庫存：無`, groupKey: key };
+                if (group.hasNullGrams || neededGrams === null) {
+                    // 換算不出克數的情況（太冷門的單位），退回保守做法：加總同單位的批次直接比較數量，
+                    // 這種情況沒辦法正確分組加總，只能各自獨立比較，比較不精準但至少有個參考
+                    const sameUnitTotal = group.batchIdxs.filter(b => b.item.unit === ing.unit).reduce((sum, b) => sum + b.item.amount, 0);
+                    if (sameUnitTotal >= needed) return { name: ing.name, matchName, batches: group.batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: sameUnitTotal > 0 ? 'ok' : 'unsure', text: `${neededText}・庫存${sameUnitTotal}${ing.unit}` };
+                    return { name: ing.name, matchName, batches: group.batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: 'unsure', text: `${neededText}・庫存${sameUnitTotal}${ing.unit}（單位換算不出來，數量請自行確認）` };
+                }
+                if (!group.validBatches.length) return { name: ing.name, matchName, batches: group.batchIdxs.map(b => b.idx), needed, unit: ing.unit, status: 'unsure', text: `${neededText}・庫存${group.totalAmountText}（單位換算不出來，數量請自行確認）` };
+                const status = group.stockGrams >= group.totalNeededGrams ? 'ok' : 'low';
+                return { name: ing.name, matchName, batches: group.validBatches, needed, neededGrams, stockGrams: group.stockGrams, unit: ing.unit, status, text: `${neededText}・庫存${group.totalAmountText}`, groupKey: key, groupTotalNeededGrams: group.totalNeededGrams };
+            });
         }
         async function updateFridgeBox(recipe, factor) {
             const box = document.getElementById('detail-fridge');
