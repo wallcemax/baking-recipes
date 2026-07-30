@@ -131,16 +131,6 @@
         #toast-container .toast-item { pointer-events: auto; }
         @keyframes toastSlideIn { from { transform: translateY(120%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes focusRingPulse {
-            0% { transform: scale(1.3); opacity: 0; }
-            30% { opacity: 1; }
-            100% { transform: scale(1); opacity: 0; }
-        }
-        .focus-ring {
-            position: absolute; width: 64px; height: 64px; margin-left: -32px; margin-top: -32px;
-            border: 2px solid #FFD54A; border-radius: 999px; pointer-events: none;
-            animation: focusRingPulse 0.6s ease-out forwards;
-        }
         .toast-item {
             background: var(--espresso); color: #fff; padding: 0.85rem 1.15rem;
             border-radius: 1rem; font-size: 0.9rem; line-height: 1.5;
@@ -578,9 +568,11 @@
     <div id="barcode-scanner-wrap" class="hidden fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="z-index:60;">
         <div class="bg-white w-full max-w-md rounded-[2rem] overflow-hidden p-6">
             <h3 class="font-display text-lg font-bold mb-3">📷 掃描條碼</h3>
-            <div style="position:relative" onclick="tapToRefocus(event)">
-                <div id="barcode-reader" style="width:100%; border-radius:1rem; overflow:hidden;"></div>
-                <p class="text-xs text-center mt-1" style="color:#B3A492">畫面模糊/對不到焦的話，點一下畫面重新對焦</p>
+            <div id="barcode-reader" style="width:100%; border-radius:1rem; overflow:hidden;"></div>
+            <div id="barcode-zoom-wrap" class="hidden mt-3 flex items-center gap-2">
+                <span class="text-sm">🔍</span>
+                <input id="barcode-zoom-slider" type="range" min="1" max="5" step="0.1" value="1" oninput="setBarcodeZoom(this.value)" class="flex-1">
+                <span class="text-xs" style="color:#B3A492">放大鏡頭，較小/模糊的條碼可以試試看</span>
             </div>
             <button onclick="closeBarcodeScanner()" class="btn-secondary w-full mt-4">取消掃描</button>
         </div>
@@ -14848,53 +14840,29 @@
                 },
                 onSuccessCallback || onBarcodeScanSuccess, // 沒有特別指定的話，預設走冰箱新增食材那套流程
                 () => {} // 掃描過程中每一幀掃不到都會呼叫一次，這是正常現象，不用處理
-            ).then(async () => {
-                // 串流開始之後，再次明確套用一次「連續自動對焦」——有些瀏覽器/裝置對於一開始
-                // getUserMedia就要求的對焦設定支援度不穩定，串流開始「之後」再套用一次反而比較容易生效。
-                // 這是網頁標準能做到最接近「自動偵測物體對焦」的做法，實際效果會因手機廠牌/瀏覽器而不同，
-                // 沒辦法完全比照原生App的相機控制能力（例如iPhone的Safari對這塊向來限制得比較嚴格）
+            ).then(() => {
+                // 對焦控制實測在使用者裝置上完全沒有作用（瀏覽器沒有開放這項權限給網頁），
+                // 改回檢查這台裝置的鏡頭支不支援縮放，支援的話顯示手動縮放滑桿——放大鏡頭雖然不是
+                // 真正意義上的「對焦」，但確實有讓小/模糊的條碼變得看得清楚、能成功掃描的實際案例
                 try {
-                    await barcodeScannerInstance.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] });
-                } catch (err) { /* 這台裝置/瀏覽器不支援就算了，不影響正常掃描，畫面上不用特別提示 */ }
+                    const capabilities = barcodeScannerInstance.getRunningTrackCapabilities();
+                    if (capabilities && capabilities.zoom) {
+                        const slider = document.getElementById('barcode-zoom-slider');
+                        slider.min = capabilities.zoom.min || 1;
+                        slider.max = capabilities.zoom.max || 5;
+                        slider.step = capabilities.zoom.step || 0.1;
+                        slider.value = capabilities.zoom.min || 1;
+                        document.getElementById('barcode-zoom-wrap').classList.remove('hidden');
+                    }
+                } catch (err) { /* 不支援就算了，不影響正常掃描 */ }
             }).catch(err => {
                 alert('無法開啟相機：' + err + '（請確認已允許瀏覽器使用相機權限）');
                 document.getElementById('barcode-scanner-wrap').classList.add('hidden');
             });
         }
-        // 點一下畫面重新對焦：顯示一個對焦圈動畫當作視覺回饋（跟原生相機App的手感一致），
-        // 同時重新套用一次對焦設定——網頁標準沒有「針對某個座標點對焦」這種精細控制，
-        // 只能透過「先切換掉、再切回連續對焦」這個小技巧，讓部分瀏覽器/裝置的相機驅動重新評估對焦，
-        // 不是每個裝置都會生效（受限於瀏覽器本身能開放給網頁的相機控制範圍）
-        async function tapToRefocus(event) {
-            const wrap = event.currentTarget;
-            const rect = wrap.getBoundingClientRect();
-            const ring = document.createElement('div');
-            ring.className = 'focus-ring';
-            ring.style.left = `${event.clientX - rect.left}px`;
-            ring.style.top = `${event.clientY - rect.top}px`;
-            wrap.appendChild(ring);
-            setTimeout(() => ring.remove(), 700);
-
+        function setBarcodeZoom(value) {
             if (!barcodeScannerInstance) return;
-            // 先確認這台裝置的鏡頭有沒有回報支援focusMode這個控制項——如果capabilities裡面根本沒有
-            // focusMode，代表這個瀏覽器/裝置從一開始就沒有把對焦控制權限開放給網頁，不管怎麼呼叫都不會有用，
-            // 這種情況會在console留下訊息，方便之後確認真正的原因
-            try {
-                const capabilities = barcodeScannerInstance.getRunningTrackCapabilities();
-                if (!capabilities || !capabilities.focusMode) {
-                    console.warn('這個瀏覽器/裝置沒有回報支援focusMode控制，網頁沒辦法對這台裝置的相機做對焦控制');
-                    return;
-                }
-                // single-shot是「觸發一次性對焦」，跟continuous(持續自動對焦)是不同的機制，
-                // 有些裝置對這兩種模式的支援情況不一樣，這裡改試single-shot看看會不會有反應
-                if (capabilities.focusMode.includes('single-shot')) {
-                    await barcodeScannerInstance.applyVideoConstraints({ advanced: [{ focusMode: 'single-shot' }] });
-                } else {
-                    await barcodeScannerInstance.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] });
-                }
-            } catch (err) {
-                console.warn('嘗試觸發對焦失敗', err && err.message);
-            }
+            barcodeScannerInstance.applyVideoConstraints({ advanced: [{ zoom: Number(value) }] }).catch(() => {});
         }
         function closeBarcodeScanner() {
             if (barcodeScannerInstance) {
@@ -14904,6 +14872,7 @@
                 });
             }
             document.getElementById('barcode-scanner-wrap').classList.add('hidden');
+            document.getElementById('barcode-zoom-wrap').classList.add('hidden');
         }
         function isLikelyUrl(text) {
             return /^https?:\/\//i.test(text.trim());
