@@ -124,11 +124,12 @@
 
         /* Toast提示（取代alert()）：右上角滑入，幾秒後自動淡出消失 */
         #toast-container {
-            position: fixed; top: 1rem; right: 1rem; z-index: 9999;
-            display: flex; flex-direction: column; gap: 0.6rem;
-            max-width: min(90vw, 360px);
+            position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999;
+            display: flex; flex-direction: column-reverse; gap: 0.6rem; align-items: center;
+            max-width: min(90vw, 360px); pointer-events: none;
         }
-        @keyframes toastSlideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        #toast-container .toast-item { pointer-events: auto; }
+        @keyframes toastSlideIn { from { transform: translateY(120%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .toast-item {
             background: var(--espresso); color: #fff; padding: 0.85rem 1.15rem;
@@ -137,7 +138,7 @@
             animation: toastSlideIn .28s cubic-bezier(.2,.8,.3,1);
             transition: opacity .25s ease, transform .25s ease;
         }
-        .toast-item.toast-leaving { opacity: 0; transform: translateX(30px); }
+        .toast-item.toast-leaving { opacity: 0; transform: translateY(20px); }
         .toast-item.toast-success { background: var(--sage); }
         .toast-item.toast-error { background: #A6362F; }
 
@@ -14822,16 +14823,21 @@
             document.getElementById('barcode-scanner-wrap').classList.remove('hidden');
             barcodeScannerInstance = new Html5Qrcode('barcode-reader');
             barcodeScannerInstance.start(
+                { facingMode: 'environment' }, // 第一個參數只能放「單一個」鏡頭選擇條件，不能塞解析度等其他設定進來，否則html5-qrcode會直接拒絕、相機開不了
                 {
-                    facingMode: 'environment', // 優先用手機後鏡頭
-                    // 明確要求較高解析度的畫面（不指定的話，瀏覽器常常會給比較低解析度的預設值），
-                    // 對於店家自己印的標籤（熱感應貼紙，通常字體較小、印刷品質也不如正式商品包裝銳利），
-                    // 解析度越高，掃描器能分析的細節就越多，比較容易辨識出來
-                    width: { ideal: 1920, min: 1280 },
-                    height: { ideal: 1080, min: 720 },
-                    advanced: [{ focusMode: 'continuous' }], // 嘗試開啟連續自動對焦（不是所有瀏覽器/裝置都支援，不支援的話會被忽略，不影響掃描）
+                    fps: 10,
+                    qrbox: { width: 280, height: 180 }, // 掃描框放大一些，比較容易對準較小的標籤
+                    aspectRatio: 1.777,
+                    // 解析度/對焦這些額外的視訊條件要放在這個第二參數的videoConstraints裡：
+                    // 明確要求較高解析度的畫面，對於店家自己印的標籤（熱感應貼紙，通常字體較小、印刷品質
+                    // 也不如正式商品包裝銳利），解析度越高，掃描器能分析的細節就越多，比較容易辨識出來
+                    videoConstraints: {
+                        facingMode: 'environment',
+                        width: { ideal: 1920, min: 1280 },
+                        height: { ideal: 1080, min: 720 },
+                        advanced: [{ focusMode: 'continuous' }], // 嘗試開啟連續自動對焦（不是所有瀏覽器/裝置都支援，不支援的話會被忽略，不影響掃描）
+                    },
                 },
-                { fps: 10, qrbox: { width: 280, height: 180 }, aspectRatio: 1.777 }, // 掃描框放大一些，比較容易對準較小的標籤
                 onSuccessCallback || onBarcodeScanSuccess, // 沒有特別指定的話，預設走冰箱新增食材那套流程
                 () => {} // 掃描過程中每一幀掃不到都會呼叫一次，這是正常現象，不用處理
             ).then(() => {
