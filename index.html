@@ -430,6 +430,7 @@
             <div class="px-6 py-6">
                 <p class="font-medium mb-3"><span id="ingredient-cost-modal-name"></span> <span id="ingredient-cost-modal-rename-link"></span></p>
                 <div id="ingredient-cost-modal-linked" class="mb-2"></div>
+                <div id="ingredient-cost-modal-specs" class="mb-3"></div>
                 <div id="ingredient-cost-modal-similar" class="mb-4"></div>
                 <p class="text-xs mb-2" style="color:#B3A492">照實際購買方式填，例如「麵粉 59元 買1000g」，系統自動換算統一單價</p>
                 <div class="mb-2">
@@ -13613,6 +13614,40 @@
         }
         // 把「畫面要顯示什麼」的邏輯獨立出來，openIngredientCostEditor（第一次打開）跟套用/取消套用
         // （視窗已經開著、只是狀態變了）都會呼叫這個，不用重複寫一次
+        // 用跟常備食材清單一樣的「標籤+X」樣式，把這個食材底下記錄過的每一種規格列出來，
+        // 方便一眼看到、也能直接刪掉打錯或不小心多存的規格，不用整筆刪掉重建
+        function renderIngredientCostModalSpecs(name, existing) {
+            const el = document.getElementById('ingredient-cost-modal-specs');
+            if (!el) return;
+            const specs = (existing && Array.isArray(existing.specs)) ? existing.specs : [];
+            if (!specs.length) { el.innerHTML = ''; return; }
+            el.innerHTML = `<p class="text-xs mb-1" style="color:#B3A492">已記錄的規格（點X可以刪除打錯的規格）</p>` +
+                specs.map(s => `<span class="chip text-xs" style="display:inline-flex; align-items:center; gap:4px; margin:2px">${s.amount}${s.unit} $${s.price}<button type="button" onclick="removeIngredientCostSpec('${escapeHtmlAttr(name)}', ${s.amount}, '${escapeHtmlAttr(s.unit)}')" style="color:#C4453F">×</button></span>`).join('');
+        }
+        // 刪除指定的規格：先詢問確認，避免手滑點到；如果刪掉的剛好是目前顯示在成本頂層的那個規格，
+        // 順便把pricePer100g/purchaseAmount等頂層欄位改成剩下規格裡最近更新的那一筆，維持資料一致
+        async function removeIngredientCostSpec(name, amount, unit) {
+            if (!confirm(`確定要刪除「${name}」規格${amount}${unit}這筆資料嗎？`)) return;
+            const ok = await mutateIngredientCostsAtomic(items => {
+                const entry = items[name];
+                if (!entry || !Array.isArray(entry.specs)) return;
+                entry.specs = entry.specs.filter(s => !(s.amount === amount && s.unit === unit));
+                // 如果刪掉的剛好是目前頂層顯示用的那個規格，改用剩下規格裡最近更新的那一筆取代，
+                // 沒有剩下規格的話就保持頂層的舊資料（至少pricePer100g還能繼續用）
+                if (entry.purchaseAmount === amount && entry.purchaseUnit === unit && entry.specs.length) {
+                    const latest = entry.specs.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+                    entry.pricePer100g = latest.pricePer100g;
+                    entry.purchaseAmount = latest.amount;
+                    entry.purchaseUnit = latest.unit;
+                    entry.purchasePrice = latest.price;
+                }
+            });
+            if (ok) {
+                renderIngredientCostModalView(name);
+                const myModal = document.getElementById('my-ingredient-costs-modal');
+                if (myModal && !myModal.classList.contains('hidden')) renderMyIngredientCostsList();
+            }
+        }
         async function renderIngredientCostModalView(name) {
             ingredientCostModalTarget = name;
             document.getElementById('ingredient-cost-modal-name').textContent = name;
@@ -13634,6 +13669,7 @@
                 linkedEl.innerHTML = '';
             }
             renderSimilarIngredientDropdown(name, costs);
+            renderIngredientCostModalSpecs(name, existing);
             // 有記錄過上次輸入的「花多少錢買多少數量」就帶回來，沒有的話用每100克單價換算回一個預設的100g版本，方便使用者參考
             document.getElementById('ingredient-cost-modal-price').value = existing && existing.purchaseAmount ? existing.purchasePrice : (existing ? existing.pricePer100g : '');
             document.getElementById('ingredient-cost-modal-amount').value = existing && existing.purchaseAmount ? existing.purchaseAmount : (existing ? 100 : '');
@@ -15836,7 +15872,7 @@
 
         // 上傳前先在瀏覽器端壓縮/縮小圖片，節省上傳流量跟 Cloudinary 儲存空間：
         // 手機拍照原始檔案常常好幾 MB，壓縮後通常只剩幾百 KB，網頁顯示用幾乎看不出畫質差異
-        function compressImageForUpload(file, maxDim = 1600, quality = 0.82) {
+        function compressImageForUpload(file, maxDim = 1400, quality = 0.8) {
             return new Promise((resolve) => {
                 let settled = false;
                 // 逾時保護那條路徑之前忘記釋放Object URL，如果連續處理很多張圖片、一直卡到逾時，
@@ -15894,7 +15930,14 @@
         }
 
         async function uploadImageToCloudinary(file) {
-            const compressed = await compressImageForUpload(file);
+            let compressed = await compressImageForUpload(file);
+            // 如果壓縮失敗（退回用原始檔案，也就是compressed跟file是同一個參照），先不要急著直接
+            // 用原始檔案上傳——原始檔案通常比較大，上傳失敗機率更高。稍微停頓一下讓瀏覽器有機會
+            // 釋放資源，再重新嘗試壓縮一次，真的還是不行才退回用原始檔案
+            if (compressed === file) {
+                await new Promise(r => setTimeout(r, 600));
+                compressed = await compressImageForUpload(file);
+            }
             return await uploadCompressedWithRetry(compressed);
         }
         // 手機網路（WiFi/行動網路切換、訊號不穩、切去相機App導致頁面被瀏覽器暫停）常常會讓上傳中途斷掉，
@@ -16092,7 +16135,7 @@
                         failedStepIdx = stepIdx; // 先記住正在處理哪一步，萬一失敗才知道是哪一張
                         // 連續處理好幾張圖片的時候，每張中間留一點緩衝時間，讓瀏覽器有機會釋放剛剛
                         // 解碼過的圖片資料、做記憶體回收，減少「處理越多張、後面越容易隨機失敗」的資源壓力
-                        if (processedCount > 0) await new Promise(r => setTimeout(r, 400));
+                        if (processedCount > 0) await new Promise(r => setTimeout(r, 800));
                         const url = await uploadImageToCloudinary(file);
                         uploadedStepImageUrls.set(stepIdx, url);
                         processedCount++;
