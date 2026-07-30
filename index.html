@@ -664,7 +664,12 @@
                 </div>
             </div>
             <div class="sticky bottom-0 px-6 sm:px-8 py-4 border-t bg-white shrink-0" style="border-color:var(--line)">
-                <button onclick="openBarcodeScanner()" class="btn-sage w-full">📷 掃描條碼新增食材</button>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="openBarcodeScanner()" class="btn-sage">📷 條碼新增</button>
+                    <label for="fridge-item-photo-file" class="btn-sage flex items-center justify-center cursor-pointer">📸 拍照新增</label>
+                    <input type="file" id="fridge-item-photo-file" accept="image/jpeg,image/png,image/webp" capture="environment" class="hidden" onchange="handleFridgeItemPhotoOcr(event)">
+                </div>
+                <p id="fridge-item-photo-status" class="hidden text-xs mt-2 text-center" style="color:var(--chambray)"></p>
             </div>
         </div>
     </div>
@@ -14691,6 +14696,40 @@
         // 找出包裝上印的日期文字，自動帶入「有效期限」欄位，不用自己找日期、自己輸入
         // 拍照自動辨識食譜：把一張或多張照片（手寫筆記、食譜書內頁、包裝作法說明）送給Gemini分析，
         // 自動整理成名稱、食材清單、作法步驟，直接幫忙填好表單，不用自己整段重新打字輸入
+        // 拍照辨識商品（冰箱新增食材用）：拍商品包裝正面照片，AI直接讀出品牌名稱跟規格數量，
+        // 跳過條碼查詢這一步，適合條碼掃不到、或商品根本沒有條碼的情況（例如店家分裝品）
+        async function handleFridgeItemPhotoOcr(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const statusEl = document.getElementById('fridge-item-photo-status');
+            statusEl.textContent = '🔍 辨識中，請稍候...';
+            statusEl.classList.remove('hidden');
+            try {
+                const compressed = await compressImageForUpload(file, 1600, 0.85);
+                const base64 = await fileToBase64(compressed);
+                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'read_product_photo', imageBase64: base64, mimeType: compressed.type || 'image/jpeg' }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '辨識失敗');
+                if (!data.name) {
+                    statusEl.innerHTML = `⚠️ 照片上辨識不出商品資訊，麻煩拍清楚一點再試一次，或是直接手動輸入<br>
+                        <span style="color:#B3A492">診斷資訊（使用模型：${data.modelUsed || '未知'}）：${(data.raw || '（沒有任何回應內容）').replace(/</g, '&lt;')}</span>`;
+                    return;
+                }
+                document.getElementById('fridge-new-name').value = data.name;
+                if (data.amount) document.getElementById('fridge-new-amount').value = data.amount;
+                if (data.unit) document.getElementById('fridge-new-unit').value = data.unit;
+                statusEl.textContent = `✅ 已自動帶入：${data.name}${data.amount && data.unit ? `（${data.amount}${data.unit}）` : ''}，請確認正確、填好份數/花費再加入冰箱`;
+                document.getElementById('fridge-new-name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } catch (err) {
+                statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
+            } finally {
+                event.target.value = '';
+            }
+        }
         async function handleRecipeOcr(event) {
             const files = Array.from(event.target.files || []);
             if (!files.length) return;
@@ -14717,23 +14756,33 @@
                         <span style="color:#B3A492">診斷資訊（使用模型：${data.modelUsed || '未知'}）：${(data.raw || '（沒有任何回應內容）').replace(/</g, '&lt;')}</span>`;
                     return;
                 }
-                // 填入食譜名稱
-                if (data.name) document.getElementById('name').value = data.name;
-                // 清空原本的食材/步驟欄位，改用辨識出來的內容重建（如果原本已經手動填了一些，這樣會被取代掉，
-                // 所以這個功能比較適合在「開始新增食譜的第一步」就先用，不要等手動填了一堆之後才用）
-                document.getElementById('ingredients-container').innerHTML = '';
-                document.getElementById('steps-container').innerHTML = '';
+                // 填入食譜名稱（只有辨識到名稱、而且目前欄位是空的時候才填入，不會覆蓋掉你已經自己填好的名稱）
+                if (data.name && !document.getElementById('name').value.trim()) document.getElementById('name').value = data.name;
+
+                // 把辨識出來的內容「加進去」現有的食材/步驟清單，而不是整個清空重建——這樣先拍食材、
+                // 再拍作法，兩次的內容都會保留下來，不會像之前那樣後拍的把前面拍的蓋掉。
+                // 如果容器裡目前的欄位都還是空白的（例如剛打開新增食譜、還沒填任何東西），才會先清掉
+                // 那些空白欄位，避免每次都疊加出多餘的空白列
+                const ingContainer = document.getElementById('ingredients-container');
+                const allIngRowsEmpty = [...ingContainer.querySelectorAll('[data-role="ing-name"]')].every(el => !el.value.trim());
+                if (allIngRowsEmpty) ingContainer.innerHTML = '';
                 if (data.ingredients && data.ingredients.length) {
-                    data.ingredients.forEach(ing => addIngredientField('', ing.name, ing.amount || 0, ing.unit || ''));
-                } else {
-                    addIngredientField(); // 沒辨識到食材的話，至少留一個空欄位可以手動填
+                    data.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, ing.amount || 0, ing.unit || ''));
+                } else if (allIngRowsEmpty) {
+                    addIngredientField(); // 這次沒辨識到食材、容器又清空了，至少留一個空欄位可以手動填
                 }
+
+                const stepContainer = document.getElementById('steps-container');
+                const allStepRowsEmpty = [...stepContainer.querySelectorAll('[data-role="step-text"]')].every(el => !el.value.trim());
+                if (allStepRowsEmpty) stepContainer.innerHTML = '';
                 if (data.steps && data.steps.length) {
                     data.steps.forEach(stepText => addStepField(stepText));
-                } else {
+                } else if (allStepRowsEmpty) {
                     addStepField();
                 }
-                statusEl.textContent = `✅ 已自動帶入！食材${data.ingredients.length}項、步驟${data.steps.length}項，用的模型：${data.modelUsed || '未知'}——請務必檢查內容是否正確再儲存`;
+                renumberStepLabels(); // 加了新的步驟進去，重新排一次編號
+
+                statusEl.textContent = `✅ 已加入辨識結果！這次新增食材${data.ingredients.length}項、步驟${data.steps.length}項，用的模型：${data.modelUsed || '未知'}——請務必檢查內容是否正確再儲存`;
             } catch (err) {
                 statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
             } finally {
