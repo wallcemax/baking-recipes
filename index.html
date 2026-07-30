@@ -14858,6 +14858,7 @@
             }).catch(err => {
                 alert('無法開啟相機：' + err + '（請確認已允許瀏覽器使用相機權限）');
                 document.getElementById('barcode-scanner-wrap').classList.add('hidden');
+                barcodeScannerInstance = null; // 相機根本沒開成功，這個物件從沒真正啟動過，重設掉避免之後關閉時對它呼叫停止而出錯、卡住整個關閉流程
             });
         }
         function setBarcodeZoom(value) {
@@ -14865,11 +14866,20 @@
             barcodeScannerInstance.applyVideoConstraints({ advanced: [{ zoom: Number(value) }] }).catch(() => {});
         }
         function closeBarcodeScanner() {
-            if (barcodeScannerInstance) {
-                barcodeScannerInstance.stop().catch(() => {}).finally(() => {
-                    barcodeScannerInstance.clear();
-                    barcodeScannerInstance = null;
-                });
+            // 相機開啟失敗的時候（例如電腦沒有鏡頭），掃描器物件其實已經被建立、只是沒有真的成功啟動，
+            // 這種「還沒真的開始掃描」的狀態下呼叫.stop()，有些瀏覽器會直接同步拋出例外（不是Promise
+            // rejection，用.catch()接不住），之前沒有防護的話，會導致這個函式整個中斷執行，後面「隱藏
+            // 視窗」那幾行完全沒機會跑到——這正是點X關不掉視窗的原因。整段包進try/catch，確保不管掃描器
+            // 是什麼狀態，畫面清理的部分都一定會執行到
+            try {
+                if (barcodeScannerInstance) {
+                    barcodeScannerInstance.stop().catch(() => {}).finally(() => {
+                        try { barcodeScannerInstance.clear(); } catch (e) { /* 忽略 */ }
+                        barcodeScannerInstance = null;
+                    });
+                }
+            } catch (err) {
+                barcodeScannerInstance = null;
             }
             document.getElementById('barcode-scanner-wrap').classList.add('hidden');
             document.getElementById('barcode-zoom-wrap').classList.add('hidden');
