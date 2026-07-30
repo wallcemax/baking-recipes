@@ -484,10 +484,7 @@
                 <div class="grid grid-cols-3 gap-2 mb-1">
                     <div class="col-span-3">
                         <label class="text-xs block mb-1" style="color:#B3A492">條碼（選填，可先在賣場掃碼記價比價，不影響庫存）</label>
-                        <div class="flex gap-2">
-                            <input id="my-cost-new-barcode" placeholder="條碼" class="form-input flex-1">
-                            <button onclick="scanIntoBarcodeField('my-cost-new-barcode')" class="btn-sage shrink-0 !px-3 !py-0" style="border-radius:0.75rem" aria-label="鏡頭掃碼" title="鏡頭掃碼">📷</button>
-                        </div>
+                        <input id="my-cost-new-barcode" placeholder="條碼" class="form-input">
                     </div>
                     <div class="col-span-3">
                         <label class="text-xs block mb-1" style="color:#B3A492">名稱</label>
@@ -625,12 +622,7 @@
                 <div class="grid grid-cols-1 gap-2 mb-1">
                     <div>
                         <label class="text-xs block mb-1" style="color:#B3A492">有效期限（選填）</label>
-                        <div class="flex gap-2">
-                            <input id="fridge-new-expiry" type="date" class="form-input flex-1">
-                            <label for="fridge-expiry-ocr-file" class="btn-sage shrink-0 !px-3 !py-0 flex items-center justify-center cursor-pointer" style="border-radius:0.75rem" title="拍照自動辨識保存日期">📷</label>
-                            <input type="file" id="fridge-expiry-ocr-file" accept="image/jpeg,image/png,image/webp" capture="environment" class="hidden" onchange="handleExpiryDateOcr(event)">
-                        </div>
-                        <p id="fridge-expiry-ocr-status" class="hidden text-xs mt-1" style="color:var(--chambray)"></p>
+                        <input id="fridge-new-expiry" type="date" class="form-input">
                     </div>
                 </div>
                 <p id="fridge-new-hint-text" class="text-xs mb-2" style="color:#B3A492">💡 規格是固定參考單位（例如麵粉都用600g），買多份只需改「份數」；花費選填，填了會同步更新食材成本</p>
@@ -665,8 +657,8 @@
             </div>
             <div class="sticky bottom-0 px-6 sm:px-8 py-4 border-t bg-white shrink-0" style="border-color:var(--line)">
                 <div class="grid grid-cols-2 gap-2">
-                    <button onclick="openBarcodeScanner()" class="btn-sage">📷 條碼新增</button>
                     <label for="fridge-item-photo-file" class="btn-sage flex items-center justify-center cursor-pointer">📸 拍照新增</label>
+                    <button onclick="openBarcodeScanner()" class="btn-sage">🏷️ 條碼新增</button>
                     <input type="file" id="fridge-item-photo-file" accept="image/jpeg,image/png,image/webp" capture="environment" class="hidden" onchange="handleFridgeItemPhotoOcr(event)">
                 </div>
                 <p id="fridge-item-photo-status" class="hidden text-xs mt-2 text-center" style="color:var(--chambray)"></p>
@@ -14797,37 +14789,7 @@
                 event.target.value = '';
             }
         }
-        async function handleExpiryDateOcr(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            const statusEl = document.getElementById('fridge-expiry-ocr-status');
-            statusEl.textContent = '🔍 辨識中，請稍候...';
-            statusEl.classList.remove('hidden');
-            try {
-                const compressed = await compressImageForUpload(file, 1600, 0.85); // 保存期限的印刷字通常很小，壓縮太多AI會看不清楚，這裡保留較多細節，即使檔案大一點也值得
-                const base64 = await fileToBase64(compressed);
-                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'read_expiry_date', imageBase64: base64, mimeType: compressed.type || 'image/jpeg' }),
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '辨識失敗');
-                if (data.date) {
-                    document.getElementById('fridge-new-expiry').value = data.date;
-                    statusEl.textContent = `✅ 已自動帶入：${data.date}（請確認正確再儲存，用的模型：${data.modelUsed || '未知'}）`;
-                } else {
-                    // 直接把AI實際回答的原始內容顯示在畫面上（不用開發人員工具），手機也能直接看到、截圖給我，
-                    // 才能判斷是「AI真的看不清楚照片」還是「AI有回答、但格式對不上被過濾掉了」
-                    statusEl.innerHTML = `⚠️ 照片上找不到日期，麻煩拍清楚一點再試一次，或是直接手動輸入<br>
-                        <span style="color:#B3A492">診斷資訊（使用模型：${data.modelUsed || '未知'}）：${(data.raw || '（沒有任何回應內容）').replace(/</g, '&lt;')}</span>`;
-                }
-            } catch (err) {
-                statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
-            } finally {
-                event.target.value = '';
-            }
-        }
+
         // 把檔案轉成base64字串（不含開頭的data:image/...;base64,前綴，Worker那邊直接需要純資料部分）
         function fileToBase64(file) {
             return new Promise((resolve, reject) => {
