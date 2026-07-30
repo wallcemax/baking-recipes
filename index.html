@@ -569,11 +569,6 @@
         <div class="bg-white w-full max-w-md rounded-[2rem] overflow-hidden p-6">
             <h3 class="font-display text-lg font-bold mb-3">📷 掃描條碼</h3>
             <div id="barcode-reader" style="width:100%; border-radius:1rem; overflow:hidden;"></div>
-            <div id="barcode-zoom-wrap" class="hidden mt-3 flex items-center gap-2">
-                <span class="text-sm">🔍</span>
-                <input id="barcode-zoom-slider" type="range" min="1" max="5" step="0.1" value="1" oninput="setBarcodeZoom(this.value)" class="flex-1">
-                <span class="text-xs" style="color:#B3A492">放大鏡頭，較小/模糊的條碼可以試試看</span>
-            </div>
             <button onclick="closeBarcodeScanner()" class="btn-secondary w-full mt-4">取消掃描</button>
         </div>
     </div>
@@ -14840,28 +14835,18 @@
                 },
                 onSuccessCallback || onBarcodeScanSuccess, // 沒有特別指定的話，預設走冰箱新增食材那套流程
                 () => {} // 掃描過程中每一幀掃不到都會呼叫一次，這是正常現象，不用處理
-            ).then(() => {
-                // 檢查這台裝置的鏡頭支不支援縮放，支援的話顯示手動縮放滑桿，讓使用者自己放大
-                // 那些自動對焦沒辦法完全解決的小/模糊條碼（不是每個瀏覽器/裝置都支援，不支援就不顯示）
+            ).then(async () => {
+                // 串流開始之後，再次明確套用一次「連續自動對焦」——有些瀏覽器/裝置對於一開始
+                // getUserMedia就要求的對焦設定支援度不穩定，串流開始「之後」再套用一次反而比較容易生效。
+                // 這是網頁標準能做到最接近「自動偵測物體對焦」的做法，實際效果會因手機廠牌/瀏覽器而不同，
+                // 沒辦法完全比照原生App的相機控制能力（例如iPhone的Safari對這塊向來限制得比較嚴格）
                 try {
-                    const capabilities = barcodeScannerInstance.getRunningTrackCapabilities();
-                    if (capabilities && capabilities.zoom) {
-                        const slider = document.getElementById('barcode-zoom-slider');
-                        slider.min = capabilities.zoom.min || 1;
-                        slider.max = capabilities.zoom.max || 5;
-                        slider.step = capabilities.zoom.step || 0.1;
-                        slider.value = capabilities.zoom.min || 1;
-                        document.getElementById('barcode-zoom-wrap').classList.remove('hidden');
-                    }
-                } catch (err) { /* 不支援就算了，不影響正常掃描 */ }
+                    await barcodeScannerInstance.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] });
+                } catch (err) { /* 這台裝置/瀏覽器不支援就算了，不影響正常掃描，畫面上不用特別提示 */ }
             }).catch(err => {
                 alert('無法開啟相機：' + err + '（請確認已允許瀏覽器使用相機權限）');
                 document.getElementById('barcode-scanner-wrap').classList.add('hidden');
             });
-        }
-        function setBarcodeZoom(value) {
-            if (!barcodeScannerInstance) return;
-            barcodeScannerInstance.applyVideoConstraints({ advanced: [{ zoom: Number(value) }] }).catch(() => {});
         }
         function closeBarcodeScanner() {
             if (barcodeScannerInstance) {
@@ -14871,7 +14856,6 @@
                 });
             }
             document.getElementById('barcode-scanner-wrap').classList.add('hidden');
-            document.getElementById('barcode-zoom-wrap').classList.add('hidden');
         }
         function isLikelyUrl(text) {
             return /^https?:\/\//i.test(text.trim());
