@@ -625,7 +625,12 @@
                 <div class="grid grid-cols-1 gap-2 mb-1">
                     <div>
                         <label class="text-xs block mb-1" style="color:#B3A492">有效期限（選填）</label>
-                        <input id="fridge-new-expiry" type="date" class="form-input">
+                        <div class="flex gap-2">
+                            <input id="fridge-new-expiry" type="date" class="form-input flex-1">
+                            <label for="fridge-expiry-ocr-file" class="btn-sage shrink-0 !px-3 !py-0 flex items-center justify-center cursor-pointer" style="border-radius:0.75rem" title="拍照自動辨識保存日期">📷</label>
+                            <input type="file" id="fridge-expiry-ocr-file" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="handleExpiryDateOcr(event)">
+                        </div>
+                        <p id="fridge-expiry-ocr-status" class="hidden text-xs mt-1" style="color:var(--chambray)"></p>
                     </div>
                 </div>
                 <p id="fridge-new-hint-text" class="text-xs mb-2" style="color:#B3A492">💡 規格是固定參考單位（例如麵粉都用600g），買多份只需改「份數」；花費選填，填了會同步更新食材成本</p>
@@ -14676,6 +14681,45 @@
             document.getElementById('fridge-new-hint-text').textContent = locked
                 ? '💡 編輯只能調整「目前庫存量」，其他欄位鎖住僅供對照；如果品牌/規格/價格需要更新，請先刪除這筆再重新用「帶入」或「新增」記錄一次'
                 : '💡 規格是固定參考單位（例如麵粉都用600g），買多份只需改「份數」；花費選填，填了會同步更新食材成本';
+        }
+        // 拍照自動辨識保存日期：把照片壓縮後轉成base64，送給Worker用Gemini的多模態能力分析，
+        // 找出包裝上印的日期文字，自動帶入「有效期限」欄位，不用自己找日期、自己輸入
+        async function handleExpiryDateOcr(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const statusEl = document.getElementById('fridge-expiry-ocr-status');
+            statusEl.textContent = '🔍 辨識中，請稍候...';
+            statusEl.classList.remove('hidden');
+            try {
+                const compressed = await compressImageForUpload(file, 1200, 0.75); // OCR不需要太高解析度，壓縮小一點上傳更快
+                const base64 = await fileToBase64(compressed);
+                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'read_expiry_date', imageBase64: base64, mimeType: compressed.type || 'image/jpeg' }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '辨識失敗');
+                if (data.date) {
+                    document.getElementById('fridge-new-expiry').value = data.date;
+                    statusEl.textContent = `✅ 已自動帶入：${data.date}（請確認正確再儲存）`;
+                } else {
+                    statusEl.textContent = '⚠️ 照片上找不到日期，麻煩拍清楚一點再試一次，或是直接手動輸入';
+                }
+            } catch (err) {
+                statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
+            } finally {
+                event.target.value = '';
+            }
+        }
+        // 把檔案轉成base64字串（不含開頭的data:image/...;base64,前綴，Worker那邊直接需要純資料部分）
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
         }
         async function importFridgeItemToForm(idx) {
             const items = await loadFridgeItems();
