@@ -14876,10 +14876,25 @@
             setTimeout(() => ring.remove(), 700);
 
             if (!barcodeScannerInstance) return;
+            // 先確認這台裝置的鏡頭有沒有回報支援focusMode這個控制項——如果capabilities裡面根本沒有
+            // focusMode，代表這個瀏覽器/裝置從一開始就沒有把對焦控制權限開放給網頁，不管怎麼呼叫都不會有用，
+            // 這種情況會在console留下訊息，方便之後確認真正的原因
             try {
-                await barcodeScannerInstance.applyVideoConstraints({ advanced: [{ focusMode: 'manual' }] });
-                await barcodeScannerInstance.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] });
-            } catch (err) { /* 這台裝置/瀏覽器不支援手動觸發重新對焦，至少畫面上還是有對焦圈的回饋 */ }
+                const capabilities = barcodeScannerInstance.getRunningTrackCapabilities();
+                if (!capabilities || !capabilities.focusMode) {
+                    console.warn('這個瀏覽器/裝置沒有回報支援focusMode控制，網頁沒辦法對這台裝置的相機做對焦控制');
+                    return;
+                }
+                // single-shot是「觸發一次性對焦」，跟continuous(持續自動對焦)是不同的機制，
+                // 有些裝置對這兩種模式的支援情況不一樣，這裡改試single-shot看看會不會有反應
+                if (capabilities.focusMode.includes('single-shot')) {
+                    await barcodeScannerInstance.applyVideoConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+                } else {
+                    await barcodeScannerInstance.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] });
+                }
+            } catch (err) {
+                console.warn('嘗試觸發對焦失敗', err && err.message);
+            }
         }
         function closeBarcodeScanner() {
             if (barcodeScannerInstance) {
