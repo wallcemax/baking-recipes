@@ -568,6 +568,11 @@
         <div class="bg-white w-full max-w-md rounded-[2rem] overflow-hidden p-6">
             <h3 class="font-display text-lg font-bold mb-3">📷 掃描條碼</h3>
             <div id="barcode-reader" style="width:100%; border-radius:1rem; overflow:hidden;"></div>
+            <div id="barcode-zoom-wrap" class="hidden mt-3 flex items-center gap-2">
+                <span class="text-sm">🔍</span>
+                <input id="barcode-zoom-slider" type="range" min="1" max="5" step="0.1" value="1" oninput="setBarcodeZoom(this.value)" class="flex-1">
+                <span class="text-xs" style="color:#B3A492">放大鏡頭，較小/模糊的條碼可以試試看</span>
+            </div>
             <button onclick="closeBarcodeScanner()" class="btn-secondary w-full mt-4">取消掃描</button>
         </div>
     </div>
@@ -13804,7 +13809,7 @@
             openBarcodeScanner(async (decodedText) => {
                 closeBarcodeScanner();
                 const dict = await loadBarcodeDictionary(true);
-                const name = dict[decodedText];
+                const name = dict[normalizeBarcodeForLookup(decodedText)];
                 const searchInput = document.getElementById('my-cost-search');
                 if (!name) {
                     if (searchInput) { searchInput.value = ''; renderMyIngredientCostsList(); }
@@ -14770,6 +14775,20 @@
         let barcodeScannerInstance = null;
         let barcodeDictCache = null;
 
+        // GS1系統裡「02」「04」「20」-「29」開頭的13碼條碼是保留給「店家自行編碼」用的（不是正式申請的
+        // 商品碼），常見結構是「前綴+店內品項代碼(固定)+重量或價格(每次秤重會變)+檢查碼」。
+        // 同一件商品秤重兩次，條碼數字其實不一樣，如果直接拿整串去比對字典，永遠對不到之前存過的資料。
+        // 這裡偵測到這種店內碼，只取前面固定不變的品項代碼部分（前7碼，多數店家內碼的常見慣例）當比對依據，
+        // 忽略後面會變動的重量/價格碼，這樣同一件商品不管秤重多少次，都能對應到同一筆資料
+        // 之前這裡曾經嘗試「020開頭的店內碼只取前7碼」，用意是想處理秤重商品（同一件商品、重量/價格
+        // 每次變動）的情況。但後來發現這個假設不一定成立——有些店家是把這段前綴拿來當作「分裝商品的
+        // 固定流水編號」（例如199代表店內第199項分裝商品），編號本身不會變動，這種情況如果硬是只取
+        // 前7碼，反而會把不同的分裝商品（剛好前7碼一樣）誤判成同一件、造成價格資料互相覆蓋，比原本的
+        // 問題更嚴重。從條碼數字本身沒辦法可靠判斷是哪一種情況（GS1規範裡這段本來就是店家自訂），
+        // 與其用錯誤的假設去猜，這裡改成一律用完整條碼，不做任何截短處理
+        function normalizeBarcodeForLookup(code) {
+            return code ? String(code).trim() : code;
+        }
         async function loadBarcodeDictionary(forceRefresh) {
             if (!currentUser) return {};
             if (!forceRefresh && barcodeDictCache) return barcodeDictCache;
@@ -14785,12 +14804,13 @@
         }
         async function saveBarcodeToDictionary(code, name) {
             if (!currentUser || !code || !name) return;
+            const key = normalizeBarcodeForLookup(code); // 店內碼(限制流通碼)只取固定的品項代碼部分，忽略會變動的重量/價格碼
             try {
                 const fridgeId = await getActiveFridgeId();
                 await db.collection('fridges').doc(fridgeId).set({
-                    barcodeDictionary: { [code]: name },
+                    barcodeDictionary: { [key]: name },
                 }, { merge: true });
-                if (barcodeDictCache) barcodeDictCache[code] = name;
+                if (barcodeDictCache) barcodeDictCache[key] = name;
             } catch (err) {
                 console.warn('儲存條碼字典失敗', err && err.message);
             }
@@ -14802,14 +14822,40 @@
             document.getElementById('barcode-scanner-wrap').classList.remove('hidden');
             barcodeScannerInstance = new Html5Qrcode('barcode-reader');
             barcodeScannerInstance.start(
-                { facingMode: 'environment' }, // 優先用手機後鏡頭
-                { fps: 10, qrbox: { width: 250, height: 150 } },
+                {
+                    facingMode: 'environment', // 優先用手機後鏡頭
+                    // 明確要求較高解析度的畫面（不指定的話，瀏覽器常常會給比較低解析度的預設值），
+                    // 對於店家自己印的標籤（熱感應貼紙，通常字體較小、印刷品質也不如正式商品包裝銳利），
+                    // 解析度越高，掃描器能分析的細節就越多，比較容易辨識出來
+                    width: { ideal: 1920, min: 1280 },
+                    height: { ideal: 1080, min: 720 },
+                    advanced: [{ focusMode: 'continuous' }], // 嘗試開啟連續自動對焦（不是所有瀏覽器/裝置都支援，不支援的話會被忽略，不影響掃描）
+                },
+                { fps: 10, qrbox: { width: 280, height: 180 }, aspectRatio: 1.777 }, // 掃描框放大一些，比較容易對準較小的標籤
                 onSuccessCallback || onBarcodeScanSuccess, // 沒有特別指定的話，預設走冰箱新增食材那套流程
                 () => {} // 掃描過程中每一幀掃不到都會呼叫一次，這是正常現象，不用處理
-            ).catch(err => {
+            ).then(() => {
+                // 檢查這台裝置的鏡頭支不支援縮放，支援的話顯示手動縮放滑桿，讓使用者自己放大
+                // 那些自動對焦沒辦法完全解決的小/模糊條碼（不是每個瀏覽器/裝置都支援，不支援就不顯示）
+                try {
+                    const capabilities = barcodeScannerInstance.getRunningTrackCapabilities();
+                    if (capabilities && capabilities.zoom) {
+                        const slider = document.getElementById('barcode-zoom-slider');
+                        slider.min = capabilities.zoom.min || 1;
+                        slider.max = capabilities.zoom.max || 5;
+                        slider.step = capabilities.zoom.step || 0.1;
+                        slider.value = capabilities.zoom.min || 1;
+                        document.getElementById('barcode-zoom-wrap').classList.remove('hidden');
+                    }
+                } catch (err) { /* 不支援就算了，不影響正常掃描 */ }
+            }).catch(err => {
                 alert('無法開啟相機：' + err + '（請確認已允許瀏覽器使用相機權限）');
                 document.getElementById('barcode-scanner-wrap').classList.add('hidden');
             });
+        }
+        function setBarcodeZoom(value) {
+            if (!barcodeScannerInstance) return;
+            barcodeScannerInstance.applyVideoConstraints({ advanced: [{ zoom: Number(value) }] }).catch(() => {});
         }
         function closeBarcodeScanner() {
             if (barcodeScannerInstance) {
@@ -14819,6 +14865,7 @@
                 });
             }
             document.getElementById('barcode-scanner-wrap').classList.add('hidden');
+            document.getElementById('barcode-zoom-wrap').classList.add('hidden');
         }
         function isLikelyUrl(text) {
             return /^https?:\/\//i.test(text.trim());
@@ -14835,8 +14882,9 @@
             // 順便把「我的食材成本」裡這個名稱記錄的上次購買數量/單位/價格也一起帶入，不是只帶名稱，
             // 這樣掃一次就等於幾乎新增好一整筆，只差有效期限要你自己輸入
             const dict = await loadBarcodeDictionary();
-            if (dict[decodedText]) {
-                const matchedName = dict[decodedText];
+            const normalizedCode = normalizeBarcodeForLookup(decodedText);
+            if (dict[normalizedCode]) {
+                const matchedName = dict[normalizedCode];
                 nameInput.value = matchedName;
                 const costs = await loadUserIngredientCosts();
                 const costEntry = costs[matchedName];
