@@ -131,6 +131,16 @@
         #toast-container .toast-item { pointer-events: auto; }
         @keyframes toastSlideIn { from { transform: translateY(120%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes focusRingPulse {
+            0% { transform: scale(1.3); opacity: 0; }
+            30% { opacity: 1; }
+            100% { transform: scale(1); opacity: 0; }
+        }
+        .focus-ring {
+            position: absolute; width: 64px; height: 64px; margin-left: -32px; margin-top: -32px;
+            border: 2px solid #FFD54A; border-radius: 999px; pointer-events: none;
+            animation: focusRingPulse 0.6s ease-out forwards;
+        }
         .toast-item {
             background: var(--espresso); color: #fff; padding: 0.85rem 1.15rem;
             border-radius: 1rem; font-size: 0.9rem; line-height: 1.5;
@@ -568,7 +578,10 @@
     <div id="barcode-scanner-wrap" class="hidden fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="z-index:60;">
         <div class="bg-white w-full max-w-md rounded-[2rem] overflow-hidden p-6">
             <h3 class="font-display text-lg font-bold mb-3">📷 掃描條碼</h3>
-            <div id="barcode-reader" style="width:100%; border-radius:1rem; overflow:hidden;"></div>
+            <div style="position:relative" onclick="tapToRefocus(event)">
+                <div id="barcode-reader" style="width:100%; border-radius:1rem; overflow:hidden;"></div>
+                <p class="text-xs text-center mt-1" style="color:#B3A492">畫面模糊/對不到焦的話，點一下畫面重新對焦</p>
+            </div>
             <button onclick="closeBarcodeScanner()" class="btn-secondary w-full mt-4">取消掃描</button>
         </div>
     </div>
@@ -14847,6 +14860,26 @@
                 alert('無法開啟相機：' + err + '（請確認已允許瀏覽器使用相機權限）');
                 document.getElementById('barcode-scanner-wrap').classList.add('hidden');
             });
+        }
+        // 點一下畫面重新對焦：顯示一個對焦圈動畫當作視覺回饋（跟原生相機App的手感一致），
+        // 同時重新套用一次對焦設定——網頁標準沒有「針對某個座標點對焦」這種精細控制，
+        // 只能透過「先切換掉、再切回連續對焦」這個小技巧，讓部分瀏覽器/裝置的相機驅動重新評估對焦，
+        // 不是每個裝置都會生效（受限於瀏覽器本身能開放給網頁的相機控制範圍）
+        async function tapToRefocus(event) {
+            const wrap = event.currentTarget;
+            const rect = wrap.getBoundingClientRect();
+            const ring = document.createElement('div');
+            ring.className = 'focus-ring';
+            ring.style.left = `${event.clientX - rect.left}px`;
+            ring.style.top = `${event.clientY - rect.top}px`;
+            wrap.appendChild(ring);
+            setTimeout(() => ring.remove(), 700);
+
+            if (!barcodeScannerInstance) return;
+            try {
+                await barcodeScannerInstance.applyVideoConstraints({ advanced: [{ focusMode: 'manual' }] });
+                await barcodeScannerInstance.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] });
+            } catch (err) { /* 這台裝置/瀏覽器不支援手動觸發重新對焦，至少畫面上還是有對焦圈的回饋 */ }
         }
         function closeBarcodeScanner() {
             if (barcodeScannerInstance) {
