@@ -383,8 +383,27 @@
     </div>
     <div class="max-w-6xl mx-auto px-4 sm:px-6 pb-28 md:pb-10">
         <div class="hero-banner mb-6">
-            <header class="px-4 sm:px-6 pt-4 sm:pt-6">
-                <div class="flex justify-between items-center gap-3">
+            <header class="px-4 sm:px-6 pt-4 sm:pt-6 relative">
+                <!-- 手機版：漢堡選單 + 使用者資訊在同一列，標題另起一列置中顯示 -->
+                <div class="flex md:hidden justify-between items-center gap-3 mb-2">
+                    <button onclick="toggleMobileMenu()" class="text-2xl leading-none" style="color:var(--jam)" aria-label="功能選單">☰</button>
+                    <div id="user-info-mobile" class="flex items-center gap-2 shrink-0"></div>
+                </div>
+                <div class="flex md:hidden justify-center items-center gap-2 mb-3">
+                    <div class="w-9 h-9 rounded-xl flex items-center justify-center text-xl shrink-0" style="background:var(--jam)">🍰</div>
+                    <h1 class="font-display text-xl font-bold leading-tight" style="font-family:'Noto Sans TC', sans-serif;">JUST DO EAT</h1>
+                </div>
+                <!-- 手機版漢堡選單下拉面板：遊戲場、我的成就、管理員專屬功能都收在這裡 -->
+                <div id="mobile-menu-panel" class="hidden md:!hidden absolute left-4 right-4 z-40 bg-white rounded-2xl shadow-lg border p-2 mt-1" style="border-color:var(--line)">
+                    <button onclick="closeMobileMenuThen(showGameModal)" class="w-full text-left px-4 py-3 rounded-xl flex items-center gap-2" style="color:var(--espresso)">🎮 遊戲場</button>
+                    <button onclick="closeMobileMenuThen(showProfileModal)" class="w-full text-left px-4 py-3 rounded-xl flex items-center gap-2" style="color:var(--espresso)">🏅 我的成就</button>
+                    <button id="admin-nutrition-btn-mobile" onclick="closeMobileMenuThen(showAdminNutritionModal)" class="hidden w-full text-left px-4 py-3 rounded-xl items-center gap-2" style="color:var(--espresso)">🛠 食材熱量管理</button>
+                    <button id="admin-orphan-images-btn-mobile" onclick="closeMobileMenuThen(showOrphanedImagesModal)" class="hidden w-full text-left px-4 py-3 rounded-xl items-center gap-2" style="color:var(--espresso)">🖼 孤兒圖片清單</button>
+                    <button id="admin-achievements-btn-mobile" onclick="closeMobileMenuThen(showAdminAchievementsModal)" class="hidden w-full text-left px-4 py-3 rounded-xl items-center gap-2" style="color:var(--espresso)">📋 成就總覽</button>
+                </div>
+
+                <!-- 電腦版：維持原本樣式不變 -->
+                <div class="hidden md:flex justify-between items-center gap-3">
                     <div class="flex items-center gap-3 min-w-0">
                         <div class="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center text-2xl sm:text-3xl shrink-0" style="background:var(--jam)">🍰</div>
                         <div class="min-w-0">
@@ -11355,18 +11374,46 @@
                 adminAchBtn.classList.toggle('hidden', !isAdmin());
                 adminAchBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
             }
+            // 手機版漢堡選單裡的管理員專屬項目，跟電腦版用同一個isAdmin()判斷同步顯示/隱藏
+            ['admin-nutrition-btn-mobile', 'admin-orphan-images-btn-mobile', 'admin-achievements-btn-mobile'].forEach(id => {
+                const btn = document.getElementById(id);
+                if (btn) {
+                    btn.classList.toggle('hidden', !isAdmin());
+                    btn.style.display = isAdmin() ? 'flex' : 'none';
+                }
+            });
         }
 
+        // 手機版漢堡選單：點擊開關顯示/隱藏，點裡面任一個項目會先關閉選單、再執行對應的功能，
+        // 避免選單一直開著擋在畫面上
+        function toggleMobileMenu() {
+            document.getElementById('mobile-menu-panel')?.classList.toggle('hidden');
+        }
+        function closeMobileMenuThen(fn) {
+            document.getElementById('mobile-menu-panel')?.classList.add('hidden');
+            if (typeof fn === 'function') fn();
+        }
+        // 點選單以外的地方自動收起選單，避免選單一直開著
+        document.addEventListener('click', (e) => {
+            const panel = document.getElementById('mobile-menu-panel');
+            const toggleBtn = e.target.closest('[onclick="toggleMobileMenu()"]');
+            if (panel && !panel.classList.contains('hidden') && !panel.contains(e.target) && !toggleBtn) {
+                panel.classList.add('hidden');
+            }
+        });
         auth.onAuthStateChanged(user => {
             currentUser = user;
             const heroName = document.getElementById('hero-greeting-name');
             if (heroName) heroName.textContent = user ? `歡迎回來，${user.displayName || '朋友'}` : '歡迎光臨';
             const info = document.getElementById('user-info');
+            const infoMobile = document.getElementById('user-info-mobile');
             if (user) {
                 const avatar = user.photoURL
                     ? `<img src="${user.photoURL}" class="w-9 h-9 rounded-full border" style="border-color:var(--line)">`
                     : `<div class="w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold" style="background:var(--honey)">${(user.displayName||'?').charAt(0)}</div>`;
                 info.innerHTML = `<button onclick="showProfileModal()" class="text-xl leading-none" style="color:var(--jam)" title="我的成就" aria-label="我的成就">🏅</button>${avatar}<span class="hidden sm:inline text-sm font-medium truncate max-w-[8rem]">${user.displayName}</span><button onclick="logout()" class="text-xs sm:text-sm font-medium" style="color:var(--jam)">登出</button>`;
+                // 手機版精簡一點：頭像+登出就好，「我的成就」已經收進漢堡選單裡，不用重複顯示
+                if (infoMobile) infoMobile.innerHTML = `${avatar}<button onclick="logout()" class="text-xs font-medium" style="color:var(--jam)">登出</button>`;
                 loadRecipes();
                 loadFavorites();
                 loadUserProgress();
@@ -11379,6 +11426,7 @@
                 renderFridgeMembersList(); // 一登入就先確認一次是不是家庭冰箱，篩選按鈕的標籤才會馬上顯示正確文字，不用等打開冰箱視窗
             } else {
                 info.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-sm flex items-center gap-2"><i class="fab fa-google"></i> 登入</button>`;
+                if (infoMobile) infoMobile.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-xs !px-3 !py-1.5 flex items-center gap-1"><i class="fab fa-google"></i> 登入</button>`;
                 userFavorites = new Set();
                 showFavoritesOnly = false;
                 showMyRecipesOnly = false;
