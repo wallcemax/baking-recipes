@@ -828,7 +828,7 @@
                         <option value="慕斯/布丁">🍮 慕斯/布丁</option>
                         <option value="中式烹飪">🥢 中式烹飪</option><option value="西式烹飪">🍝 西式烹飪</option><option value="日式烹飪">🍣 日式烹飪</option>
                         <option value="健康餐">🥗 健康餐</option><option value="寶寶食品">🍼 寶寶食品</option>
-                        <option value="其他">🍽️ 其他</option>
+                        <option value="其他">🍽️ 其它</option>
                     </select>
                     <div>
                         <input id="servings" type="number" value="8" class="form-input" placeholder="成品數量">
@@ -1051,7 +1051,23 @@
 
         const ADMIN_EMAIL = 'wallcemax@gmail.com';
         const CATEGORY_LIST = ['全部', '蛋糕/糕餅', '麵包/包子', '餅乾/塔派', '慕斯/布丁', '中式烹飪', '西式烹飪', '日式烹飪', '健康餐', '寶寶食品', '其他'];
+        // 「其他」在畫面上要顯示成「其它」，但底層資料的值還是用「其他」，避免影響到既有食譜資料的分類比對
+        function categoryDisplayLabel(cat) { return cat === '其他' ? '其它' : cat; }
         const CATEGORY_ICONS = { '蛋糕/糕餅': '🎂', '麵包/包子': '🍞', '餅乾/塔派': '🍪', '慕斯/布丁': '🍮', '中式烹飪': '🥢', '西式烹飪': '🍝', '日式烹飪': '🍣', '健康餐': '🥗', '寶寶食品': '🍼', '其他': '🍽️' };
+        // 食譜沒有放封面照片時，用這幾張對應分類的插畫圖片當佔位圖，取代原本的emoji大圖示
+        const CATEGORY_PLACEHOLDER_IMAGES = {
+            '麵包/包子': 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785479075/Bread_Steamed_Buns_hzifcm.png',
+            '餅乾/塔派': 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785479345/Cookies_Tarts_Pies_xknekc.png',
+            '慕斯/布丁': 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785479279/Mousse_Pudding_izcjgm.png',
+            '中式烹飪': 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785479652/Chinese_cooking_ckia5c.png',
+            '西式烹飪': 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785477441/Western_style_cuisine_ijxa2n.png',
+            '日式烹飪': 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785477443/Japanese_cuisine_qupsqx.png',
+            '健康餐': 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785479560/Healthy_Meal_giy0h3.png',
+            '寶寶食品': 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785477440/baby_food_bdeagx.png',
+            '其他': 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785481994/other_ynxa4y.png',
+        };
+        // 分類選單裡沒有對應到上面表格的（例如蛋糕/糕餅還沒特別做圖），沿用這張當備援
+        const CATEGORY_PLACEHOLDER_FALLBACK = 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785481994/other_ynxa4y.png';
         const VISIBILITY_LABELS = { private: { label: '🔒 私人', bg: '#EFEAE0', color: 'var(--espresso-soft)' }, draft: { label: '📝 草稿', bg: '#FCE9C8', color: 'var(--honey)' } };
         const RECIPES_PER_PAGE = 12;
         let currentPage = 1;
@@ -11351,7 +11367,7 @@
             const row = document.getElementById('category-chips');
             row.innerHTML = CATEGORY_LIST.map(cat => {
                 const icon = CATEGORY_ICONS[cat] || '🍽️';
-                const label = cat === '全部' ? '全部' : `${icon} ${cat}`;
+                const label = cat === '全部' ? '全部' : `${icon} ${categoryDisplayLabel(cat)}`;
                 return `<button class="chip ${cat === selectedCategory ? 'active' : ''}" id="chip-${cat}" onclick="filterByCategory('${cat}')">${label}</button>`;
             }).join('');
         }
@@ -11507,6 +11523,7 @@
                 div.className = "recipe-card p-6";
                 div.tabIndex = 0;
                 const icon = CATEGORY_ICONS[r.category] || '🍽️';
+                const placeholderImg = CATEGORY_PLACEHOLDER_IMAGES[r.category] || CATEGORY_PLACEHOLDER_FALLBACK;
                 const isFav = userFavorites.has(r.id);
                 const visInfo = VISIBILITY_LABELS[r.visibility];
                 const visBadge = visInfo ? `<span class="px-2.5 py-0.5 text-[11px] font-medium rounded-full ml-1.5" style="background:${visInfo.bg}; color:${visInfo.color}">${visInfo.label}</span>` : '';
@@ -11516,9 +11533,9 @@
                     </button>
                     ${r.imageUrl
                         ? `<div class="recipe-card-image-wrap"><img class="fade-img" src="${r.imageUrl}" loading="lazy" onload="this.classList.add('loaded')"></div>`
-                        : `<div class="recipe-card-image-wrap"><div class="recipe-card-image-placeholder">${icon}</div></div>`}
+                        : `<div class="recipe-card-image-wrap"><img class="fade-img" src="${placeholderImg}" loading="lazy" onload="this.classList.add('loaded')" style="object-fit:cover"></div>`}
                     <div class="flex justify-between items-start mb-3">
-                        <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${r.category}</span>
+                        <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${categoryDisplayLabel(r.category)}</span>
                         ${r.youtubeUrl ? '<i class="fab fa-youtube text-lg" style="color:#C4453F"></i>' : ''}
                     </div>
                     <h3 class="font-display font-bold text-xl mb-1.5 leading-snug">${r.name}${visBadge}</h3>
@@ -12332,7 +12349,7 @@
             const html = `
                 <div class="sticky top-0 z-10 flex justify-between items-start gap-4 px-6 sm:px-8 py-5 border-b bg-white" id="detail-header-row" style="border-color:var(--line)">
                     <div class="min-w-0">
-                        <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${recipe.category}</span>${visBadge}
+                        <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${categoryDisplayLabel(recipe.category)}</span>${visBadge}
                         <h2 class="font-display text-2xl sm:text-3xl font-bold mt-3 leading-snug">${recipe.name}</h2>
                         ${recipe.tags && recipe.tags.length ? `<div class="flex flex-wrap gap-1 mt-2">${recipe.tags.map(t => `<span onclick="searchByTagFromDetail('${escapeHtmlAttr(t)}')" class="text-xs px-2 py-0.5 rounded-full cursor-pointer" style="background:var(--cream); color:var(--espresso-soft)">#${t}</span>`).join('')}</div>` : ''}
                     </div>
@@ -12346,7 +12363,7 @@
                         <button onclick="closeDetail()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
                     </div>
                 </div>
-                ${recipe.imageUrl ? `<img id="detail-image" src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">` : ''}
+                ${recipe.imageUrl ? `<img id="detail-image" src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">` : `<img src="${CATEGORY_PLACEHOLDER_IMAGES[recipe.category] || CATEGORY_PLACEHOLDER_FALLBACK}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">`}
                 <div class="px-6 sm:px-8 py-6">
                     <div id="detail-top-controls">
                     ${recipe.sizeValue ? `<p class="text-xs mb-2" style="color:#B3A492">原始：${recipe.sizeValue}${recipe.sizeUnit} × ${recipe.servings} 個。換算時會同時依尺寸（面積比）與數量計算份量</p>` : ''}
