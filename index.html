@@ -1148,59 +1148,6 @@
         // 分類選單裡沒有對應到上面表格的（例如蛋糕/糕餅還沒特別做圖），沿用這張當備援
         const CATEGORY_PLACEHOLDER_FALLBACK = 'https://res.cloudinary.com/bumzwp9g/image/upload/w_500,q_auto,f_auto/v1785481994/other_ynxa4y.png';
 
-        // 達成特定成就/稱號可以解鎖個人化的食譜卡片邊框素材，之後陸續會再加更多稱號對應的素材，
-        // 這裡只要新增一行「稱號名稱: 素材網址」就可以擴充，不用改其他程式碼
-        const TITLE_BORDER_MATERIALS = {
-            '家常料理人': 'https://res.cloudinary.com/bumzwp9g/image/upload/q_auto,f_auto/v1785685464/1_iv3yvz.png',
-        };
-        // 幫食譜卡片套用個人化邊框：只加在卡片「外框」這一層，不影響裡面的照片/文字內容，
-        // 用border-image把素材圖片鋪在邊框上，slice/repeat的參數是讓花紋能繞著卡片四周重複、
-        // 而不是被拉伸變形
-        function applyRecipeCardBorder(cardEl, imageUrl) {
-            cardEl.style.borderWidth = '10px';
-            cardEl.style.borderStyle = 'solid';
-            cardEl.style.borderImageSource = `url('${imageUrl}')`;
-            cardEl.style.borderImageSlice = '40';
-            cardEl.style.borderImageRepeat = 'round';
-            // 卡片中間的內容背景，改成從邊框素材圖片自動抓出來的代表色（淡化過的版本），
-            // 不用手動幫每張素材配色，以後新增素材也會自動跟著配對
-            sampleAverageColorFromImage(imageUrl).then(rgb => {
-                if (rgb) cardEl.style.background = `rgba(${rgb.r},${rgb.g},${rgb.b},0.14)`;
-            });
-        }
-        // 用畫布讀取圖片像素、算出平均色調（每隔幾個像素取樣一次，不用整張圖每個像素都算，
-        // 速度會快很多），同一張素材網址只會抓一次、之後直接用快取的結果
-        const avgColorCache = {};
-        function sampleAverageColorFromImage(url) {
-            if (avgColorCache[url]) return Promise.resolve(avgColorCache[url]);
-            return new Promise(resolve => {
-                const img = new Image();
-                img.crossOrigin = 'anonymous'; // Cloudinary圖片有開放跨網域存取，這裡需要標明才能讀取像素資料
-                img.onload = () => {
-                    try {
-                        const canvas = document.createElement('canvas');
-                        const size = 40; // 縮小到固定小尺寸再取樣，不需要原始解析度，這樣算平均色更快
-                        canvas.width = size; canvas.height = size;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0, size, size);
-                        const data = ctx.getImageData(0, 0, size, size).data;
-                        let r = 0, g = 0, b = 0, count = 0;
-                        for (let i = 0; i < data.length; i += 4) {
-                            r += data[i]; g += data[i + 1]; b += data[i + 2];
-                            count++;
-                        }
-                        const rgb = { r: Math.round(r / count), g: Math.round(g / count), b: Math.round(b / count) };
-                        avgColorCache[url] = rgb;
-                        resolve(rgb);
-                    } catch (err) {
-                        console.warn('抓取素材代表色失敗，卡片背景維持預設樣式', err && err.message);
-                        resolve(null);
-                    }
-                };
-                img.onerror = () => resolve(null);
-                img.src = url;
-            });
-        }
         const VISIBILITY_LABELS = { private: { label: '🔒 私人', bg: '#EFEAE0', color: 'var(--espresso-soft)' }, draft: { label: '📝 草稿', bg: '#FCE9C8', color: 'var(--honey)' } };
         const RECIPES_PER_PAGE = 12;
         let currentPage = 1;
@@ -11714,12 +11661,6 @@
                         if (!title) return;
                         const el = document.getElementById(`author-title-${r.id}`);
                         if (el) el.textContent = `${title.icon} ${title.name} `;
-                        // 依作者「目前裝備」的稱號，即時查詢有沒有對應的個人化卡片邊框素材——
-                        // 因為每次都是即時查目前狀態，不是存檔時就寫死，所以不管是新解鎖還是很久以前
-                        // 就拿到這個稱號的舊使用者，只要現在有裝備這個稱號，食譜卡片都會自動套用邊框，
-                        // 不需要另外做「補發給舊使用者」這種一次性遷移
-                        const borderUrl = TITLE_BORDER_MATERIALS[title.name];
-                        if (borderUrl) applyRecipeCardBorder(div, borderUrl);
                     });
                 }
             });
