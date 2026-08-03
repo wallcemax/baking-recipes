@@ -84,9 +84,16 @@ async function main() {
             try {
                 await messaging.send({
                     token,
-                    notification: { title, body },
+                    // 故意「不帶」頂層的notification欄位——如果同時有notification跟data，
+                    // 瀏覽器/系統會自動跳出一則通知，同時service worker裡的onBackgroundMessage
+                    // 又會手動再顯示一次，兩邊疊加起來就變成同一則訊息收到兩次通知。
+                    // 改成只用data（純文字資料），完全交給service worker自己決定怎麼顯示，只會顯示一次
+                    data: { title, body, tag: 'fridge-expiry-reminder', link: 'https://wallcemax.github.io/baking-recipes/index.html' },
+                    // collapseKey：如果FCM本身在傳輸過程中因為重試等原因把同一則訊息送達了不只一次，
+                    // 有相同collapseKey的訊息，系統只會保留最新一則在通知列，不會顯示成兩則分開的通知
+                    android: { collapseKey: 'fridge-expiry-reminder' },
                     webpush: {
-                        notification: { title, body, requireInteraction: true, tag: 'fridge-expiry-reminder' },
+                        headers: { Urgency: 'high' },
                         fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
                     },
                 });
