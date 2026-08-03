@@ -16,6 +16,13 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
+// 這兩個是讓新版本的service worker能夠「立刻」取代舊版本生效的關鍵設定：
+// 沒有這兩行的話，瀏覽器會讓新版本卡在「等待中」狀態，要等使用者把所有分頁都關掉才會真的切換，
+// 導致上傳新的service worker檔案後，使用者手機可能還跑舊版本一段時間都不會更新，
+// 造成「明明檔案換了但行為還是舊的」這種容易誤判的狀況
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => event.waitUntil(clients.claim()));
+
 // 網站沒有開著（在背景）的時候，收到推播會走這裡，負責跳出系統通知。
 // 故意讀payload.data（不是payload.notification）——後端故意只送data格式，不帶頂層notification，
 // 這樣瀏覽器/系統就不會自動再跳出一次通知，全部都交給這裡統一處理，確保同一則訊息只會顯示一次
