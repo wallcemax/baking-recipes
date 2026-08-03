@@ -9,10 +9,12 @@
 // 不需要Cloud Functions / Blaze方案，也共用同一組FIREBASE_SERVICE_ACCOUNT密鑰，
 // 通知也是共用同一組fcmTokens（使用者只要開過一次通知權限，兩個功能都能收到推播）。
 //
-// 因為排程是「每小時整點跑一次」，這裡只比對「小時」是否相符，不比對分鐘——
-// 使用者設定的提醒時間如果是「09:15」，只要排程有跑到09:00這一整個小時的範圍內，
-// 都會當作「時間到了」觸發，實際收到通知的時間點可能跟設定的分鐘有一點誤差(最多±1小時)，
-// 這是每小時執行一次排程本身就會有的取捨，如果要更精準需要縮短排程間隔。
+// 因為排程是「每小時整點跑一次」，比對邏輯不是單純看「現在是不是設定的那個整點」，
+// 而是記錄「上次成功執行的時間點」，檢查「上次~這次執行」這段窗口內有沒有任何提醒該觸發——
+// 這樣即使某次排程被GitHub Actions延遲、甚至整次被跳過（官方文件提到系統負載高時可能發生），
+// 下一次執行還是會抓到窗口內錯過的提醒，不會真的整個漏掉。實際收到通知的時間點跟設定的分鐘
+// 之間可能有最多接近1小時的提前量（例如設定8:45，可能在8:00那次執行就先觸發了），
+// 這是每小時執行一次排程本身的取捨，如果要更精準需要縮短排程間隔。
 // ============================================================
 
 const admin = require('firebase-admin');
@@ -47,11 +49,46 @@ function formatDateStr(d) {
     return `${y}-${m}-${day}`;
 }
 
+// 記錄「上次成功執行的時間點」，存在一個固定的系統狀態文件裡，跟個別使用者的提醒設定分開存
+async function getLastRunTime(nowTW) {
+    try {
+        const doc = await db.collection('systemState').doc('shoppingReminderScheduler').get();
+        if (doc.exists && doc.data().lastRunAt) {
+            return doc.data().lastRunAt.toDate();
+        }
+    } catch (err) {
+        console.warn('讀取上次執行時間失敗，改用預設值', err.message);
+    }
+    // 從來沒執行過(第一次跑)，預設當作「65分鐘前」就好，涵蓋一般每小時排程的正常間隔，
+    // 不要抓太久以前，不然萬一系統很久沒跑，會一次補發一堆已經過期很久的提醒
+    return new Date(nowTW.getTime() - 65 * 60 * 1000);
+}
+async function saveLastRunTime(nowTW) {
+    try {
+        await db.collection('systemState').doc('shoppingReminderScheduler')
+            .set({ lastRunAt: admin.firestore.Timestamp.fromDate(nowTW) }, { merge: true });
+    } catch (err) {
+        console.warn('儲存這次執行時間失敗（不影響這次的推播結果，只是下次的比對窗口可能不準）', err.message);
+    }
+}
+
 async function main() {
     const nowTW = getTaiwanNow();
     const todayStr = formatDateStr(nowTW);
-    const currentHour = nowTW.getHours();
-    console.log(`開始檢查採購提醒...（台灣時間 ${todayStr} ${currentHour}時）`);
+    console.log(`開始檢查採購提醒...（台灣時間 ${todayStr} ${nowTW.getHours()}:${String(nowTW.getMinutes()).padStart(2, '0')}）`);
+
+    // 抓「上次執行時間」，跟現在時間中間這一段就是這次要檢查的窗口——
+    // 不管中間排程有沒有被GitHub延遲、甚至整次被跳過，只要提醒的時間點落在這個窗口內，這次都會補上，
+    // 不會因為某一次排程沒準時觸發就整個漏掉那個使用者設定的提醒
+    let lastRunTW = await getLastRunTime(nowTW);
+    // 保險機制：如果窗口異常地長（例如腳本壞掉很久沒執行、或是第一次手動測試時剛好抓到很舊的時間），
+    // 最多只往回看24小時，避免一次把好幾天份的「過期提醒」全部補發出去，造成使用者被連環轟炸通知
+    const maxLookbackMs = 24 * 60 * 60 * 1000;
+    if (nowTW.getTime() - lastRunTW.getTime() > maxLookbackMs) {
+        console.log('距離上次執行超過24小時，把檢查窗口限制在24小時內，避免一次補發太多天的舊提醒');
+        lastRunTW = new Date(nowTW.getTime() - maxLookbackMs);
+    }
+    console.log(`這次檢查窗口：${lastRunTW.toLocaleString('zh-TW')} ~ ${nowTW.toLocaleString('zh-TW')}`);
 
     const remindersSnap = await db.collection('shoppingReminders').where('enabled', '==', true).get();
     console.log(`共有 ${remindersSnap.size} 位使用者開啟了採購提醒`);
@@ -64,16 +101,22 @@ async function main() {
         const reminder = doc.data();
         const timeStr = reminder.time; // 'HH:MM' 格式
         if (!timeStr) continue;
-        const reminderHour = parseInt(timeStr.split(':')[0], 10);
-        if (isNaN(reminderHour) || reminderHour !== currentHour) continue; // 還沒到設定的時段，跳過
+        const [rH, rM] = timeStr.split(':').map(n => parseInt(n, 10));
+        if (isNaN(rH) || isNaN(rM)) continue;
 
         const isOneTime = !!reminder.date; // 有填日期的話，這是「只提醒一次」的模式
-        if (isOneTime) {
-            if (reminder.date !== todayStr) continue; // 不是指定的那一天，跳過
-        } else {
-            // 每天固定提醒的模式：今天已經提醒過的話跳過，避免同一小時排程萬一跑了兩次就重複發送
-            if (reminder.lastNotifiedDate === todayStr) continue;
-        }
+        // 算出「這個提醒應該觸發的實際時間點」：一次性的話就是指定日期那天的那個時間；
+        // 每天固定提醒的話，用「今天」的那個時間點（如果落在檢查窗口內就是要觸發的那一次）
+        const targetDateStr = isOneTime ? reminder.date : todayStr;
+        const [ty, tm, td] = targetDateStr.split('-').map(n => parseInt(n, 10));
+        const scheduledAt = new Date(ty, tm - 1, td, rH, rM, 0, 0);
+
+        // 核心判斷：這個提醒該觸發的時間點，有沒有落在「上次執行~現在」這段窗口內
+        // （用(lastRunTW, nowTW]這種「左開右閉」的區間，避免窗口交界的那一分鐘被算兩次或漏掉）
+        const isDue = scheduledAt.getTime() > lastRunTW.getTime() && scheduledAt.getTime() <= nowTW.getTime();
+        if (!isDue) continue;
+
+        if (!isOneTime && reminder.lastNotifiedDate === todayStr) continue; // 保險：避免同一天重複發送
 
         // 檢查這個使用者的採購清單，是不是「還有東西沒買」——已經買完的品項不算，全部買完的話沒必要提醒
         let hasUnpurchasedItems = false;
@@ -154,6 +197,8 @@ async function main() {
     }
 
     console.log(`完成！共提醒了 ${notifiedUsers} 位使用者，總共發送了 ${notifiedDevices} 則通知`);
+    // 不管這次有沒有真的發送通知，都要記錄這次執行的時間點，下次執行才能接著這個時間點往後檢查窗口
+    await saveLastRunTime(nowTW);
 }
 
 main().catch(err => {
