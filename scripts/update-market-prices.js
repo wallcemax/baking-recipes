@@ -279,7 +279,27 @@ async function detectQueryFormat(baseUrl, label) {
 // 這裡改成把「聚合後的結果」（不是原始逐筆資料，聚合後體積小很多）存進Firestore當快取，
 // 只有快取超過25天沒更新，才會真的重新呼叫政府API抓資料，平常每天執行只會抓「近期」這一段
 const BASELINE_CACHE_MAX_AGE_DAYS = 25;
-async function getBaselineAggByYear(cacheKey, baseUrl, label, type, dateFormatFn, paramNames) {
+// 把一批rows依照交易日期切成3個小週(各約10天)，各自聚合成一個基準點，
+// 不用多打API——反正±15天的資料本來就已經抓回來了，只是切開分別算而不是整段混在一起算一個平均，
+// 這樣3年×3小週=9個基準點，比原本3年×1個點的樣本數多很多，也才能算出「歷史3年最低點」這種資訊
+function splitIntoSubWindowPoints(rows, centerDate, type, columns) {
+    const buckets = [[], [], []]; // 依照離中心日期的天數分成3個小週：-15~-6, -5~+5, +6~+15
+    rows.forEach(row => {
+        const d = parseRowDate(row);
+        if (!d) return;
+        const diffDays = Math.round((d - centerDate) / (1000 * 60 * 60 * 24));
+        if (diffDays < -15 || diffDays > 15) return;
+        const bucketIdx = diffDays <= -6 ? 0 : (diffDays >= 6 ? 2 : 1);
+        buckets[bucketIdx].push(row);
+    });
+    return buckets.map(bucketRows => type ? aggregateByName(bucketRows, type, null) : aggregateByColumns(bucketRows, columns));
+}
+// ---- 3. 主流程：抓「近期」跟「歷史同期基準」兩段資料，算跌幅排行 ----
+// 「近期14天」這種資料每天都在變，必須每天重抓；但「1年前/2年前/3年前同期」這種歷史資料
+// 本質上是「已經發生過的事」，不會每天改變，沒必要每天都重新跟政府API要一次。這裡改成把
+// 「聚合後的結果」（不是原始逐筆資料，聚合後體積小很多）存進Firestore當快取，只有快取超過
+// 25天沒更新，才會真的重新呼叫政府API抓資料，平常每天執行只會抓「近期」這一段
+async function getBaselineAggByYear(cacheKey, baseUrl, label, type, dateFormatFn, paramNames, columns) {
     const cacheRef = db.collection('marketPriceBaselineCache').doc(cacheKey);
     try {
         const cacheDoc = await cacheRef.get();
@@ -287,9 +307,9 @@ async function getBaselineAggByYear(cacheKey, baseUrl, label, type, dateFormatFn
             const cached = cacheDoc.data();
             const computedAt = cached.computedAt && cached.computedAt.toDate ? cached.computedAt.toDate() : null;
             const ageDays = computedAt ? (Date.now() - computedAt.getTime()) / (1000 * 60 * 60 * 24) : Infinity;
-            if (ageDays < BASELINE_CACHE_MAX_AGE_DAYS && Array.isArray(cached.aggByYear)) {
+            if (ageDays < BASELINE_CACHE_MAX_AGE_DAYS && Array.isArray(cached.subWindowPointsByYear)) {
                 console.log(`[${label}] 歷史基準資料使用快取（${Math.round(ageDays)}天前算的，還沒過期，不重新呼叫政府API）`);
-                return cached.aggByYear;
+                return cached.subWindowPointsByYear;
             }
             console.log(`[${label}] 歷史基準快取已經過期（${Math.round(ageDays)}天前算的，超過${BASELINE_CACHE_MAX_AGE_DAYS}天），重新抓取`);
         } else {
@@ -300,7 +320,7 @@ async function getBaselineAggByYear(cacheKey, baseUrl, label, type, dateFormatFn
     }
 
     const today = new Date();
-    const aggByYear = [];
+    const subWindowPointsByYear = [];
     for (const yearsAgo of [1, 2, 3]) {
         console.log(`[${label}] 開始抓取「${yearsAgo}年前同期」資料...`);
         const centerDate = new Date(today);
@@ -310,25 +330,20 @@ async function getBaselineAggByYear(cacheKey, baseUrl, label, type, dateFormatFn
         const rows = await fetchAllPages(baseUrl, rangeStart, rangeEnd, dateFormatFn, paramNames);
         console.log(`[${label}] ${yearsAgo}年前同期資料筆數：${rows.length}`);
         if (type) logDateRangeSanity(rows, type, label, `${yearsAgo}年前同期應該要是${yearsAgo}年前±15天`);
-        // 這裡直接聚合成「名稱->平均價」這種小體積的結果才存進快取，不存原始逐筆交易紀錄
-        // （原始資料筆數可能上萬筆，聚合後通常只剩幾百個品項，存進Firestore也比較不會超過單一文件大小限制）
-        const agg = type ? aggregateByName(rows, type, null) : null; // type為null代表這是型態B(固定欄位)，交給呼叫端自己聚合
-        aggByYear.push({ yearsAgo, agg, rows: type ? undefined : rows });
+        // 切成3個小週各自聚合，一年3個基準點，3年總共9個基準點
+        const points = splitIntoSubWindowPoints(rows, centerDate, type, columns);
+        subWindowPointsByYear.push({ yearsAgo, points });
     }
     try {
-        // 型態B(毛豬/雞蛋雞肉/鴨鵝/白米)還沒聚合完成(要等呼叫端用各自的columns設定去聚合)，
-        // 這種情況不快取原始rows(太大)，只有型態A(agg已經算好)才存快取
-        if (type) {
-            await cacheRef.set({ computedAt: admin.firestore.FieldValue.serverTimestamp(), aggByYear });
-            console.log(`[${label}] 歷史基準資料已更新快取`);
-        }
+        await cacheRef.set({ computedAt: admin.firestore.FieldValue.serverTimestamp(), subWindowPointsByYear });
+        console.log(`[${label}] 歷史基準資料已更新快取`);
     } catch (err) {
         console.warn(`[${label}] 寫入歷史基準快取失敗（不影響這次執行結果，只是下次還是要重抓）`, err.message);
     }
-    return aggByYear;
+    return subWindowPointsByYear;
 }
 
-async function fetchRecentAndBaselineRows(baseUrl, label, type) {
+async function fetchRecentAndBaselineRows(baseUrl, label, type, columns) {
     const today = new Date();
     const { dateFormatFn, paramNames } = await detectQueryFormat(baseUrl, label);
 
@@ -337,44 +352,78 @@ async function fetchRecentAndBaselineRows(baseUrl, label, type) {
     console.log(`[${label}] 近期資料筆數：${recentRows.length}`);
     if (type) logDateRangeSanity(recentRows, type, label, '近期應該要是最近14天');
 
-    const baselineAggByYear = await getBaselineAggByYear(`${label}_${type}`, baseUrl, label, type, dateFormatFn, paramNames);
-    return { recentRows, baselineAggByYear };
+    const subWindowPointsByYear = await getBaselineAggByYear(`${label}_${type || 'col'}`, baseUrl, label, type, dateFormatFn, paramNames, columns);
+    return { recentRows, subWindowPointsByYear };
 }
 
-// 取中位數：把一組數字由小到大排序，取正中間那一個（偶數個的話取中間兩個的平均），
-// 比算術平均更不容易被單一極端值拉走，適合拿來抓「正常價格帶大概是多少」
+// 取中位數：把一組數字由小到大排序，取正中間那一個（偶數個的話取中間兩個的平均）
 function median(numbers) {
     const sorted = [...numbers].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
+// 去頭去尾平均：排序後拿掉最大值跟最小值（通常就是異常年份造成的暴漲或暴跌），
+// 剩下的取平均，比單純中位數更能兼顧「用到大部分樣本」又「不被單一極端值拖累」的效果。
+// 樣本數太少（少於5個點）的話去頭去尾意義不大，改用中位數
+function trimmedMean(numbers) {
+    if (numbers.length < 5) return median(numbers);
+    const sorted = [...numbers].sort((a, b) => a - b);
+    const trimmed = sorted.slice(1, -1); // 拿掉一個最大、一個最小
+    return trimmed.reduce((a, b) => a + b, 0) / trimmed.length;
+}
 
-// 把「近期rows」跟「已經聚合好的3年份基準」整理成 { all, recommended }，可以指定type（farm/fish/sheep）跟類別代碼篩選
-function buildRecommendationsFromRows(recentRows, baselineAggByYear, type, categoryFilter) {
+// 判斷真便宜/假便宜的容錯係數：3年內物價本來就會有3%~5%左右的自然通膨，
+// 用1.05這個容錯範圍，避免因為差個幾毛錢就把「真的很便宜」的食材漏掉
+const VALUE_TOLERANCE = 1.05;
+const FAKE_CHEAP_SPIKE_THRESHOLD = 1.3; // 去年同期均價只要比基準價高30%以上，就視為「去年異常暴漲」
+const FAKE_CHEAP_RATIO_THRESHOLD = 0.95; // 今年價格要「跟基準價差不多、甚至更高」才算是「看起來便宜其實只是假象」
+const GREAT_VALUE_RATIO_THRESHOLD = 0.85; // 今年比基準價低15%以上，才夠格叫「真便宜」
+
+// 把「近期rows」跟「9個歷史基準點（3年×3小週）」整理成 { all, recommended }，可以指定type（farm/fish/sheep）跟類別代碼篩選
+function buildRecommendationsFromRows(recentRows, subWindowPointsByYear, type, categoryFilter) {
     const recentAgg = aggregateByName(recentRows, type, categoryFilter);
 
     // 完整清單以「近期」為主——只要現在有在交易，搜尋就要找得到，不能因為過去同期沒有對應資料就整個消失
-    // （例如新品種、或過去這段時間剛好沒上市，都會缺基準資料，但這不代表現在買不到、不該讓人搜尋不到）
-    // 過去有足夠年份的資料才會附上跌漲幅比較，樣本數太少的年份不採用，但一樣不影響能不能被搜尋到
     const all = [];
     Object.keys(recentAgg).forEach(name => {
         const recent = recentAgg[name];
         if (recent.sampleCount < 1) return;
-        // 收集這個食材在「過去這幾年」裡，每一年各自算出來的同期平均價（樣本數不足的那一年不算進去）
-        const validYearlyPrices = baselineAggByYear
-            .map(({ agg }) => agg && agg[name])
-            .filter(baseline => baseline && baseline.sampleCount >= 3 && baseline.avgPrice > 0)
-            .map(baseline => baseline.avgPrice);
-        // 至少要有2個年份的資料才採用比較（只有1年的話，跟舊做法一樣容易被單一異常年份誤導，
-        // 這種情況乾脆不提供比較，比提供一個不可靠的數字更負責任）
-        const hasValidBaseline = recent.sampleCount >= 3 && validYearlyPrices.length >= 2;
-        const baselinePrice = hasValidBaseline ? median(validYearlyPrices) : null;
+
+        // 收集這個食材在9個歷史基準點裡，每個點各自的平均價（樣本數不足<3筆的點不算進去）
+        const allPoints = []; // 全部9點（用來算Base_Price、歷史最低點）
+        const lastYearPoints = []; // 只有「1年前」那3個點（用來算Last_Year_Spike，判斷去年是不是異常）
+        subWindowPointsByYear.forEach(({ yearsAgo, points }) => {
+            points.forEach(agg => {
+                const baseline = agg && agg[name];
+                if (!baseline || baseline.sampleCount < 3 || baseline.avgPrice <= 0) return;
+                allPoints.push(baseline.avgPrice);
+                if (yearsAgo === 1) lastYearPoints.push(baseline.avgPrice);
+            });
+        });
+
+        // 至少要有5個基準點（滿分9點，允許缺一些）才採用比較，樣本太少的話比較結果不可靠，寧可不提供
+        const hasValidBaseline = recent.sampleCount >= 3 && allPoints.length >= 5;
+        let basePrice = null, historicalMin = null, priceRatio = null, lastYearSpike = null;
+        let isGreatValue = false, isFakeCheap = false;
+        if (hasValidBaseline) {
+            basePrice = trimmedMean(allPoints);
+            historicalMin = Math.min(...allPoints);
+            priceRatio = recent.avgPrice / basePrice;
+            lastYearSpike = lastYearPoints.length > 0 ? (lastYearPoints.reduce((a, b) => a + b, 0) / lastYearPoints.length) / basePrice : null;
+            // 真便宜：現在價格比基準價低15%以上，而且逼近或低於歷史9點裡的最低點（容許5%的通膨誤差）
+            isGreatValue = priceRatio < GREAT_VALUE_RATIO_THRESHOLD && recent.avgPrice <= historicalMin * VALUE_TOLERANCE;
+            // 假便宜：看起來沒有比基準價低多少（甚至更高），但去年同期均價比基準價高出30%以上——
+            // 代表去年是異常暴漲的年份，今年只是「恢復正常」，不是真的撿到便宜
+            isFakeCheap = priceRatio >= FAKE_CHEAP_RATIO_THRESHOLD && lastYearSpike !== null && lastYearSpike >= FAKE_CHEAP_SPIKE_THRESHOLD;
+        }
         const item = {
             name,
             recentPrice: Math.round(recent.avgPrice * 100) / 100,
-            baselinePrice: baselinePrice !== null ? Math.round(baselinePrice * 100) / 100 : null,
-            dropPct: baselinePrice !== null ? Math.round(((baselinePrice - recent.avgPrice) / baselinePrice) * 1000) / 10 : null,
-            baselineYearsUsed: validYearlyPrices.length, // 這次比較實際採用了幾年的資料，方便之後除錯確認
+            baselinePrice: basePrice !== null ? Math.round(basePrice * 100) / 100 : null,
+            dropPct: basePrice !== null ? Math.round(((basePrice - recent.avgPrice) / basePrice) * 1000) / 10 : null,
+            baselinePointsUsed: allPoints.length, // 這次比較實際採用了幾個基準點(滿分9)，方便之後除錯確認
+            isGreatValue,
+            isFakeCheap,
         };
         all.push(item);
     });
@@ -387,9 +436,9 @@ function buildRecommendationsFromRows(recentRows, baselineAggByYear, type, categ
 }
 
 async function buildRecommendations(baseUrl, type, label) {
-    const { recentRows, baselineAggByYear } = await fetchRecentAndBaselineRows(baseUrl, label, type);
+    const { recentRows, subWindowPointsByYear } = await fetchRecentAndBaselineRows(baseUrl, label, type);
     logCategoryCodeSamples(recentRows, type, label);
-    return buildRecommendationsFromRows(recentRows, baselineAggByYear, type, null);
+    return buildRecommendationsFromRows(recentRows, subWindowPointsByYear, type, null);
 }
 
 // 農產專用：只抓一次資料，但依種類代碼拆成蔬菜(N04)/水果(N05)/花卉(N06)三個獨立分類
@@ -400,10 +449,10 @@ const FARM_CATEGORY_CODES = {
     flowers: 'N06',
 };
 async function buildFarmCategorizedRecommendations(baseUrl, label) {
-    const { recentRows, baselineAggByYear } = await fetchRecentAndBaselineRows(baseUrl, label, 'farm');
+    const { recentRows, subWindowPointsByYear } = await fetchRecentAndBaselineRows(baseUrl, label, 'farm');
     const result = {};
     for (const [key, code] of Object.entries(FARM_CATEGORY_CODES)) {
-        result[key] = buildRecommendationsFromRows(recentRows, baselineAggByYear, 'farm', code);
+        result[key] = buildRecommendationsFromRows(recentRows, subWindowPointsByYear, 'farm', code);
         console.log(`[${label}] ${key}（代碼${code}）：全部 ${result[key].all.length} 項，推薦 ${result[key].recommended.length} 項`);
     }
     return result;
@@ -462,75 +511,50 @@ function logDateRangeSanity(rows, type, label, expectedDesc) {
 }
 
 async function buildColumnRecommendations(baseUrl, columns, label) {
-    const today = new Date();
-    const { dateFormatFn, paramNames } = await detectQueryFormat(baseUrl, label);
-
     console.log(`[${label}] 開始抓取「近期14天」資料...`);
+    const { dateFormatFn, paramNames } = await detectQueryFormat(baseUrl, label);
+    const today = new Date();
     const recentRows = await fetchAllPages(baseUrl, addDays(today, -14), today, dateFormatFn, paramNames);
     const recentAgg = aggregateByColumns(recentRows, columns);
     console.log(`[${label}] 近期資料筆數：${recentRows.length}`);
     logRawFieldNames(recentRows, columns, label);
 
-    // 跟農產/漁產那邊同樣的道理：歷史基準資料（過去3年同期）不會每天改變，
-    // 用Firestore快取起來，只有超過25天沒更新才重新向政府API抓，平常每天只抓「近期」這一段就好
-    const cacheRef = db.collection('marketPriceBaselineCache').doc(`${label}_column`);
-    let baselineAggByYear = null;
-    try {
-        const cacheDoc = await cacheRef.get();
-        if (cacheDoc.exists) {
-            const cached = cacheDoc.data();
-            const computedAt = cached.computedAt && cached.computedAt.toDate ? cached.computedAt.toDate() : null;
-            const ageDays = computedAt ? (Date.now() - computedAt.getTime()) / (1000 * 60 * 60 * 24) : Infinity;
-            if (ageDays < BASELINE_CACHE_MAX_AGE_DAYS && Array.isArray(cached.aggByYear)) {
-                console.log(`[${label}] 歷史基準資料使用快取（${Math.round(ageDays)}天前算的，還沒過期）`);
-                baselineAggByYear = cached.aggByYear;
-            } else {
-                console.log(`[${label}] 歷史基準快取已經過期（${Math.round(ageDays)}天前算的），重新抓取`);
-            }
-        } else {
-            console.log(`[${label}] 沒有歷史基準快取，第一次抓取`);
-        }
-    } catch (err) {
-        console.warn(`[${label}] 讀取歷史基準快取失敗，改為重新抓取`, err.message);
-    }
-
-    if (!baselineAggByYear) {
-        baselineAggByYear = [];
-        for (const yearsAgo of [1, 2, 3]) {
-            console.log(`[${label}] 開始抓取「${yearsAgo}年前同期」資料...`);
-            const centerDate = new Date(today);
-            centerDate.setFullYear(centerDate.getFullYear() - yearsAgo);
-            const rangeStart = addDays(centerDate, -15);
-            const rangeEnd = addDays(centerDate, 15);
-            const rows = await fetchAllPages(baseUrl, rangeStart, rangeEnd, dateFormatFn, paramNames);
-            baselineAggByYear.push(aggregateByColumns(rows, columns));
-            console.log(`[${label}] ${yearsAgo}年前同期資料筆數：${rows.length}`);
-        }
-        try {
-            await cacheRef.set({ computedAt: admin.firestore.FieldValue.serverTimestamp(), aggByYear: baselineAggByYear });
-            console.log(`[${label}] 歷史基準資料已更新快取`);
-        } catch (err) {
-            console.warn(`[${label}] 寫入歷史基準快取失敗（不影響這次執行結果，只是下次還是要重抓）`, err.message);
-        }
-    }
+    // 跟農產/漁產共用同一套「9個歷史基準點(3年×3小週)」+ 快取機制，type傳null代表用aggregateByColumns聚合
+    const subWindowPointsByYear = await getBaselineAggByYear(`${label}_col`, baseUrl, label, null, dateFormatFn, paramNames, columns);
 
     const all = [];
     Object.keys(recentAgg).forEach(name => {
         const recent = recentAgg[name];
         if (recent.sampleCount < 1) return;
-        const validYearlyPrices = baselineAggByYear
-            .map(agg => agg[name])
-            .filter(baseline => baseline && baseline.sampleCount >= 3 && baseline.avgPrice > 0)
-            .map(baseline => baseline.avgPrice);
-        // 至少要有2個年份的資料才採用比較，只有1年的話比較結果不可靠，寧可不提供
-        const hasValidBaseline = recent.sampleCount >= 3 && validYearlyPrices.length >= 2;
-        const baselinePrice = hasValidBaseline ? median(validYearlyPrices) : null;
+        const allPoints = [];
+        const lastYearPoints = [];
+        subWindowPointsByYear.forEach(({ yearsAgo, points }) => {
+            points.forEach(agg => {
+                const baseline = agg && agg[name];
+                if (!baseline || baseline.sampleCount < 3 || baseline.avgPrice <= 0) return;
+                allPoints.push(baseline.avgPrice);
+                if (yearsAgo === 1) lastYearPoints.push(baseline.avgPrice);
+            });
+        });
+        const hasValidBaseline = recent.sampleCount >= 3 && allPoints.length >= 5;
+        let basePrice = null, historicalMin = null, priceRatio = null, lastYearSpike = null;
+        let isGreatValue = false, isFakeCheap = false;
+        if (hasValidBaseline) {
+            basePrice = trimmedMean(allPoints);
+            historicalMin = Math.min(...allPoints);
+            priceRatio = recent.avgPrice / basePrice;
+            lastYearSpike = lastYearPoints.length > 0 ? (lastYearPoints.reduce((a, b) => a + b, 0) / lastYearPoints.length) / basePrice : null;
+            isGreatValue = priceRatio < GREAT_VALUE_RATIO_THRESHOLD && recent.avgPrice <= historicalMin * VALUE_TOLERANCE;
+            isFakeCheap = priceRatio >= FAKE_CHEAP_RATIO_THRESHOLD && lastYearSpike !== null && lastYearSpike >= FAKE_CHEAP_SPIKE_THRESHOLD;
+        }
         all.push({
             name,
             recentPrice: Math.round(recent.avgPrice * 100) / 100,
-            baselinePrice: baselinePrice !== null ? Math.round(baselinePrice * 100) / 100 : null,
-            dropPct: baselinePrice !== null ? Math.round(((baselinePrice - recent.avgPrice) / baselinePrice) * 1000) / 10 : null,
-            baselineYearsUsed: validYearlyPrices.length,
+            baselinePrice: basePrice !== null ? Math.round(basePrice * 100) / 100 : null,
+            dropPct: basePrice !== null ? Math.round(((basePrice - recent.avgPrice) / basePrice) * 1000) / 10 : null,
+            baselinePointsUsed: allPoints.length,
+            isGreatValue,
+            isFakeCheap,
         });
     });
     const recommended = all.filter(d => d.dropPct > 0).sort((a, b) => b.dropPct - a.dropPct).slice(0, 50);
