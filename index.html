@@ -383,6 +383,7 @@
            避免不同瀏覽器/PWA 對 media query 支援度不一致導致樣式套用不了的問題 */
         .cook-mode-text-lg { font-size: 1.15em !important; }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js" defer></script>
 </head>
 <body class="min-h-screen">
     <div id="toast-container"></div>
@@ -459,6 +460,11 @@
 
     <!-- 手機版漢堡選單：獨立浮動在畫面最上層，不受任何父層overflow裁切影響，
          點背景遮罩或選單項目都會自動收起 -->
+    <!-- 採購清單全部買完的慶祝動畫：置中浮現的Lottie動畫+背景輕微遮罩，播完自動消失 -->
+    <div id="shopping-complete-overlay" class="hidden fixed inset-0 z-[70] flex items-center justify-center" style="background:rgba(58,42,30,0.15); pointer-events:none;">
+        <div id="shopping-complete-lottie" style="width:260px; height:260px;"></div>
+    </div>
+
     <div id="mobile-menu-backdrop" class="hidden md:!hidden fixed inset-0 z-[59]" style="background:rgba(58,42,30,0.35)" onclick="toggleMobileMenu()"></div>
     <div id="mobile-menu-panel" class="hidden md:!hidden fixed left-4 right-4 z-[60] rounded-[1.75rem] overflow-hidden" style="top:calc(env(safe-area-inset-top) + 4.2rem); box-shadow:0 20px 40px -12px rgba(58,42,30,0.35); background:var(--paper);">
         <div class="px-5 py-4" style="background:linear-gradient(120deg, var(--jam), var(--jam-dark));">
@@ -12428,6 +12434,43 @@
             }
         }
 
+        // 採購清單裡「還需要買的食材」全部都點成已購買時，播放這個慶祝動畫：
+        // Lottie購物籃動畫置中彈出，同時疊加彩色紙屑+一些emoji粒子效果，增加一點熱鬧感
+        function playShoppingListCompleteCelebration() {
+            const overlay = document.getElementById('shopping-complete-overlay');
+            const lottieContainer = document.getElementById('shopping-complete-lottie');
+            if (!overlay || !lottieContainer || typeof lottie === 'undefined') return;
+            overlay.classList.remove('hidden');
+            lottieContainer.innerHTML = ''; // 清掉上一次播放留下的畫面，避免疊加
+            lottieContainer.style.transform = 'scale(0.5)';
+            lottieContainer.style.opacity = '0';
+            lottieContainer.style.transition = 'transform .5s cubic-bezier(.34,1.56,.64,1), opacity .3s ease';
+            // 用requestAnimationFrame讓瀏覽器先套用好初始的縮小+透明狀態，下一幀再放大回正常大小，
+            // 才會有「彈跳放大」的進場效果，不會因為兩個style同時設定被瀏覽器優化掉、直接跳過渡程
+            requestAnimationFrame(() => {
+                lottieContainer.style.transform = 'scale(1)';
+                lottieContainer.style.opacity = '1';
+            });
+            const anim = lottie.loadAnimation({
+                container: lottieContainer,
+                renderer: 'svg',
+                loop: false,
+                autoplay: true,
+                path: 'https://res.cloudinary.com/bumzwp9g/raw/upload/v1785748371/basket_18173870_ueguyc.json',
+            });
+            // 額外疊加彩色紙屑+慶祝emoji，讓整體效果更熱鬧一點，不是只有單一個購物籃動畫孤零零播放
+            launchConfetti();
+            spawnEmojiParticles({ emojis: ['🎉', '🛒', '✅', '🎊'], count: 18, duration: 2200, mode: 'burst' });
+            // Lottie動畫本身播完就觸發淡出收起；如果動畫檔案本身讀取失敗(complete事件不會觸發)，
+            // 額外加一個保險的逾時，確保畫面不會卡住一直蓋在那裡
+            const hideOverlay = () => {
+                lottieContainer.style.transform = 'scale(0.85)';
+                lottieContainer.style.opacity = '0';
+                setTimeout(() => { overlay.classList.add('hidden'); anim.destroy(); }, 300);
+            };
+            anim.addEventListener('complete', hideOverlay);
+            setTimeout(hideOverlay, 6000); // 保險逾時，避免動畫檔案讀取失敗時畫面卡住不消失
+        }
         // 純前端 canvas 彩色紙屑動畫，不依賴外部套件
         function launchConfetti() {
             const canvas = document.createElement('canvas');
@@ -14267,6 +14310,14 @@
                 // 也可能是像"__nodata__可可粉"這種內部格式，不是給使用者看的）
                 if (labelEl) labelEl.textContent = (bought ? '✅ ' : '') + (displayName || key);
             }
+            // 只有在「打勾」（不是取消打勾）的時候才檢查，避免取消勾選時誤觸發；
+            // 檢查目前這份「還需要買的食材」清單裡，是不是每一個都已經標記成已購買
+            if (bought) {
+                const keys = window.shoppingListCurrentVisibleKeys || [];
+                if (keys.length > 0 && keys.every(k => !!shoppingListPurchasedCache[k])) {
+                    playShoppingListCompleteCelebration();
+                }
+            }
             if (currentUser) {
                 // 這裡故意用 set(..., {mergeFields:['purchased']}) 而不是單純 set(merge:true)：
                 // 一般merge對巢狀物件是「深度合併」，取消勾選時本機物件已經把那個key刪掉了，
@@ -14463,6 +14514,8 @@
                 if (groups[a].isStaple !== groups[b].isStaple) return groups[a].isStaple ? 1 : -1;
                 return (groups[b].cost || 0) - (groups[a].cost || 0);
             });
+            // 存到全域變數，方便點擊「已購買」的時候可以檢查「是不是全部都買完了」，觸發慶祝動畫
+            window.shoppingListCurrentVisibleKeys = visibleGroupKeys;
             const sufficientCount = Object.values(groups).filter(g => g.sufficientStock).length;
             liveSummaryEl.innerHTML = `
                 <div class="px-5 py-4 rounded-2xl" style="background:var(--cream)">
@@ -14945,6 +14998,7 @@
             statusEl.classList.remove('hidden');
             try {
                 const compressed = await compressImageForUpload(file, 1600, 0.85);
+                if (compressed === null) throw new Error('這個檔案看起來不是有效的圖片格式，請確認選的檔案正確');
                 const base64 = await fileToBase64(compressed);
                 const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
                     method: 'POST',
@@ -14987,6 +15041,7 @@
                 const images = [];
                 for (const file of files) {
                     const compressed = await compressImageForUpload(file, 1600, 0.85); // 食譜文字通常比日期文字更多、更密集，保留較高解析度比較容易辨識
+                    if (compressed === null) throw new Error('其中一個檔案看起來不是有效的圖片格式，請確認選的檔案正確');
                     const base64 = await fileToBase64(compressed);
                     images.push({ data: base64, mimeType: compressed.type || 'image/jpeg' });
                 }
@@ -16395,19 +16450,28 @@
                         finish(file);
                     }
                 };
-                img.onerror = () => { clearTimeout(timeoutId); finish(file); };
+                img.onerror = () => { clearTimeout(timeoutId); finish(null); }; // null代表這根本不是圖片檔案，呼叫端要擋下來，不能真的送去上傳
                 img.src = url;
             });
         }
 
         async function uploadImageToCloudinary(file) {
             let compressed = await compressImageForUpload(file);
+            // compressed是null，代表瀏覽器確認這個檔案根本無法解碼成圖片（不是HEIC那種暫時性的解碼問題，
+            // 是真的不是圖片格式，例如被偽裝成圖片副檔名的JSON/文字檔），這種情況必須直接擋下來、
+            // 不能像逾時保護那樣還是退回用原始檔案上傳，避免有心人士把非圖片內容偽裝上傳
+            if (compressed === null) {
+                throw new Error('這個檔案看起來不是有效的圖片格式，請確認選的檔案正確');
+            }
             // 如果壓縮失敗（退回用原始檔案，也就是compressed跟file是同一個參照），先不要急著直接
             // 用原始檔案上傳——原始檔案通常比較大，上傳失敗機率更高。稍微停頓一下讓瀏覽器有機會
             // 釋放資源，再重新嘗試壓縮一次，真的還是不行才退回用原始檔案
             if (compressed === file) {
                 await new Promise(r => setTimeout(r, 600));
                 compressed = await compressImageForUpload(file);
+                if (compressed === null) {
+                    throw new Error('這個檔案看起來不是有效的圖片格式，請確認選的檔案正確');
+                }
             }
             return await uploadCompressedWithRetry(compressed);
         }
