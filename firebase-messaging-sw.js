@@ -16,28 +16,34 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// 網站沒有開著（在背景）的時候，收到推播會走這裡，負責跳出系統通知
+// 網站沒有開著（在背景）的時候，收到推播會走這裡，負責跳出系統通知。
+// 故意讀payload.data（不是payload.notification）——後端故意只送data格式，不帶頂層notification，
+// 這樣瀏覽器/系統就不會自動再跳出一次通知，全部都交給這裡統一處理，確保同一則訊息只會顯示一次
 messaging.onBackgroundMessage((payload) => {
-    const title = (payload.notification && payload.notification.title) || '食材快到期了';
-    const body = (payload.notification && payload.notification.body) || '';
+    const data = payload.data || {};
+    const title = data.title || '通知';
+    const body = data.body || '';
+    // tag由後端指定是「哪一種」通知(例如冰箱到期用fridge-expiry-reminder、採購提醒用shopping-list-reminder)，
+    // 同一種類型的通知重複出現時會互相取代成一則，但不同類型的通知不會互相蓋掉對方
+    const tag = data.tag || 'default-reminder';
     self.registration.showNotification(title, {
         body,
         icon: '🧊', // 大部分瀏覽器不吃emoji當icon，之後有正式圖示可以換成圖片網址
-        // 加上固定的tag：如果同一則推播因為某種原因被觸發了不只一次（實測發現部分裝置會這樣），
-        // 瀏覽器看到同一個tag會直接「取代」前一個通知，不會顯示成兩則分開的通知
-        tag: 'fridge-expiry-reminder',
+        tag,
+        data: { link: data.link || './' }, // 記住點擊時要開啟的網址
     });
 });
 
 // 點通知的時候，把使用者帶回網站
 self.addEventListener('notificationclick', (event) => {
     event.notification.close();
+    const link = (event.notification.data && event.notification.data.link) || './';
     event.waitUntil(
         clients.matchAll({ type: 'window' }).then((clientList) => {
             for (const client of clientList) {
                 if ('focus' in client) return client.focus();
             }
-            if (clients.openWindow) return clients.openWindow('./');
+            if (clients.openWindow) return clients.openWindow(link);
         })
     );
 });
