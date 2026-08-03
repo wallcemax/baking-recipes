@@ -14847,9 +14847,11 @@
             try {
                 const permission = await Notification.requestPermission();
                 if (permission !== 'granted') return { ok: false, error: '沒有允許通知權限，沒辦法開啟提醒' };
-                // scope要用相對路徑（不能用開頭是/的絕對路徑），瀏覽器會自動以這個檔案所在的資料夾為基準，
-                // 這樣不管網站部署在網域根目錄還是像這裡放在/baking-recipes/子路徑下，都不會超出允許的範圍
-                const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js', { scope: './firebase-cloud-messaging-push-scope' });
+                // 改成沿用網站本身既有的service-worker.js註冊（PWA離線快取用的那一支，
+                // Firebase推播的程式碼已經整合進去了），不再另外註冊一支獨立scope的
+                // firebase-messaging-sw.js——之前拆成兩支各自獨立的service worker同時存在，
+                // 懷疑就是造成同一則推播被重複顯示成兩則的原因
+                const registration = await navigator.serviceWorker.ready;
                 const messaging = firebase.messaging();
                 const token = await messaging.getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: registration });
                 if (!token) return { ok: false, error: '沒辦法取得通知權杖，請稍後再試' };
@@ -16961,9 +16963,20 @@
         // 徹底繞過任何一層 HTTP 快取，確保一定會抓到最新的 service-worker.js
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('service-worker.js?v=20260712b').catch(err => {
+                navigator.serviceWorker.register('service-worker.js?v=20260803a').catch(err => {
                     console.warn('Service Worker 註冊失敗', err);
                 });
+                // 清掉舊版本殘留的獨立firebase-messaging-sw.js註冊——之前拆成兩支service worker
+                // 各自獨立運作，懷疑是造成同一則推播被重複顯示成兩則的原因，現在已經整合進
+                // service-worker.js一支處理，這個舊的獨立scope註冊不再需要，主動清掉避免殘留
+                navigator.serviceWorker.getRegistrations().then(regs => {
+                    regs.forEach(reg => {
+                        if (reg.scope.includes('firebase-cloud-messaging-push-scope')) {
+                            reg.unregister();
+                            console.log('已清除舊版本的獨立推播service worker註冊');
+                        }
+                    });
+                }).catch(() => {});
             });
         }
     </script>
