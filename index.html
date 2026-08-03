@@ -11437,10 +11437,16 @@
             searchInput.placeholder = `${label}${emoji}今天想煮點什麼好吃的呢？`;
         })();
 
-        // 首頁「歡迎回來」旁邊的揮手動畫，循環播放
-        (function playHeroWaveAnimation() {
+        // 首頁「歡迎回來」旁邊的揮手動畫，循環播放。
+        // Lottie函式庫是用defer載入的，會比這段inline script晚執行，
+        // 這裡用簡單的輪詢方式，等函式庫真的準備好了才建立動畫，不然會抓不到lottie這個全域變數
+        function playHeroWaveAnimation() {
             const container = document.getElementById('hero-wave-lottie');
-            if (!container || typeof lottie === 'undefined') return;
+            if (!container) return;
+            if (typeof lottie === 'undefined') {
+                setTimeout(playHeroWaveAnimation, 100);
+                return;
+            }
             lottie.loadAnimation({
                 container,
                 renderer: 'svg',
@@ -11448,7 +11454,8 @@
                 autoplay: true,
                 path: 'https://res.cloudinary.com/bumzwp9g/raw/upload/v1785763703/hello_12744510_xob9qd.json',
             });
-        })();
+        }
+        playHeroWaveAnimation();
 
         // 處理登入導轉流程回來後的結果；如果使用者在流程中按了上一頁導致狀態遺失，
         // 這裡會安靜地攔截錯誤，不會讓整個頁面卡住；若是環境不支援登入，主動提示使用者
