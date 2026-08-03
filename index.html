@@ -12213,11 +12213,22 @@
             }
         }
 
-        function updateHourglass(idx, fraction) {
-            const top = document.getElementById(`hourglass-top-${idx}`);
-            const bottom = document.getElementById(`hourglass-bottom-${idx}`);
-            if (top) top.style.transform = `scaleY(${Math.max(0, 1 - fraction)})`;
-            if (bottom) bottom.style.transform = `scaleY(${Math.min(1, fraction)})`;
+        // 每個步驟計時器各自的Lottie動畫實例，用idx當key快取起來，同一個步驟的計時器
+        // 不用每次開始/暫停都重新載入動畫，重複利用同一個實例即可
+        const stepTimerAnims = {};
+        function getOrCreateStepTimerAnim(idx) {
+            if (stepTimerAnims[idx]) return stepTimerAnims[idx];
+            const container = document.getElementById(`step-timer-lottie-${idx}`);
+            if (!container || typeof lottie === 'undefined') return null;
+            const anim = lottie.loadAnimation({
+                container,
+                renderer: 'svg',
+                loop: true,
+                autoplay: false,
+                path: 'https://res.cloudinary.com/bumzwp9g/raw/upload/v1785762475/eating-time_17105703_lrxwwv.json',
+            });
+            stepTimerAnims[idx] = anim;
+            return anim;
         }
 
         function startStepTimer(spanId, minutes, idx) {
@@ -12241,15 +12252,18 @@
                 };
             }
             const t = stepTimers[spanId];
+            const anim = getOrCreateStepTimerAnim(idx);
             if (t.running) {
                 clearInterval(t.intervalId);
                 clearTimeout(t.completionTimeoutId);
                 t.running = false;
                 btn.style.background = '#EFEAE0'; btn.style.color = 'var(--espresso-soft)';
+                if (anim) anim.pause();
                 return;
             }
             t.running = true;
             btn.style.background = 'var(--jam)'; btn.style.color = '#fff';
+            if (anim) anim.play();
 
             if (t.mode === 'countdown') {
                 // 用「絕對結束時間」取代每秒遞減，這樣就算 UI 更新的 interval 被瀏覽器降頻／延遲，
@@ -12263,13 +12277,12 @@
                     t.running = false;
                     span.textContent = '時間到！';
                     btn.style.background = 'var(--sage)'; btn.style.color = '#fff';
-                    updateHourglass(idx, 1);
+                    if (anim) anim.pause();
                     notifyTimerDone();
                 }, t.totalSeconds * 1000);
 
                 t.intervalId = setInterval(() => {
                     const remaining = Math.max(0, Math.round((t.endTime - Date.now()) / 1000));
-                    if (t.totalSeconds > 0) updateHourglass(idx, 1 - (remaining / t.totalSeconds));
                     // 最後 5 秒：每一秒都用比較強、比較長的震動節奏提醒，並且用 lastPulsedSecond
                     // 避免同一秒被重複觸發（保留但加強原本的節奏震動）
                     if (remaining <= 5 && remaining > 0 && navigator.vibrate && t.lastPulsedSecond !== remaining) {
@@ -12293,6 +12306,9 @@
                 if (t.completionTimeoutId) clearTimeout(t.completionTimeoutId);
             });
             stepTimers = {};
+            // 一併銷毀對應的Lottie動畫實例，避免離開這篇食譜後動畫還殘留在背景佔用資源
+            Object.values(stepTimerAnims).forEach(anim => anim.destroy());
+            Object.keys(stepTimerAnims).forEach(key => delete stepTimerAnims[key]);
         }
 
         // ---------- 步驟勾選與完成進度 ----------
@@ -12609,8 +12625,8 @@
                             const stepImageUrl = typeof s === 'string' ? null : (s.imageUrl || null);
                             const videoBadge = (ts !== null && recipe.youtubeUrl) ? `<button onclick="seekVideo(${ts}, ${JSON.stringify(recipe.youtubeUrl).replace(/"/g, '&quot;')})" class="inline-flex items-center gap-1 mt-2 mr-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#F4E4EA; color:var(--jam)"><i class="fas fa-play text-[10px]"></i> ${formatTimestamp(ts)}</button>` : '';
                             const timerSpanId = `step-timer-${i}`;
-                            const hourglassSvg = `<svg width="15" height="15" viewBox="0 0 24 24" class="shrink-0"><path d="M5 3h14v3l-6 6 6 6v3H5v-3l6-6-6-6V3z" fill="none" stroke="currentColor" stroke-width="1.3"/><g id="hourglass-top-${i}" style="transform-origin:12px 6px; transform:scaleY(1)"><path d="M7 4.3h10l-5 5z" fill="currentColor"/></g><g id="hourglass-bottom-${i}" style="transform-origin:12px 18px; transform:scaleY(0)"><path d="M7 19.7h10l-5 -5z" fill="currentColor"/></g></svg>`;
-                            const timerBadge = duration ? `<button id="step-timer-btn-${i}" onclick="startStepTimer('${timerSpanId}', ${duration}, ${i})" class="inline-flex items-center gap-1 mt-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#EFEAE0; color:var(--espresso-soft)">${hourglassSvg} <span id="${timerSpanId}">${formatTimestamp(Math.round(duration * 60))}</span></button>` : '';
+                            const timerLottieId = `step-timer-lottie-${i}`;
+                            const timerBadge = duration ? `<button id="step-timer-btn-${i}" onclick="startStepTimer('${timerSpanId}', ${duration}, ${i})" class="inline-flex items-center gap-1 mt-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#EFEAE0; color:var(--espresso-soft)"><div id="${timerLottieId}" style="width:18px; height:18px;" class="shrink-0"></div> <span id="${timerSpanId}">${formatTimestamp(Math.round(duration * 60))}</span></button>` : '';
                             const stepImage = stepImageUrl ? `<img src="${stepImageUrl}" class="rounded-xl mt-3 max-w-[220px] w-full" loading="lazy">` : '';
                             return `<div class="flex gap-4 mb-5 step-row">
                                 <button onclick="toggleStepCheck(${i})" id="step-check-${i}" class="step-checkbox shrink-0 w-7 h-7 rounded-full border-2 flex items-center justify-center mt-0.5 transition-colors" style="border-color:var(--jam)" aria-label="標記完成">
