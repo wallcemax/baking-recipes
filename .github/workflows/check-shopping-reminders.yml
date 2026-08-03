@@ -6,6 +6,15 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch: {} # 也可以在GitHub網頁上手動點一次「Run workflow」立刻執行，方便測試
 
+# 加上concurrency設定：確保同一時間只會有「一個」這個workflow在執行。
+# 如果排程自動觸發的那次還沒跑完，剛好又手動點了一次「Run workflow」（或反過來），
+# 沒有這個設定的話，兩次執行會同時進行，各自獨立判斷「今天還沒發送過提醒」，導致同一則提醒被送兩次。
+# group設成固定值（不是動態的），代表這個workflow全域只允許一個執行個體；
+# cancel-in-progress設false代表新的執行不會強制取消舊的，而是排隊等舊的先跑完，確保不會漏執行，只是不會同時跑
+concurrency:
+  group: check-shopping-reminders
+  cancel-in-progress: false
+
 jobs:
   check-shopping-reminders:
     runs-on: ubuntu-latest
