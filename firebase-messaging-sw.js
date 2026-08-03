@@ -23,34 +23,8 @@ const messaging = firebase.messaging();
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(clients.claim()));
 
-// 網站沒有開著（在背景）的時候，收到推播會走這裡，負責跳出系統通知。
-// 故意讀payload.data（不是payload.notification）——後端故意只送data格式，不帶頂層notification，
-// 這樣瀏覽器/系統就不會自動再跳出一次通知，全部都交給這裡統一處理，確保同一則訊息只會顯示一次
-messaging.onBackgroundMessage((payload) => {
-    const data = payload.data || {};
-    const title = data.title || '通知';
-    const body = data.body || '';
-    // tag由後端指定是「哪一種」通知(例如冰箱到期用fridge-expiry-reminder、採購提醒用shopping-list-reminder)，
-    // 同一種類型的通知重複出現時會互相取代成一則，但不同類型的通知不會互相蓋掉對方
-    const tag = data.tag || 'default-reminder';
-    self.registration.showNotification(title, {
-        body,
-        icon: '🧊', // 大部分瀏覽器不吃emoji當icon，之後有正式圖示可以換成圖片網址
-        tag,
-        data: { link: data.link || './' }, // 記住點擊時要開啟的網址
-    });
-});
-
-// 點通知的時候，把使用者帶回網站
-self.addEventListener('notificationclick', (event) => {
-    event.notification.close();
-    const link = (event.notification.data && event.notification.data.link) || './';
-    event.waitUntil(
-        clients.matchAll({ type: 'window' }).then((clientList) => {
-            for (const client of clientList) {
-                if ('focus' in client) return client.focus();
-            }
-            if (clients.openWindow) return clients.openWindow(link);
-        })
-    );
-});
+// 注意：這裡故意「不再」自己寫onBackgroundMessage去手動呼叫showNotification()，
+// 也不再自己寫notificationclick去處理點擊開啟連結——後端傳送訊息時已經改用webpush.notification
+// 這個標準格式，加上fcmOptions.link，Firebase官方的messaging-compat SDK看到這兩個設定，
+// 會「自動」負責顯示通知、也會自動處理點擊後開啟指定連結，不需要（也不應該）自己再寫一次，
+// 之前顯示錯誤內容的問題，很可能就是因為自己手動處理跟SDK自動處理互相干擾造成的
