@@ -116,7 +116,31 @@ async function main() {
         const isDue = scheduledAt.getTime() > lastRunTW.getTime() && scheduledAt.getTime() <= nowTW.getTime();
         if (!isDue) continue;
 
-        if (!isOneTime && reminder.lastNotifiedDate === todayStr) continue; // 保險：避免同一天重複發送
+        // 用Firestore交易「搶」這次發送的資格：交易內部會重新讀一次最新資料，確認還沒發送過
+        // 才會標記成已發送，這個讀取+標記是不可分割的單一動作。就算剛好有兩個執行同時跑到這裡
+        // （例如排程自動觸發跟手動觸發時間點重疊），也只有其中一個能真的搶到資格往下發送通知，
+        // 另一個會在交易裡發現「已經被標記過了」而自動放棄，從根本上避免同一則提醒被送兩次
+        const reminderRef = db.collection('shoppingReminders').doc(uid);
+        let claimed = false;
+        try {
+            claimed = await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(reminderRef);
+                const freshData = freshDoc.data() || {};
+                if (!isOneTime && freshData.lastNotifiedDate === todayStr) return false; // 今天已經被(可能是另一次執行)標記發送過了
+                if (isOneTime && freshData.enabled === false) return false; // 一次性提醒已經被標記關閉了，代表已經發送過
+                tx.set(reminderRef, isOneTime
+                    ? { enabled: false, lastNotifiedDate: todayStr }
+                    : { lastNotifiedDate: todayStr }, { merge: true });
+                return true;
+            });
+        } catch (err) {
+            console.warn(`搶佔 ${uid} 的發送資格失敗，這次先跳過：`, err.message);
+            continue;
+        }
+        if (!claimed) {
+            console.log(`使用者 ${uid}：時間到了，但這次沒搶到發送資格（可能已經被另一次執行搶先發送過），跳過`);
+            continue;
+        }
 
         // 檢查這個使用者的採購清單，是不是「還有東西沒買」——已經買完的品項不算，全部買完的話沒必要提醒
         let hasUnpurchasedItems = false;
@@ -184,17 +208,12 @@ async function main() {
 
         if (sentAny) {
             notifiedUsers++;
-            // 更新這次提醒的狀態：一次性提醒(有設定日期)提醒完直接關閉整個提醒功能；
-            // 每天固定提醒的話，只記錄「今天提醒過了」，避免同一天重複發送，明天會自動恢復正常繼續提醒
-            const updateData = isOneTime
-                ? { enabled: false, lastNotifiedDate: todayStr }
-                : { lastNotifiedDate: todayStr };
-            try {
-                await db.collection('shoppingReminders').doc(uid).set(updateData, { merge: true });
-            } catch (err) {
-                console.warn(`更新 ${uid} 的提醒狀態失敗：`, err.message);
-            }
+            // 發送狀態已經在前面的交易裡提前標記過了(搶佔發送資格的同時就順便標記)，這裡不用再更新一次，
+            // 只需要記錄log方便之後查閱執行紀錄
             console.log(`使用者 ${uid}：已推播採購提醒${isOneTime ? '（一次性，已自動關閉）' : ''}`);
+        } else {
+            console.warn(`使用者 ${uid}：已經搶到發送資格、也標記成已發送，但實際上全部裝置都推播失敗了——
+狀態已經被標記，不會重試，比較保守的處理方式是避免無限重試造成其他問題，之後可以從log裡人工查證`);
         }
     }
 
