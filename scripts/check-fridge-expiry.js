@@ -79,6 +79,10 @@ async function main() {
         const names = soonExpiring.map(i => i.name).join('、');
         const title = '🧊 冰箱食材快到期了';
         const body = `${names} 快到期了，記得盡快使用`;
+        // tag加上冰箱ID+今天日期，確保「今天這一次檢查」不管實際被送達幾次，
+        // 瀏覽器看到的tag都完全一樣，能正確合併顯示成一則，避免SDK底層網路重試造成重複顯示
+        const todayForTag = new Date().toISOString().slice(0, 10);
+        const notificationTag = `fridge-expiry-${doc.id}-${todayForTag}`;
 
         for (const { uid, token } of tokenOwners) {
             try {
@@ -89,12 +93,12 @@ async function main() {
                     // 兩邊都做反而容易出現顯示錯誤內容、或抓到瀏覽器快取舊通知這類不穩定的狀況
                     webpush: {
                         headers: { Urgency: 'high' },
-                        notification: { title, body, tag: 'fridge-expiry-reminder', requireInteraction: true },
+                        notification: { title, body, tag: notificationTag, requireInteraction: true },
                         fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
                     },
                     // collapseKey：如果FCM本身在傳輸過程中因為重試等原因把同一則訊息送達了不只一次，
                     // 有相同collapseKey的訊息，系統只會保留最新一則在通知列，不會顯示成兩則分開的通知
-                    android: { collapseKey: 'fridge-expiry-reminder' },
+                    android: { collapseKey: notificationTag },
                 });
                 notifiedDevices++;
             } catch (err) {

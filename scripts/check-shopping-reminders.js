@@ -176,6 +176,10 @@ async function main() {
 
         const title = '🛒 採購提醒';
         const body = '你的採購清單裡還有東西沒買，記得去採購喔！';
+        // tag加上使用者ID+這次觸發的確切時間點，確保「同一次提醒事件」不管實際被送達幾次，
+        // 瀏覽器看到的tag都完全一樣，能正確辨識成同一則、自動合併顯示成一個通知，
+        // 不會因為底層SDK網路重試等原因造成的重複送達，讓使用者收到兩則
+        const notificationTag = `shopping-reminder-${uid}-${scheduledAt.getTime()}`;
         let sentAny = false;
         for (const token of tokens) {
             try {
@@ -184,10 +188,10 @@ async function main() {
                     // 改用webpush.notification讓Firebase官方SDK自動顯示，不再自己手動處理顯示邏輯
                     webpush: {
                         headers: { Urgency: 'high' },
-                        notification: { title, body, tag: 'shopping-list-reminder', requireInteraction: true },
+                        notification: { title, body, tag: notificationTag, requireInteraction: true },
                         fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
                     },
-                    android: { collapseKey: 'shopping-list-reminder' },
+                    android: { collapseKey: notificationTag },
                 });
                 notifiedDevices++;
                 sentAny = true;
