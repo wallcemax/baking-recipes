@@ -7,6 +7,13 @@
 //
 // 跟市場價格那支腳本用同一套架構：GitHub Actions排程執行、用firebase-admin寫Firestore，
 // 不需要Cloud Functions / Blaze方案，也共用同一組FIREBASE_SERVICE_ACCOUNT密鑰。
+//
+// 注意：推播的部分「故意不用」admin.messaging().send()——這是Firebase官方SDK長年存在、
+// 目前還沒開放設定選項的已知問題：SDK內部的HTTP連線層遇到逾時/連線中斷，會「自動重試一次」，
+// 而且完全不會讓我們的程式碼知道發生了重試。如果第一次請求其實已經成功送達裝置、只是回應
+// 因為網路狀況delay了，SDK還是會重送第二次，導致使用者收到兩則一模一樣的通知，我們自己的
+// 程式碼完全看不出破綻（log只會顯示「呼叫了一次」）。改成自己直接呼叫FCM的REST API，
+// 用單純的fetch()送出去，不做任何自動重試，就能徹底避開這個問題
 // ============================================================
 
 const admin = require('firebase-admin');
@@ -23,9 +30,34 @@ try {
     console.error('FIREBASE_SERVICE_ACCOUNT 不是合法的 JSON：', err.message);
     process.exit(1);
 }
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+const credential = admin.credential.cert(serviceAccount);
+admin.initializeApp({ credential });
 const db = admin.firestore();
-const messaging = admin.messaging();
+
+// 自己拿存取權杖、自己直接呼叫FCM REST API，不透過admin.messaging()，避開SDK內建的自動重試
+async function getFcmAccessToken() {
+    const tokenInfo = await credential.getAccessToken();
+    return tokenInfo.access_token;
+}
+async function sendFcmMessageRaw(message) {
+    const accessToken = await getFcmAccessToken();
+    const url = `https://fcm.googleapis.com/v1/projects/${serviceAccount.project_id}/messages:send`;
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json; UTF-8' },
+        body: JSON.stringify({ message }),
+        // 這裡只送這一次請求，不做任何自動重試，失敗就是失敗，不會偷偷重送造成重複通知
+    });
+    if (!res.ok) {
+        const errBody = await res.text();
+        let errStatus = '';
+        try { errStatus = JSON.parse(errBody).error?.status || ''; } catch { /* 解析失敗就當作空字串 */ }
+        const err = new Error(`FCM回應錯誤 ${res.status}: ${errBody}`);
+        err.fcmStatus = errStatus; // 例如 'UNREGISTERED'、'INVALID_ARGUMENT'，判斷權杖是否失效用
+        throw err;
+    }
+    return res.json();
+}
 
 // 算「還剩幾天到期」，負數代表已經過期
 function daysUntil(expiryDateStr) {
@@ -86,26 +118,25 @@ async function main() {
 
         for (const { uid, token } of tokenOwners) {
             try {
-                await messaging.send({
+                await sendFcmMessageRaw({
                     token,
-                    // 改用webpush.notification：這是Firebase官方建議的標準做法，瀏覽器/SDK看到這個設定
-                    // 會「自動」顯示通知，不需要（也不應該）在service worker裡再手動呼叫一次showNotification()，
-                    // 兩邊都做反而容易出現顯示錯誤內容、或抓到瀏覽器快取舊通知這類不穩定的狀況
+                    // 用webpush.notification：這是Firebase官方建議的標準做法，瀏覽器/SDK看到這個設定
+                    // 會「自動」顯示通知，不需要（也不應該）在service worker裡再手動呼叫一次showNotification()
                     webpush: {
                         headers: { Urgency: 'high' },
                         notification: { title, body, tag: notificationTag, requireInteraction: true },
                         fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
                     },
-                    // collapseKey：如果FCM本身在傳輸過程中因為重試等原因把同一則訊息送達了不只一次，
+                    // collapseKey：如果FCM本身在傳輸過程中因為其他原因把同一則訊息送達了不只一次，
                     // 有相同collapseKey的訊息，系統只會保留最新一則在通知列，不會顯示成兩則分開的通知
                     android: { collapseKey: notificationTag },
                 });
                 notifiedDevices++;
             } catch (err) {
-                // NotRegistered / InvalidArgument 這類錯誤代表權杖確定已經失效了（換裝置、清快取、解除授權…），
+                // UNREGISTERED / INVALID_ARGUMENT 這類錯誤代表權杖確定已經失效了（換裝置、清快取、解除授權…），
                 // 順手把它從使用者的權杖清單裡移除，不然會一直堆積在那裡、每次都重複噴一樣的警告
                 console.warn(`推播到某個裝置失敗（權杖可能已失效）：`, err.message);
-                if (err.code === 'messaging/registration-token-not-registered' || (err.errorInfo && err.errorInfo.code === 'messaging/invalid-argument')) {
+                if (err.fcmStatus === 'UNREGISTERED' || err.fcmStatus === 'INVALID_ARGUMENT') {
                     try {
                         await db.collection('fcmTokens').doc(uid).update({
                             tokens: admin.firestore.FieldValue.arrayRemove(token),

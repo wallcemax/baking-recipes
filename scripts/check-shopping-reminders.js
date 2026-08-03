@@ -31,9 +31,38 @@ try {
     console.error('FIREBASE_SERVICE_ACCOUNT 不是合法的 JSON：', err.message);
     process.exit(1);
 }
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+// 注意：推播的部分「故意不用」admin.messaging().send()——這是Firebase官方SDK長年存在、
+// 目前還沒開放設定選項的已知問題：SDK內部的HTTP連線層遇到逾時/連線中斷，會「自動重試一次」，
+// 而且完全不會讓我們的程式碼知道發生了重試。如果第一次請求其實已經成功送達裝置、只是回應
+// 因為網路狀況delay了，SDK還是會重送第二次，導致使用者收到兩則一模一樣的通知，我們自己的
+// 程式碼完全看不出破綻（log只會顯示「呼叫了一次」）。改成自己直接呼叫FCM的REST API，
+// 用單純的fetch()送出去，不做任何自動重試，就能徹底避開這個問題
+const credential = admin.credential.cert(serviceAccount);
+admin.initializeApp({ credential });
 const db = admin.firestore();
-const messaging = admin.messaging();
+async function getFcmAccessToken() {
+    const tokenInfo = await credential.getAccessToken();
+    return tokenInfo.access_token;
+}
+async function sendFcmMessageRaw(message) {
+    const accessToken = await getFcmAccessToken();
+    const url = `https://fcm.googleapis.com/v1/projects/${serviceAccount.project_id}/messages:send`;
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json; UTF-8' },
+        body: JSON.stringify({ message }),
+        // 這裡只送這一次請求，不做任何自動重試，失敗就是失敗，不會偷偷重送造成重複通知
+    });
+    if (!res.ok) {
+        const errBody = await res.text();
+        let errStatus = '';
+        try { errStatus = JSON.parse(errBody).error?.status || ''; } catch { /* 解析失敗就當作空字串 */ }
+        const err = new Error(`FCM回應錯誤 ${res.status}: ${errBody}`);
+        err.fcmStatus = errStatus; // 例如 'UNREGISTERED'、'INVALID_ARGUMENT'，判斷權杖是否失效用
+        throw err;
+    }
+    return res.json();
+}
 
 // 取得現在的台灣時間（伺服器可能跑在UTC時區，這裡手動校正+8小時，不依賴伺服器本身的時區設定）
 function getTaiwanNow() {
@@ -183,9 +212,9 @@ async function main() {
         let sentAny = false;
         for (const token of tokens) {
             try {
-                await messaging.send({
+                await sendFcmMessageRaw({
                     token,
-                    // 改用webpush.notification讓Firebase官方SDK自動顯示，不再自己手動處理顯示邏輯
+                    // 用webpush.notification讓Firebase官方SDK自動顯示，不再自己手動處理顯示邏輯
                     webpush: {
                         headers: { Urgency: 'high' },
                         notification: { title, body, tag: notificationTag, requireInteraction: true },
@@ -197,7 +226,7 @@ async function main() {
                 sentAny = true;
             } catch (err) {
                 console.warn(`推播到 ${uid} 的某個裝置失敗（權杖可能已失效）：`, err.message);
-                if (err.code === 'messaging/registration-token-not-registered' || (err.errorInfo && err.errorInfo.code === 'messaging/invalid-argument')) {
+                if (err.fcmStatus === 'UNREGISTERED' || err.fcmStatus === 'INVALID_ARGUMENT') {
                     try {
                         await db.collection('fcmTokens').doc(uid).update({
                             tokens: admin.firestore.FieldValue.arrayRemove(token),
