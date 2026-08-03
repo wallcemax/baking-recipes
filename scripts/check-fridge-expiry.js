@@ -59,35 +59,23 @@ async function main() {
         if (!soonExpiring.length) continue;
         fridgesWithExpiring++;
 
-                // 1. 利用 Set 移除 members 中可能重複的 uid
-        const uniqueMembers = [...new Set(members)];
-        
-        // 2. 使用 Map 確保同一個 token 在這個冰箱只會被通知一次
-        const uniqueTokensMap = new Map(); // token -> uid
-
-        for (const uid of uniqueMembers) {
+        // 收集這個冰箱所有成員、所有裝置的推播權杖（記住每個權杖是哪個uid的，等一下要清理失效權杖用）
+        const tokenOwners = []; // [{ uid, token }]
+        for (const uid of members) {
             try {
                 const tDoc = await db.collection('fcmTokens').doc(uid).get();
                 if (tDoc.exists && Array.isArray(tDoc.data().tokens)) {
-                    tDoc.data().tokens.forEach(token => {
-                        // 如果 token 乾淨且尚未加入，才記錄下來
-                        if (token && typeof token === 'string') {
-                            uniqueTokensMap.set(token.trim(), uid);
-                        }
-                    });
+                    tDoc.data().tokens.forEach(token => tokenOwners.push({ uid, token }));
                 }
             } catch (err) {
                 console.warn(`讀取 ${uid} 的通知權杖失敗：`, err.message);
             }
         }
-
-        // 3. 將 Map 轉換回原本的物件格式，確保發送邏輯不用大改
-        const tokenOwners = Array.from(uniqueTokensMap.entries()).map(([token, uid]) => ({ uid, token }));
-
         if (!tokenOwners.length) {
             console.log(`冰箱 ${doc.id}：有 ${soonExpiring.length} 項快到期，但沒有任何成員開啟過通知，跳過`);
             continue;
         }
+
         const names = soonExpiring.map(i => i.name).join('、');
         const title = '🧊 冰箱食材快到期了';
         const body = `${names} 快到期了，記得盡快使用`;
