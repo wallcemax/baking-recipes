@@ -686,8 +686,12 @@
                     <div id="shopping-reminder-fields" class="hidden">
                         <div class="grid grid-cols-2 gap-3 mb-3">
                             <div>
-                                <label class="text-xs block mb-1" style="color:#B3A492">提醒時間</label>
-                                <input type="time" id="shopping-reminder-time" class="form-input !py-1.5 text-sm" value="09:00">
+                                <label class="text-xs block mb-1" style="color:#B3A492">提醒時間（24小時制）</label>
+                                <div class="flex items-center gap-1">
+                                    <select id="shopping-reminder-hour" class="form-input !py-1.5 text-sm" style="width:auto"></select>
+                                    <span>:</span>
+                                    <select id="shopping-reminder-minute" class="form-input !py-1.5 text-sm" style="width:auto"></select>
+                                </div>
                             </div>
                             <div>
                                 <label class="text-xs block mb-1" style="color:#B3A492">指定日期（選填）</label>
@@ -14489,15 +14493,34 @@
             document.getElementById('shopping-list-modal').classList.add('hidden');
         }
         // 載入使用者目前的採購提醒設定，把畫面上的開關/時間/日期都還原成上次儲存的狀態
+        // 填入時、分的下拉選單選項，補0讓個位數也是兩位數顯示（例如09、05），24小時制固定顯示，
+        // 不受手機/瀏覽器的12小時制系統設定影響，不會有上下午混淆的問題
+        function populateReminderTimeSelects() {
+            const hourSel = document.getElementById('shopping-reminder-hour');
+            const minuteSel = document.getElementById('shopping-reminder-minute');
+            if (hourSel.options.length === 0) {
+                for (let h = 0; h < 24; h++) {
+                    hourSel.innerHTML += `<option value="${h}">${String(h).padStart(2, '0')}</option>`;
+                }
+            }
+            if (minuteSel.options.length === 0) {
+                for (let m = 0; m < 60; m++) {
+                    minuteSel.innerHTML += `<option value="${m}">${String(m).padStart(2, '0')}</option>`;
+                }
+            }
+        }
         async function loadShoppingReminderSettings() {
             if (!currentUser) return;
+            populateReminderTimeSelects();
             try {
                 const doc = await db.collection('shoppingReminders').doc(currentUser.uid).get();
                 const data = doc.exists ? doc.data() : null;
                 const enabled = !!(data && data.enabled);
                 document.getElementById('shopping-reminder-enabled').checked = enabled;
                 document.getElementById('shopping-reminder-fields').classList.toggle('hidden', !enabled);
-                document.getElementById('shopping-reminder-time').value = (data && data.time) || '09:00';
+                const [savedH, savedM] = ((data && data.time) || '09:00').split(':');
+                document.getElementById('shopping-reminder-hour').value = String(parseInt(savedH, 10));
+                document.getElementById('shopping-reminder-minute').value = String(parseInt(savedM, 10));
                 document.getElementById('shopping-reminder-date').value = (data && data.date) || '';
                 document.getElementById('shopping-reminder-status').textContent = '';
             } catch (err) {
@@ -14519,9 +14542,10 @@
         }
         async function saveShoppingReminderSettings() {
             if (!currentUser) { alert('請先登入'); return; }
-            const time = document.getElementById('shopping-reminder-time').value;
+            const hourVal = document.getElementById('shopping-reminder-hour').value;
+            const minuteVal = document.getElementById('shopping-reminder-minute').value;
+            const time = `${String(hourVal).padStart(2, '0')}:${String(minuteVal).padStart(2, '0')}`;
             const date = document.getElementById('shopping-reminder-date').value; // 選填，YYYY-MM-DD格式或空字串
-            if (!time) { alert('請設定提醒時間'); return; }
             const statusEl = document.getElementById('shopping-reminder-status');
             statusEl.textContent = '設定中...';
             statusEl.style.color = '#B3A492';
