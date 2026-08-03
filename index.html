@@ -14525,12 +14525,24 @@
             const statusEl = document.getElementById('shopping-reminder-status');
             statusEl.textContent = '設定中...';
             statusEl.style.color = '#B3A492';
-            // 先確保這個裝置有推播權杖（跟冰箱到期提醒共用同一套，如果之前已經開過就不會重複跳權限詢問）
-            const tokenResult = await ensureNotificationTokenRegistered();
-            if (!tokenResult.ok) {
-                statusEl.textContent = '⚠️ ' + tokenResult.error;
-                statusEl.style.color = '#C4453F';
-                return;
+            // 先檢查這個使用者是不是「已經」有推播權杖了——如果有，就不要再呼叫一次取得權杖的流程。
+            // 之前的問題是每次按儲存都會重新呼叫messaging.getToken()，就算裝置沒換、瀏覽器也沒換，
+            // 這個呼叫本身偶爾還是會產生出一個新的權杖值，導致每存一次設定，權杖清單就多一筆，
+            // 越存越多筆（其實都是同一支手機的），改成「已經有就跳過，不用每次都重新要一次」
+            let hasExistingToken = false;
+            try {
+                const tDoc = await db.collection('fcmTokens').doc(currentUser.uid).get();
+                hasExistingToken = tDoc.exists && Array.isArray(tDoc.data().tokens) && tDoc.data().tokens.length > 0;
+            } catch (err) {
+                console.warn('檢查現有推播權杖失敗，改為照常嘗試取得權杖', err && err.message);
+            }
+            if (!hasExistingToken) {
+                const tokenResult = await ensureNotificationTokenRegistered();
+                if (!tokenResult.ok) {
+                    statusEl.textContent = '⚠️ ' + tokenResult.error;
+                    statusEl.style.color = '#C4453F';
+                    return;
+                }
             }
             try {
                 await db.collection('shoppingReminders').doc(currentUser.uid).set({
