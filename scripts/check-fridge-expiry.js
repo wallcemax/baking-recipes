@@ -84,18 +84,17 @@ async function main() {
             try {
                 await messaging.send({
                     token,
-                    // 故意「不帶」頂層的notification欄位——如果同時有notification跟data，
-                    // 瀏覽器/系統會自動跳出一則通知，同時service worker裡的onBackgroundMessage
-                    // 又會手動再顯示一次，兩邊疊加起來就變成同一則訊息收到兩次通知。
-                    // 改成只用data（純文字資料），完全交給service worker自己決定怎麼顯示，只會顯示一次
-                    data: { title, body, tag: 'fridge-expiry-reminder', link: 'https://wallcemax.github.io/baking-recipes/index.html' },
+                    // 改用webpush.notification：這是Firebase官方建議的標準做法，瀏覽器/SDK看到這個設定
+                    // 會「自動」顯示通知，不需要（也不應該）在service worker裡再手動呼叫一次showNotification()，
+                    // 兩邊都做反而容易出現顯示錯誤內容、或抓到瀏覽器快取舊通知這類不穩定的狀況
+                    webpush: {
+                        headers: { Urgency: 'high' },
+                        notification: { title, body, tag: 'fridge-expiry-reminder', requireInteraction: true },
+                        fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
+                    },
                     // collapseKey：如果FCM本身在傳輸過程中因為重試等原因把同一則訊息送達了不只一次，
                     // 有相同collapseKey的訊息，系統只會保留最新一則在通知列，不會顯示成兩則分開的通知
                     android: { collapseKey: 'fridge-expiry-reminder' },
-                    webpush: {
-                        headers: { Urgency: 'high' },
-                        fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
-                    },
                 });
                 notifiedDevices++;
             } catch (err) {
