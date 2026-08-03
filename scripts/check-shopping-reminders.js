@@ -157,14 +157,13 @@ async function main() {
             try {
                 await messaging.send({
                     token,
-                    // 跟冰箱到期提醒同樣的道理：故意不帶頂層notification，避免瀏覽器自動顯示一次、
-                    // service worker的onBackgroundMessage又手動顯示一次，疊加成同一則訊息收到兩則通知
-                    data: { title, body, tag: 'shopping-list-reminder', link: 'https://wallcemax.github.io/baking-recipes/index.html' },
-                    android: { collapseKey: 'shopping-list-reminder' },
+                    // 改用webpush.notification讓Firebase官方SDK自動顯示，不再自己手動處理顯示邏輯
                     webpush: {
                         headers: { Urgency: 'high' },
+                        notification: { title, body, tag: 'shopping-list-reminder', requireInteraction: true },
                         fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
                     },
+                    android: { collapseKey: 'shopping-list-reminder' },
                 });
                 notifiedDevices++;
                 sentAny = true;
