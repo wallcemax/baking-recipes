@@ -675,6 +675,31 @@
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p class="text-xs mb-4" style="color:#B3A492">在食譜詳細頁點🛒可以加入這裡；每篇食譜可以自己調整這次要做幾份，下面會統一把所有食材加總，估算這次採買總共要花多少錢。</p>
                 <p class="text-xs mb-4"><a href="javascript:void(0)" onclick="closeShoppingListModal(); openMyIngredientCostsModal(true);" style="color:var(--sage); text-decoration:underline">💰 前往「我的食材成本」查看/管理個別食材價格 →</a></p>
+
+                <!-- 採購提醒：可以設定每天固定時間提醒，或是指定某一天提醒一次就好 -->
+                <div class="mb-6 p-4 rounded-2xl" style="background:var(--cream)">
+                    <label class="flex items-center gap-2 cursor-pointer mb-1">
+                        <input type="checkbox" id="shopping-reminder-enabled" onchange="onShoppingReminderToggle()" class="w-4 h-4">
+                        <span class="font-display font-semibold text-sm">🔔 採購提醒</span>
+                    </label>
+                    <p class="text-xs mb-3" style="color:#B3A492">只要清單裡還有東西沒買，就會在設定的時間推播提醒你去採購</p>
+                    <div id="shopping-reminder-fields" class="hidden">
+                        <div class="grid grid-cols-2 gap-3 mb-3">
+                            <div>
+                                <label class="text-xs block mb-1" style="color:#B3A492">提醒時間</label>
+                                <input type="time" id="shopping-reminder-time" class="form-input !py-1.5 text-sm" value="09:00">
+                            </div>
+                            <div>
+                                <label class="text-xs block mb-1" style="color:#B3A492">指定日期（選填）</label>
+                                <input type="date" id="shopping-reminder-date" class="form-input !py-1.5 text-sm">
+                            </div>
+                        </div>
+                        <p class="text-xs mb-3" style="color:#B3A492">只設定時間、不選日期 → 每天同一時間都會提醒；如果有選日期 → 只有那天那個時間會提醒一次，之後就不會再提醒了</p>
+                        <button onclick="saveShoppingReminderSettings()" class="btn-secondary text-xs !px-4 !py-2">儲存提醒設定</button>
+                        <p id="shopping-reminder-status" class="text-xs mt-2" style="color:var(--sage)"></p>
+                    </div>
+                </div>
+
                 <div id="shopping-list-recipes" class="space-y-2 mb-6"></div>
                 <div id="shopping-list-summary"></div>
                 <div class="mt-6">
@@ -14457,10 +14482,72 @@
             if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
             document.getElementById('shopping-list-modal').classList.remove('hidden');
             await renderShoppingListModal();
+            loadShoppingReminderSettings();
             pushModalHistoryState();
         }
         function closeShoppingListModal() {
             document.getElementById('shopping-list-modal').classList.add('hidden');
+        }
+        // 載入使用者目前的採購提醒設定，把畫面上的開關/時間/日期都還原成上次儲存的狀態
+        async function loadShoppingReminderSettings() {
+            if (!currentUser) return;
+            try {
+                const doc = await db.collection('shoppingReminders').doc(currentUser.uid).get();
+                const data = doc.exists ? doc.data() : null;
+                const enabled = !!(data && data.enabled);
+                document.getElementById('shopping-reminder-enabled').checked = enabled;
+                document.getElementById('shopping-reminder-fields').classList.toggle('hidden', !enabled);
+                document.getElementById('shopping-reminder-time').value = (data && data.time) || '09:00';
+                document.getElementById('shopping-reminder-date').value = (data && data.date) || '';
+                document.getElementById('shopping-reminder-status').textContent = '';
+            } catch (err) {
+                console.warn('讀取採購提醒設定失敗', err && err.message);
+            }
+        }
+        // 開關切換時：打開的話只是先展開欄位讓使用者填，實際儲存要按下面的按鈕；
+        // 關掉的話直接馬上生效停用，不用另外按儲存（比較符合「關閉」應該要立刻反映的直覺）
+        async function onShoppingReminderToggle() {
+            const enabled = document.getElementById('shopping-reminder-enabled').checked;
+            document.getElementById('shopping-reminder-fields').classList.toggle('hidden', !enabled);
+            if (!enabled && currentUser) {
+                try {
+                    await db.collection('shoppingReminders').doc(currentUser.uid).set({ enabled: false }, { merge: true });
+                } catch (err) {
+                    console.warn('關閉採購提醒失敗', err && err.message);
+                }
+            }
+        }
+        async function saveShoppingReminderSettings() {
+            if (!currentUser) { alert('請先登入'); return; }
+            const time = document.getElementById('shopping-reminder-time').value;
+            const date = document.getElementById('shopping-reminder-date').value; // 選填，YYYY-MM-DD格式或空字串
+            if (!time) { alert('請設定提醒時間'); return; }
+            const statusEl = document.getElementById('shopping-reminder-status');
+            statusEl.textContent = '設定中...';
+            statusEl.style.color = '#B3A492';
+            // 先確保這個裝置有推播權杖（跟冰箱到期提醒共用同一套，如果之前已經開過就不會重複跳權限詢問）
+            const tokenResult = await ensureNotificationTokenRegistered();
+            if (!tokenResult.ok) {
+                statusEl.textContent = '⚠️ ' + tokenResult.error;
+                statusEl.style.color = '#C4453F';
+                return;
+            }
+            try {
+                await db.collection('shoppingReminders').doc(currentUser.uid).set({
+                    enabled: true,
+                    time,
+                    date: date || null,
+                    // 每次手動儲存設定，都視為「還沒發送過」，讓新設定的日期/時間有機會真的觸發一次，
+                    // 不會因為之前剛好已經標記過「今天發送過了」而被誤判成跳過
+                    lastNotifiedDate: null,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+                statusEl.textContent = date ? `✅ 已設定：${date} ${time} 提醒一次` : `✅ 已設定：每天 ${time} 提醒`;
+                statusEl.style.color = 'var(--sage)';
+            } catch (err) {
+                statusEl.textContent = '⚠️ 儲存失敗：' + err.message;
+                statusEl.style.color = '#C4453F';
+            }
         }
 
         async function renderShoppingListModal() {
@@ -14736,48 +14823,46 @@
         // VAPID金鑰要去Firebase主控台「專案設定→Cloud Messaging→Web Push憑證」自己產生一組，貼在這裡才能用，
         // 沒填之前這個功能會直接跳錯誤訊息、不會壞掉其他功能
         const FCM_VAPID_KEY = 'BMo9vd2x5q6NaFfOPSbYxxPwjxBp4n4XbDnhEMJtMsBHcwWngLfOK6epfNz23Tkn3XaJ61z9AZY9Bb8nAflr-aY';
-        async function enableFridgeNotifications() {
-            if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
-            if (FCM_VAPID_KEY === '請填入你的VAPID金鑰') {
-                alert('這個功能還沒設定完成，要先去Firebase主控台產生VAPID金鑰');
-                return;
-            }
+        // 核心邏輯抽出來共用：請求通知權限、註冊service worker、取得推播權杖、存進Firestore的fcmTokens集合。
+        // 冰箱到期提醒、採購提醒都是用同一組權杖，使用者只要開過一次「通知」，兩個功能都能收到推播，
+        // 不用各自分開請求、也不會重複跳出瀏覽器的授權詢問視窗
+        async function ensureNotificationTokenRegistered() {
+            if (!currentUser) return { ok: false, error: '請先登入' };
+            if (FCM_VAPID_KEY === '請填入你的VAPID金鑰') return { ok: false, error: '這個功能還沒設定完成，要先去Firebase主控台產生VAPID金鑰' };
             if (!('Notification' in window) || !('serviceWorker' in navigator)) {
-                alert('這個瀏覽器不支援通知功能（部分手機瀏覽器，尤其iOS Safari，對網頁推播通知的支援不完整）');
-                return;
+                return { ok: false, error: '這個瀏覽器不支援通知功能（部分手機瀏覽器，尤其iOS Safari，對網頁推播通知的支援不完整）' };
             }
-            const btn = document.getElementById('fridge-notif-btn');
-            const originalText = btn.textContent;
-            btn.textContent = '設定中...';
-            btn.disabled = true;
             try {
                 const permission = await Notification.requestPermission();
-                if (permission !== 'granted') {
-                    alert('沒有允許通知權限，沒辦法開啟提醒');
-                    btn.textContent = originalText;
-                    btn.disabled = false;
-                    return;
-                }
+                if (permission !== 'granted') return { ok: false, error: '沒有允許通知權限，沒辦法開啟提醒' };
                 // scope要用相對路徑（不能用開頭是/的絕對路徑），瀏覽器會自動以這個檔案所在的資料夾為基準，
                 // 這樣不管網站部署在網域根目錄還是像這裡放在/baking-recipes/子路徑下，都不會超出允許的範圍
                 const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js', { scope: './firebase-cloud-messaging-push-scope' });
                 const messaging = firebase.messaging();
                 const token = await messaging.getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: registration });
-                if (!token) {
-                    alert('沒辦法取得通知權杖，請稍後再試');
-                    btn.textContent = originalText;
-                    btn.disabled = false;
-                    return;
-                }
+                if (!token) return { ok: false, error: '沒辦法取得通知權杖，請稍後再試' };
                 await db.collection('fcmTokens').doc(currentUser.uid).set({
                     tokens: firebase.firestore.FieldValue.arrayUnion(token),
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 }, { merge: true });
+                return { ok: true };
+            } catch (err) {
+                return { ok: false, error: err.message };
+            }
+        }
+        async function enableFridgeNotifications() {
+            if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
+            const btn = document.getElementById('fridge-notif-btn');
+            const originalText = btn.textContent;
+            btn.textContent = '設定中...';
+            btn.disabled = true;
+            const result = await ensureNotificationTokenRegistered();
+            if (result.ok) {
                 btn.textContent = '✅ 通知已開啟';
                 btn.disabled = true;
                 alert('通知已成功開啟！之後食材快到期會自動推播提醒你');
-            } catch (err) {
-                alert('開啟通知失敗：' + err.message);
+            } else {
+                alert('開啟通知失敗：' + result.error);
                 btn.textContent = originalText;
                 btn.disabled = false;
             }
