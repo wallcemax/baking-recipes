@@ -677,6 +677,14 @@
                 <p class="text-xs mb-4"><a href="javascript:void(0)" onclick="closeShoppingListModal(); openMyIngredientCostsModal(true);" style="color:var(--sage); text-decoration:underline">💰 前往「我的食材成本」查看/管理個別食材價格 →</a></p>
                 <div id="shopping-list-recipes" class="space-y-2 mb-6"></div>
                 <div id="shopping-list-summary"></div>
+                <div class="mt-6">
+                    <h3 class="font-display font-semibold text-sm mb-2">其他採購品項<span class="text-xs font-normal" style="color:#B3A492">（不是食材也可以，例如衛生紙、洗碗精這類日用品）</span></h3>
+                    <div class="flex gap-2 mb-3">
+                        <input id="shopping-manual-item-input" placeholder="輸入品項，例如：洗碗精" class="form-input !py-2 text-sm" onkeydown="if(event.key==='Enter'){event.preventDefault(); addManualShoppingItem();}">
+                        <button onclick="addManualShoppingItem()" class="btn-sage shrink-0 !px-4 !py-2 text-sm">+ 增加採購品項</button>
+                    </div>
+                    <div id="shopping-list-manual-items" class="space-y-2"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -12458,9 +12466,6 @@
                 autoplay: true,
                 path: 'https://res.cloudinary.com/bumzwp9g/raw/upload/v1785748371/basket_18173870_ueguyc.json',
             });
-            // 額外疊加彩色紙屑+慶祝emoji，讓整體效果更熱鬧一點，不是只有單一個購物籃動畫孤零零播放
-            launchConfetti();
-            spawnEmojiParticles({ emojis: ['🎉', '🛒', '✅', '🎊'], count: 18, duration: 2200, mode: 'burst' });
             // Lottie動畫本身播完就觸發淡出收起；如果動畫檔案本身讀取失敗(complete事件不會觸發)，
             // 額外加一個保險的逾時，確保畫面不會卡住一直蓋在那裡
             const hideOverlay = () => {
@@ -14263,14 +14268,16 @@
         let shoppingListCache = null;
         let shoppingListCacheUid = null;
         let shoppingListPurchasedCache = {}; // 食材加總清單裡，哪些食材已經點過「已購買」（存在同一份文件的purchased欄位）
+        let shoppingListManualItemsCache = []; // 使用者自己輸入的非食材採購品項：[{id, name}]
 
         async function loadShoppingList(forceRefresh) {
-            if (!currentUser) { shoppingListCache = []; shoppingListPurchasedCache = {}; shoppingListCacheUid = null; return shoppingListCache; }
+            if (!currentUser) { shoppingListCache = []; shoppingListPurchasedCache = {}; shoppingListManualItemsCache = []; shoppingListCacheUid = null; return shoppingListCache; }
             if (!forceRefresh && shoppingListCache && shoppingListCacheUid === currentUser.uid) return shoppingListCache;
             try {
                 const doc = await db.collection('userShoppingLists').doc(currentUser.uid).get();
                 shoppingListCache = doc.exists ? (doc.data().items || []) : [];
                 shoppingListPurchasedCache = doc.exists ? (doc.data().purchased || {}) : {};
+                shoppingListManualItemsCache = doc.exists ? (doc.data().manualItems || []) : [];
                 shoppingListCacheUid = currentUser.uid;
             } catch (err) {
                 console.warn('讀取採購清單失敗', err && err.message);
@@ -14311,10 +14318,12 @@
                 if (labelEl) labelEl.textContent = (bought ? '✅ ' : '') + (displayName || key);
             }
             // 只有在「打勾」（不是取消打勾）的時候才檢查，避免取消勾選時誤觸發；
-            // 檢查目前這份「還需要買的食材」清單裡，是不是每一個都已經標記成已購買
+            // 檢查目前這份「還需要買的食材」+「其他採購品項」，是不是每一個都已經標記成已購買
             if (bought) {
-                const keys = window.shoppingListCurrentVisibleKeys || [];
-                if (keys.length > 0 && keys.every(k => !!shoppingListPurchasedCache[k])) {
+                const ingredientKeys = window.shoppingListCurrentVisibleKeys || [];
+                const manualKeys = shoppingListManualItemsCache.map(i => `manual_${i.id}`);
+                const allKeys = [...ingredientKeys, ...manualKeys];
+                if (allKeys.length > 0 && allKeys.every(k => !!shoppingListPurchasedCache[k])) {
                     playShoppingListCompleteCelebration();
                 }
             }
@@ -14343,6 +14352,77 @@
                     .catch(err => console.warn('重設採購狀態失敗', err && err.message));
             }
             renderShoppingListModal();
+        }
+        // 新增一筆使用者自己輸入的採購品項（不是食材，例如衛生紙、洗碗精這類日用品），
+        // 存在同一份userShoppingLists文件的manualItems欄位裡，跟食譜/食材加總清單是分開的兩件事
+        async function addManualShoppingItem() {
+            const input = document.getElementById('shopping-manual-item-input');
+            const name = (input.value || '').trim();
+            if (!name) return;
+            if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
+            const newItem = { id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name };
+            shoppingListManualItemsCache.push(newItem);
+            input.value = '';
+            try {
+                await db.collection('userShoppingLists').doc(currentUser.uid)
+                    .set({ manualItems: shoppingListManualItemsCache }, { mergeFields: ['manualItems'] });
+            } catch (err) {
+                console.warn('新增採購品項失敗', err && err.message);
+            }
+            renderShoppingListManualItems();
+        }
+        async function removeManualShoppingItem(id) {
+            shoppingListManualItemsCache = shoppingListManualItemsCache.filter(i => i.id !== id);
+            // 這個品項如果之前有打勾過，順便把打勾記錄也一起清掉，避免留下沒用的殘餘資料
+            delete shoppingListPurchasedCache[`manual_${id}`];
+            if (currentUser) {
+                try {
+                    await db.collection('userShoppingLists').doc(currentUser.uid).set({
+                        manualItems: shoppingListManualItemsCache,
+                        purchased: shoppingListPurchasedCache,
+                    }, { mergeFields: ['manualItems', 'purchased'] });
+                } catch (err) {
+                    console.warn('刪除採購品項失敗', err && err.message);
+                }
+            }
+            renderShoppingListManualItems();
+        }
+        // 手動品項的「已購買」狀態，共用跟食材同一份purchased物件，只是key加上manual_前綴區隔開來，
+        // 不用另外做一整套追蹤機制；打勾之後也會一起檢查「是不是全部都買完了」，觸發同一個慶祝動畫
+        function toggleManualItemPurchased(id) {
+            const key = `manual_${id}`;
+            shoppingListPurchasedCache[key] = !shoppingListPurchasedCache[key];
+            if (!shoppingListPurchasedCache[key]) delete shoppingListPurchasedCache[key];
+            renderShoppingListManualItems();
+            if (currentUser) {
+                db.collection('userShoppingLists').doc(currentUser.uid)
+                    .set({ purchased: shoppingListPurchasedCache }, { mergeFields: ['purchased'] })
+                    .catch(err => console.warn('更新採購狀態失敗', err && err.message));
+            }
+            const bought = !!shoppingListPurchasedCache[key];
+            if (bought) {
+                const ingredientKeys = window.shoppingListCurrentVisibleKeys || [];
+                const manualKeys = shoppingListManualItemsCache.map(i => `manual_${i.id}`);
+                const allKeys = [...ingredientKeys, ...manualKeys];
+                if (allKeys.length > 0 && allKeys.every(k => !!shoppingListPurchasedCache[k])) {
+                    playShoppingListCompleteCelebration();
+                }
+            }
+        }
+        function renderShoppingListManualItems() {
+            const el = document.getElementById('shopping-list-manual-items');
+            if (!el) return;
+            if (!shoppingListManualItemsCache.length) {
+                el.innerHTML = '';
+                return;
+            }
+            el.innerHTML = shoppingListManualItemsCache.map(item => {
+                const bought = !!shoppingListPurchasedCache[`manual_${item.id}`];
+                return `<div class="flex items-center gap-3 px-4 py-2.5 rounded-2xl" style="background:var(--cream)">
+                    <span onclick="toggleManualItemPurchased('${escapeHtmlAttr(item.id)}')" class="flex-1 text-sm cursor-pointer select-none min-w-0 truncate" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">${bought ? '✅ ' : ''}${item.name}</span>
+                    <button onclick="removeManualShoppingItem('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:#C4453F">移除</button>
+                </div>`;
+            }).join('');
         }
         async function addToShoppingList(recipe) {
             if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
@@ -14384,6 +14464,7 @@
             const summaryEl = document.getElementById('shopping-list-summary');
             if (!recipesEl || !summaryEl) return;
             const list = await loadShoppingList(true);
+            renderShoppingListManualItems(); // 不管有沒有食譜，其他採購品項都要正常顯示
             if (!list.length) {
                 recipesEl.innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">還沒有加入任何食譜，去食譜詳細頁點🛒加進來吧</p>`;
                 summaryEl.innerHTML = '';
