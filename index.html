@@ -15654,7 +15654,9 @@
         let marketPricesActiveTab = 'all';
         let marketPricesSortDir = 'desc'; // 'desc'=跌幅高到低，'asc'=跌幅低到高（漲最多排最前面）
         let marketPricesPage = 0; // 目前頁數，從0開始
+        let marketPricesGreatValueOnly = false; // 「高CP值推薦」開關：疊加在分類篩選上面，不是取代分類
         const MARKET_PRICES_PAGE_SIZE = 50;
+        const MARKET_PRICE_GREAT_VALUE_ICON = 'https://res.cloudinary.com/bumzwp9g/image/upload/q_auto,f_auto/v1785739905/g1_jmmet8.png';
 
         async function openMarketPricesModal() {
             document.getElementById('market-prices-modal').classList.remove('hidden');
@@ -15663,12 +15665,13 @@
             if (tabsEl) {
                 tabsEl.innerHTML = MARKET_PRICE_CATEGORIES.map(c =>
                     `<button id="market-prices-tab-${c.key}" onclick="switchMarketPricesTab('${c.key}')" class="chip">${c.emoji} ${c.label}</button>`
-                ).join('');
+                ).join('') + `<button id="market-prices-great-value-toggle" onclick="toggleMarketPricesGreatValueOnly()" class="chip"><img src="${MARKET_PRICE_GREAT_VALUE_ICON}" style="width:1.82em;height:1.82em;display:inline-block;vertical-align:-0.5em;object-fit:contain"> 高CP值推薦</button>`;
             }
             const searchInput = document.getElementById('market-prices-search');
             if (searchInput) searchInput.value = '';
             marketPricesSortDir = 'desc';
             marketPricesPage = 0;
+            marketPricesGreatValueOnly = false;
             pushModalHistoryState();
             try {
                 const doc = await db.collection('marketPriceRecommendations').doc('latest').get();
@@ -15688,6 +15691,16 @@
         }
         function closeMarketPricesModal() {
             document.getElementById('market-prices-modal').classList.add('hidden');
+        }
+        // 「高CP值推薦」是疊加在目前選的分類上面的篩選，不是另一個分類分頁——
+        // 選蔬菜+高CP值推薦＝只顯示蔬菜裡真便宜的；選全部+高CP值推薦＝顯示全部類別裡真便宜的；
+        // 沒開這個開關的話，維持原本依跌幅排序的清單，不受影響
+        function toggleMarketPricesGreatValueOnly() {
+            marketPricesGreatValueOnly = !marketPricesGreatValueOnly;
+            const btn = document.getElementById('market-prices-great-value-toggle');
+            if (btn) btn.classList.toggle('active', marketPricesGreatValueOnly);
+            marketPricesPage = 0;
+            renderMarketPricesList();
         }
         function switchMarketPricesTab(tab) {
             marketPricesActiveTab = tab;
@@ -15711,6 +15724,7 @@
         function marketPriceCardHTML(item) {
             const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(item.name)}`;
             const categoryTag = item.categoryLabel ? `<span style="color:#B3A492">［${item.categoryLabel}］</span> ` : '';
+            const greatValueBadge = item.isGreatValue ? `<img src="${MARKET_PRICE_GREAT_VALUE_ICON}" style="width:1.3em;height:1.3em;display:inline-block;vertical-align:-0.3em;object-fit:contain" title="高CP值：接近歷史最低價">` : '';
             let changeHTML = `<span style="color:#B3A492">（過去年份資料不足，無法比較）</span>`;
             if (item.dropPct !== null && item.dropPct !== undefined) {
                 const isDrop = item.dropPct > 0;
@@ -15720,8 +15734,8 @@
             }
             return `
                 <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)">
-                    <p class="font-medium text-sm">${categoryTag}<a href="${googleUrl}" target="_blank" rel="noopener" style="text-decoration:underline; text-decoration-color:#B3A492">${item.name}</a> ${changeHTML}</p>
-                    <p class="text-xs" style="color:#B3A492">現在約 NT$${item.recentPrice}/公斤${item.baselinePrice !== null ? `（近${item.baselineYearsUsed || 3}年同期中位數約 NT$${item.baselinePrice}/公斤）` : ''}</p>
+                    <p class="font-medium text-sm">${greatValueBadge}${categoryTag}<a href="${googleUrl}" target="_blank" rel="noopener" style="text-decoration:underline; text-decoration-color:#B3A492">${item.name}</a> ${changeHTML}</p>
+                    <p class="text-xs" style="color:#B3A492">現在約 NT$${item.recentPrice}/公斤${item.baselinePrice !== null ? `（近3年同期基準約 NT$${item.baselinePrice}/公斤，採用${item.baselinePointsUsed || 9}個基準點）` : ''}</p>
                 </div>`;
         }
         // 把所有類別的完整清單合併成一份，每一項都標記來源類別，給「全部」分頁用
@@ -15759,13 +15773,17 @@
             const isAllTab = marketPricesActiveTab === 'all';
 
             let items = isAllTab ? getMergedMarketPriceList() : (marketPricesCache[`${marketPricesActiveTab}All`] || []);
+            // 高CP值推薦：疊加篩選，只留下真便宜的項目（不管目前選哪個分類，篩選完才排序分頁）
+            if (marketPricesGreatValueOnly) items = items.filter(item => item.isGreatValue);
             if (keyword) items = items.filter(item => item.name.includes(keyword));
             items = sortMarketPriceItems(items, marketPricesSortDir);
 
             if (!items.length) {
                 listEl.innerHTML = keyword
                     ? `<p class="text-sm text-center py-6" style="color:#B3A492">查無「${keyword}」的資料（可能是政府資料裡沒有用這個名稱，試試看別的寫法，例如「甘藍」而不是「高麗菜」；也可以切到別的分頁再試試看）</p>`
-                    : `<p class="text-sm text-center py-6" style="color:#B3A492">這個分類目前還沒有資料</p>`;
+                    : (marketPricesGreatValueOnly
+                        ? `<p class="text-sm text-center py-6" style="color:#B3A492">這個分類目前沒有符合「高CP值推薦」條件的項目，換個分類看看，或關掉這個篩選看看完整清單</p>`
+                        : `<p class="text-sm text-center py-6" style="color:#B3A492">這個分類目前還沒有資料</p>`);
                 if (paginationEl) paginationEl.innerHTML = '';
                 if (countEl) countEl.textContent = '';
                 return;
