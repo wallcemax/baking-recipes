@@ -15280,27 +15280,12 @@
                 return;
             }
 
-            // ③一般條碼：直接用AI搭配網路搜尋去查這個條碼對應的商品是什麼——原本這裡有先查Open Food Facts，
-            // 但那個資料庫是全球共用的，查到的商品名稱常常是外文，對台灣商品不好用，拿掉改成統一用AI搜尋，
-            // AI回答時可以直接指定要繁體中文的商品名稱，比較實用
+            // ③一般條碼：這裡目前建好的商品名稱字典裡都找不到——現在有「拍照新增」可以直接讀取包裝上的
+            // 商品名稱/規格，比讓AI上網搜尋條碼號碼準確、也不會額外消耗搜尋工具的額度，
+            // 這裡改成直接讓使用者自己輸入，或是改用拍照新增
             nameInput.value = '';
-            nameInput.placeholder = '查詢中...';
-            await tryAIBarcodeSearch(decodedText, nameInput);
+            nameInput.placeholder = `查無此條碼的商品資料，請自己輸入名稱，或改用「📸 拍照新增」讀取包裝內容`;
             nameInput.focus();
-            if (nameInput.value) nameInput.select();
-        }
-        // 掃到一般條碼，讓AI搭配網路搜尋去查這個條碼號碼對應的商品是什麼
-        // （跟你自己上網搜尋條碼號碼是同樣的動作，交給AI代勞），這裡查不到才會真的放棄、讓使用者自己輸入
-        async function tryAIBarcodeSearch(code, nameInput) {
-            nameInput.placeholder = `查詢中...（AI搜尋中，請稍候）`;
-            const prompt = `請搜尋台灣商品條碼「${code}」對應的商品名稱是什麼（可能是食品/食材/調味料類）。找到的話只回傳商品的完整繁體中文名稱（含品牌跟規格，例如「金蘭醬油 590ml」），不要用英文或其他語言、不要有其他文字說明；如果搜尋不到任何結果，只回傳「查無資料」這四個字，不要猜測或編造名稱。`;
-            const text = await callAIProxy(prompt);
-            const cleaned = (text || '').trim().replace(/["「」]/g, '');
-            if (cleaned && !cleaned.includes('查無資料') && cleaned.length <= 60) {
-                nameInput.value = cleaned;
-            } else {
-                nameInput.placeholder = `查無商品資料，條碼${code}，請自己輸入名稱建檔`;
-            }
         }
 
         async function addFridgeItem() {
