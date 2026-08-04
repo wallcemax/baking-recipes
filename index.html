@@ -1140,6 +1140,12 @@
             const profileModal = document.getElementById('profile-modal');
             const adminAchModal = document.getElementById('admin-achievements-modal');
             const gameModal = document.getElementById('game-modal');
+            const orphanModal = document.getElementById('orphaned-images-modal');
+            const shoppingModal = document.getElementById('shopping-list-modal');
+            const myCostsModal = document.getElementById('my-ingredient-costs-modal');
+            const costModal = document.getElementById('ingredient-cost-modal');
+            const fridgeModal = document.getElementById('fridge-modal');
+            const marketModal = document.getElementById('market-prices-modal');
             modalHistoryPushed = false; // 這筆歷史紀錄已經被返回鍵消耗掉了
             if (detailModal && !detailModal.classList.contains('hidden')) {
                 closeDetail(true);
@@ -1153,6 +1159,20 @@
                 closeAdminAchievementsModal(true);
             } else if (gameModal && !gameModal.classList.contains('hidden')) {
                 closeGameModal(true);
+            } else if (orphanModal && !orphanModal.classList.contains('hidden')) {
+                closeOrphanedImagesModal(true);
+            } else if (shoppingModal && !shoppingModal.classList.contains('hidden')) {
+                closeShoppingListModal(true);
+            } else if (costModal && !costModal.classList.contains('hidden')) {
+                // 設定食材價格要排在「我的食材成本」前面判斷：這個視窗常常是疊在「我的食材成本」上面
+                // 開啟的，如果順序反過來，「我的食材成本」會先被誤判成要關的那一層，跳過真正該關的
+                closeIngredientCostModal(true);
+            } else if (myCostsModal && !myCostsModal.classList.contains('hidden')) {
+                closeMyIngredientCostsModal(true);
+            } else if (fridgeModal && !fridgeModal.classList.contains('hidden')) {
+                closeFridgeModal(true);
+            } else if (marketModal && !marketModal.classList.contains('hidden')) {
+                closeMarketPricesModal(true);
             }
             // 沒有任何彈窗開著時，代表使用者是在首頁按返回鍵，讓瀏覽器/系統走預設行為即可
         });
@@ -14080,13 +14100,14 @@
             document.getElementById('ingredient-cost-modal').classList.remove('hidden');
             pushModalHistoryState();
         }
-        function closeIngredientCostModal() {
+        function closeIngredientCostModal(fromPopState) {
             document.getElementById('ingredient-cost-modal').classList.add('hidden');
             ingredientCostModalTarget = null;
             if (ingredientCostModalReturnToManage) {
                 document.getElementById('my-ingredient-costs-modal').classList.remove('hidden');
                 ingredientCostModalReturnToManage = false;
             }
+            consumeModalHistoryState(fromPopState);
         }
         async function saveIngredientCostModal() {
             if (!ingredientCostModalTarget) return;
@@ -14144,12 +14165,13 @@
             await renderMyIngredientCostsList();
             pushModalHistoryState();
         }
-        function closeMyIngredientCostsModal() {
+        function closeMyIngredientCostsModal(fromPopState) {
             document.getElementById('my-ingredient-costs-modal').classList.add('hidden');
             if (myCostsModalReturnToShoppingList) {
                 myCostsModalReturnToShoppingList = false;
                 openShoppingListModal();
             }
+            consumeModalHistoryState(fromPopState);
         }
         // 一次幫某個食材(品牌)設定好幾個別名，用逗號分隔，不用一個一個跑去食譜頁面套用
         async function manageIngredientAliases(name) {
@@ -14535,8 +14557,9 @@
             loadShoppingReminderSettings();
             pushModalHistoryState();
         }
-        function closeShoppingListModal() {
+        function closeShoppingListModal(fromPopState) {
             document.getElementById('shopping-list-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
         }
         // 載入使用者目前的採購提醒設定，把畫面上的開關/時間/日期都還原成上次儲存的狀態
         // 填入時、分的下拉選單選項，補0讓個位數也是兩位數顯示（例如09、05），24小時制固定顯示，
@@ -15164,9 +15187,10 @@
             await renderFridgeMembersList();
             await checkFridgeNotificationStatus();
         }
-        function closeFridgeModal() {
+        function closeFridgeModal(fromPopState) {
             closeBarcodeScanner();
             document.getElementById('fridge-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
         }
         async function renderFridgeItemsList() {
             const listEl = document.getElementById('fridge-items-list');
@@ -16006,8 +16030,9 @@
             }
             switchMarketPricesTab('all');
         }
-        function closeMarketPricesModal() {
+        function closeMarketPricesModal(fromPopState) {
             document.getElementById('market-prices-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
         }
         // 「高CP值推薦」是疊加在目前選的分類上面的篩選，不是另一個分類分頁——
         // 選蔬菜+高CP值推薦＝只顯示蔬菜裡真便宜的；選全部+高CP值推薦＝顯示全部類別裡真便宜的；
