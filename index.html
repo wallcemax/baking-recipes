@@ -892,7 +892,7 @@
         <div class="bg-white w-full md:max-w-2xl max-h-[90vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
             <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0 relative modal-photo-header" style="border-color:var(--line); background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785486286/Playground_lhojce.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785486286/Playground_lhojce.png') 2x);">
                 <h2 class="font-display text-xl sm:text-2xl font-bold" id="game-modal-title">🎮 遊戲場</h2>
-                <button onclick="closeGameModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+                <button onclick="handleGameModalBack()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6" id="game-modal-body"></div>
         </div>
@@ -1187,6 +1187,7 @@
             const costModal = document.getElementById('ingredient-cost-modal');
             const fridgeModal = document.getElementById('fridge-modal');
             const marketModal = document.getElementById('market-prices-modal');
+            const mobileMenuPanel = document.getElementById('mobile-menu-panel');
             modalHistoryPushed = false; // 這筆歷史紀錄已經被返回鍵消耗掉了
             if (detailModal && !detailModal.classList.contains('hidden')) {
                 closeDetail(true);
@@ -1199,26 +1200,7 @@
             } else if (adminAchModal && !adminAchModal.classList.contains('hidden')) {
                 closeAdminAchievementsModal(true);
             } else if (gameModal && !gameModal.classList.contains('hidden')) {
-                if (currentGameScreen === 'hub') {
-                    // 在遊戲場主選單，返回鍵直接關閉整個遊戲場，回到首頁
-                    closeGameModal(true);
-                } else if (currentGameScreen === 'leaderboard') {
-                    // 在排行榜，返回鍵回到遊戲場主選單，不是直接關閉整個遊戲場
-                    renderGameMenu();
-                    // 重新推一筆歷史紀錄，這樣回到主選單之後，下一次按返回鍵才能正確攔截、關閉整個遊戲場
-                    history.pushState({ modalOpen: true }, '', location.href);
-                    modalHistoryPushed = true;
-                } else if (currentGameScreen === 'game') {
-                    // 正在玩某一款遊戲，返回鍵要先跳出確認對話框，確定才會回到遊戲場主選單
-                    const confirmExit = confirm('確定要離開遊戲嗎？目前的遊戲進度可能會遺失。');
-                    if (confirmExit) {
-                        renderGameMenu();
-                    }
-                    // 不管使用者選確定還是取消，都要重新推一筆歷史紀錄，維持能攔截下一次返回鍵的狀態——
-                    // 選取消的話，這樣才能讓使用者留在原本的遊戲畫面，下次按返回鍵還能再跳出這個確認框
-                    history.pushState({ modalOpen: true }, '', location.href);
-                    modalHistoryPushed = true;
-                }
+                handleGameModalBack();
             } else if (orphanModal && !orphanModal.classList.contains('hidden')) {
                 closeOrphanedImagesModal(true);
             } else if (shoppingModal && !shoppingModal.classList.contains('hidden')) {
@@ -1233,6 +1215,8 @@
                 closeFridgeModal(true);
             } else if (marketModal && !marketModal.classList.contains('hidden')) {
                 closeMarketPricesModal(true);
+            } else if (mobileMenuPanel && !mobileMenuPanel.classList.contains('hidden')) {
+                closeMobileMenu(true);
             } else {
                 // 沒有任何彈窗開著，代表使用者是在首頁按返回鍵——套用「連按兩次才離開」的邏輯
                 const now = Date.now();
@@ -1792,6 +1776,30 @@
         // 'leaderboard' = 排行榜（返回鍵回到主選單，不是直接關閉）
         // 'game' = 正在玩某一款遊戲（返回鍵要先跳出確認對話框，確定才會回到主選單）
         let currentGameScreen = 'hub';
+        // 遊戲場的「返回」邏輯：依照目前畫面狀態決定行為，X按鈕跟返回鍵都呼叫這個共用函式，
+        // 確保兩種關閉方式的行為完全一致
+        function handleGameModalBack() {
+            if (currentGameScreen === 'hub') {
+                // 在遊戲場主選單，直接關閉整個遊戲場，回到首頁
+                closeGameModal(true);
+            } else if (currentGameScreen === 'leaderboard') {
+                // 在排行榜，回到遊戲場主選單，不是直接關閉整個遊戲場
+                renderGameMenu();
+                // 重新推一筆歷史紀錄，這樣回到主選單之後，下一次按返回鍵/X才能正確攔截、關閉整個遊戲場
+                history.pushState({ modalOpen: true }, '', location.href);
+                modalHistoryPushed = true;
+            } else if (currentGameScreen === 'game') {
+                // 正在玩某一款遊戲，要先跳出確認對話框，確定才會回到遊戲場主選單
+                const confirmExit = confirm('確定要離開遊戲嗎？目前的遊戲進度可能會遺失。');
+                if (confirmExit) {
+                    renderGameMenu();
+                }
+                // 不管使用者選確定還是取消，都要重新推一筆歷史紀錄，維持能攔截下一次返回鍵/X的狀態——
+                // 選取消的話，這樣才能讓使用者留在原本的遊戲畫面，下次按返回鍵/X還能再跳出這個確認框
+                history.pushState({ modalOpen: true }, '', location.href);
+                modalHistoryPushed = true;
+            }
+        }
         function showGameModal() {
             document.getElementById('game-modal').classList.remove('hidden');
             renderGameMenu();
@@ -11611,12 +11619,23 @@
         // 手機版漢堡選單：點擊開關顯示/隱藏，點裡面任一個項目會先關閉選單、再執行對應的功能，
         // 避免選單一直開著擋在畫面上
         function toggleMobileMenu() {
-            document.getElementById('mobile-menu-panel')?.classList.toggle('hidden');
+            const panel = document.getElementById('mobile-menu-panel');
+            const isOpening = panel && panel.classList.contains('hidden');
+            panel?.classList.toggle('hidden');
             document.getElementById('mobile-menu-backdrop')?.classList.toggle('hidden');
+            if (isOpening) {
+                pushModalHistoryState();
+            } else {
+                consumeModalHistoryState();
+            }
         }
-        function closeMobileMenuThen(fn) {
+        function closeMobileMenu(fromPopState) {
             document.getElementById('mobile-menu-panel')?.classList.add('hidden');
             document.getElementById('mobile-menu-backdrop')?.classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
+        }
+        function closeMobileMenuThen(fn) {
+            closeMobileMenu();
             if (typeof fn === 'function') fn();
         }
         // 點背景遮罩收起選單的邏輯，已經直接寫在遮罩元素的onclick上，不需要額外的全域監聽
