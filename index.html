@@ -1199,7 +1199,26 @@
             } else if (adminAchModal && !adminAchModal.classList.contains('hidden')) {
                 closeAdminAchievementsModal(true);
             } else if (gameModal && !gameModal.classList.contains('hidden')) {
-                closeGameModal(true);
+                if (currentGameScreen === 'hub') {
+                    // 在遊戲場主選單，返回鍵直接關閉整個遊戲場，回到首頁
+                    closeGameModal(true);
+                } else if (currentGameScreen === 'leaderboard') {
+                    // 在排行榜，返回鍵回到遊戲場主選單，不是直接關閉整個遊戲場
+                    renderGameMenu();
+                    // 重新推一筆歷史紀錄，這樣回到主選單之後，下一次按返回鍵才能正確攔截、關閉整個遊戲場
+                    history.pushState({ modalOpen: true }, '', location.href);
+                    modalHistoryPushed = true;
+                } else if (currentGameScreen === 'game') {
+                    // 正在玩某一款遊戲，返回鍵要先跳出確認對話框，確定才會回到遊戲場主選單
+                    const confirmExit = confirm('確定要離開遊戲嗎？目前的遊戲進度可能會遺失。');
+                    if (confirmExit) {
+                        renderGameMenu();
+                    }
+                    // 不管使用者選確定還是取消，都要重新推一筆歷史紀錄，維持能攔截下一次返回鍵的狀態——
+                    // 選取消的話，這樣才能讓使用者留在原本的遊戲畫面，下次按返回鍵還能再跳出這個確認框
+                    history.pushState({ modalOpen: true }, '', location.href);
+                    modalHistoryPushed = true;
+                }
             } else if (orphanModal && !orphanModal.classList.contains('hidden')) {
                 closeOrphanedImagesModal(true);
             } else if (shoppingModal && !shoppingModal.classList.contains('hidden')) {
@@ -1768,6 +1787,11 @@
         // ============================================================
         // 遊戲場：料理主題小遊戲 + 排行榜
         // ============================================================
+        // 追蹤遊戲場目前在哪個畫面，讓返回鍵的行為可以依畫面不同而不同：
+        // 'hub' = 遊戲場主選單（返回鍵直接關閉整個遊戲場）
+        // 'leaderboard' = 排行榜（返回鍵回到主選單，不是直接關閉）
+        // 'game' = 正在玩某一款遊戲（返回鍵要先跳出確認對話框，確定才會回到主選單）
+        let currentGameScreen = 'hub';
         function showGameModal() {
             document.getElementById('game-modal').classList.remove('hidden');
             renderGameMenu();
@@ -1786,6 +1810,7 @@
         }
 
         function renderGameMenu() {
+            currentGameScreen = 'hub';
             qteCleanup();
             stockGameCleanup();
             dashGameCleanup();
@@ -1868,6 +1893,7 @@
 
         function startQteGame() {
             if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            currentGameScreen = 'game';
             qteCleanup();
             ensureAudioContext(); // 在按下「開始」這個真正的點擊當下解鎖音效
             document.getElementById('game-modal-title').textContent = '🔥 神廚火候控制';
@@ -1993,6 +2019,7 @@
 
         function startStockGame() {
             if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            currentGameScreen = 'game';
             qteCleanup();
             stockGameCleanup();
             ensureAudioContext(); // 在按下「開始」這個真正的點擊當下解鎖音效
@@ -2161,6 +2188,7 @@
 
         function startDashGame() {
             if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            currentGameScreen = 'game';
             qteCleanup(); stockGameCleanup(); dashGameCleanup();
             ensureAudioContext(); // 在按下「開始」這個真正的點擊當下解鎖音效
             const dish = DASH_DISHES[Math.floor(Math.random() * DASH_DISHES.length)];
@@ -2738,6 +2766,7 @@
 
         function startDinerGame() {
             if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            currentGameScreen = 'game';
             qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup();
             ensureAudioContext(); // 在按下「開始」這個真正的點擊當下解鎖音效
             const usedIndices = new Set();
@@ -3021,6 +3050,7 @@
 
         async function startTinyDinerGame() {
             if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            currentGameScreen = 'game';
             qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup(); tinyDinerCleanup();
             ensureAudioContext();
             document.getElementById('game-modal-title').textContent = '🏮 小餐廳經營模擬';
@@ -5328,6 +5358,7 @@
         async function startRpgGame() {
             if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
             if (!isAdmin() && !(userProgress && userProgress.rpgUnlocked)) { alert('要先新增過一份食譜，才能進入異世界料理者喔！'); return; }
+            currentGameScreen = 'game';
             qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup(); tinyDinerCleanup(); rpgCleanup();
             ensureAudioContext();
             document.getElementById('game-modal').classList.remove('hidden');
@@ -11346,6 +11377,7 @@
         }
 
         async function showLeaderboard(gameId) {
+            currentGameScreen = 'leaderboard';
             document.getElementById('game-modal-title').textContent = '🏆 排行榜';
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="modal-photo-header rounded-2xl px-4 py-4 mb-4" style="background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785486362/Achievement_gqdqic.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785486362/Achievement_gqdqic.png') 2x);">
