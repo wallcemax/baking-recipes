@@ -11540,7 +11540,10 @@
         // 搜尋欄的placeholder依照現在時段顯示不同的問候語+emoji，早上/中午/晚上各自搭配幾個適合的
         // 料理相關emoji隨機挑一個，增加一點生活感，不會每次打開都看到一模一樣的文字。
         // 天氣資料抓到之後，如果符合特定條件（下雨/很熱/很冷），會疊加一句天氣相關的提示，
-        // 抓不到天氣資料的話就維持原本單純的時段問候語，不會整個功能掛掉
+        // 抓不到天氣資料的話就維持原本單純的時段問候語，不會整個功能掛掉。
+        // 這個變數要宣告在這裡（比使用到它的函式更早），不然會撞到JS的暫時死區規則，
+        // 直接拋出「Cannot access before initialization」的錯誤、中斷整個腳本執行
+        let currentWeatherData = null;
         const TIME_BASED_GREETINGS = {
             morning: { label: '早安', emojis: ['☕', '🥪', '🍳'] },   // 05:00~10:59
             noon: { label: '午安', emojis: ['🍱', '🥗', '🍜'] },      // 11:00~17:59
@@ -11585,8 +11588,8 @@
 
         // ========== 天氣資料：抓取+快取，給首頁推薦、烘焙濕度提醒、市場價格警示、問候語這幾個功能共用 ==========
         // 快取1小時，不用每次打開網頁都重新查一次；抓不到天氣資料的話，各功能都會靜默略過，
-        // 不會因為天氣查詢失敗（例如使用者沒開定位權限、WeatherAPI額度用完）就影響到其他功能正常運作
-        let currentWeatherData = null;
+        // 不會因為天氣查詢失敗（例如使用者沒開定位權限、WeatherAPI額度用完）就影響到其他功能正常運作。
+        // （currentWeatherData這個變數已經提前宣告在上面的問候語區塊了，這裡不再重複宣告）
         const WEATHER_CACHE_KEY = 'cachedWeatherData';
         const WEATHER_CACHE_MS = 60 * 60 * 1000; // 快取1小時
         async function fetchWeatherData() {
