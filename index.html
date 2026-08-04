@@ -674,7 +674,7 @@
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p class="text-xs mb-4" style="color:#B3A492">在食譜詳細頁點🛒可以加入這裡；每篇食譜可以自己調整這次要做幾份，下面會統一把所有食材加總，估算這次採買總共要花多少錢。</p>
-                <p class="text-xs mb-4"><a href="javascript:void(0)" onclick="closeShoppingListModal(); openMyIngredientCostsModal(true);" style="color:var(--sage); text-decoration:underline">💰 前往「我的食材成本」查看/管理個別食材價格 →</a></p>
+                <p class="text-xs mb-4"><a href="javascript:void(0)" onclick="document.getElementById('shopping-list-modal').classList.add('hidden'); openMyIngredientCostsModal(true);" style="color:var(--sage); text-decoration:underline">💰 前往「我的食材成本」查看/管理個別食材價格 →</a></p>
 
                 <!-- 採購提醒：可以設定每天固定時間提醒，或是指定某一天提醒一次就好 -->
                 <div class="mb-6 p-4 rounded-2xl" style="background:var(--cream)">
@@ -1119,6 +1119,13 @@
         // 有彈窗開著就先關彈窗，不會真的觸發瀏覽器/系統的「上一頁」（也就不會被系統當成
         // 沒有上一頁可退、直接把整個 App 關掉跳回主畫面）
         let modalHistoryPushed = false;
+        // 頁面一載入就主動推一筆「保護層」歷史紀錄，這樣就算在首頁（沒有任何彈窗開著）按第一次
+        // 返回鍵，也會真的觸發popstate事件（不會因為沒有多的歷史紀錄可退，直接被系統當成
+        // 「已經到底了」而跳過popstate、直接把整個PWA關掉），讓下面「連按兩次才離開」的邏輯
+        // 有機會攔截。這筆「保護層」記錄跟modalHistoryPushed是分開的兩件事——modalHistoryPushed
+        // 只追蹤「目前開著的某個彈窗」有沒有推過自己的歷史紀錄，不要混在一起，不然彈窗的
+        // 開關判斷會因為首頁保護層已經佔用掉這個旗標而失效
+        history.pushState({ guard: true }, '', location.href);
         function pushModalHistoryState() {
             if (!modalHistoryPushed) {
                 history.pushState({ modalOpen: true }, '', location.href);
@@ -1132,6 +1139,20 @@
                 modalHistoryPushed = false;
                 if (!fromPopState) history.back();
             }
+        }
+        // 首頁「連按兩次返回鍵才離開」的標準手機App模式：第一次按下會攔截、顯示提示訊息、
+        // 把剛剛的返回動作「抵銷」掉（重新推一筆歷史紀錄）；2秒內再按一次才會真的離開
+        let lastHomeBackPressTime = 0;
+        const EXIT_CONFIRM_WINDOW_MS = 2000;
+        function showExitConfirmToast() {
+            const existing = document.getElementById('exit-confirm-toast');
+            if (existing) existing.remove();
+            const toast = document.createElement('div');
+            toast.id = 'exit-confirm-toast';
+            toast.textContent = '再按一次返回鍵即可離開 JUST DO EAT';
+            toast.style.cssText = 'position:fixed; bottom:90px; left:50%; transform:translateX(-50%); background:rgba(58,42,30,0.9); color:white; padding:10px 20px; border-radius:2rem; z-index:9999; font-size:13px; white-space:nowrap;';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), EXIT_CONFIRM_WINDOW_MS);
         }
         window.addEventListener('popstate', () => {
             const detailModal = document.getElementById('detail-modal');
@@ -1173,8 +1194,19 @@
                 closeFridgeModal(true);
             } else if (marketModal && !marketModal.classList.contains('hidden')) {
                 closeMarketPricesModal(true);
+            } else {
+                // 沒有任何彈窗開著，代表使用者是在首頁按返回鍵——套用「連按兩次才離開」的邏輯
+                const now = Date.now();
+                if (now - lastHomeBackPressTime < EXIT_CONFIRM_WINDOW_MS) {
+                    // 2秒內第二次按下，不攔截，讓瀏覽器/系統走預設行為（真的離開App）
+                    return;
+                }
+                lastHomeBackPressTime = now;
+                // 重新推一筆「保護層」歷史紀錄，把剛剛這次的返回動作「抵銷」掉，讓使用者還停留在首頁；
+                // 這裡不設定modalHistoryPushed，因為這不是某個彈窗的歷史紀錄，只是單純的保護層
+                history.pushState({ guard: true }, '', location.href);
+                showExitConfirmToast();
             }
-            // 沒有任何彈窗開著時，代表使用者是在首頁按返回鍵，讓瀏覽器/系統走預設行為即可
         });
         let checkedSteps = new Set();
         let currentDetailRecipe = null; // 目前開著的食譜，給「大功告成」的成就追蹤用
