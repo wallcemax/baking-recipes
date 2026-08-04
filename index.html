@@ -16745,9 +16745,11 @@
                 const provider = new firebase.auth.GoogleAuthProvider();
                 provider.addScope('https://www.googleapis.com/auth/youtube.readonly');
                 const result = await auth.signInWithPopup(provider);
-                const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
-                const accessToken = credential && credential.accessToken;
-                if (!accessToken) throw new Error('沒有取得存取權杖，請稍後再試');
+                // result.credential.accessToken是官方文件針對v8版SDK明確示範的寫法（你的網站用的就是v8）；
+                // 保留credentialFromResult這個新版寫法當備援，兩種都試一次，哪個有值就用哪個
+                const accessToken = (result.credential && result.credential.accessToken)
+                    || (firebase.auth.GoogleAuthProvider.credentialFromResult(result) && firebase.auth.GoogleAuthProvider.credentialFromResult(result).accessToken);
+                if (!accessToken) throw new Error('沒有取得存取權杖，請確認Google Cloud Console裡YouTube Data API v3已經啟用、你的帳號有加進測試使用者名單');
 
                 const res = await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet&mine=true&maxResults=25`, {
                     headers: { 'Authorization': `Bearer ${accessToken}` },
