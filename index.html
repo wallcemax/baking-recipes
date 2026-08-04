@@ -1143,10 +1143,15 @@
         }
         // closeFn 關閉彈窗時呼叫這個，如果這次關閉「不是」由按返回鍵觸發（例如點了 X 按鈕），
         // 才需要自己把剛剛推的那筆歷史紀錄退掉，維持歷史堆疊乾淨、不會多按一次返回鍵才有反應
+        let selfTriggeredBack = false; // 標記「這次的history.back()是程式碼自己觸發的清理動作」，
+        // 不是使用者真的按了返回鍵——避免popstate處理常式誤判成「使用者在首頁按返回鍵」而跳出離開提示
         function consumeModalHistoryState(fromPopState) {
             if (modalHistoryPushed) {
                 modalHistoryPushed = false;
-                if (!fromPopState) history.back();
+                if (!fromPopState) {
+                    selfTriggeredBack = true;
+                    history.back();
+                }
             }
         }
         // 首頁「連按兩次返回鍵才離開」的標準手機App模式：第一次按下會攔截、顯示提示訊息、
@@ -1164,6 +1169,12 @@
             setTimeout(() => toast.remove(), EXIT_CONFIRM_WINDOW_MS);
         }
         window.addEventListener('popstate', () => {
+            // 如果這次popstate是「程式碼自己觸發的清理動作」（例如按X關閉視窗時內部呼叫的
+            // history.back()），不是使用者真的按了返回鍵，直接跳過，不要誤判成首頁的返回鍵行為
+            if (selfTriggeredBack) {
+                selfTriggeredBack = false;
+                return;
+            }
             const detailModal = document.getElementById('detail-modal');
             const addModal = document.getElementById('add-modal');
             const adminModal = document.getElementById('admin-nutrition-modal');
