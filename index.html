@@ -513,7 +513,7 @@
     </div>
     <!-- YouTube播放器：平常隱藏，只在烹飪模式播放音樂用，不會擋畫面 -->
     <div id="youtube-music-player-wrap" class="hidden fixed" style="bottom:12px; left:12px; z-index:65; width:200px;">
-        <div id="youtube-music-player"></div>
+        <iframe id="youtube-music-player" width="200" height="113" frameborder="0" allow="autoplay" style="border-radius:0.75rem;"></iframe>
     </div>
 
     <div id="mobile-menu-backdrop" class="hidden md:!hidden fixed inset-0 z-[59]" style="background:rgba(58,42,30,0.35)" onclick="toggleMobileMenu()"></div>
@@ -16708,8 +16708,6 @@
         // 所以把這個授權做成獨立、選用的流程，不會影響到現有的登入功能
         const YOUTUBE_MUSIC_PLAYLIST_KEY = 'musicCookingPlaylistId';
         const YOUTUBE_MUSIC_PLAYLIST_TITLE_KEY = 'musicCookingPlaylistTitle';
-        let youtubeMusicPlayer = null;
-        let youtubeMusicApiReady = false;
 
         function openMusicPlaylistModal() {
             document.getElementById('music-playlist-modal').classList.remove('hidden');
@@ -16786,60 +16784,24 @@
             document.getElementById('music-playlist-list').innerHTML = '';
         }
 
-        // 載入YouTube IFrame Player API（只在真的要用的時候才載入，不會拖慢一般瀏覽速度）
-        function loadYoutubeIframeApi() {
-            if (youtubeMusicApiReady || document.getElementById('youtube-iframe-api-script')) return;
-            const tag = document.createElement('script');
-            tag.id = 'youtube-iframe-api-script';
-            tag.src = 'https://www.youtube.com/iframe_api';
-            document.head.appendChild(tag);
-        }
-        // YouTube官方規定這個函式名稱要放在全域(window)底下，API載入完成會自動呼叫它
-        window.onYouTubeIframeAPIReady = function () {
-            youtubeMusicApiReady = true;
-        };
-        // 進入烹飪模式時，如果有設定歌單就自動開始播放；沒設定的話安靜跳過，不影響其他功能
+        // 進入烹飪模式時，如果有設定歌單就自動開始播放；沒設定的話安靜跳過，不影響其他功能。
+        // 改成單純設定iframe的src網址（用videoseries這個特殊代稱+list參數來嵌入整份播放清單），
+        // 這是跟你網站原本「跳到影片時間軸」那個功能同一套已經驗證過穩定的簡單嵌入方式，
+        // 不再用比較容易出狀況的YouTube JS API物件
         function startCookingMusicIfConfigured() {
             const playlistId = localStorage.getItem(YOUTUBE_MUSIC_PLAYLIST_KEY);
             if (!playlistId) return;
-            loadYoutubeIframeApi();
             const wrap = document.getElementById('youtube-music-player-wrap');
-            const tryCreatePlayer = () => {
-                if (!youtubeMusicApiReady || typeof YT === 'undefined') {
-                    setTimeout(tryCreatePlayer, 200);
-                    return;
-                }
-                wrap.classList.remove('hidden');
-                if (youtubeMusicPlayer) {
-                    youtubeMusicPlayer.loadPlaylist({ listType: 'playlist', list: playlistId });
-                } else {
-                    youtubeMusicPlayer = new YT.Player('youtube-music-player', {
-                        height: '113', width: '200',
-                        playerVars: {
-                            listType: 'playlist', list: playlistId, autoplay: 1,
-                            origin: window.location.origin, // 指定來源網域，避免部分嵌入驗證問題
-                        },
-                        events: {
-                            // 播放清單裡常常會混雜到「擁有者關閉外部嵌入播放」的影片，遇到這種沒辦法播的
-                            // 影片，自動跳下一首，不要卡在同一首「無法播放」的畫面上不動
-                            onError: (event) => {
-                                console.warn('這首歌沒辦法在嵌入播放器裡播放（可能是擁有者關閉了嵌入權限），自動跳下一首', event.data);
-                                if (youtubeMusicPlayer && youtubeMusicPlayer.nextVideo) {
-                                    youtubeMusicPlayer.nextVideo();
-                                }
-                            },
-                        },
-                    });
-                }
-            };
-            tryCreatePlayer();
+            const iframe = document.getElementById('youtube-music-player');
+            if (!wrap || !iframe) return;
+            wrap.classList.remove('hidden');
+            iframe.src = `https://www.youtube.com/embed/videoseries?list=${playlistId}&autoplay=1`;
         }
         function stopCookingMusic() {
             const wrap = document.getElementById('youtube-music-player-wrap');
+            const iframe = document.getElementById('youtube-music-player');
             if (wrap) wrap.classList.add('hidden');
-            if (youtubeMusicPlayer && youtubeMusicPlayer.pauseVideo) {
-                try { youtubeMusicPlayer.pauseVideo(); } catch (e) { /* 忽略 */ }
-            }
+            if (iframe) iframe.src = ''; // 清空網址讓播放真的停止，不是只有畫面上隱藏、背景還在放
         }
 
         function toggleDesktopCookingMode() {
