@@ -12685,6 +12685,16 @@
         // 處理聽到的語音指令：還沒開始導覽前只聽「語音作法」這個啟動詞；
         // 開始導覽之後聽「下一步驟」（打勾目前步驟、唸下一步）跟「大功告成」（只有在最後一步才有效，
         // 打勾最後一步、觸發完成、念鼓勵語）
+        // 找出目前第一個「還沒打勾」的步驟——不管這個勾是使用者手動點的、還是之前語音打的都算，
+        // 因為checkedSteps是兩種操作共用的同一份紀錄。這樣不管使用者是全程用語音、還是先手動
+        // 點了幾步後來才喊「語音作法」，都能接續在正確的進度往下講，不會每次都笨笨地從第一步重講
+        function findFirstUncheckedStepIndex() {
+            const totalSteps = (currentDetailRecipe && currentDetailRecipe.steps) ? currentDetailRecipe.steps.length : 0;
+            for (let i = 0; i < totalSteps; i++) {
+                if (!checkedSteps.has(i)) return i;
+            }
+            return Math.max(0, totalSteps - 1); // 全部都勾完了(理論上這時finishRecipe早就觸發了)，保底回傳最後一步
+        }
         function handleVoiceCookingCommand(transcript) {
             const totalSteps = (currentDetailRecipe && currentDetailRecipe.steps) ? currentDetailRecipe.steps.length : 0;
             if (!totalSteps) return;
@@ -12692,7 +12702,7 @@
             if (!voiceModeEngaged) {
                 if (transcript.includes('語音作法')) {
                     voiceModeEngaged = true;
-                    voiceStepIndex = 0;
+                    voiceStepIndex = findFirstUncheckedStepIndex();
                     speakCurrentVoiceStep();
                 }
                 return;
