@@ -178,6 +178,17 @@
         .form-input::placeholder { color: #B3A492; }
         .form-input:focus { outline: none; border-color: var(--jam); box-shadow: 0 0 0 3px rgba(168,50,74,0.14); }
 
+        /* 搜尋欄疊加文字太長超出可視範圍時，用跑馬燈效果水平捲動顯示 */
+        #search-placeholder-text.marquee {
+            display: inline-block;
+            animation: search-marquee 9s linear infinite;
+            padding-left: 100%; /* 從輸入框最右邊開始，往左捲動 */
+        }
+        @keyframes search-marquee {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-100%); }
+        }
+
         .btn-primary {
             background: var(--jam); color: #fff; border-radius: 999px;
             padding: 0.95rem 1.75rem; font-weight: 600; transition: background .2s, transform .1s;
@@ -427,8 +438,14 @@
 
                 <div class="flex gap-3 mb-3">
                     <div class="relative flex-1">
-                        <i class="fas fa-search absolute left-5 top-1/2 -translate-y-1/2" style="color:#B3A492"></i>
-                        <input id="search-input" onkeyup="filterRecipes()" placeholder="搜尋食譜、食材或料理..." class="form-input pl-12">
+                        <i class="fas fa-search absolute left-5 top-1/2 -translate-y-1/2 z-10" style="color:#B3A492"></i>
+                        <input id="search-input" onkeyup="filterRecipes()" oninput="updateSearchPlaceholderOverlay()" onfocus="updateSearchPlaceholderOverlay()" onblur="updateSearchPlaceholderOverlay()" placeholder="搜尋食譜、食材或料理..." class="form-input pl-12">
+                        <!-- 自訂的疊加文字，取代原生placeholder——原生placeholder沒辦法套用跑馬燈這類CSS動畫，
+                             文字太長只會被裁掉，改成自己刻一個文字疊在輸入框上面模擬placeholder的樣子，
+                             太長的時候才能做跑馬燈捲動效果。輸入框有內容或正在輸入時會自動隱藏，行為跟真的placeholder一樣 -->
+                        <div id="search-placeholder-overlay" class="absolute left-12 right-4 top-1/2 -translate-y-1/2 pointer-events-none overflow-hidden" style="color:#B3A492; white-space:nowrap;">
+                            <span id="search-placeholder-text"></span>
+                        </div>
                     </div>
                     <button id="add-recipe-btn-desktop" onclick="showAddModal()" class="btn-primary hidden md:flex items-center gap-2 whitespace-nowrap" style="font-family:'Noto Sans TC', sans-serif;">
                         <i class="fas fa-plus"></i> 新增食譜
@@ -11551,7 +11568,8 @@
         };
         function applyGreetingPlaceholder() {
             const searchInput = document.getElementById('search-input');
-            if (!searchInput) return;
+            const textEl = document.getElementById('search-placeholder-text');
+            if (!searchInput || !textEl) return;
             const hour = new Date().getHours();
             const period = (hour >= 5 && hour < 11) ? 'morning' : (hour >= 11 && hour < 18) ? 'noon' : 'night';
             const { label, emojis } = TIME_BASED_GREETINGS[period];
@@ -11562,7 +11580,32 @@
                 else if (currentWeatherData.isHot) weatherTip = '，今天天氣炎熱，來點清爽消暑的菜色如何';
                 else if (currentWeatherData.isCold) weatherTip = '，天氣有點冷，煮個熱騰騰的料理暖暖身子';
             }
-            searchInput.placeholder = `${label}${emoji}今天想煮點什麼好吃的呢？${weatherTip}`;
+            const fullText = `${label}${emoji}今天想煮點什麼好吃的呢？${weatherTip}`;
+            textEl.textContent = fullText;
+            // 原生placeholder清空、只留一句簡短的備用文字（萬一JS執行失敗，至少還有基本的提示可看），
+            // 主要顯示交給上面的疊加文字容器負責，這樣才能套用跑馬燈效果
+            searchInput.placeholder = '搜尋食譜、食材或料理...';
+            updateSearchPlaceholderOverlay();
+        }
+        // 判斷疊加文字是不是超出容器寬度，超出的話才套用跑馬燈捲動效果，沒超出就正常靜態顯示，
+        // 不會讓短文字也莫名其妙一直在跑
+        function updateSearchPlaceholderOverlay() {
+            const searchInput = document.getElementById('search-input');
+            const overlay = document.getElementById('search-placeholder-overlay');
+            const textEl = document.getElementById('search-placeholder-text');
+            if (!searchInput || !overlay || !textEl) return;
+            // 輸入框有內容、或正在輸入中（有焦點）時，隱藏疊加文字，行為要跟真的placeholder一樣
+            const shouldShow = !searchInput.value && document.activeElement !== searchInput;
+            overlay.style.visibility = shouldShow ? 'visible' : 'hidden';
+            if (!shouldShow) return;
+            textEl.classList.remove('marquee');
+            // 用requestAnimationFrame讓瀏覽器先把文字不跑馬燈的寬度量出來，再判斷要不要加上跑馬燈class，
+            // 不然文字內容剛換掉的當下，量到的可能還是舊的寬度
+            requestAnimationFrame(() => {
+                if (textEl.scrollWidth > overlay.clientWidth) {
+                    textEl.classList.add('marquee');
+                }
+            });
         }
         applyGreetingPlaceholder();
 
