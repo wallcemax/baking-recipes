@@ -16815,7 +16815,20 @@
                 } else {
                     youtubeMusicPlayer = new YT.Player('youtube-music-player', {
                         height: '113', width: '200',
-                        playerVars: { listType: 'playlist', list: playlistId, autoplay: 1 },
+                        playerVars: {
+                            listType: 'playlist', list: playlistId, autoplay: 1,
+                            origin: window.location.origin, // 指定來源網域，避免部分嵌入驗證問題
+                        },
+                        events: {
+                            // 播放清單裡常常會混雜到「擁有者關閉外部嵌入播放」的影片，遇到這種沒辦法播的
+                            // 影片，自動跳下一首，不要卡在同一首「無法播放」的畫面上不動
+                            onError: (event) => {
+                                console.warn('這首歌沒辦法在嵌入播放器裡播放（可能是擁有者關閉了嵌入權限），自動跳下一首', event.data);
+                                if (youtubeMusicPlayer && youtubeMusicPlayer.nextVideo) {
+                                    youtubeMusicPlayer.nextVideo();
+                                }
+                            },
+                        },
                     });
                 }
             };
