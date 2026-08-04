@@ -465,6 +465,12 @@
         <div id="shopping-complete-lottie" style="width:260px; height:260px;"></div>
     </div>
 
+    <!-- AI辨識中的循環動畫：拍照辨識食譜、冰箱拍照新增這兩個功能共用，辨識開始顯示、結束後手動關閉 -->
+    <div id="ai-processing-overlay" class="hidden fixed inset-0 z-[70] flex flex-col items-center justify-center" style="background:rgba(58,42,30,0.35); pointer-events:none;">
+        <div id="ai-processing-lottie" style="width:180px; height:180px;"></div>
+        <p class="text-sm font-medium mt-1" style="color:white;">🔍 AI辨識中，請稍候...</p>
+    </div>
+
     <div id="mobile-menu-backdrop" class="hidden md:!hidden fixed inset-0 z-[59]" style="background:rgba(58,42,30,0.35)" onclick="toggleMobileMenu()"></div>
     <div id="mobile-menu-panel" class="hidden md:!hidden fixed left-4 right-4 z-[60] rounded-[1.75rem] overflow-hidden" style="top:calc(env(safe-area-inset-top) + 4.2rem); box-shadow:0 20px 40px -12px rgba(58,42,30,0.35); background:var(--paper);">
         <div class="px-5 py-4" style="background:linear-gradient(120deg, var(--jam), var(--jam-dark));">
@@ -12668,6 +12674,28 @@
         function playShoppingListCompleteCelebration() {
             playLottieCelebration('https://res.cloudinary.com/bumzwp9g/raw/upload/v1785748371/basket_18173870_ueguyc.json');
         }
+        // AI辨識中的循環動畫：拍照辨識食譜、冰箱拍照新增這兩個功能共用，開始辨識時顯示、
+        // 辨識完成（不管成功還是失敗）都要記得呼叫hideAiProcessingAnimation()關掉，不會像慶祝動畫
+        // 那樣播完自動消失，因為AI辨識所需時間不固定，得手動控制開關的時機點
+        let aiProcessingAnim = null;
+        function showAiProcessingAnimation() {
+            const overlay = document.getElementById('ai-processing-overlay');
+            const container = document.getElementById('ai-processing-lottie');
+            if (!overlay || !container || typeof lottie === 'undefined') return;
+            overlay.classList.remove('hidden');
+            container.innerHTML = '';
+            aiProcessingAnim = lottie.loadAnimation({
+                container,
+                renderer: 'svg',
+                loop: true,
+                autoplay: true,
+                path: 'https://res.cloudinary.com/bumzwp9g/raw/upload/v1785812498/image-text_19034748_ukabag.json',
+            });
+        }
+        function hideAiProcessingAnimation() {
+            document.getElementById('ai-processing-overlay')?.classList.add('hidden');
+            if (aiProcessingAnim) { aiProcessingAnim.destroy(); aiProcessingAnim = null; }
+        }
         // 純前端 canvas 彩色紙屑動畫，不依賴外部套件
         function launchConfetti() {
             const canvas = document.createElement('canvas');
@@ -15366,6 +15394,7 @@
             const statusEl = document.getElementById('fridge-item-photo-status');
             statusEl.textContent = '🔍 辨識中，請稍候...';
             statusEl.classList.remove('hidden');
+            showAiProcessingAnimation();
             try {
                 const compressed = await compressImageForUpload(file, 1600, 0.85);
                 if (compressed === null) throw new Error('這個檔案看起來不是有效的圖片格式，請確認選的檔案正確');
@@ -15399,6 +15428,7 @@
                 statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
             } finally {
                 event.target.value = '';
+                hideAiProcessingAnimation();
             }
         }
         async function handleRecipeOcr(event) {
@@ -15407,6 +15437,7 @@
             const statusEl = document.getElementById('recipe-ocr-status');
             statusEl.textContent = `🔍 辨識中，請稍候...（共${files.length}張照片）`;
             statusEl.classList.remove('hidden');
+            showAiProcessingAnimation();
             try {
                 const images = [];
                 for (const file of files) {
@@ -15459,6 +15490,7 @@
                 statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
             } finally {
                 event.target.value = '';
+                hideAiProcessingAnimation();
             }
         }
 
