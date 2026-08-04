@@ -77,11 +77,39 @@ function formatDateStr(d) {
     return `${y}-${m}-${day}`;
 }
 
+// 查詢台灣（預設台北）今天接下來會不會下雨，一次執行只查一次（不分使用者），
+// 查詢失敗的話回傳null，呼叫端要當作「沒有天氣資訊可用」處理，不能讓天氣查詢失敗影響到
+// 採購提醒本身的正常發送
+async function fetchWillRainToday() {
+    const apiKey = process.env.WEATHERAPI_KEY;
+    if (!apiKey) {
+        console.log('沒有設定WEATHERAPI_KEY，跳過天氣查詢，通知文字維持原本樣子');
+        return null;
+    }
+    try {
+        const res = await fetch(`https://api.weatherapi.com/v1/forecast.json?key=${apiKey}&q=25.0330,121.5654&days=1&lang=zh_tw`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        const conditionText = (data.current && data.current.condition && data.current.condition.text) || '';
+        if (conditionText.includes('雨')) return true;
+        const hours = (data.forecast && data.forecast.forecastday && data.forecast.forecastday[0] && data.forecast.forecastday[0].hour) || [];
+        const nowEpoch = Math.floor(Date.now() / 1000);
+        const upcomingHours = hours.filter(h => h.time_epoch >= nowEpoch).slice(0, 12);
+        return upcomingHours.some(h => (h.chance_of_rain || 0) >= 50);
+    } catch (err) {
+        console.warn('查詢天氣失敗，通知文字維持原本樣子', err.message);
+        return null;
+    }
+}
+
 async function main() {
     const nowTW = getTaiwanNow();
     const todayStr = formatDateStr(nowTW);
     const currentHour = nowTW.getHours();
     console.log(`開始檢查採購提醒...（台灣時間 ${todayStr} ${currentHour}時）`);
+
+    const willRainToday = await fetchWillRainToday();
+    console.log(`今天會不會下雨：${willRainToday === null ? '查詢失敗，不附加天氣提示' : (willRainToday ? '會' : '不會')}`);
 
     const remindersSnap = await db.collection('shoppingReminders').where('enabled', '==', true).get();
     console.log(`共有 ${remindersSnap.size} 位使用者開啟了採購提醒`);
@@ -165,7 +193,9 @@ async function main() {
         }
 
         const title = '🛒 採購提醒';
-        const body = '你的採購清單裡還有東西沒買，記得去採購喔！';
+        const body = willRainToday
+            ? '記得帶傘，你的採購清單裡還有東西沒買，記得去採購喔！'
+            : '你的採購清單裡還有東西沒買，記得去採購喔！';
         // tag加上使用者ID+這次觸發的確切時間點，確保「同一次提醒事件」不管實際被送達幾次，
         // 瀏覽器看到的tag都完全一樣，能正確辨識成同一則、自動合併顯示成一個通知，
         // 不會因為底層SDK網路重試等原因造成的重複送達，讓使用者收到兩則
