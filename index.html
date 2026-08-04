@@ -12598,6 +12598,125 @@
         }
 
         // ---------- 步驟勾選與完成進度 ----------
+        // ========== 語音操作烹飪模式 ==========
+        // 完成料理時隨機挑一句念出來，不會每次都一樣、感覺比較有溫度
+        const VOICE_COMPLETION_PHRASES = [
+            '恭喜您完成這道料理，辛苦了！',
+            '太棒了，您辛苦了，快去享用您的成果吧！',
+            '大功告成，我從手機裡都聞到了陣陣香氣呢',
+            '您辛苦了，這道菜一定很好吃',
+            '完成了！記得幫這道菜拍張照留念喔',
+            '恭喜完成料理，趁熱享用吧！',
+            '您做到了，這道菜看起來一定很美味',
+            '辛苦了，現在是享受美食的時候了',
+            '完成了！希望這道菜能為您帶來滿滿的幸福感',
+            '您的料理完成了，家人朋友一定會很驚豔',
+            '好厲害，您已經完成這道菜了，快去嚐嚐看吧',
+            '恭喜！這是您用心完成的一道料理',
+            '您辛苦了，這一路的每個步驟都做得很仔細',
+            '料理大功告成，記得跟大家分享您的成果喔',
+            '完成了！廚房裡是不是充滿了幸福的味道呢',
+        ];
+
+        let voiceRecognition = null;
+        let voiceModeEngaged = false; // 是否已經聽到「語音作法」這個啟動指令，開始逐步導覽
+        let voiceStepIndex = 0; // 目前正在唸/等待使用者回應的步驟索引
+        let voiceListeningShouldRun = false; // 整體語音功能是否應該在運作中（進烹飪模式開、離開關）
+
+        // 語音合成：唸出一段文字，先打斷任何還在講的話，避免疊在一起講不清楚
+        function speakVoiceText(text) {
+            if (!('speechSynthesis' in window)) return;
+            window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.lang = 'zh-TW';
+            window.speechSynthesis.speak(utter);
+        }
+        function getVoiceStepText(idx) {
+            if (!currentDetailRecipe || !currentDetailRecipe.steps) return '';
+            const s = currentDetailRecipe.steps[idx];
+            return typeof s === 'string' ? s : (s && s.text) || '';
+        }
+        function speakCurrentVoiceStep() {
+            const text = getVoiceStepText(voiceStepIndex);
+            if (text) speakVoiceText(`第${voiceStepIndex + 1}步，${text}`);
+        }
+
+        // 語音辨識：目前先針對Android的Chrome開發（用webkit前綴的建構子），
+        // 其他不支援的瀏覽器/裝置會直接偵測不到、安靜地不啟用這個功能，不影響其他部分正常使用
+        function startVoiceCookingListening() {
+            const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognitionCtor) {
+                console.log('這個瀏覽器不支援語音辨識，語音操作功能不會啟用');
+                return;
+            }
+            voiceListeningShouldRun = true;
+            voiceModeEngaged = false;
+            voiceStepIndex = 0;
+            voiceRecognition = new SpeechRecognitionCtor();
+            voiceRecognition.continuous = true;
+            voiceRecognition.interimResults = false;
+            voiceRecognition.lang = 'zh-TW';
+            voiceRecognition.onresult = (event) => {
+                const lastResult = event.results[event.results.length - 1];
+                if (!lastResult || !lastResult[0]) return;
+                handleVoiceCookingCommand(lastResult[0].transcript.trim());
+            };
+            voiceRecognition.onerror = (event) => {
+                console.warn('語音辨識錯誤（onend會自動重新開始聽，不用特別處理）', event.error);
+            };
+            // 瀏覽器常常會自己把辨識停掉（例如安靜一段時間），只要語音功能還應該運作，
+            // 就自動重新開始聽，做到「持續聆聽」的效果
+            voiceRecognition.onend = () => {
+                if (voiceListeningShouldRun) {
+                    try { voiceRecognition.start(); } catch (e) { /* 已經在跑的話會丟錯誤，忽略即可 */ }
+                }
+            };
+            try { voiceRecognition.start(); } catch (e) { console.warn('啟動語音辨識失敗', e.message); }
+        }
+        function stopVoiceCookingListening() {
+            voiceListeningShouldRun = false;
+            voiceModeEngaged = false;
+            if (voiceRecognition) {
+                try { voiceRecognition.onend = null; voiceRecognition.stop(); } catch (e) { /* 忽略 */ }
+                voiceRecognition = null;
+            }
+            if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        }
+        // 處理聽到的語音指令：還沒開始導覽前只聽「語音作法」這個啟動詞；
+        // 開始導覽之後聽「下一步驟」（打勾目前步驟、唸下一步）跟「大功告成」（只有在最後一步才有效，
+        // 打勾最後一步、觸發完成、念鼓勵語）
+        function handleVoiceCookingCommand(transcript) {
+            const totalSteps = (currentDetailRecipe && currentDetailRecipe.steps) ? currentDetailRecipe.steps.length : 0;
+            if (!totalSteps) return;
+
+            if (!voiceModeEngaged) {
+                if (transcript.includes('語音作法')) {
+                    voiceModeEngaged = true;
+                    voiceStepIndex = 0;
+                    speakCurrentVoiceStep();
+                }
+                return;
+            }
+
+            if (transcript.includes('下一步驟')) {
+                if (voiceStepIndex < totalSteps - 1) {
+                    if (!checkedSteps.has(voiceStepIndex)) toggleStepCheck(voiceStepIndex);
+                    voiceStepIndex++;
+                    speakCurrentVoiceStep();
+                } else {
+                    // 已經在最後一步了，「下一步驟」不會再往下推進，要等「大功告成」才會真的完成
+                    speakVoiceText('您已完成全部作法跟步驟');
+                }
+            } else if (transcript.includes('大功告成')) {
+                if (voiceStepIndex === totalSteps - 1) {
+                    if (!checkedSteps.has(voiceStepIndex)) toggleStepCheck(voiceStepIndex);
+                    const phrase = VOICE_COMPLETION_PHRASES[Math.floor(Math.random() * VOICE_COMPLETION_PHRASES.length)];
+                    speakVoiceText(phrase);
+                    finishRecipe();
+                }
+            }
+        }
+
         function toggleStepCheck(idx) {
             const wasChecked = checkedSteps.has(idx);
             if (wasChecked) checkedSteps.delete(idx); else checkedSteps.add(idx);
@@ -12913,6 +13032,9 @@
                 ${recipe.imageUrl ? `<img id="detail-image" src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">` : `<img src="${CATEGORY_PLACEHOLDER_IMAGES[recipe.category] || CATEGORY_PLACEHOLDER_FALLBACK}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">`}
                 <div class="px-6 sm:px-8 py-6">
                     <div id="detail-top-controls">
+                    <button onclick="toggleDesktopCookingMode()" class="btn-secondary hidden md:flex items-center gap-2 mb-4" title="電腦版沒有橫置螢幕，用這個按鈕手動進入沉浸式烹飪模式，按ESC鍵退出">
+                        🍳 進入烹飪模式（按ESC退出）
+                    </button>
                     ${recipe.sizeValue ? `<p class="text-xs mb-2" style="color:#B3A492">原始：${recipe.sizeValue}${recipe.sizeUnit} × ${recipe.servings} 個。換算時會同時依尺寸（面積比）與數量計算份量</p>` : ''}
                     <div class="flex gap-3 mb-4 flex-wrap">
                         <input id="scale-servings" value="${recipe.servings}" type="number" class="form-input flex-1" style="min-width:100px" placeholder="數量">
@@ -16544,6 +16666,7 @@
         function applyCookingMode(modal) {
             if (modal.classList.contains('landscape-cooking-mode')) return; // 已經套用過了，避免每次輪詢都重複執行
             modal.classList.add('landscape-cooking-mode');
+            startVoiceCookingListening();
             Object.entries(COOKING_MODE_VARS).forEach(([k, v]) => modal.style.setProperty(k, v));
             // 背景遮罩改成不透明的深色，並移除內距，讓內容真的能撐滿整個螢幕
             modal.style.setProperty('background', COOKING_MODE_VARS['--cream'], 'important');
@@ -16628,6 +16751,7 @@
         function removeCookingMode(modal) {
             if (!modal.classList.contains('landscape-cooking-mode')) return; // 本來就沒套用，不用重複清
             modal.classList.remove('landscape-cooking-mode');
+            stopVoiceCookingListening();
             modal.style.removeProperty('align-items');
             modal.style.removeProperty('justify-content');
             modal.style.removeProperty('background');
@@ -16665,12 +16789,19 @@
             exitFullscreenIfActive();
         }
 
+        // 電腦版沒有「橫置」這件事，改成用按鈕手動強制進入烹飪模式，這個旗標開著的話，
+        // 不管螢幕方向如何都視為「應該要在烹飪模式」；按ESC或再按一次按鈕會關掉這個旗標退出
+        let desktopCookingModeForced = false;
+        function toggleDesktopCookingMode() {
+            desktopCookingModeForced = !desktopCookingModeForced;
+            updateCookingModeClass();
+        }
         function updateCookingModeClass() {
             const modal = document.getElementById('detail-modal');
             if (!modal) return;
             const isOpen = !modal.classList.contains('hidden');
             const matched = isLandscapeSmallScreen();
-            if (isOpen && matched) {
+            if (isOpen && (matched || desktopCookingModeForced)) {
                 applyCookingMode(modal);
             } else {
                 removeCookingMode(modal);
@@ -16681,6 +16812,14 @@
         if (window.screen && window.screen.orientation) {
             window.screen.orientation.addEventListener('change', updateCookingModeClass);
         }
+        // 按ESC鍵退出烹飪模式（主要給電腦版手動按鈕進入的情況用；手機橫置進入的模式，
+        // 本來就是靠轉回直向退出，ESC對那種情況沒有實際影響，因為matched還是true）
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && desktopCookingModeForced) {
+                desktopCookingModeForced = false;
+                updateCookingModeClass();
+            }
+        });
         // 保險機制：部分手機瀏覽器／PWA 的方向改變事件不太可靠，食譜頁開著時額外每 0.5 秒檢查一次，
         // 確保橫向/直向切換一定會被偵測到
         let cookingModePollId = null;
@@ -16723,6 +16862,7 @@
             clearAllStepTimers();
             releaseWakeLock();
             stopCookingModePoll();
+            desktopCookingModeForced = false; // 重置，避免下次開別的食譜時被誤觸發強制進入烹飪模式
             const modal = document.getElementById('detail-modal');
             modal.classList.add('hidden');
             removeCookingMode(modal);
