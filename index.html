@@ -682,23 +682,19 @@
                         <input type="checkbox" id="shopping-reminder-enabled" onchange="onShoppingReminderToggle()" class="w-4 h-4">
                         <span class="font-display font-semibold text-sm">🔔 採購提醒</span>
                     </label>
-                    <p class="text-xs mb-3" style="color:#B3A492">只要清單裡還有東西沒買，就會在設定的時間推播提醒你去採購</p>
+                    <p class="text-xs mb-3" style="color:#B3A492">只要清單裡還有東西沒買，就會在設定的整點推播提醒你去採購（只能選整點，不能選分鐘）</p>
                     <div id="shopping-reminder-fields" class="hidden">
                         <div class="grid grid-cols-2 gap-3 mb-3">
                             <div>
-                                <label class="text-xs block mb-1" style="color:#B3A492">提醒時間（24小時制）</label>
-                                <div class="flex items-center gap-1">
-                                    <select id="shopping-reminder-hour" class="form-input !py-1.5 text-sm" style="width:auto"></select>
-                                    <span>:</span>
-                                    <select id="shopping-reminder-minute" class="form-input !py-1.5 text-sm" style="width:auto"></select>
-                                </div>
+                                <label class="text-xs block mb-1" style="color:#B3A492">提醒時間（只能整點，24小時制）</label>
+                                <select id="shopping-reminder-hour" class="form-input !py-1.5 text-sm"></select>
                             </div>
                             <div>
                                 <label class="text-xs block mb-1" style="color:#B3A492">指定日期（選填）</label>
                                 <input type="date" id="shopping-reminder-date" class="form-input !py-1.5 text-sm">
                             </div>
                         </div>
-                        <p class="text-xs mb-3" style="color:#B3A492">只設定時間、不選日期 → 每天同一時間都會提醒；如果有選日期 → 只有那天那個時間會提醒一次，之後就不會再提醒了</p>
+                        <p class="text-xs mb-3" style="color:#B3A492">只設定時間、不選日期 → 每天到了那個整點都會提醒；如果有選日期 → 只有那天那個整點會提醒一次，之後就不會再提醒了</p>
                         <button onclick="saveShoppingReminderSettings()" class="btn-secondary text-xs !px-4 !py-2">儲存提醒設定</button>
                         <p id="shopping-reminder-status" class="text-xs mt-2" style="color:var(--sage)"></p>
                     </div>
@@ -14665,19 +14661,14 @@
             consumeModalHistoryState(fromPopState);
         }
         // 載入使用者目前的採購提醒設定，把畫面上的開關/時間/日期都還原成上次儲存的狀態
-        // 填入時、分的下拉選單選項，補0讓個位數也是兩位數顯示（例如09、05），24小時制固定顯示，
-        // 不受手機/瀏覽器的12小時制系統設定影響，不會有上下午混淆的問題
+        // 填入小時的下拉選單選項，補0讓個位數也是兩位數顯示（例如09），24小時制固定顯示，
+        // 不受手機/瀏覽器的12小時制系統設定影響，不會有上下午混淆的問題。只能選整點，
+        // 因為排程本身就是每小時整點檢查一次，讓使用者以為能選分鐘只是假精確，乾脆拿掉
         function populateReminderTimeSelects() {
             const hourSel = document.getElementById('shopping-reminder-hour');
-            const minuteSel = document.getElementById('shopping-reminder-minute');
             if (hourSel.options.length === 0) {
                 for (let h = 0; h < 24; h++) {
-                    hourSel.innerHTML += `<option value="${h}">${String(h).padStart(2, '0')}</option>`;
-                }
-            }
-            if (minuteSel.options.length === 0) {
-                for (let m = 0; m < 60; m += 5) {
-                    minuteSel.innerHTML += `<option value="${m}">${String(m).padStart(2, '0')}</option>`;
+                    hourSel.innerHTML += `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`;
                 }
             }
         }
@@ -14690,9 +14681,8 @@
                 const enabled = !!(data && data.enabled);
                 document.getElementById('shopping-reminder-enabled').checked = enabled;
                 document.getElementById('shopping-reminder-fields').classList.toggle('hidden', !enabled);
-                const [savedH, savedM] = ((data && data.time) || '09:00').split(':');
+                const [savedH] = ((data && data.time) || '09:00').split(':');
                 document.getElementById('shopping-reminder-hour').value = String(parseInt(savedH, 10));
-                document.getElementById('shopping-reminder-minute').value = String(Math.round(parseInt(savedM, 10) / 5) * 5 % 60);
                 document.getElementById('shopping-reminder-date').value = (data && data.date) || '';
                 document.getElementById('shopping-reminder-status').textContent = '';
             } catch (err) {
@@ -14715,8 +14705,7 @@
         async function saveShoppingReminderSettings() {
             if (!currentUser) { alert('請先登入'); return; }
             const hourVal = document.getElementById('shopping-reminder-hour').value;
-            const minuteVal = document.getElementById('shopping-reminder-minute').value;
-            const time = `${String(hourVal).padStart(2, '0')}:${String(minuteVal).padStart(2, '0')}`;
+            const time = `${String(hourVal).padStart(2, '0')}:00`; // 只能選整點，分鐘固定是00
             const date = document.getElementById('shopping-reminder-date').value; // 選填，YYYY-MM-DD格式或空字串
             const statusEl = document.getElementById('shopping-reminder-status');
             statusEl.textContent = '設定中...';
