@@ -16749,7 +16749,7 @@
                     || (firebase.auth.GoogleAuthProvider.credentialFromResult(result) && firebase.auth.GoogleAuthProvider.credentialFromResult(result).accessToken);
                 if (!accessToken) throw new Error('沒有取得存取權杖，請確認Google Cloud Console裡YouTube Data API v3已經啟用、你的帳號有加進測試使用者名單');
 
-                const res = await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet&mine=true&maxResults=25`, {
+                const res = await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet,status&mine=true&maxResults=25`, {
                     headers: { 'Authorization': `Bearer ${accessToken}` },
                 });
                 const data = await res.json();
@@ -16771,9 +16771,21 @@
             listEl.innerHTML = items.map(item => {
                 const title = (item.snippet && item.snippet.title) || '未命名播放清單';
                 const thumb = item.snippet && item.snippet.thumbnails && (item.snippet.thumbnails.default || {}).url;
+                const privacy = item.status && item.status.privacyStatus; // 'public' / 'unlisted' / 'private'
+                const isPrivate = privacy === 'private';
+                // 私人清單就算是擁有者自己，也沒辦法透過一般嵌入播放器播放（YouTube本身的限制，不是我們的問題），
+                // 這裡直接標示清楚、灰階呈現、擋掉點擊，避免選了之後才發現播不出來、搞不清楚原因
+                if (isPrivate) {
+                    return `<div class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left opacity-50" style="background:var(--cream)" title="私人清單沒辦法用一般嵌入播放器播放，這是YouTube本身的限制">
+                        ${thumb ? `<img src="${thumb}" class="w-10 h-10 rounded-lg object-cover shrink-0">` : ''}
+                        <span class="text-sm truncate flex-1">${title}</span>
+                        <span class="text-xs shrink-0" style="color:#B3A492">🔒 私人，無法播放</span>
+                    </div>`;
+                }
                 return `<button onclick="selectMusicPlaylist('${item.id}', ${JSON.stringify(title).replace(/"/g, '&quot;')})" class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left" style="background:var(--cream)">
                     ${thumb ? `<img src="${thumb}" class="w-10 h-10 rounded-lg object-cover shrink-0">` : ''}
-                    <span class="text-sm truncate">${title}</span>
+                    <span class="text-sm truncate flex-1">${title}</span>
+                    <span class="text-xs shrink-0" style="color:#B3A492">${privacy === 'unlisted' ? '🔗 不公開' : '🌐 公開'}</span>
                 </button>`;
             }).join('');
         }
