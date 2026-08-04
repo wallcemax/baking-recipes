@@ -513,7 +513,7 @@
     </div>
     <!-- YouTube播放器：平常隱藏，只在烹飪模式播放音樂用，不會擋畫面 -->
     <div id="youtube-music-player-wrap" class="hidden fixed" style="bottom:12px; left:12px; z-index:65; width:200px;">
-        <iframe id="youtube-music-player" width="200" height="113" frameborder="0" allow="autoplay" style="border-radius:0.75rem;"></iframe>
+        <iframe id="youtube-music-player" width="200" height="113" frameborder="0" allow="autoplay" referrerpolicy="origin" style="border-radius:0.75rem;"></iframe>
     </div>
 
     <div id="mobile-menu-backdrop" class="hidden md:!hidden fixed inset-0 z-[59]" style="background:rgba(58,42,30,0.35)" onclick="toggleMobileMenu()"></div>
@@ -16748,6 +16748,7 @@
                 const accessToken = (result.credential && result.credential.accessToken)
                     || (firebase.auth.GoogleAuthProvider.credentialFromResult(result) && firebase.auth.GoogleAuthProvider.credentialFromResult(result).accessToken);
                 if (!accessToken) throw new Error('沒有取得存取權杖，請確認Google Cloud Console裡YouTube Data API v3已經啟用、你的帳號有加進測試使用者名單');
+                lastYoutubeAccessToken = accessToken; // 選播放清單時要用它去抓清單裡每首歌的個別影片ID
 
                 const res = await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet,status&mine=true&maxResults=25`, {
                     headers: { 'Authorization': `Bearer ${accessToken}` },
@@ -16789,11 +16790,30 @@
                 </button>`;
             }).join('');
         }
-        function selectMusicPlaylist(id, title) {
-            localStorage.setItem(YOUTUBE_MUSIC_PLAYLIST_KEY, id);
-            localStorage.setItem(YOUTUBE_MUSIC_PLAYLIST_TITLE_KEY, title);
-            renderCurrentMusicPlaylist();
-            document.getElementById('music-playlist-list').innerHTML = '';
+        let lastYoutubeAccessToken = null; // 暫存剛拿到的存取權杖，選播放清單時要用它去抓清單裡每首歌的個別影片ID
+        async function selectMusicPlaylist(id, title) {
+            const listEl = document.getElementById('music-playlist-list');
+            listEl.innerHTML = `<p class="text-sm" style="color:#B3A492">讀取歌單內容中...</p>`;
+            try {
+                // 直接抓出清單裡每一首歌的「個別影片ID」，改成用跟seekVideo()完全相同、
+                // 已經證實能穩定播放的「單一影片ID」方式嵌入，不再用videoseries?list=這種
+                // 播放清單ID嵌入的方式（這個方式在部分帳號/清單上會出現Error 153播放失敗）
+                const res = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${id}&maxResults=50`, {
+                    headers: { 'Authorization': `Bearer ${lastYoutubeAccessToken}` },
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error((data.error && data.error.message) || '讀取歌單內容失敗');
+                const videoIds = (data.items || [])
+                    .map(item => item.snippet && item.snippet.resourceId && item.snippet.resourceId.videoId)
+                    .filter(Boolean);
+                if (!videoIds.length) throw new Error('這個播放清單裡沒有可播放的影片');
+                localStorage.setItem(YOUTUBE_MUSIC_PLAYLIST_KEY, videoIds.join(','));
+                localStorage.setItem(YOUTUBE_MUSIC_PLAYLIST_TITLE_KEY, title);
+                renderCurrentMusicPlaylist();
+                listEl.innerHTML = '';
+            } catch (err) {
+                listEl.innerHTML = `<p class="text-sm" style="color:#C4453F">讀取歌單內容失敗：${err.message}</p>`;
+            }
         }
 
         // 進入烹飪模式時，如果有設定歌單就自動開始播放；沒設定的話安靜跳過，不影響其他功能。
@@ -16801,13 +16821,19 @@
         // 這是跟你網站原本「跳到影片時間軸」那個功能同一套已經驗證過穩定的簡單嵌入方式，
         // 不再用比較容易出狀況的YouTube JS API物件
         function startCookingMusicIfConfigured() {
-            const playlistId = localStorage.getItem(YOUTUBE_MUSIC_PLAYLIST_KEY);
-            if (!playlistId) return;
+            const savedVideoIds = localStorage.getItem(YOUTUBE_MUSIC_PLAYLIST_KEY);
+            if (!savedVideoIds) return;
+            const videoIds = savedVideoIds.split(',').filter(Boolean);
+            if (!videoIds.length) return;
             const wrap = document.getElementById('youtube-music-player-wrap');
             const iframe = document.getElementById('youtube-music-player');
             if (!wrap || !iframe) return;
             wrap.classList.remove('hidden');
-            iframe.src = `https://www.youtube.com/embed/videoseries?list=${playlistId}&autoplay=1`;
+            // 用跟seekVideo()完全相同的「單一影片ID」嵌入方式播第一首（已經證實這個方式能穩定播放），
+            // 其餘的用YouTube支援的playlist參數接續播放，不再用videoseries?list=這種容易播放失敗的方式
+            const firstId = videoIds[0];
+            const restIds = videoIds.slice(1).join(',');
+            iframe.src = `https://www.youtube.com/embed/${firstId}?${restIds ? `playlist=${restIds}&` : ''}autoplay=1`;
         }
         function stopCookingMusic() {
             const wrap = document.getElementById('youtube-music-player-wrap');
