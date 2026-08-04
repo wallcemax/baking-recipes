@@ -449,6 +449,8 @@
             </div>
         </div>
 
+        <div id="weather-recommend-banner"></div>
+
         <div id="recipes-grid" class="grid gap-5" style="grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));">
             <!-- 骨架屏佔位卡片：資料還沒回來之前先顯示這個，loadRecipes抓到資料後會整個覆蓋掉 -->
             <div class="recipe-card p-6"><div class="skeleton" style="aspect-ratio:4/3; margin-bottom:.75rem;"></div><div class="skeleton h-4 w-2/3 mb-2"></div><div class="skeleton h-3 w-1/2"></div></div>
@@ -728,6 +730,7 @@
                 <button onclick="closeMarketPricesModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <div id="market-prices-weather-alert"></div>
                 <p class="text-xs mb-1" style="color:#B3A492">資料來源：農業部/漁業署開放資料，每天自動更新一次。跟過去3年同期價格的中位數比較，價格掉最多的食材代表現在正是便宜盛產的時候（用3年中位數是為了避免單一年份異常大漲，導致今年只是恢復正常卻被誤判成「超便宜」）。※這些是批發市場價格，跟你實際在市場/超市買到的零售價會有落差，僅供參考當季便宜與否。</p>
                 <p id="market-prices-updated-at" class="text-xs mb-4" style="color:#B3A492"></p>
                 <div id="market-prices-tabs" class="flex gap-2 mb-4 flex-wrap"></div>
@@ -11535,21 +11538,30 @@
         })();
 
         // 搜尋欄的placeholder依照現在時段顯示不同的問候語+emoji，早上/中午/晚上各自搭配幾個適合的
-        // 料理相關emoji隨機挑一個，增加一點生活感，不會每次打開都看到一模一樣的文字
+        // 料理相關emoji隨機挑一個，增加一點生活感，不會每次打開都看到一模一樣的文字。
+        // 天氣資料抓到之後，如果符合特定條件（下雨/很熱/很冷），會疊加一句天氣相關的提示，
+        // 抓不到天氣資料的話就維持原本單純的時段問候語，不會整個功能掛掉
         const TIME_BASED_GREETINGS = {
             morning: { label: '早安', emojis: ['☕', '🥪', '🍳'] },   // 05:00~10:59
             noon: { label: '午安', emojis: ['🍱', '🥗', '🍜'] },      // 11:00~17:59
             night: { label: '晚安', emojis: ['🌙', '🍲', '🍵'] },     // 18:00~04:59
         };
-        (function applyTimeBasedSearchPlaceholder() {
+        function applyGreetingPlaceholder() {
             const searchInput = document.getElementById('search-input');
             if (!searchInput) return;
             const hour = new Date().getHours();
             const period = (hour >= 5 && hour < 11) ? 'morning' : (hour >= 11 && hour < 18) ? 'noon' : 'night';
             const { label, emojis } = TIME_BASED_GREETINGS[period];
             const emoji = emojis[Math.floor(Math.random() * emojis.length)];
-            searchInput.placeholder = `${label}${emoji}今天想煮點什麼好吃的呢？`;
-        })();
+            let weatherTip = '';
+            if (currentWeatherData) {
+                if (currentWeatherData.willRainToday) weatherTip = '，今天會下雨記得帶傘，煮個暖呼呼的湯品吧';
+                else if (currentWeatherData.isHot) weatherTip = '，今天天氣炎熱，來點清爽消暑的菜色如何';
+                else if (currentWeatherData.isCold) weatherTip = '，天氣有點冷，煮個熱騰騰的料理暖暖身子';
+            }
+            searchInput.placeholder = `${label}${emoji}今天想煮點什麼好吃的呢？${weatherTip}`;
+        }
+        applyGreetingPlaceholder();
 
         // 首頁「歡迎回來」旁邊的揮手動畫，循環播放。
         // Lottie函式庫是用defer載入的，會比這段inline script晚執行，
@@ -11570,6 +11582,75 @@
             });
         }
         playHeroWaveAnimation();
+
+        // ========== 天氣資料：抓取+快取，給首頁推薦、烘焙濕度提醒、市場價格警示、問候語這幾個功能共用 ==========
+        // 快取1小時，不用每次打開網頁都重新查一次；抓不到天氣資料的話，各功能都會靜默略過，
+        // 不會因為天氣查詢失敗（例如使用者沒開定位權限、WeatherAPI額度用完）就影響到其他功能正常運作
+        let currentWeatherData = null;
+        const WEATHER_CACHE_KEY = 'cachedWeatherData';
+        const WEATHER_CACHE_MS = 60 * 60 * 1000; // 快取1小時
+        async function fetchWeatherData() {
+            try {
+                const cached = JSON.parse(localStorage.getItem(WEATHER_CACHE_KEY) || 'null');
+                if (cached && Date.now() - cached.cachedAt < WEATHER_CACHE_MS) {
+                    currentWeatherData = cached.data;
+                    onWeatherDataReady();
+                    return;
+                }
+            } catch (e) { /* 快取格式壞掉，忽略，當作沒快取繼續往下查 */ }
+
+            // 嘗試取得使用者目前位置，設定逾時避免使用者遲遲不回應定位權限詢問而卡住，
+            // 逾時或使用者拒絕的話，改用預設地點（Worker那邊會退回台北市）
+            const coords = await new Promise(resolve => {
+                if (!navigator.geolocation) { resolve(null); return; }
+                const timer = setTimeout(() => resolve(null), 3000);
+                navigator.geolocation.getCurrentPosition(
+                    pos => { clearTimeout(timer); resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }); },
+                    () => { clearTimeout(timer); resolve(null); },
+                    { timeout: 3000 }
+                );
+            });
+
+            try {
+                const res = await fetch('https://baking-recipes-ai.wallcemax.workers.dev/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'get_weather', lat: coords && coords.lat, lon: coords && coords.lon }),
+                });
+                const data = await res.json();
+                if (res.ok && !data.error) {
+                    currentWeatherData = data;
+                    try { localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify({ data, cachedAt: Date.now() })); } catch (e) { /* 存不了就算了，不影響這次使用 */ }
+                    onWeatherDataReady();
+                }
+            } catch (err) {
+                console.warn('查詢天氣失敗（不影響其他功能運作）', err.message);
+            }
+        }
+        // 天氣資料抓到之後，更新目前畫面上需要用到它的部分
+        function onWeatherDataReady() {
+            applyGreetingPlaceholder();
+            renderWeatherRecommendationBanner();
+        }
+        fetchWeatherData();
+
+        // 首頁依天氣推薦分類的橫幅：下雨/變冷推薦湯品類，炎熱推薦涼拌/沙拉類，平常不特別顯示什麼
+        function renderWeatherRecommendationBanner() {
+            const container = document.getElementById('weather-recommend-banner');
+            if (!container || !currentWeatherData) return;
+            let suggestion = null;
+            if (currentWeatherData.willRainToday || currentWeatherData.isCold) {
+                suggestion = { text: '☔ 濕冷的天氣，來點溫暖的湯品或燉煮料理吧', category: '中式烹飪' };
+            } else if (currentWeatherData.isHot) {
+                suggestion = { text: '☀️ 天氣炎熱，來點清爽消暑的涼拌菜或沙拉吧', category: '健康餐' };
+            }
+            if (!suggestion) { container.innerHTML = ''; return; }
+            container.innerHTML = `
+                <button onclick="filterByCategory('${suggestion.category}')" class="w-full text-left px-4 py-3 rounded-2xl mb-4 flex items-center justify-between" style="background:var(--cream)">
+                    <span class="text-sm font-medium">${suggestion.text}</span>
+                    <span class="text-xs shrink-0 ml-2" style="color:var(--jam)">看看食譜 →</span>
+                </button>`;
+        }
 
         // 處理登入導轉流程回來後的結果；如果使用者在流程中按了上一頁導致狀態遺失，
         // 這裡會安靜地攔截錯誤，不會讓整個頁面卡住；若是環境不支援登入，主動提示使用者
@@ -12737,6 +12818,17 @@
             draw();
         }
 
+        // 蛋糕/糕餅、麵包/包子這類對濕度敏感的分類，如果目前濕度偏高，跳出小提示
+        function applyBakingHumidityTip(recipe) {
+            const tipEl = document.getElementById('baking-humidity-tip');
+            if (!tipEl) return;
+            tipEl.innerHTML = '';
+            const sensitiveCategories = ['蛋糕/糕餅', '麵包/包子'];
+            if (!sensitiveCategories.includes(recipe.category)) return;
+            if (!currentWeatherData || currentWeatherData.humidity === null) return;
+            if (currentWeatherData.humidity < 80) return; // 濕度80%以上才提醒，一般濕度不用特別講
+            tipEl.innerHTML = `<p class="text-xs mt-2 px-3 py-2 rounded-xl" style="background:#FCE9C8; color:var(--honey)">💧 目前濕度約${currentWeatherData.humidity}%偏高，麵團發酵、蛋白霜打發可能需要拉長一點時間，多留意成品狀態</p>`;
+        }
         function showDetail(recipe) {
             const icon = CATEGORY_ICONS[recipe.category] || '🍽️';
             const isFav = userFavorites.has(recipe.id);
@@ -12750,6 +12842,7 @@
                         <h2 class="font-display text-2xl sm:text-3xl font-bold mt-3 leading-snug" style="font-family:'Chiron GoRound TC', sans-serif;">${recipe.name}</h2>
                         ${recipe.tagline ? `<p class="text-sm mt-1" style="color:var(--espresso-soft); font-family:'Chiron Sung HK', serif;">${recipe.tagline}</p>` : ''}
                         ${recipe.tags && recipe.tags.length ? `<div class="flex flex-wrap gap-1 mt-2">${recipe.tags.map(t => `<span onclick="searchByTagFromDetail('${escapeHtmlAttr(t)}')" class="text-xs px-2 py-0.5 rounded-full cursor-pointer" style="background:var(--cream); color:var(--espresso-soft)">#${t}</span>`).join('')}</div>` : ''}
+                        <div id="baking-humidity-tip"></div>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
                         <button onclick="addToShoppingList(${recipeJson})" class="fav-btn" style="background:var(--cream)" aria-label="加入採購清單" title="加入採購清單">
@@ -12833,6 +12926,7 @@
             `;
             document.getElementById('modal-content').innerHTML = html;
             document.getElementById('detail-modal').classList.remove('hidden');
+            applyBakingHumidityTip(recipe);
             // 頁面一顯示出來，就主動幫每個有設定計時的步驟先建立好動畫實例（此時只會停在第一影格），
             // 不用等到使用者真的按下計時器才建立，這樣還沒按之前就能看到預覽畫面，不會是空白的
             recipe.steps.forEach((s, i) => {
@@ -16126,6 +16220,13 @@
         async function openMarketPricesModal() {
             document.getElementById('market-prices-modal').classList.remove('hidden');
             document.getElementById('market-prices-list').innerHTML = `<p class="text-sm text-center py-6" style="color:#B3A492">讀取中...</p>`;
+            // 有生效中的天氣警特報（颱風、豪雨這類）的話，加一句提示幫助理解價格波動的原因
+            const alertEl = document.getElementById('market-prices-weather-alert');
+            if (alertEl) {
+                alertEl.innerHTML = (currentWeatherData && currentWeatherData.alertText)
+                    ? `<p class="text-xs mb-3 px-3 py-2 rounded-xl" style="background:#FCE9C8; color:var(--honey)">⚠️ 目前有「${currentWeatherData.alertText}」生效中，近期部分農漁產品價格可能因此波動</p>`
+                    : '';
+            }
             const tabsEl = document.getElementById('market-prices-tabs');
             if (tabsEl) {
                 tabsEl.innerHTML = MARKET_PRICE_CATEGORIES.map(c =>
