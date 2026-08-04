@@ -496,25 +496,6 @@
         <p class="text-sm font-medium mt-1" style="color:white;">🔍 AI辨識中，請稍候...</p>
     </div>
 
-    <!-- 做菜歌單設定：連結YouTube帳號、挑一個播放清單，進烹飪模式時自動播放 -->
-    <div id="music-playlist-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
-        <div class="bg-white w-full md:max-w-lg rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
-            <div class="flex items-center justify-between px-6 py-5 border-b shrink-0" style="border-color:var(--line)">
-                <h2 class="font-display text-lg font-bold">🎵 做菜歌單</h2>
-                <button onclick="closeMusicPlaylistModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
-            </div>
-            <div class="px-6 py-6">
-                <p class="text-xs mb-4" style="color:#B3A492">選一個你自己YouTube帳號裡的播放清單，進入烹飪模式時會自動開始播放，不用切出App手動找歌單。這個授權跟登入是分開的，只有真的要用這個功能才需要多同意一次。</p>
-                <div id="music-current-playlist" class="mb-4"></div>
-                <button id="music-connect-btn" onclick="connectYoutubeMusic()" class="btn-secondary w-full mb-3">連結YouTube帳號、挑選播放清單</button>
-                <div id="music-playlist-list" class="space-y-2"></div>
-            </div>
-        </div>
-    </div>
-    <!-- YouTube播放器：平常隱藏，只在烹飪模式播放音樂用，不會擋畫面 -->
-    <div id="youtube-music-player-wrap" class="hidden fixed" style="bottom:12px; left:12px; z-index:65; width:200px;">
-        <iframe id="youtube-music-player" width="200" height="113" frameborder="0" allow="autoplay" referrerpolicy="origin" style="border-radius:0.75rem;"></iframe>
-    </div>
 
     <div id="mobile-menu-backdrop" class="hidden md:!hidden fixed inset-0 z-[59]" style="background:rgba(58,42,30,0.35)" onclick="toggleMobileMenu()"></div>
     <div id="mobile-menu-panel" class="hidden md:!hidden fixed left-4 right-4 z-[60] rounded-[1.75rem] overflow-hidden" style="top:calc(env(safe-area-inset-top) + 4.2rem); box-shadow:0 20px 40px -12px rgba(58,42,30,0.35); background:var(--paper);">
@@ -1240,7 +1221,6 @@
             const fridgeModal = document.getElementById('fridge-modal');
             const marketModal = document.getElementById('market-prices-modal');
             const mobileMenuPanel = document.getElementById('mobile-menu-panel');
-            const musicModal = document.getElementById('music-playlist-modal');
             modalHistoryPushed = false; // 這筆歷史紀錄已經被返回鍵消耗掉了
             if (detailModal && !detailModal.classList.contains('hidden')) {
                 closeDetail(true);
@@ -1270,8 +1250,6 @@
                 closeMarketPricesModal(true);
             } else if (mobileMenuPanel && !mobileMenuPanel.classList.contains('hidden')) {
                 closeMobileMenu(true);
-            } else if (musicModal && !musicModal.classList.contains('hidden')) {
-                closeMusicPlaylistModal(true);
             } else {
                 // 沒有任何彈窗開著，代表使用者是在首頁按返回鍵——套用「連按兩次才離開」的邏輯
                 const now = Date.now();
@@ -12937,9 +12915,6 @@
                         <button onclick="toggleDesktopCookingMode()" class="btn-secondary hidden md:flex items-center gap-2 text-sm !py-2" title="電腦版沒有橫置螢幕，用這個按鈕手動進入沉浸式烹飪模式，按ESC鍵退出">
                             🍳 進入烹飪模式
                         </button>
-                        <button onclick="openMusicPlaylistModal()" class="btn-secondary flex items-center gap-2 text-sm !py-2" title="設定做菜時想聽的YouTube播放清單，進入烹飪模式會自動開始播放">
-                            🎵 做菜歌單
-                        </button>
                     </div>
                 </div>
                 ${recipe.imageUrl ? `<img id="detail-image" src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">` : `<img src="${CATEGORY_PLACEHOLDER_IMAGES[recipe.category] || CATEGORY_PLACEHOLDER_FALLBACK}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">`}
@@ -16576,7 +16551,6 @@
         function applyCookingMode(modal) {
             if (modal.classList.contains('landscape-cooking-mode')) return; // 已經套用過了，避免每次輪詢都重複執行
             modal.classList.add('landscape-cooking-mode');
-            startCookingMusicIfConfigured();
             Object.entries(COOKING_MODE_VARS).forEach(([k, v]) => modal.style.setProperty(k, v));
             // 背景遮罩改成不透明的深色，並移除內距，讓內容真的能撐滿整個螢幕
             modal.style.setProperty('background', COOKING_MODE_VARS['--cream'], 'important');
@@ -16661,7 +16635,6 @@
         function removeCookingMode(modal) {
             if (!modal.classList.contains('landscape-cooking-mode')) return; // 本來就沒套用，不用重複清
             modal.classList.remove('landscape-cooking-mode');
-            stopCookingMusic();
             modal.style.removeProperty('align-items');
             modal.style.removeProperty('justify-content');
             modal.style.removeProperty('background');
@@ -16702,145 +16675,6 @@
         // 電腦版沒有「橫置」這件事，改成用按鈕手動強制進入烹飪模式，這個旗標開著的話，
         // 不管螢幕方向如何都視為「應該要在烹飪模式」；按ESC或再按一次按鈕會關掉這個旗標退出
         let desktopCookingModeForced = false;
-        // ========== 做菜歌單（串接YouTube） ==========
-        // 播放本身不需要OAuth權限（YouTube內嵌播放器可以直接用播放清單ID播放公開/不公開列出的清單），
-        // 只有「讀取使用者自己帳號裡有哪些播放清單讓他挑」這一步才需要額外授權，
-        // 所以把這個授權做成獨立、選用的流程，不會影響到現有的登入功能
-        const YOUTUBE_MUSIC_PLAYLIST_KEY = 'musicCookingPlaylistId';
-        const YOUTUBE_MUSIC_PLAYLIST_TITLE_KEY = 'musicCookingPlaylistTitle';
-
-        function openMusicPlaylistModal() {
-            document.getElementById('music-playlist-modal').classList.remove('hidden');
-            renderCurrentMusicPlaylist();
-            pushModalHistoryState();
-        }
-        function closeMusicPlaylistModal(fromPopState) {
-            document.getElementById('music-playlist-modal').classList.add('hidden');
-            consumeModalHistoryState(fromPopState);
-        }
-        function renderCurrentMusicPlaylist() {
-            const el = document.getElementById('music-current-playlist');
-            const title = localStorage.getItem(YOUTUBE_MUSIC_PLAYLIST_TITLE_KEY);
-            el.innerHTML = title
-                ? `<p class="text-sm px-3 py-2 rounded-xl" style="background:var(--cream)">目前選的歌單：<strong>${title}</strong> <button onclick="clearMusicPlaylist()" class="text-xs ml-2" style="color:var(--jam); text-decoration:underline">取消選擇</button></p>`
-                : `<p class="text-sm" style="color:#B3A492">目前還沒設定歌單</p>`;
-        }
-        function clearMusicPlaylist() {
-            localStorage.removeItem(YOUTUBE_MUSIC_PLAYLIST_KEY);
-            localStorage.removeItem(YOUTUBE_MUSIC_PLAYLIST_TITLE_KEY);
-            renderCurrentMusicPlaylist();
-            document.getElementById('music-playlist-list').innerHTML = '';
-        }
-        // 請求額外的YouTube讀取權限（跟原本的登入是分開的，只有按這個按鈕才會跳出授權詢問），
-        // 拿到存取權杖之後呼叫YouTube Data API列出使用者自己的播放清單
-        async function connectYoutubeMusic() {
-            if (!currentUser) { alert('請先登入'); return; }
-            const btn = document.getElementById('music-connect-btn');
-            const originalText = btn.textContent;
-            btn.textContent = '連結中...';
-            btn.disabled = true;
-            try {
-                const provider = new firebase.auth.GoogleAuthProvider();
-                provider.addScope('https://www.googleapis.com/auth/youtube.readonly');
-                const result = await auth.signInWithPopup(provider);
-                // result.credential.accessToken是官方文件針對v8版SDK明確示範的寫法（你的網站用的就是v8）；
-                // 保留credentialFromResult這個新版寫法當備援，兩種都試一次，哪個有值就用哪個
-                const accessToken = (result.credential && result.credential.accessToken)
-                    || (firebase.auth.GoogleAuthProvider.credentialFromResult(result) && firebase.auth.GoogleAuthProvider.credentialFromResult(result).accessToken);
-                if (!accessToken) throw new Error('沒有取得存取權杖，請確認Google Cloud Console裡YouTube Data API v3已經啟用、你的帳號有加進測試使用者名單');
-                lastYoutubeAccessToken = accessToken; // 選播放清單時要用它去抓清單裡每首歌的個別影片ID
-
-                const res = await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet,status&mine=true&maxResults=25`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` },
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error((data.error && data.error.message) || '讀取播放清單失敗');
-                renderMusicPlaylistOptions(data.items || []);
-            } catch (err) {
-                alert('連結YouTube失敗：' + err.message);
-            } finally {
-                btn.textContent = originalText;
-                btn.disabled = false;
-            }
-        }
-        function renderMusicPlaylistOptions(items) {
-            const listEl = document.getElementById('music-playlist-list');
-            if (!items.length) {
-                listEl.innerHTML = `<p class="text-sm" style="color:#B3A492">你的YouTube帳號裡目前沒有任何播放清單</p>`;
-                return;
-            }
-            listEl.innerHTML = items.map(item => {
-                const title = (item.snippet && item.snippet.title) || '未命名播放清單';
-                const thumb = item.snippet && item.snippet.thumbnails && (item.snippet.thumbnails.default || {}).url;
-                const privacy = item.status && item.status.privacyStatus; // 'public' / 'unlisted' / 'private'
-                const isPrivate = privacy === 'private';
-                // 私人清單就算是擁有者自己，也沒辦法透過一般嵌入播放器播放（YouTube本身的限制，不是我們的問題），
-                // 這裡直接標示清楚、灰階呈現、擋掉點擊，避免選了之後才發現播不出來、搞不清楚原因
-                if (isPrivate) {
-                    return `<div class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left opacity-50" style="background:var(--cream)" title="私人清單沒辦法用一般嵌入播放器播放，這是YouTube本身的限制">
-                        ${thumb ? `<img src="${thumb}" class="w-10 h-10 rounded-lg object-cover shrink-0">` : ''}
-                        <span class="text-sm truncate flex-1">${title}</span>
-                        <span class="text-xs shrink-0" style="color:#B3A492">🔒 私人，無法播放</span>
-                    </div>`;
-                }
-                return `<button onclick="selectMusicPlaylist('${item.id}', ${JSON.stringify(title).replace(/"/g, '&quot;')})" class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left" style="background:var(--cream)">
-                    ${thumb ? `<img src="${thumb}" class="w-10 h-10 rounded-lg object-cover shrink-0">` : ''}
-                    <span class="text-sm truncate flex-1">${title}</span>
-                    <span class="text-xs shrink-0" style="color:#B3A492">${privacy === 'unlisted' ? '🔗 不公開' : '🌐 公開'}</span>
-                </button>`;
-            }).join('');
-        }
-        let lastYoutubeAccessToken = null; // 暫存剛拿到的存取權杖，選播放清單時要用它去抓清單裡每首歌的個別影片ID
-        async function selectMusicPlaylist(id, title) {
-            const listEl = document.getElementById('music-playlist-list');
-            listEl.innerHTML = `<p class="text-sm" style="color:#B3A492">讀取歌單內容中...</p>`;
-            try {
-                // 直接抓出清單裡每一首歌的「個別影片ID」，改成用跟seekVideo()完全相同、
-                // 已經證實能穩定播放的「單一影片ID」方式嵌入，不再用videoseries?list=這種
-                // 播放清單ID嵌入的方式（這個方式在部分帳號/清單上會出現Error 153播放失敗）
-                const res = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${id}&maxResults=50`, {
-                    headers: { 'Authorization': `Bearer ${lastYoutubeAccessToken}` },
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error((data.error && data.error.message) || '讀取歌單內容失敗');
-                const videoIds = (data.items || [])
-                    .map(item => item.snippet && item.snippet.resourceId && item.snippet.resourceId.videoId)
-                    .filter(Boolean);
-                if (!videoIds.length) throw new Error('這個播放清單裡沒有可播放的影片');
-                localStorage.setItem(YOUTUBE_MUSIC_PLAYLIST_KEY, videoIds.join(','));
-                localStorage.setItem(YOUTUBE_MUSIC_PLAYLIST_TITLE_KEY, title);
-                renderCurrentMusicPlaylist();
-                listEl.innerHTML = '';
-            } catch (err) {
-                listEl.innerHTML = `<p class="text-sm" style="color:#C4453F">讀取歌單內容失敗：${err.message}</p>`;
-            }
-        }
-
-        // 進入烹飪模式時，如果有設定歌單就自動開始播放；沒設定的話安靜跳過，不影響其他功能。
-        // 改成單純設定iframe的src網址（用videoseries這個特殊代稱+list參數來嵌入整份播放清單），
-        // 這是跟你網站原本「跳到影片時間軸」那個功能同一套已經驗證過穩定的簡單嵌入方式，
-        // 不再用比較容易出狀況的YouTube JS API物件
-        function startCookingMusicIfConfigured() {
-            const savedVideoIds = localStorage.getItem(YOUTUBE_MUSIC_PLAYLIST_KEY);
-            if (!savedVideoIds) return;
-            const videoIds = savedVideoIds.split(',').filter(Boolean);
-            if (!videoIds.length) return;
-            const wrap = document.getElementById('youtube-music-player-wrap');
-            const iframe = document.getElementById('youtube-music-player');
-            if (!wrap || !iframe) return;
-            wrap.classList.remove('hidden');
-            // 用跟seekVideo()完全相同的「單一影片ID」嵌入方式播第一首（已經證實這個方式能穩定播放），
-            // 其餘的用YouTube支援的playlist參數接續播放，不再用videoseries?list=這種容易播放失敗的方式
-            const firstId = videoIds[0];
-            const restIds = videoIds.slice(1).join(',');
-            iframe.src = `https://www.youtube.com/embed/${firstId}?${restIds ? `playlist=${restIds}&` : ''}autoplay=1`;
-        }
-        function stopCookingMusic() {
-            const wrap = document.getElementById('youtube-music-player-wrap');
-            const iframe = document.getElementById('youtube-music-player');
-            if (wrap) wrap.classList.add('hidden');
-            if (iframe) iframe.src = ''; // 清空網址讓播放真的停止，不是只有畫面上隱藏、背景還在放
-        }
 
         function toggleDesktopCookingMode() {
             desktopCookingModeForced = !desktopCookingModeForced;
