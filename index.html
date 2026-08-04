@@ -1124,8 +1124,17 @@
         // 「已經到底了」而跳過popstate、直接把整個PWA關掉），讓下面「連按兩次才離開」的邏輯
         // 有機會攔截。這筆「保護層」記錄跟modalHistoryPushed是分開的兩件事——modalHistoryPushed
         // 只追蹤「目前開著的某個彈窗」有沒有推過自己的歷史紀錄，不要混在一起，不然彈窗的
-        // 開關判斷會因為首頁保護層已經佔用掉這個旗標而失效
-        history.pushState({ guard: true }, '', location.href);
+        // 開關判斷會因為首頁保護層已經佔用掉這個旗標而失效。
+        // 注意：這筆保護層一定要等頁面「完全載入完成」之後才能推——如果在載入過程中太早呼叫
+        // pushState，瀏覽器有可能會把它當成這次載入本身的一部分，不會真的產生「多一層」的效果，
+        // 導致返回鍵攔截邏輯形同虛設
+        if (document.readyState === 'complete') {
+            history.pushState({ guard: true }, '', location.href);
+        } else {
+            window.addEventListener('load', () => {
+                history.pushState({ guard: true }, '', location.href);
+            });
+        }
         function pushModalHistoryState() {
             if (!modalHistoryPushed) {
                 history.pushState({ modalOpen: true }, '', location.href);
