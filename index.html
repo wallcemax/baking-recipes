@@ -275,6 +275,25 @@
         }
         .header-dropdown-item:hover { background: var(--cream); }
 
+        /* 做菜音樂：烹飪模式時出現的小型播放器，保留看得到但不搶眼的畫面，
+           右上角小卡片的形式，搭配自訂的上一首/下一首/隨機播放按鈕 */
+        #cooking-music-widget {
+            position: fixed; bottom: calc(env(safe-area-inset-bottom) + 0.75rem); right: 0.75rem; z-index: 65;
+            width: 11.5rem; border-radius: 1rem; overflow: hidden; background: rgba(58,42,30,0.92);
+            box-shadow: 0 10px 24px -6px rgba(0,0,0,0.5);
+        }
+        #cooking-music-widget .music-player-frame-wrap { width: 100%; aspect-ratio: 16/9; background: #000; }
+        #cooking-music-widget .music-controls { display: flex; align-items: center; justify-content: space-between; padding: 0.4rem 0.5rem; gap: 0.25rem; }
+        #cooking-music-widget .music-ctrl-btn {
+            width: 1.9rem; height: 1.9rem; border-radius: 999px; display: flex; align-items: center; justify-content: center;
+            background: rgba(255,255,255,0.12); color: #F5EBDF; font-size: 0.85rem; flex-shrink: 0;
+        }
+        #cooking-music-widget .music-ctrl-btn.active { background: var(--jam); }
+        #cooking-music-widget .music-track-title {
+            font-size: 0.65rem; color: #F5EBDF; opacity: 0.8; padding: 0 0.5rem 0.4rem; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap;
+        }
+
         /* 首頁歡迎Hero橫幅：溫暖漸層背景 + 手繪風裝飾插畫，取代原本樸素的空白開頭 */
         .hero-banner {
             position: relative; overflow: hidden; border-radius: 1.75rem;
@@ -446,6 +465,7 @@
                     </div>
                     <div class="flex items-center gap-1 sm:gap-2 shrink-0">
                         <button onclick="showGameModal()" class="text-xl leading-none" style="color:var(--jam)" title="遊戲場" aria-label="遊戲場">🎮</button>
+                        <button onclick="showMusicSettingsModal()" class="text-xl leading-none" style="color:var(--jam)" title="做菜音樂設定" aria-label="做菜音樂設定">🎵</button>
                         <!-- 管理員專屬功能收進下拉選單，不再個別平鋪佔用header版面 -->
                         <div class="relative shrink-0">
                             <button id="desktop-admin-menu-btn" onclick="toggleDesktopAdminMenu()" class="hidden btn-secondary !px-2.5 sm:!px-4 !py-2 sm:!py-2.5 text-xs sm:text-sm whitespace-nowrap items-center gap-1" title="管理工具">⚙<span class="hidden sm:inline"> 管理</span></button>
@@ -531,6 +551,9 @@
             <button onclick="closeMobileMenuThen(showProfileModal)" class="mobile-menu-item">
                 <span class="mobile-menu-item-icon" style="background:rgba(201,138,44,0.15)">🏅</span>我的成就
             </button>
+            <button onclick="closeMobileMenuThen(showMusicSettingsModal)" class="mobile-menu-item">
+                <span class="mobile-menu-item-icon" style="background:rgba(91,122,150,0.15)">🎵</span>做菜音樂設定
+            </button>
             <div id="mobile-menu-admin-divider" class="hidden my-1.5 border-t" style="border-color:var(--line)"></div>
             <button id="admin-nutrition-btn-mobile" onclick="closeMobileMenuThen(showAdminNutritionModal)" class="hidden mobile-menu-item">
                 <span class="mobile-menu-item-icon" style="background:rgba(111,140,110,0.15)">🛠</span>食材熱量管理
@@ -543,6 +566,9 @@
             </button>
         </div>
     </div>
+
+    <!-- 做菜音樂播放器小工具：只有烹飪模式時才會顯示，內容由JS動態產生 -->
+    <div id="cooking-music-widget" class="hidden"></div>
 
     <!-- 手機版底部固定導覽列：常用功能一排放在最下面，不用每次都滑到最上面找 -->
     <nav id="mobile-bottom-nav" class="md:hidden fixed bottom-0 left-0 right-0 z-40 flex items-end justify-around px-2" style="padding-top:.4rem; padding-bottom:calc(.4rem + env(safe-area-inset-bottom));">
@@ -570,6 +596,30 @@
     <!-- 食譜詳細 Modal -->
     <div id="detail-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
         <div class="bg-white w-full md:max-w-2xl max-h-[92vh] md:max-h-[88vh] rounded-t-[2rem] md:rounded-[2rem] overflow-y-auto sheet-panel" id="modal-content"></div>
+    </div>
+
+    <!-- 做菜音樂設定 Modal：連接YouTube帳號、讀取私人播放清單，進烹飪模式時自動播放 -->
+    <div id="music-settings-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-lg max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">🎵 做菜音樂</h2>
+                <button onclick="closeMusicSettingsModal()" class="text-3xl leading-none" style="color:#B3A492" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <label class="flex items-center gap-2 cursor-pointer mb-1">
+                    <input type="checkbox" id="music-enabled-toggle" onchange="onMusicEnabledToggle()" class="w-4 h-4">
+                    <span class="font-display font-semibold text-sm">開啟做菜音樂</span>
+                </label>
+                <p class="text-xs mb-4" style="color:#B3A492">開啟後，只要食譜進入烹飪模式，就會自動播放你設定的YouTube播放清單，畫面右上角會出現一個小小的播放器</p>
+                <div id="music-settings-fields" class="hidden">
+                    <label class="text-xs block mb-1" style="color:#B3A492">YouTube播放清單網址或ID</label>
+                    <input id="music-playlist-input" placeholder="https://www.youtube.com/playlist?list=..." class="form-input mb-2 text-sm">
+                    <p class="text-xs mb-3" style="color:#B3A492">因為是私人清單，需要連接你自己的YouTube帳號才能讀取內容；只會讀取清單內容，不會有任何寫入或修改的權限</p>
+                    <button onclick="connectYoutubeAndFetchPlaylist()" id="music-connect-btn" class="btn-secondary text-sm !px-4 !py-2 mb-3">🔗 連接YouTube帳號並讀取清單</button>
+                    <p id="music-settings-status" class="text-xs" style="color:var(--sage)"></p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- 食材熱量資料管理 Modal（只有管理者看得到） -->
@@ -1233,6 +1283,7 @@
             const detailModal = document.getElementById('detail-modal');
             const addModal = document.getElementById('add-modal');
             const adminModal = document.getElementById('admin-nutrition-modal');
+            const musicSettingsModal = document.getElementById('music-settings-modal');
             const profileModal = document.getElementById('profile-modal');
             const adminAchModal = document.getElementById('admin-achievements-modal');
             const gameModal = document.getElementById('game-modal');
@@ -1250,6 +1301,8 @@
                 closeAddModal(true);
             } else if (adminModal && !adminModal.classList.contains('hidden')) {
                 closeAdminNutritionModal(true);
+            } else if (musicSettingsModal && !musicSettingsModal.classList.contains('hidden')) {
+                closeMusicSettingsModal(true);
             } else if (profileModal && !profileModal.classList.contains('hidden')) {
                 closeProfileModal(true);
             } else if (adminAchModal && !adminAchModal.classList.contains('hidden')) {
@@ -11808,6 +11861,269 @@
             closeDesktopAdminMenu();
             if (typeof fn === 'function') fn();
         }
+
+        // ---------- 做菜音樂（YouTube播放清單）----------
+        // 設計原則：YouTube的播放清單只當「資料來源」用——一次性讀取清單裡每一支影片的ID+標題，
+        // 存進Firestore；實際播放永遠是「載入單一影片ID」這個站上唯一確認穩定的方式（跟食譜教學
+        // 影片同一招），完全不使用YouTube播放清單本身的嵌入/串接機制（videoseries、cuePlaylist
+        // 這類一律不用）。「下一首/上一首」單純是我們自己的程式碼決定接下來要載入哪一個影片ID，
+        // 不是交給YouTube的播放清單引擎處理——這是之前「做菜歌單」功能失敗的根本原因，這次刻意避開
+        const YOUTUBE_READONLY_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
+        let musicSettings = { enabled: false, playlistUrl: '', videoIds: [], titles: [] };
+        let musicOrder = []; // 目前的播放順序（存index），一般模式=依序0,1,2...；隨機模式=洗牌過的順序
+        let musicOrderPos = 0; // 目前播放到musicOrder裡的第幾個位置
+        let musicShuffleOn = false;
+        let ytPlayer = null;
+        let ytPlayerReady = false;
+        let ytApiReadyPromise = null;
+
+        function musicSettingsDocRef() {
+            return db.collection('musicSettings').doc(currentUser.uid);
+        }
+
+        // 登入時載入一次設定（只存進變數，不動UI），這樣就算使用者還沒打開過設定視窗，
+        // 直接進烹飪模式時musicSettings也已經是最新的
+        async function loadMusicSettings() {
+            try {
+                const doc = await musicSettingsDocRef().get();
+                const data = doc.exists ? doc.data() : {};
+                musicSettings = {
+                    enabled: !!data.enabled,
+                    playlistUrl: data.playlistUrl || '',
+                    videoIds: data.videoIds || [],
+                    titles: data.titles || [],
+                };
+            } catch (err) {
+                console.warn('讀取做菜音樂設定失敗', err && err.message);
+            }
+        }
+
+        async function showMusicSettingsModal() {
+            if (!currentUser) { alert('請先登入才能設定做菜音樂'); return; }
+            document.getElementById('music-settings-modal').classList.remove('hidden');
+            await loadMusicSettings();
+            document.getElementById('music-enabled-toggle').checked = musicSettings.enabled;
+            document.getElementById('music-settings-fields').classList.toggle('hidden', !musicSettings.enabled);
+            document.getElementById('music-playlist-input').value = musicSettings.playlistUrl;
+            updateMusicSettingsStatusText();
+            pushModalHistoryState();
+        }
+        function closeMusicSettingsModal(fromPopState) {
+            document.getElementById('music-settings-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
+        }
+        function updateMusicSettingsStatusText() {
+            const statusEl = document.getElementById('music-settings-status');
+            if (!statusEl) return;
+            statusEl.textContent = musicSettings.videoIds.length
+                ? `✅ 目前清單有 ${musicSettings.videoIds.length} 首歌，可以隨時重新整理更新內容`
+                : '尚未讀取過播放清單，請貼上網址後按下面的按鈕連接';
+        }
+        async function onMusicEnabledToggle() {
+            const enabled = document.getElementById('music-enabled-toggle').checked;
+            document.getElementById('music-settings-fields').classList.toggle('hidden', !enabled);
+            musicSettings.enabled = enabled;
+            try {
+                await musicSettingsDocRef().set({ enabled }, { merge: true });
+            } catch (err) {
+                console.warn('儲存做菜音樂開關失敗', err && err.message);
+            }
+        }
+        // 從YouTube網址或純ID裡解析出播放清單ID
+        function parsePlaylistId(input) {
+            if (!input) return null;
+            input = input.trim();
+            const match = input.match(/[?&]list=([^&]+)/);
+            if (match) return match[1];
+            if (/^[A-Za-z0-9_-]+$/.test(input)) return input; // 看起來已經是純ID，直接當ID用
+            return null;
+        }
+        // 連接YouTube帳號（額外請求「讀取」權限，不會要求任何寫入/修改權限）並讀取播放清單裡
+        // 所有影片的ID+標題，存進Firestore。只在使用者主動按下按鈕時才會跳出Google的授權畫面，
+        // 不會在一般登入流程裡就跳出來，共用這個網站的其他人不會被要求同意這個額外權限
+        async function connectYoutubeAndFetchPlaylist() {
+            if (isInAppBrowser()) {
+                alert('偵測到你目前是透過App內建瀏覽器開啟，YouTube帳號授權可能無法正常運作，請改用Chrome／Safari開啟本網站再試一次。');
+                return;
+            }
+            const playlistId = parsePlaylistId(document.getElementById('music-playlist-input').value);
+            const statusEl = document.getElementById('music-settings-status');
+            if (!playlistId) { statusEl.textContent = '⚠️ 看不出來這是有效的播放清單網址或ID，請確認後再試一次'; return; }
+            const btn = document.getElementById('music-connect-btn');
+            btn.disabled = true;
+            statusEl.textContent = '🔗 連接中，請在跳出的視窗完成授權...';
+            try {
+                const provider = new firebase.auth.GoogleAuthProvider();
+                provider.addScope(YOUTUBE_READONLY_SCOPE);
+                const result = await auth.signInWithPopup(provider);
+                const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
+                const accessToken = credential && credential.accessToken;
+                if (!accessToken) throw new Error('沒有拿到YouTube存取權杖，請重新嘗試授權');
+
+                statusEl.textContent = '📥 讀取播放清單中...';
+                const items = await fetchAllPlaylistItems(playlistId, accessToken);
+                if (!items.length) throw new Error('這個播放清單目前是空的，或是沒有權限讀取，請確認清單網址正確');
+
+                musicSettings.videoIds = items.map(i => i.videoId);
+                musicSettings.titles = items.map(i => i.title);
+                musicSettings.playlistUrl = document.getElementById('music-playlist-input').value.trim();
+                musicSettings.enabled = true;
+                await musicSettingsDocRef().set({
+                    enabled: true,
+                    playlistUrl: musicSettings.playlistUrl,
+                    videoIds: musicSettings.videoIds,
+                    titles: musicSettings.titles,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+                document.getElementById('music-enabled-toggle').checked = true;
+                musicOrder = []; // 清單換新了，播放順序要重新建立
+                updateMusicSettingsStatusText();
+            } catch (err) {
+                statusEl.textContent = '⚠️ 讀取失敗：' + (err && err.message ? err.message : String(err));
+            } finally {
+                btn.disabled = false;
+            }
+        }
+        // 依序抓完播放清單所有分頁，最多抓300首歌就停止（防呆用，避免異常大的清單一直抓下去）
+        async function fetchAllPlaylistItems(playlistId, accessToken) {
+            const items = [];
+            let pageToken = '';
+            do {
+                const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId=${encodeURIComponent(playlistId)}${pageToken ? `&pageToken=${pageToken}` : ''}`;
+                const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => null);
+                    throw new Error((errData && errData.error && errData.error.message) || `YouTube API回應錯誤(${res.status})`);
+                }
+                const data = await res.json();
+                (data.items || []).forEach(item => {
+                    const videoId = item.contentDetails && item.contentDetails.videoId;
+                    const title = item.snippet && item.snippet.title;
+                    // 被刪除或設為私人的影片，YouTube會回傳「Private video」「Deleted video」這種標題，
+                    // 濾掉這種項目，不然播放的時候會直接放不出來
+                    if (videoId && title && title !== 'Private video' && title !== 'Deleted video') {
+                        items.push({ videoId, title });
+                    }
+                });
+                pageToken = data.nextPageToken || '';
+            } while (pageToken && items.length < 300);
+            return items;
+        }
+
+        // 動態載入YouTube IFrame Player API，只有真的要播放時才載入，不會讓所有訪客都白白多載一支script
+        function loadYoutubeIframeApi() {
+            if (ytApiReadyPromise) return ytApiReadyPromise;
+            ytApiReadyPromise = new Promise(resolve => {
+                if (window.YT && window.YT.Player) { resolve(); return; }
+                const prevCallback = window.onYouTubeIframeAPIReady;
+                window.onYouTubeIframeAPIReady = () => {
+                    if (typeof prevCallback === 'function') prevCallback();
+                    resolve();
+                };
+                const tag = document.createElement('script');
+                tag.src = 'https://www.youtube.com/iframe_api';
+                document.head.appendChild(tag);
+            });
+            return ytApiReadyPromise;
+        }
+        // 產生這次要播放的順序：一般模式依序0,1,2...；隨機模式洗牌過
+        function buildMusicOrder() {
+            const order = Array.from({ length: musicSettings.videoIds.length }, (_, i) => i);
+            if (musicShuffleOn) {
+                for (let i = order.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [order[i], order[j]] = [order[j], order[i]];
+                }
+            }
+            return order;
+        }
+        // 進烹飪模式時呼叫：顯示小工具、（第一次的話）建立YT.Player並開始播放
+        async function startCookingMusic() {
+            if (!musicSettings.enabled || !musicSettings.videoIds.length) return;
+            const widget = document.getElementById('cooking-music-widget');
+            if (!widget) return;
+            if (!musicOrder.length) { musicOrder = buildMusicOrder(); musicOrderPos = 0; }
+
+            widget.classList.remove('hidden');
+            renderMusicWidgetShell();
+
+            await loadYoutubeIframeApi();
+            const videoId = musicSettings.videoIds[musicOrder[musicOrderPos]];
+            if (!ytPlayer) {
+                ytPlayer = new YT.Player('cooking-music-iframe-target', {
+                    width: '100%', height: '100%', videoId,
+                    playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
+                    events: {
+                        onReady: () => { ytPlayerReady = true; updateMusicTrackTitle(); updateMusicPlayPauseIcon(); },
+                        onStateChange: (e) => {
+                            if (e.data === YT.PlayerState.ENDED) playNextTrack();
+                            updateMusicPlayPauseIcon();
+                        },
+                    },
+                });
+            } else if (ytPlayerReady) {
+                ytPlayer.loadVideoById(videoId);
+                updateMusicTrackTitle();
+            }
+        }
+        // 離開烹飪模式時呼叫：暫停播放、隱藏小工具（player實例保留著，下次進烹飪模式能快速接續）
+        function stopCookingMusic() {
+            document.getElementById('cooking-music-widget')?.classList.add('hidden');
+            if (ytPlayer && ytPlayerReady) {
+                try { ytPlayer.pauseVideo(); } catch (err) {}
+            }
+        }
+        function renderMusicWidgetShell() {
+            const widget = document.getElementById('cooking-music-widget');
+            if (!widget || widget.dataset.built === '1') return; // 只建立一次DOM結構，避免把YT.Player賴以運作的容器整個砍掉重建
+            widget.dataset.built = '1';
+            widget.innerHTML = `
+                <div class="music-player-frame-wrap"><div id="cooking-music-iframe-target" style="width:100%;height:100%"></div></div>
+                <div class="music-track-title" id="music-track-title"></div>
+                <div class="music-controls">
+                    <button class="music-ctrl-btn" onclick="toggleMusicShuffle()" id="music-shuffle-btn" title="隨機播放">🔀</button>
+                    <button class="music-ctrl-btn" onclick="playPrevTrack()" title="上一首">⏮</button>
+                    <button class="music-ctrl-btn" onclick="toggleMusicPlayPause()" id="music-playpause-btn" title="播放/暫停">⏸</button>
+                    <button class="music-ctrl-btn" onclick="playNextTrack()" title="下一首">⏭</button>
+                </div>`;
+        }
+        function updateMusicTrackTitle() {
+            const el = document.getElementById('music-track-title');
+            if (!el || !musicOrder.length) return;
+            el.textContent = musicSettings.titles[musicOrder[musicOrderPos]] || '';
+        }
+        function toggleMusicPlayPause() {
+            if (!ytPlayer || !ytPlayerReady) return;
+            if (ytPlayer.getPlayerState() === YT.PlayerState.PLAYING) ytPlayer.pauseVideo(); else ytPlayer.playVideo();
+        }
+        function updateMusicPlayPauseIcon() {
+            const btn = document.getElementById('music-playpause-btn');
+            if (!btn || !ytPlayer) return;
+            btn.textContent = ytPlayer.getPlayerState() === YT.PlayerState.PLAYING ? '⏸' : '▶';
+        }
+        function playNextTrack() {
+            if (!musicOrder.length) return;
+            musicOrderPos = (musicOrderPos + 1) % musicOrder.length;
+            if (ytPlayer && ytPlayerReady) ytPlayer.loadVideoById(musicSettings.videoIds[musicOrder[musicOrderPos]]);
+            updateMusicTrackTitle();
+        }
+        function playPrevTrack() {
+            if (!musicOrder.length) return;
+            musicOrderPos = (musicOrderPos - 1 + musicOrder.length) % musicOrder.length;
+            if (ytPlayer && ytPlayerReady) ytPlayer.loadVideoById(musicSettings.videoIds[musicOrder[musicOrderPos]]);
+            updateMusicTrackTitle();
+        }
+        function toggleMusicShuffle() {
+            musicShuffleOn = !musicShuffleOn;
+            document.getElementById('music-shuffle-btn')?.classList.toggle('active', musicShuffleOn);
+            // 重新洗牌，但把目前正在播放的這首放在新順序的第一個位置，切換隨機模式的當下不會馬上跳歌
+            const currentVideoIdx = musicOrder[musicOrderPos];
+            musicOrder = buildMusicOrder();
+            const posOfCurrent = musicOrder.indexOf(currentVideoIdx);
+            if (posOfCurrent > 0) { musicOrder.splice(posOfCurrent, 1); musicOrder.unshift(currentVideoIdx); }
+            musicOrderPos = 0;
+        }
+
         // 點背景遮罩收起選單的邏輯，已經直接寫在遮罩元素的onclick上，不需要額外的全域監聽
         auth.onAuthStateChanged(user => {
             currentUser = user;
@@ -11832,6 +12148,7 @@
                         .catch(err => console.warn('同步email索引失敗', err && err.message));
                 }
                 renderFridgeMembersList(); // 一登入就先確認一次是不是家庭冰箱，篩選按鈕的標籤才會馬上顯示正確文字，不用等打開冰箱視窗
+                loadMusicSettings();
             } else {
                 info.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-sm flex items-center gap-2"><i class="fab fa-google"></i> 登入</button>`;
                 if (infoMobile) infoMobile.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-xs !px-3 !py-1.5 flex items-center gap-1"><i class="fab fa-google"></i> 登入</button>`;
@@ -16667,6 +16984,7 @@
                 exitBtn.onclick = closeDetail;
                 document.body.appendChild(exitBtn);
             }
+            startCookingMusic();
         }
 
         function removeCookingMode(modal) {
@@ -16707,6 +17025,7 @@
             const exitBtn = document.getElementById('cook-exit-btn');
             if (exitBtn) exitBtn.remove();
             exitFullscreenIfActive();
+            stopCookingMusic();
         }
 
         // 電腦版沒有「橫置」這件事，改成用按鈕手動強制進入烹飪模式，這個旗標開著的話，
