@@ -11939,8 +11939,9 @@
         let ytApiReadyPromise = null;
         let musicProgressPollId = null;
         let musicConsecutiveErrors = 0; // 連續幾首播放失敗（版權下架/停用嵌入等），用來防止整份清單都放不出來時無限循環卡住
-        let musicLastAdSkipAt = 0; // 上次因為疑似廣告觸發跳過的時間戳記，防止同一則廣告短時間內重複觸發好幾次跳過
-        let musicSeekCheckedForCurrentVideo = false; // 這首歌有沒有測試過「時間軸能不能拖曳」，每首歌只測一次，避免一直測試干擾正常聽歌
+        let musicAdSkipHandledForCurrentVideo = false; // 這首歌有沒有已經因為疑似廣告觸發過跳過，避免同一首歌被重複觸發好幾次跳過指令
+        let musicConsecutiveAdSkips = 0; // 連續因為疑似廣告跳過幾首（不是同一首重複算，是不同首連續中招），避免萬一誤判連環發生時無限跳下去
+        let musicNonPlayingStreak = 0; // 連續幾次輪詢發現「不是播放中」狀態，用來確認不是短暫緩衝的誤判，要連續兩次才觸發跳過
         let youtubeAccessToken = null; // 只存在記憶體裡，換分頁或重新整理頁面就會消失，需要重新連接才能再抓一次清單
         let musicPlaylistCandidates = []; // 目前這次連接後列出來、可供選擇的播放清單清單
 
@@ -12358,6 +12359,8 @@
             const widget = document.getElementById('cooking-music-widget');
             if (!widget) return;
             musicCurrentIndex = musicShuffleOn ? Math.floor(Math.random() * musicSettings.videoIds.length) : 0;
+            musicAdSkipHandledForCurrentVideo = false;
+            musicNonPlayingStreak = 0;
 
             renderMusicWidgetShell();
             widget.classList.remove('hidden');
@@ -12382,10 +12385,6 @@
                             // 歌曲成功開始播放，代表這首沒問題，把「連續放不出來」的計數器歸零
                             musicConsecutiveErrors = 0;
                             checkForAdAndSkip();
-                            if (!musicSeekCheckedForCurrentVideo) {
-                                musicSeekCheckedForCurrentVideo = true;
-                                checkSeekabilityAndSkipIfAd();
-                            }
                         }
                         updateMusicPlayPauseIcon();
                     },
@@ -12418,8 +12417,9 @@
             ytPlayer = null;
             ytPlayerReady = false;
             musicConsecutiveErrors = 0;
-            musicLastAdSkipAt = 0;
-            musicSeekCheckedForCurrentVideo = false;
+            musicAdSkipHandledForCurrentVideo = false;
+            musicNonPlayingStreak = 0;
+            musicConsecutiveAdSkips = 0;
             if (widget) { widget.innerHTML = ''; widget.dataset.built = ''; }
         }
         function renderMusicWidgetShell() {
@@ -12460,14 +12460,18 @@
         function playNextTrack() {
             if (!musicSettings.videoIds.length) return;
             musicCurrentIndex = pickNextMusicIndex();
-            musicSeekCheckedForCurrentVideo = false; // 換了新的一首，重置拖曳測試旗標，這首開始播放時會重新測一次
+            // 換了新的一首，重置這首歌專屬的偵測旗標，這首開始播放時會重新測一次，
+            // 不會被上一首歌已經處理過的狀態卡住（這是之前「連續遇到廣告會卡住跳不掉」的根本原因）
+            musicAdSkipHandledForCurrentVideo = false;
+            musicNonPlayingStreak = 0;
             if (ytPlayer && ytPlayerReady) ytPlayer.loadVideoById(musicSettings.videoIds[musicCurrentIndex]);
             updateMusicTrackTitle();
         }
         function playPrevTrack() {
             if (!musicSettings.videoIds.length) return;
             musicCurrentIndex = pickPrevMusicIndex();
-            musicSeekCheckedForCurrentVideo = false;
+            musicAdSkipHandledForCurrentVideo = false;
+            musicNonPlayingStreak = 0;
             if (ytPlayer && ytPlayerReady) ytPlayer.loadVideoById(musicSettings.videoIds[musicCurrentIndex]);
             updateMusicTrackTitle();
         }
@@ -12494,42 +12498,56 @@
         // 這個經驗法則，時長明顯偏短就當作廣告直接跳過。廣告可能只播幾秒鐘，如果只在播放狀態
         // 「剛切換」的那一瞬間檢查一次，很容易因為切換得比檢查時機還快而整個錯過，所以這個函式
         // 除了狀態切換時呼叫，也會搭配每0.5秒一次的時間軸輪詢一起呼叫，提高抓到的機會。
-        // 用時間戳記防止同一則廣告在還沒真的切換掉之前，短時間內被重複觸發好幾次跳過
+        //
+        // 兩種判斷依據一起用：
+        //  1. 播放狀態：使用者實測發現，播放廣告時getPlayerState()不會回報「播放中」(1)，
+        //     只有播放正常內容時才會——這個純粹讀取現有狀態，不用像之前的拖曳測試那樣主動下指令
+        //     去試探，沒有任何側作用/干擾播放的疑慮，比拖曳測試更好。連續2次輪詢(至少1秒)都不是
+        //     播放中才觸發，避免把「剛換歌時短暫的緩衝」誤判成廣告
+        //  2. 時長：歌曲時長明顯偏短（少於60秒），這份清單的歌幾乎不會這麼短
+        // 這兩個都不是YouTube官方文件記載保證的行為，是根據實際觀察歸納出來的經驗法則
         function checkForAdAndSkip() {
             if (!ytPlayer || !ytPlayerReady) return;
             try {
+                const state = ytPlayer.getPlayerState();
+                if (state === YT.PlayerState.PLAYING) {
+                    musicNonPlayingStreak = 0;
+                } else {
+                    musicNonPlayingStreak++;
+                    if (musicNonPlayingStreak >= 2) {
+                        triggerAdSkip('播放狀態不是「播放中」（可能是廣告）');
+                        musicNonPlayingStreak = 0;
+                        return;
+                    }
+                }
                 const dur = ytPlayer.getDuration();
-                const now = Date.now();
-                if (dur > 0 && dur < 60 && (now - musicLastAdSkipAt) > 3000) {
-                    console.warn('[做菜音樂] 疑似廣告（時長只有' + Math.round(dur) + '秒），自動跳過');
-                    musicLastAdSkipAt = now;
-                    playNextTrack();
+                if (dur > 0 && dur < 60) {
+                    triggerAdSkip('疑似廣告（時長只有' + Math.round(dur) + '秒）');
+                } else if (dur >= 60) {
+                    // 確認是正常長度的歌，代表沒有連續中招，把連續跳過計數器歸零
+                    musicConsecutiveAdSkips = 0;
                 }
             } catch (err) {}
         }
-        // 第二種偵測方式：測試時間軸能不能拖曳。廣告通常不允許拖曳進度（跟正片不一樣），
-        // 這是很多影音平台的共同慣例，不是YouTube官方明文承諾的行為。因為唯一能測試「能不能拖曳」
-        // 的方法就是真的下一次跳轉指令、看結果有沒有變化，這個測試動作本身會讓播放位置有小小的
-        // 跳動，所以只在「這首歌剛開始播放」的時候測一次（廣告通常出現在最前面），不會像時長判斷
-        // 那樣每0.5秒一直測，避免正常聽歌的時候一直被這個測試動作打斷
-        async function checkSeekabilityAndSkipIfAd() {
-            if (!ytPlayer || !ytPlayerReady) return;
-            try {
-                const before = ytPlayer.getCurrentTime();
-                ytPlayer.seekTo(before + 2, true); // 嘗試往前跳2秒
-                await new Promise(r => setTimeout(r, 500)); // 給一點時間讓跳轉真的生效（或被擋下來）
-                if (!ytPlayer || !ytPlayerReady) return; // 這段等待期間可能剛好離開了烹飪模式，player已經被銷毀
-                const after = ytPlayer.getCurrentTime();
-                const now = Date.now();
-                // 嘗試跳轉之後，實際時間幾乎沒變，代表這次拖曳被擋下來了，很可能正在播廣告。
-                // 但也要考慮到網路不好、正在緩衝的情況一樣會讓時間「看起來沒變」，這個檢查不是100%
-                // 準確，只是額外多一個判斷依據，跟時長判斷一起用互相輔助
-                if (Math.abs(after - before) < 1 && (now - musicLastAdSkipAt) > 3000) {
-                    console.warn('[做菜音樂] 時間軸無法拖曳（疑似廣告），自動跳過');
-                    musicLastAdSkipAt = now;
-                    playNextTrack();
-                }
-            } catch (err) {}
+        // 兩種偵測方式共用的「觸發跳過」函式：用「這首歌有沒有處理過」這個旗標防重複，
+        // 不是用時間長短防重複——這樣才不會發生「跳到下一首、下一首剛好也是廣告，
+        // 卻因為還在時間冷卻期內被自己的保護機制擋下來、變成真的卡住跳不掉」的狀況。
+        // 每首新載入的歌都會拿到全新一次判斷機會，可以連續跳好幾首直到跳出廣告為止；
+        // 另外用musicConsecutiveAdSkips擋住「連續一大串都被判斷成廣告」這種可能是誤判、
+        // 而不是真的一直遇到廣告的極端情況，避免無限跳下去
+        function triggerAdSkip(reason) {
+            if (musicAdSkipHandledForCurrentVideo) return; // 這首已經處理過了，不要對同一首重複觸發
+            musicAdSkipHandledForCurrentVideo = true;
+            musicConsecutiveAdSkips++;
+            if (musicConsecutiveAdSkips > Math.max(5, musicSettings.videoIds.length)) {
+                console.warn('[做菜音樂] 連續好幾首都被判斷成廣告，可能是誤判，先停下來不再自動跳過');
+                const titleEl = document.getElementById('music-title-text');
+                if (titleEl) titleEl.textContent = '⚠️ 連續跳過太多次，可能是誤判，請手動確認';
+                musicConsecutiveAdSkips = 0;
+                return;
+            }
+            console.warn('[做菜音樂] ' + reason + '，自動跳到下一首');
+            playNextTrack();
         }
         function updateMusicProgressBar() {
             const fill = document.getElementById('music-progress-fill');
