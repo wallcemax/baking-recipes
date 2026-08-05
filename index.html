@@ -294,7 +294,7 @@
             display: flex; align-items: center; height: 1.4rem;
         }
         #cooking-music-widget .music-title-text { display: inline-block; font-size: 0.75rem; line-height: 1.4rem; color: #F5EBDF; }
-        #cooking-music-widget .music-title-text.marquee { animation: music-marquee 8s linear infinite; padding-left: 100%; }
+        #cooking-music-widget .music-title-text.marquee { animation: music-marquee 14s linear infinite; padding-left: 100%; }
         @keyframes music-marquee { from { transform: translateX(0); } to { transform: translateX(-100%); } }
         #cooking-music-widget .music-controls { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
         #cooking-music-widget .music-ctrl-btn {
@@ -631,10 +631,12 @@
                     <input type="checkbox" id="music-enabled-toggle" onchange="onMusicEnabledToggle()" class="w-4 h-4">
                     <span class="font-display font-semibold text-sm">開啟做菜音樂</span>
                 </label>
-                <p class="text-xs mb-4" style="color:#B3A492">開啟後，只要食譜進入烹飪模式，就會自動播放你設定的YouTube播放清單，畫面右上角會出現一個小小的播放器</p>
+                <p class="text-xs mb-4" style="color:#B3A492">開啟後，只要食譜進入烹飪模式，就會自動播放你設定的YouTube播放清單，「食材」標題旁邊會出現一個小小的播放器</p>
                 <div id="music-settings-fields" class="hidden">
-                    <p class="text-xs mb-3" style="color:#B3A492">連接你的YouTube帳號後，會列出你自己的播放清單讓你選一個當做菜音樂；只會讀取清單內容，不會有任何寫入或修改的權限</p>
-                    <button onclick="connectYoutubeAccount()" id="music-connect-btn" class="btn-secondary text-sm !px-4 !py-2 mb-3">🔗 連接並選擇播放清單</button>
+                    <label class="text-xs block mb-1" style="color:#B3A492">別人公開的播放清單網址（選填）</label>
+                    <input id="music-public-playlist-input" placeholder="https://www.youtube.com/playlist?list=...　留空＝連接自己的播放清單" class="form-input mb-2 text-sm">
+                    <p class="text-xs mb-3" style="color:#B3A492">有貼網址：直接讀取那個公開清單。沒貼網址：連接你的YouTube帳號，列出你自己的播放清單讓你選；只會讀取清單內容，不會有任何寫入或修改的權限</p>
+                    <button onclick="connectYoutubeAccount()" id="music-connect-btn" class="btn-secondary text-sm !px-4 !py-2 mb-3">🔗 連接</button>
                     <div id="music-playlist-picker" class="hidden mb-2">
                         <p class="text-xs mb-2" style="color:#B3A492">選一個播放清單：</p>
                         <div id="music-playlist-list" class="space-y-2"></div>
@@ -11953,11 +11955,42 @@
             } catch (err) {
                 console.warn('儲存做菜音樂開關失敗', err && err.message);
             }
+            // 打開開關時，如果本來就選過清單、而且這次session之前有連接過YouTube帳號（權杖還在記憶體裡），
+            // 就安靜地在背景重新讀一次清單內容，確保是最新的（新增/刪除的歌會反映到）。
+            // 沒有現成權杖的話不會強迫跳出授權視窗——單純打勾這個動作不該無預警彈出Google登入視窗，
+            // 使用者想強制重新連接的話，本來就可以按下面「連接」按鈕
+            if (enabled && musicSettings.playlistId && youtubeAccessToken) {
+                try {
+                    const items = await fetchAllPlaylistItems(musicSettings.playlistId, youtubeAccessToken);
+                    if (items.length) {
+                        musicSettings.videoIds = items.map(i => i.videoId);
+                        musicSettings.titles = items.map(i => i.title);
+                        await musicSettingsDocRef().set({
+                            videoIds: musicSettings.videoIds,
+                            titles: musicSettings.titles,
+                            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        }, { merge: true });
+                        updateMusicSettingsStatusText();
+                    }
+                } catch (err) {
+                    console.warn('打勾時背景更新清單失敗（不影響原本已存的清單，忽略即可）', err && err.message);
+                }
+            }
         }
-        // 連接YouTube帳號（額外請求「讀取」權限，不會要求任何寫入/修改權限），連上之後列出
-        // 使用者自己帳號底下的播放清單讓他選一個，不用自己貼網址。只在使用者主動按下按鈕時
-        // 才會跳出Google的授權畫面，不會在一般登入流程裡就跳出來，共用這個網站的其他人
-        // 不會被要求同意這個額外權限
+        // 從YouTube網址或純ID裡解析出播放清單ID，給「別人公開的播放清單網址」這個欄位用
+        function parsePlaylistId(input) {
+            if (!input) return null;
+            input = input.trim();
+            const match = input.match(/[?&]list=([^&]+)/);
+            if (match) return match[1];
+            if (/^[A-Za-z0-9_-]+$/.test(input)) return input; // 看起來已經是純ID，直接當ID用
+            return null;
+        }
+        // 連接YouTube帳號（額外請求「讀取」權限，不會要求任何寫入/修改權限）。
+        // 如果「別人公開的播放清單網址」欄位有填，直接讀那個清單（不用列出自己的清單選）；
+        // 沒有填的話才走原本流程：連上之後列出使用者自己帳號底下的播放清單讓他選一個。
+        // 只在使用者主動按下按鈕時才會跳出Google的授權畫面，不會在一般登入流程裡就跳出來，
+        // 共用這個網站的其他人不會被要求同意這個額外權限
         async function connectYoutubeAccount() {
             if (isInAppBrowser()) {
                 alert('偵測到你目前是透過App內建瀏覽器開啟，YouTube帳號授權可能無法正常運作，請改用Chrome／Safari開啟本網站再試一次。');
@@ -11965,6 +11998,12 @@
             }
             const statusEl = document.getElementById('music-settings-status');
             const btn = document.getElementById('music-connect-btn');
+            const publicPlaylistInput = document.getElementById('music-public-playlist-input');
+            const publicPlaylistId = parsePlaylistId(publicPlaylistInput ? publicPlaylistInput.value : '');
+            if (publicPlaylistInput && publicPlaylistInput.value.trim() && !publicPlaylistId) {
+                statusEl.textContent = '⚠️ 看不出來這是有效的播放清單網址或ID，請確認後再試一次';
+                return;
+            }
             btn.disabled = true;
             statusEl.textContent = '🔗 連接中，請在跳出的視窗完成授權...';
             try {
@@ -11982,11 +12021,17 @@
                     throw new Error('沒有拿到YouTube存取權杖——最常見原因是這個Google帳號還沒被加進Cloud Console的「測試使用者」名單，或YouTube Data API還沒啟用，請打開瀏覽器開發者工具的Console分頁查看詳細資訊');
                 }
 
-                statusEl.textContent = '📥 讀取你的播放清單中...';
-                musicPlaylistCandidates = await fetchMyPlaylists(youtubeAccessToken);
-                if (!musicPlaylistCandidates.length) throw new Error('找不到你帳號底下的任何播放清單');
-                renderPlaylistPicker();
-                statusEl.textContent = `找到 ${musicPlaylistCandidates.length} 個播放清單，選一個當做菜音樂吧`;
+                if (publicPlaylistId) {
+                    // 有貼別人的公開清單網址：直接讀那個清單的內容，不用列出自己的清單選
+                    statusEl.textContent = '📥 讀取播放清單中...';
+                    await selectMusicPlaylist(publicPlaylistId); // selectMusicPlaylist內部會自動去查這個清單的標題
+                } else {
+                    statusEl.textContent = '📥 讀取你的播放清單中...';
+                    musicPlaylistCandidates = await fetchMyPlaylists(youtubeAccessToken);
+                    if (!musicPlaylistCandidates.length) throw new Error('找不到你帳號底下的任何播放清單');
+                    renderPlaylistPicker();
+                    statusEl.textContent = `找到 ${musicPlaylistCandidates.length} 個播放清單，選一個當做菜音樂吧`;
+                }
             } catch (err) {
                 console.warn('[做菜音樂] 連接失敗', err);
                 statusEl.textContent = '⚠️ 連接失敗：' + (err && err.message ? err.message : String(err));
@@ -12032,16 +12077,20 @@
         async function selectMusicPlaylist(playlistId) {
             const statusEl = document.getElementById('music-settings-status');
             if (!youtubeAccessToken) { statusEl.textContent = '⚠️ 連接已逾時，請重新按一次連接按鈕'; return; }
-            const candidate = musicPlaylistCandidates.find(p => p.id === playlistId);
+            let candidateTitle = (musicPlaylistCandidates.find(p => p.id === playlistId) || {}).title;
             statusEl.textContent = '📥 讀取歌曲清單中...';
             try {
+                // 別人的公開清單不會出現在「musicPlaylistCandidates」（那個只列自己帳號底下的清單），
+                // 這種情況額外查一次這個清單本身的標題，畫面上才不會只顯示一長串ID
+                if (!candidateTitle) candidateTitle = await fetchPlaylistTitle(playlistId, youtubeAccessToken);
+
                 const items = await fetchAllPlaylistItems(playlistId, youtubeAccessToken);
-                if (!items.length) throw new Error('這個播放清單目前是空的');
+                if (!items.length) throw new Error('這個播放清單目前是空的，或是沒有權限讀取，請確認網址正確、清單是公開的');
 
                 musicSettings.videoIds = items.map(i => i.videoId);
                 musicSettings.titles = items.map(i => i.title);
                 musicSettings.playlistId = playlistId;
-                musicSettings.playlistTitle = (candidate && candidate.title) || '';
+                musicSettings.playlistTitle = candidateTitle || playlistId;
                 musicSettings.enabled = true;
                 await musicSettingsDocRef().set({
                     enabled: true,
@@ -12056,6 +12105,20 @@
                 updateMusicSettingsStatusText();
             } catch (err) {
                 statusEl.textContent = '⚠️ 讀取失敗：' + (err && err.message ? err.message : String(err));
+            }
+        }
+        // 查單一播放清單的標題（給貼別人公開清單網址這個情境用，這種清單不會出現在「我的清單」列表裡）
+        async function fetchPlaylistTitle(playlistId, accessToken) {
+            try {
+                const res = await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${encodeURIComponent(playlistId)}`, {
+                    headers: { Authorization: `Bearer ${accessToken}` },
+                });
+                if (!res.ok) return '';
+                const data = await res.json();
+                const item = (data.items || [])[0];
+                return (item && item.snippet && item.snippet.title) || '';
+            } catch (err) {
+                return '';
             }
         }
         // 依序抓完播放清單所有分頁，最多抓300首歌就停止（防呆用，避免異常大的清單一直抓下去）
