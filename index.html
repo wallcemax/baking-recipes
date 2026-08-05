@@ -11940,6 +11940,7 @@
         let musicProgressPollId = null;
         let musicConsecutiveErrors = 0; // 連續幾首播放失敗（版權下架/停用嵌入等），用來防止整份清單都放不出來時無限循環卡住
         let musicLastAdSkipAt = 0; // 上次因為疑似廣告觸發跳過的時間戳記，防止同一則廣告短時間內重複觸發好幾次跳過
+        let musicSeekCheckedForCurrentVideo = false; // 這首歌有沒有測試過「時間軸能不能拖曳」，每首歌只測一次，避免一直測試干擾正常聽歌
         let youtubeAccessToken = null; // 只存在記憶體裡，換分頁或重新整理頁面就會消失，需要重新連接才能再抓一次清單
         let musicPlaylistCandidates = []; // 目前這次連接後列出來、可供選擇的播放清單清單
 
@@ -12381,6 +12382,10 @@
                             // 歌曲成功開始播放，代表這首沒問題，把「連續放不出來」的計數器歸零
                             musicConsecutiveErrors = 0;
                             checkForAdAndSkip();
+                            if (!musicSeekCheckedForCurrentVideo) {
+                                musicSeekCheckedForCurrentVideo = true;
+                                checkSeekabilityAndSkipIfAd();
+                            }
                         }
                         updateMusicPlayPauseIcon();
                     },
@@ -12414,6 +12419,7 @@
             ytPlayerReady = false;
             musicConsecutiveErrors = 0;
             musicLastAdSkipAt = 0;
+            musicSeekCheckedForCurrentVideo = false;
             if (widget) { widget.innerHTML = ''; widget.dataset.built = ''; }
         }
         function renderMusicWidgetShell() {
@@ -12454,12 +12460,14 @@
         function playNextTrack() {
             if (!musicSettings.videoIds.length) return;
             musicCurrentIndex = pickNextMusicIndex();
+            musicSeekCheckedForCurrentVideo = false; // 換了新的一首，重置拖曳測試旗標，這首開始播放時會重新測一次
             if (ytPlayer && ytPlayerReady) ytPlayer.loadVideoById(musicSettings.videoIds[musicCurrentIndex]);
             updateMusicTrackTitle();
         }
         function playPrevTrack() {
             if (!musicSettings.videoIds.length) return;
             musicCurrentIndex = pickPrevMusicIndex();
+            musicSeekCheckedForCurrentVideo = false;
             if (ytPlayer && ytPlayerReady) ytPlayer.loadVideoById(musicSettings.videoIds[musicCurrentIndex]);
             updateMusicTrackTitle();
         }
@@ -12494,6 +12502,30 @@
                 const now = Date.now();
                 if (dur > 0 && dur < 60 && (now - musicLastAdSkipAt) > 3000) {
                     console.warn('[做菜音樂] 疑似廣告（時長只有' + Math.round(dur) + '秒），自動跳過');
+                    musicLastAdSkipAt = now;
+                    playNextTrack();
+                }
+            } catch (err) {}
+        }
+        // 第二種偵測方式：測試時間軸能不能拖曳。廣告通常不允許拖曳進度（跟正片不一樣），
+        // 這是很多影音平台的共同慣例，不是YouTube官方明文承諾的行為。因為唯一能測試「能不能拖曳」
+        // 的方法就是真的下一次跳轉指令、看結果有沒有變化，這個測試動作本身會讓播放位置有小小的
+        // 跳動，所以只在「這首歌剛開始播放」的時候測一次（廣告通常出現在最前面），不會像時長判斷
+        // 那樣每0.5秒一直測，避免正常聽歌的時候一直被這個測試動作打斷
+        async function checkSeekabilityAndSkipIfAd() {
+            if (!ytPlayer || !ytPlayerReady) return;
+            try {
+                const before = ytPlayer.getCurrentTime();
+                ytPlayer.seekTo(before + 2, true); // 嘗試往前跳2秒
+                await new Promise(r => setTimeout(r, 500)); // 給一點時間讓跳轉真的生效（或被擋下來）
+                if (!ytPlayer || !ytPlayerReady) return; // 這段等待期間可能剛好離開了烹飪模式，player已經被銷毀
+                const after = ytPlayer.getCurrentTime();
+                const now = Date.now();
+                // 嘗試跳轉之後，實際時間幾乎沒變，代表這次拖曳被擋下來了，很可能正在播廣告。
+                // 但也要考慮到網路不好、正在緩衝的情況一樣會讓時間「看起來沒變」，這個檢查不是100%
+                // 準確，只是額外多一個判斷依據，跟時長判斷一起用互相輔助
+                if (Math.abs(after - before) < 1 && (now - musicLastAdSkipAt) > 3000) {
+                    console.warn('[做菜音樂] 時間軸無法拖曳（疑似廣告），自動跳過');
                     musicLastAdSkipAt = now;
                     playNextTrack();
                 }
