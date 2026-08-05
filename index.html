@@ -11695,9 +11695,22 @@
             const emoji = emojis[Math.floor(Math.random() * emojis.length)];
             let weatherTip = '';
             if (currentWeatherData) {
-                if (currentWeatherData.willRainToday) weatherTip = '，今天會下雨記得帶傘，煮個暖呼呼的湯品吧';
-                else if (currentWeatherData.isHot) weatherTip = '，今天天氣炎熱，來點清爽消暑的菜色如何';
-                else if (currentWeatherData.isCold) weatherTip = '，天氣有點冷，煮個熱騰騰的料理暖暖身子';
+                // 判斷順序很重要：氣溫（炎熱/寒冷）優先於「會不會下雨」，因為下雨這件事本身
+                // 不能決定冷熱（35度大熱天照樣會下雷陣雨），不能一律把「會下雨」當成「濕冷」，
+                // 一定要先看氣溫，再決定要不要把下雨資訊疊加進去
+                if (currentWeatherData.isHot && currentWeatherData.willRainToday) {
+                    weatherTip = '，今天炎熱又有雨，記得帶傘，來點清爽消暑的菜色如何';
+                } else if (currentWeatherData.isHot) {
+                    weatherTip = '，今天天氣炎熱，來點清爽消暑的菜色如何';
+                } else if (currentWeatherData.isCold && currentWeatherData.willRainToday) {
+                    weatherTip = '，天氣濕冷又下雨，記得帶傘，煮個暖呼呼的湯品吧';
+                } else if (currentWeatherData.isCold) {
+                    weatherTip = '，天氣有點冷，煮個熱騰騰的料理暖暖身子';
+                } else if (currentWeatherData.willRainToday) {
+                    // 這裡代表：不熱也不冷、單純會下雨（例如舒適氣溫但有陣雨），
+                    // 只提醒帶傘+溫暖料理的建議，不會誤說成「濕冷」
+                    weatherTip = '，今天會下雨記得帶傘，煮個暖呼呼的湯品也不錯';
+                }
             }
             const fullText = `${label}${emoji}今天想煮點什麼好吃的呢？${weatherTip}`;
             textEl.textContent = fullText;
@@ -11804,10 +11817,21 @@
             const container = document.getElementById('weather-recommend-banner');
             if (!container || !currentWeatherData) return;
             let suggestion = null;
-            if (currentWeatherData.willRainToday || currentWeatherData.isCold) {
-                suggestion = { text: '☔ 濕冷的天氣，來點溫暖的湯品或燉煮料理吧', category: '中式烹飪' };
+            // 判斷順序：氣溫優先於「會不會下雨」——下雨這件事本身不能決定冷熱（炎熱的天氣
+            // 一樣可能下雷陣雨），一定要先確認是不是真的冷，才能說「濕冷」，不然35度下雨天
+            // 顯示「濕冷的天氣」會很奇怪
+            if (currentWeatherData.isHot && currentWeatherData.willRainToday) {
+                suggestion = { text: '☀️ 天氣炎熱又有雨，記得帶傘，來點清爽消暑的涼拌菜或沙拉吧', category: '健康餐' };
             } else if (currentWeatherData.isHot) {
                 suggestion = { text: '☀️ 天氣炎熱，來點清爽消暑的涼拌菜或沙拉吧', category: '健康餐' };
+            } else if (currentWeatherData.isCold && currentWeatherData.willRainToday) {
+                suggestion = { text: '☔ 濕冷的天氣，來點溫暖的湯品或燉煮料理吧', category: '中式烹飪' };
+            } else if (currentWeatherData.isCold) {
+                suggestion = { text: '🧣 天氣寒冷，來點溫暖的湯品或燉煮料理吧', category: '中式烹飪' };
+            } else if (currentWeatherData.willRainToday) {
+                // 不熱也不冷、單純會下雨（例如氣溫舒適但有陣雨），不能說是「濕冷」，
+                // 只單純提醒帶傘、順便推薦溫暖料理即可
+                suggestion = { text: '☔ 今天會下雨，記得帶傘，來點溫暖的湯品也不錯', category: '中式烹飪' };
             }
             if (!suggestion) { container.innerHTML = ''; return; }
             container.innerHTML = `
