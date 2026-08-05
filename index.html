@@ -11939,6 +11939,7 @@
         let ytApiReadyPromise = null;
         let musicProgressPollId = null;
         let musicConsecutiveErrors = 0; // 連續幾首播放失敗（版權下架/停用嵌入等），用來防止整份清單都放不出來時無限循環卡住
+        let musicLastAdSkipAt = 0; // 上次因為疑似廣告觸發跳過的時間戳記，防止同一則廣告短時間內重複觸發好幾次跳過
         let youtubeAccessToken = null; // 只存在記憶體裡，換分頁或重新整理頁面就會消失，需要重新連接才能再抓一次清單
         let musicPlaylistCandidates = []; // 目前這次連接後列出來、可供選擇的播放清單清單
 
@@ -12376,8 +12377,21 @@
                     onReady: () => { ytPlayerReady = true; updateMusicTrackTitle(); updateMusicPlayPauseIcon(); startMusicProgressPolling(); },
                     onStateChange: (e) => {
                         if (e.data === YT.PlayerState.ENDED) playNextTrack();
-                        // 歌曲成功開始播放，代表這首沒問題，把「連續放不出來」的計數器歸零
-                        if (e.data === YT.PlayerState.PLAYING) musicConsecutiveErrors = 0;
+                        if (e.data === YT.PlayerState.PLAYING) {
+                            // 歌曲成功開始播放，代表這首沒問題，把「連續放不出來」的計數器歸零
+                            musicConsecutiveErrors = 0;
+                            // 疑似廣告偵測：這不是YouTube官方保證的行為，純粹是「你們清單裡的歌
+                            // 幾乎不會短於60秒」這個經驗法則，時長明顯偏短就當作廣告直接跳過。
+                            // 如果之後YouTube調整廣告時長模式，這個判斷可能會失準，需要留意；
+                            // 用時間戳記防止同一則廣告在還沒真的切換掉之前重複觸發好幾次跳過
+                            const dur = ytPlayer.getDuration();
+                            const now = Date.now();
+                            if (dur > 0 && dur < 60 && (now - musicLastAdSkipAt) > 3000) {
+                                console.warn('[做菜音樂] 疑似廣告（時長只有' + Math.round(dur) + '秒），自動跳過');
+                                musicLastAdSkipAt = now;
+                                playNextTrack();
+                            }
+                        }
                         updateMusicPlayPauseIcon();
                     },
                     // 這首歌播放失敗（常見原因：版權下架、原作者關閉嵌入播放權限、影片被移除），
@@ -12409,6 +12423,7 @@
             ytPlayer = null;
             ytPlayerReady = false;
             musicConsecutiveErrors = 0;
+            musicLastAdSkipAt = 0;
             if (widget) { widget.innerHTML = ''; widget.dataset.built = ''; }
         }
         function renderMusicWidgetShell() {
