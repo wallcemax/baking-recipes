@@ -12380,17 +12380,7 @@
                         if (e.data === YT.PlayerState.PLAYING) {
                             // 歌曲成功開始播放，代表這首沒問題，把「連續放不出來」的計數器歸零
                             musicConsecutiveErrors = 0;
-                            // 疑似廣告偵測：這不是YouTube官方保證的行為，純粹是「你們清單裡的歌
-                            // 幾乎不會短於60秒」這個經驗法則，時長明顯偏短就當作廣告直接跳過。
-                            // 如果之後YouTube調整廣告時長模式，這個判斷可能會失準，需要留意；
-                            // 用時間戳記防止同一則廣告在還沒真的切換掉之前重複觸發好幾次跳過
-                            const dur = ytPlayer.getDuration();
-                            const now = Date.now();
-                            if (dur > 0 && dur < 60 && (now - musicLastAdSkipAt) > 3000) {
-                                console.warn('[做菜音樂] 疑似廣告（時長只有' + Math.round(dur) + '秒），自動跳過');
-                                musicLastAdSkipAt = now;
-                                playNextTrack();
-                            }
+                            checkForAdAndSkip();
                         }
                         updateMusicPlayPauseIcon();
                     },
@@ -12492,6 +12482,23 @@
         function stopMusicProgressPolling() {
             if (musicProgressPollId) { clearInterval(musicProgressPollId); musicProgressPollId = null; }
         }
+        // 疑似廣告偵測：不是YouTube官方保證的行為，純粹是「這份清單的歌幾乎不會短於60秒」
+        // 這個經驗法則，時長明顯偏短就當作廣告直接跳過。廣告可能只播幾秒鐘，如果只在播放狀態
+        // 「剛切換」的那一瞬間檢查一次，很容易因為切換得比檢查時機還快而整個錯過，所以這個函式
+        // 除了狀態切換時呼叫，也會搭配每0.5秒一次的時間軸輪詢一起呼叫，提高抓到的機會。
+        // 用時間戳記防止同一則廣告在還沒真的切換掉之前，短時間內被重複觸發好幾次跳過
+        function checkForAdAndSkip() {
+            if (!ytPlayer || !ytPlayerReady) return;
+            try {
+                const dur = ytPlayer.getDuration();
+                const now = Date.now();
+                if (dur > 0 && dur < 60 && (now - musicLastAdSkipAt) > 3000) {
+                    console.warn('[做菜音樂] 疑似廣告（時長只有' + Math.round(dur) + '秒），自動跳過');
+                    musicLastAdSkipAt = now;
+                    playNextTrack();
+                }
+            } catch (err) {}
+        }
         function updateMusicProgressBar() {
             const fill = document.getElementById('music-progress-fill');
             if (!fill || !ytPlayer || !ytPlayerReady) return;
@@ -12500,6 +12507,7 @@
                 const current = ytPlayer.getCurrentTime();
                 if (duration > 0) fill.style.width = `${Math.min(100, (current / duration) * 100)}%`;
             } catch (err) {}
+            checkForAdAndSkip();
         }
         // 點時間軸可以拖曳/跳到指定進度
         function seekMusicProgress(event) {
