@@ -472,7 +472,7 @@
         <button onclick="this.parentElement.classList.add('hidden')" class="text-lg leading-none shrink-0" aria-label="關閉提示">×</button>
     </div>
     <div class="max-w-6xl mx-auto px-4 sm:px-6 pb-28 md:pb-10">
-        <div class="hero-banner mb-6">
+        <div class="hero-banner mb-6" id="hero-banner-section">
             <header class="px-4 sm:px-6 pt-4 sm:pt-6 relative">
                 <!-- 手機版：漢堡選單、標題、使用者資訊在同一列，用格線讓標題保持真正置中 -->
                 <div class="grid md:hidden items-center gap-2 mb-1" style="grid-template-columns: auto 1fr auto;">
@@ -544,6 +544,18 @@
             </div>
         </div>
 
+        <!-- 個人頁面：收藏/我的食譜共用首頁本來就有的recipes-grid，只是切換篩選狀態；
+             做菜音樂/成就則沿用原本就有、已經驗證過能正常運作的視窗，不重新刻一份 -->
+        <div id="personal-page-header" class="hidden mb-5 px-4 sm:px-0">
+            <button onclick="hidePersonalPage()" class="text-sm font-medium mb-3" style="color:var(--jam)">← 返回首頁</button>
+            <div class="chip-row" id="personal-page-tabs">
+                <button class="chip active" data-tab="favorites" onclick="switchPersonalTab('favorites')">❤️ 我的收藏</button>
+                <button class="chip" data-tab="mine" onclick="switchPersonalTab('mine')">📝 我的食譜</button>
+                <button class="chip" onclick="showMusicSettingsModal()">🎵 做菜音樂</button>
+                <button class="chip" onclick="showProfileModal()">🏅 成就</button>
+            </div>
+        </div>
+
         <div id="weather-recommend-banner"></div>
 
         <div id="recipes-grid" class="grid gap-5" style="grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));">
@@ -578,11 +590,8 @@
             <button onclick="closeMobileMenuThen(showGameModal)" class="mobile-menu-item">
                 <span class="mobile-menu-item-icon" style="background:rgba(168,50,74,0.1)">🎮</span>遊戲場
             </button>
-            <button onclick="closeMobileMenuThen(showProfileModal)" class="mobile-menu-item">
-                <span class="mobile-menu-item-icon" style="background:rgba(201,138,44,0.15)">🏅</span>我的成就
-            </button>
-            <button onclick="closeMobileMenuThen(showMusicSettingsModal)" class="mobile-menu-item">
-                <span class="mobile-menu-item-icon" style="background:rgba(91,122,150,0.15)">🎵</span>做菜音樂設定
+            <button onclick="closeMobileMenuThen(showPersonalPage)" class="mobile-menu-item">
+                <span class="mobile-menu-item-icon" style="background:rgba(201,138,44,0.15)">👤</span>個人頁面
             </button>
             <div id="mobile-menu-admin-divider" class="hidden my-1.5 border-t" style="border-color:var(--line)"></div>
             <button id="admin-nutrition-btn-mobile" onclick="closeMobileMenuThen(showAdminNutritionModal)" class="hidden mobile-menu-item">
@@ -1368,6 +1377,8 @@
                 closeMarketPricesModal(true);
             } else if (mobileMenuPanel && !mobileMenuPanel.classList.contains('hidden')) {
                 closeMobileMenu(true);
+            } else if (personalPageActive) {
+                hidePersonalPage(true);
             } else {
                 // 沒有任何彈窗開著，代表使用者是在首頁按返回鍵——套用「連按兩次才離開」的邏輯
                 const now = Date.now();
@@ -12531,7 +12542,7 @@
                 const avatar = user.photoURL
                     ? `<img src="${user.photoURL}" class="w-9 h-9 rounded-full border" style="border-color:var(--line)">`
                     : `<div class="w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold" style="background:var(--honey)">${(user.displayName||'?').charAt(0)}</div>`;
-                info.innerHTML = `<button onclick="showProfileModal()" class="text-xl leading-none" style="color:var(--jam)" title="我的成就" aria-label="我的成就">🏅</button>${avatar}<span class="hidden sm:inline text-sm font-medium truncate max-w-[8rem]">${user.displayName}</span><button onclick="logout()" class="text-xs sm:text-sm font-medium" style="color:var(--jam)">登出</button>`;
+                info.innerHTML = `<button onclick="showPersonalPage()" class="text-xl leading-none" style="color:var(--jam)" title="個人頁面" aria-label="個人頁面">👤</button>${avatar}<span class="hidden sm:inline text-sm font-medium truncate max-w-[8rem]">${user.displayName}</span><button onclick="logout()" class="text-xs sm:text-sm font-medium" style="color:var(--jam)">登出</button>`;
                 // 手機版精簡一點：頭像+登出就好，「我的成就」已經收進漢堡選單裡，不用重複顯示
                 if (infoMobile) infoMobile.innerHTML = `${avatar}<button onclick="logout()" class="text-xs font-medium" style="color:var(--jam)">登出</button>`;
                 loadRecipes();
@@ -12575,6 +12586,42 @@
             document.querySelectorAll('#category-chips .chip').forEach(c => c.classList.remove('active'));
             const el = document.getElementById(`chip-${cat}`);
             if (el) el.classList.add('active');
+            filterRecipes();
+        }
+
+        // ---------- 個人頁面 ----------
+        // 設計上刻意不重新刻一份食譜格線或成就/音樂設定的畫面，而是直接重用首頁本來就有的
+        // recipes-grid + filterRecipes()（收藏/我的食譜兩個分頁只是切換篩選狀態），
+        // 做菜音樂/成就則直接開原本就驗證過能正常運作的視窗，降低風險、不用重寫已經動的東西
+        let personalPageActive = false;
+        function showPersonalPage() {
+            if (!currentUser) { alert('請先登入才能查看個人頁面'); return; }
+            personalPageActive = true;
+            document.getElementById('hero-banner-section')?.classList.add('hidden');
+            document.getElementById('weather-recommend-banner')?.classList.add('hidden');
+            document.getElementById('personal-page-header')?.classList.remove('hidden');
+            switchPersonalTab('favorites'); // 預設打開「我的收藏」分頁
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            pushModalHistoryState(); // 按返回鍵時要能回到首頁，不是直接跳出整個網站
+        }
+        function hidePersonalPage(fromPopState) {
+            personalPageActive = false;
+            document.getElementById('hero-banner-section')?.classList.remove('hidden');
+            document.getElementById('weather-recommend-banner')?.classList.remove('hidden');
+            document.getElementById('personal-page-header')?.classList.add('hidden');
+            showFavoritesOnly = false;
+            showMyRecipesOnly = false;
+            document.getElementById('chip-fav')?.classList.remove('active');
+            document.getElementById('chip-mine')?.classList.remove('active');
+            filterRecipes();
+            consumeModalHistoryState(fromPopState);
+        }
+        function switchPersonalTab(tab) {
+            document.querySelectorAll('#personal-page-tabs .chip[data-tab]').forEach(c => c.classList.toggle('active', c.dataset.tab === tab));
+            showFavoritesOnly = tab === 'favorites';
+            showMyRecipesOnly = tab === 'mine';
+            document.getElementById('chip-fav')?.classList.toggle('active', showFavoritesOnly);
+            document.getElementById('chip-mine')?.classList.toggle('active', showMyRecipesOnly);
             filterRecipes();
         }
 
