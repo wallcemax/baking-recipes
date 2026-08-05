@@ -286,6 +286,13 @@
         /* #id的優先權比.hidden這個class選擇器高，如果不額外補這條，該隱藏的時候會被上面的
            display:flex蓋過去，導致播放器該藏的時候藏不住 */
         #cooking-music-widget.hidden { display: none; }
+        /* 廣告略過用的小畫面：故意做得很小，平常聽歌不會太搶眼，但遇到廣告出現略過鈕時
+           還是看得到、點得到 */
+        #cooking-video-skip-widget {
+            width: 6.5rem; aspect-ratio: 16/9; border-radius: 0.6rem; overflow: hidden; background: #000;
+            box-shadow: 0 4px 10px -2px rgba(58,42,30,0.3); flex-shrink: 0;
+        }
+        #cooking-video-skip-widget.hidden { display: none; }
         #cooking-music-widget .music-progress-track {
             width: 3rem; flex-shrink: 0; height: 3px; border-radius: 999px; background: rgba(255,255,255,0.22);
             overflow: hidden; cursor: pointer;
@@ -592,6 +599,9 @@
 
     <!-- 做菜音樂播放器小工具：只有烹飪模式時才會顯示，內容由JS動態產生 -->
     <div id="cooking-music-widget" class="hidden"></div>
+    <!-- 廣告略過用的小畫面：平常小小一塊看不出內容，遇到YouTube廣告出現略過鈕時可以手動點擊；
+         刻意跟上面的做菜音樂控制列（時間軸/歌名/按鈕）分開放，插入在「作法」標題旁邊 -->
+    <div id="cooking-video-skip-widget" class="hidden"></div>
 
     <!-- 手機版底部固定導覽列：常用功能一排放在最下面，不用每次都滑到最上面找 -->
     <nav id="mobile-bottom-nav" class="md:hidden fixed bottom-0 left-0 right-0 z-40 flex items-end justify-around px-2" style="padding-top:.4rem; padding-bottom:calc(.4rem + env(safe-area-inset-bottom));">
@@ -11939,9 +11949,6 @@
         let ytApiReadyPromise = null;
         let musicProgressPollId = null;
         let musicConsecutiveErrors = 0; // 連續幾首播放失敗（版權下架/停用嵌入等），用來防止整份清單都放不出來時無限循環卡住
-        let musicAdSkipHandledForCurrentVideo = false; // 這首歌有沒有已經因為疑似廣告觸發過跳過，避免同一首歌被重複觸發好幾次跳過指令
-        let musicConsecutiveAdSkips = 0; // 連續因為疑似廣告跳過幾首（不是同一首重複算，是不同首連續中招），避免萬一誤判連環發生時無限跳下去
-        let musicNonPlayingStreak = 0; // 連續幾次輪詢發現「不是播放中」狀態，用來確認不是短暫緩衝的誤判，要連續兩次才觸發跳過
         let youtubeAccessToken = null; // 只存在記憶體裡，換分頁或重新整理頁面就會消失，需要重新連接才能再抓一次清單
         let musicPlaylistCandidates = []; // 目前這次連接後列出來、可供選擇的播放清單清單
 
@@ -12359,11 +12366,15 @@
             const widget = document.getElementById('cooking-music-widget');
             if (!widget) return;
             musicCurrentIndex = musicShuffleOn ? Math.floor(Math.random() * musicSettings.videoIds.length) : 0;
-            musicAdSkipHandledForCurrentVideo = false;
-            musicNonPlayingStreak = 0;
 
             renderMusicWidgetShell();
             widget.classList.remove('hidden');
+            // 廣告略過用的小畫面：獨立於上面的控制列之外，準備好iframe容器讓播放器附著上去
+            const videoWidget = document.getElementById('cooking-video-skip-widget');
+            if (videoWidget) {
+                videoWidget.innerHTML = '<div id="cooking-music-iframe-target" style="width:100%;height:100%"></div>';
+                videoWidget.classList.remove('hidden');
+            }
             // 公開清單來源的話，在背景（不await、不擋住播放）偷偷刷新一次清單內容，確保跟YouTube
             // 上的最新狀態一致；這次播放還是先用手上現有的清單開始，不會為了等刷新結果而卡住
             refreshPublicPlaylistIfNeeded();
@@ -12376,16 +12387,16 @@
             // 問題，改成每次全新建立雖然多一點點開銷，但徹底避免這整類殘留狀態的bug
             ytPlayer = new YT.Player('cooking-music-iframe-target', {
                 width: '100%', height: '100%', videoId,
-                playerVars: { autoplay: 1, playsinline: 1, rel: 0, controls: 0 },
+                // controls改成1（顯示YouTube原生控制列），不是為了控制正常播放（那個用我們自己
+                // 做的控制列就好），是為了讓遇到廣告時YouTube自己的「略過廣告」按鈕能顯示出來、
+                // 點得到——這是這個小畫面存在的唯一目的
+                playerVars: { autoplay: 1, playsinline: 1, rel: 0, controls: 1 },
                 events: {
                     onReady: () => { ytPlayerReady = true; updateMusicTrackTitle(); updateMusicPlayPauseIcon(); startMusicProgressPolling(); },
                     onStateChange: (e) => {
                         if (e.data === YT.PlayerState.ENDED) playNextTrack();
-                        if (e.data === YT.PlayerState.PLAYING) {
-                            // 歌曲成功開始播放，代表這首沒問題，把「連續放不出來」的計數器歸零
-                            musicConsecutiveErrors = 0;
-                            checkForAdAndSkip();
-                        }
+                        // 歌曲成功開始播放，代表這首沒問題，把「連續放不出來」的計數器歸零
+                        if (e.data === YT.PlayerState.PLAYING) musicConsecutiveErrors = 0;
                         updateMusicPlayPauseIcon();
                     },
                     // 這首歌播放失敗（常見原因：版權下架、原作者關閉嵌入播放權限、影片被移除），
@@ -12410,6 +12421,8 @@
         function stopCookingMusic() {
             const widget = document.getElementById('cooking-music-widget');
             widget?.classList.add('hidden');
+            const videoWidget = document.getElementById('cooking-video-skip-widget');
+            if (videoWidget) { videoWidget.innerHTML = ''; videoWidget.classList.add('hidden'); }
             stopMusicProgressPolling();
             if (ytPlayer) {
                 try { ytPlayer.destroy(); } catch (err) {}
@@ -12417,9 +12430,6 @@
             ytPlayer = null;
             ytPlayerReady = false;
             musicConsecutiveErrors = 0;
-            musicAdSkipHandledForCurrentVideo = false;
-            musicNonPlayingStreak = 0;
-            musicConsecutiveAdSkips = 0;
             if (widget) { widget.innerHTML = ''; widget.dataset.built = ''; }
         }
         function renderMusicWidgetShell() {
@@ -12434,8 +12444,7 @@
                     <button class="music-ctrl-btn" onclick="playPrevTrack()" title="上一首">⏮</button>
                     <button class="music-ctrl-btn" onclick="toggleMusicPlayPause()" id="music-playpause-btn" title="播放/暫停">⏸</button>
                     <button class="music-ctrl-btn" onclick="playNextTrack()" title="下一首">⏭</button>
-                </div>
-                <div id="cooking-music-iframe-target" class="music-video-hidden"></div>`;
+                </div>`;
         }
         // 更新歌名文字；文字寬度超出容器才套用跑馬燈動畫，沒有超出就不需要多餘的跑動效果
         function updateMusicTrackTitle() {
@@ -12462,16 +12471,12 @@
             musicCurrentIndex = pickNextMusicIndex();
             // 換了新的一首，重置這首歌專屬的偵測旗標，這首開始播放時會重新測一次，
             // 不會被上一首歌已經處理過的狀態卡住（這是之前「連續遇到廣告會卡住跳不掉」的根本原因）
-            musicAdSkipHandledForCurrentVideo = false;
-            musicNonPlayingStreak = 0;
             if (ytPlayer && ytPlayerReady) ytPlayer.loadVideoById(musicSettings.videoIds[musicCurrentIndex]);
             updateMusicTrackTitle();
         }
         function playPrevTrack() {
             if (!musicSettings.videoIds.length) return;
             musicCurrentIndex = pickPrevMusicIndex();
-            musicAdSkipHandledForCurrentVideo = false;
-            musicNonPlayingStreak = 0;
             if (ytPlayer && ytPlayerReady) ytPlayer.loadVideoById(musicSettings.videoIds[musicCurrentIndex]);
             updateMusicTrackTitle();
         }
@@ -12494,61 +12499,6 @@
         function stopMusicProgressPolling() {
             if (musicProgressPollId) { clearInterval(musicProgressPollId); musicProgressPollId = null; }
         }
-        // 疑似廣告偵測：不是YouTube官方保證的行為，純粹是「這份清單的歌幾乎不會短於60秒」
-        // 這個經驗法則，時長明顯偏短就當作廣告直接跳過。廣告可能只播幾秒鐘，如果只在播放狀態
-        // 「剛切換」的那一瞬間檢查一次，很容易因為切換得比檢查時機還快而整個錯過，所以這個函式
-        // 除了狀態切換時呼叫，也會搭配每0.5秒一次的時間軸輪詢一起呼叫，提高抓到的機會。
-        //
-        // 兩種判斷依據一起用：
-        //  1. 播放狀態：使用者實測發現，播放廣告時getPlayerState()不會回報「播放中」(1)，
-        //     只有播放正常內容時才會——這個純粹讀取現有狀態，不用像之前的拖曳測試那樣主動下指令
-        //     去試探，沒有任何側作用/干擾播放的疑慮，比拖曳測試更好。連續2次輪詢(至少1秒)都不是
-        //     播放中才觸發，避免把「剛換歌時短暫的緩衝」誤判成廣告
-        //  2. 時長：歌曲時長明顯偏短（少於60秒），這份清單的歌幾乎不會這麼短
-        // 這兩個都不是YouTube官方文件記載保證的行為，是根據實際觀察歸納出來的經驗法則
-        function checkForAdAndSkip() {
-            if (!ytPlayer || !ytPlayerReady) return;
-            try {
-                const state = ytPlayer.getPlayerState();
-                if (state === YT.PlayerState.PLAYING) {
-                    musicNonPlayingStreak = 0;
-                } else {
-                    musicNonPlayingStreak++;
-                    if (musicNonPlayingStreak >= 2) {
-                        triggerAdSkip('播放狀態不是「播放中」（可能是廣告）');
-                        musicNonPlayingStreak = 0;
-                        return;
-                    }
-                }
-                const dur = ytPlayer.getDuration();
-                if (dur > 0 && dur < 60) {
-                    triggerAdSkip('疑似廣告（時長只有' + Math.round(dur) + '秒）');
-                } else if (dur >= 60) {
-                    // 確認是正常長度的歌，代表沒有連續中招，把連續跳過計數器歸零
-                    musicConsecutiveAdSkips = 0;
-                }
-            } catch (err) {}
-        }
-        // 兩種偵測方式共用的「觸發跳過」函式：用「這首歌有沒有處理過」這個旗標防重複，
-        // 不是用時間長短防重複——這樣才不會發生「跳到下一首、下一首剛好也是廣告，
-        // 卻因為還在時間冷卻期內被自己的保護機制擋下來、變成真的卡住跳不掉」的狀況。
-        // 每首新載入的歌都會拿到全新一次判斷機會，可以連續跳好幾首直到跳出廣告為止；
-        // 另外用musicConsecutiveAdSkips擋住「連續一大串都被判斷成廣告」這種可能是誤判、
-        // 而不是真的一直遇到廣告的極端情況，避免無限跳下去
-        function triggerAdSkip(reason) {
-            if (musicAdSkipHandledForCurrentVideo) return; // 這首已經處理過了，不要對同一首重複觸發
-            musicAdSkipHandledForCurrentVideo = true;
-            musicConsecutiveAdSkips++;
-            if (musicConsecutiveAdSkips > Math.max(5, musicSettings.videoIds.length)) {
-                console.warn('[做菜音樂] 連續好幾首都被判斷成廣告，可能是誤判，先停下來不再自動跳過');
-                const titleEl = document.getElementById('music-title-text');
-                if (titleEl) titleEl.textContent = '⚠️ 連續跳過太多次，可能是誤判，請手動確認';
-                musicConsecutiveAdSkips = 0;
-                return;
-            }
-            console.warn('[做菜音樂] ' + reason + '，自動跳到下一首');
-            playNextTrack();
-        }
         function updateMusicProgressBar() {
             const fill = document.getElementById('music-progress-fill');
             if (!fill || !ytPlayer || !ytPlayerReady) return;
@@ -12557,7 +12507,6 @@
                 const current = ytPlayer.getCurrentTime();
                 if (duration > 0) fill.style.width = `${Math.min(100, (current / duration) * 100)}%`;
             } catch (err) {}
-            checkForAdAndSkip();
         }
         // 點時間軸可以拖曳/跳到指定進度
         function seekMusicProgress(event) {
@@ -13749,7 +13698,7 @@
                         <div id="detail-ingredients"></div>
                     </div>
                     <div class="mb-10" id="cook-steps-block">
-                        <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                        <div class="flex items-center justify-between mb-3 gap-3 flex-wrap" id="cook-steps-heading-row">
                             <h3 class="font-display font-semibold text-lg">作法</h3>
                             <span id="steps-progress-text" class="text-sm font-medium" style="color:var(--jam)">目前進度：0%</span>
                         </div>
@@ -17541,6 +17490,17 @@
                 row.appendChild(ingHeading);
                 row.appendChild(musicWidget);
             }
+            // 廣告略過用的小畫面：搬到「作法」標題那一列（已經有現成的flex列可以放，不用像
+            // 食材那邊另外包一層），跟上面的做菜音樂控制列分開，離開烹飪模式時一樣要搬回原位
+            const stepsHeadingRow = document.getElementById('cook-steps-heading-row');
+            const videoSkipWidget = document.getElementById('cooking-video-skip-widget');
+            if (stepsHeadingRow && videoSkipWidget && !document.getElementById('video-skip-widget-placeholder')) {
+                const placeholder = document.createElement('div');
+                placeholder.id = 'video-skip-widget-placeholder';
+                placeholder.style.display = 'none';
+                videoSkipWidget.parentNode.insertBefore(placeholder, videoSkipWidget);
+                stepsHeadingRow.appendChild(videoSkipWidget);
+            }
 
             const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
             if (splitWrap) {
@@ -17628,6 +17588,13 @@
                     musicPlaceholder.remove();
                 }
                 musicRow.remove();
+            }
+            // 廣告略過小畫面搬回原位
+            const videoSkipPlaceholder = document.getElementById('video-skip-widget-placeholder');
+            const videoSkipWidgetBack = document.getElementById('cooking-video-skip-widget');
+            if (videoSkipWidgetBack && videoSkipPlaceholder) {
+                videoSkipPlaceholder.parentNode.insertBefore(videoSkipWidgetBack, videoSkipPlaceholder);
+                videoSkipPlaceholder.remove();
             }
             const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
             if (splitWrap) {
