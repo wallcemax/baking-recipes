@@ -612,11 +612,13 @@
                 </label>
                 <p class="text-xs mb-4" style="color:#B3A492">開啟後，只要食譜進入烹飪模式，就會自動播放你設定的YouTube播放清單，畫面右上角會出現一個小小的播放器</p>
                 <div id="music-settings-fields" class="hidden">
-                    <label class="text-xs block mb-1" style="color:#B3A492">YouTube播放清單網址或ID</label>
-                    <input id="music-playlist-input" placeholder="https://www.youtube.com/playlist?list=..." class="form-input mb-2 text-sm">
-                    <p class="text-xs mb-3" style="color:#B3A492">因為是私人清單，需要連接你自己的YouTube帳號才能讀取內容；只會讀取清單內容，不會有任何寫入或修改的權限</p>
-                    <button onclick="connectYoutubeAndFetchPlaylist()" id="music-connect-btn" class="btn-secondary text-sm !px-4 !py-2 mb-3">🔗 連接YouTube帳號並讀取清單</button>
-                    <p id="music-settings-status" class="text-xs" style="color:var(--sage)"></p>
+                    <p class="text-xs mb-3" style="color:#B3A492">連接你的YouTube帳號後，會列出你自己的播放清單讓你選一個當做菜音樂；只會讀取清單內容，不會有任何寫入或修改的權限</p>
+                    <button onclick="connectYoutubeAccount()" id="music-connect-btn" class="btn-secondary text-sm !px-4 !py-2 mb-3">🔗 連接並選擇播放清單</button>
+                    <div id="music-playlist-picker" class="hidden mb-2">
+                        <p class="text-xs mb-2" style="color:#B3A492">選一個播放清單：</p>
+                        <div id="music-playlist-list" class="space-y-2"></div>
+                    </div>
+                    <p id="music-settings-status" class="text-xs mt-1" style="color:var(--sage)"></p>
                 </div>
             </div>
         </div>
@@ -11869,13 +11871,15 @@
         // 這類一律不用）。「下一首/上一首」單純是我們自己的程式碼決定接下來要載入哪一個影片ID，
         // 不是交給YouTube的播放清單引擎處理——這是之前「做菜歌單」功能失敗的根本原因，這次刻意避開
         const YOUTUBE_READONLY_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
-        let musicSettings = { enabled: false, playlistUrl: '', videoIds: [], titles: [] };
+        let musicSettings = { enabled: false, playlistId: '', playlistTitle: '', videoIds: [], titles: [] };
         let musicOrder = []; // 目前的播放順序（存index），一般模式=依序0,1,2...；隨機模式=洗牌過的順序
         let musicOrderPos = 0; // 目前播放到musicOrder裡的第幾個位置
         let musicShuffleOn = false;
         let ytPlayer = null;
         let ytPlayerReady = false;
         let ytApiReadyPromise = null;
+        let youtubeAccessToken = null; // 只存在記憶體裡，換分頁或重新整理頁面就會消失，需要重新連接才能再抓一次清單
+        let musicPlaylistCandidates = []; // 目前這次連接後列出來、可供選擇的播放清單清單
 
         function musicSettingsDocRef() {
             return db.collection('musicSettings').doc(currentUser.uid);
@@ -11889,7 +11893,8 @@
                 const data = doc.exists ? doc.data() : {};
                 musicSettings = {
                     enabled: !!data.enabled,
-                    playlistUrl: data.playlistUrl || '',
+                    playlistId: data.playlistId || '',
+                    playlistTitle: data.playlistTitle || '',
                     videoIds: data.videoIds || [],
                     titles: data.titles || [],
                 };
@@ -11904,7 +11909,7 @@
             await loadMusicSettings();
             document.getElementById('music-enabled-toggle').checked = musicSettings.enabled;
             document.getElementById('music-settings-fields').classList.toggle('hidden', !musicSettings.enabled);
-            document.getElementById('music-playlist-input').value = musicSettings.playlistUrl;
+            document.getElementById('music-playlist-picker').classList.add('hidden'); // 每次重新打開視窗都先收起清單選擇區，避免顯示上次連接時的舊資料
             updateMusicSettingsStatusText();
             pushModalHistoryState();
         }
@@ -11916,8 +11921,8 @@
             const statusEl = document.getElementById('music-settings-status');
             if (!statusEl) return;
             statusEl.textContent = musicSettings.videoIds.length
-                ? `✅ 目前清單有 ${musicSettings.videoIds.length} 首歌，可以隨時重新整理更新內容`
-                : '尚未讀取過播放清單，請貼上網址後按下面的按鈕連接';
+                ? `✅ 目前使用「${musicSettings.playlistTitle || '播放清單'}」，共 ${musicSettings.videoIds.length} 首歌`
+                : '尚未選擇播放清單，請按上面的按鈕連接';
         }
         async function onMusicEnabledToggle() {
             const enabled = document.getElementById('music-enabled-toggle').checked;
@@ -11929,26 +11934,16 @@
                 console.warn('儲存做菜音樂開關失敗', err && err.message);
             }
         }
-        // 從YouTube網址或純ID裡解析出播放清單ID
-        function parsePlaylistId(input) {
-            if (!input) return null;
-            input = input.trim();
-            const match = input.match(/[?&]list=([^&]+)/);
-            if (match) return match[1];
-            if (/^[A-Za-z0-9_-]+$/.test(input)) return input; // 看起來已經是純ID，直接當ID用
-            return null;
-        }
-        // 連接YouTube帳號（額外請求「讀取」權限，不會要求任何寫入/修改權限）並讀取播放清單裡
-        // 所有影片的ID+標題，存進Firestore。只在使用者主動按下按鈕時才會跳出Google的授權畫面，
-        // 不會在一般登入流程裡就跳出來，共用這個網站的其他人不會被要求同意這個額外權限
-        async function connectYoutubeAndFetchPlaylist() {
+        // 連接YouTube帳號（額外請求「讀取」權限，不會要求任何寫入/修改權限），連上之後列出
+        // 使用者自己帳號底下的播放清單讓他選一個，不用自己貼網址。只在使用者主動按下按鈕時
+        // 才會跳出Google的授權畫面，不會在一般登入流程裡就跳出來，共用這個網站的其他人
+        // 不會被要求同意這個額外權限
+        async function connectYoutubeAccount() {
             if (isInAppBrowser()) {
                 alert('偵測到你目前是透過App內建瀏覽器開啟，YouTube帳號授權可能無法正常運作，請改用Chrome／Safari開啟本網站再試一次。');
                 return;
             }
-            const playlistId = parsePlaylistId(document.getElementById('music-playlist-input').value);
             const statusEl = document.getElementById('music-settings-status');
-            if (!playlistId) { statusEl.textContent = '⚠️ 看不出來這是有效的播放清單網址或ID，請確認後再試一次'; return; }
             const btn = document.getElementById('music-connect-btn');
             btn.disabled = true;
             statusEl.textContent = '🔗 連接中，請在跳出的視窗完成授權...';
@@ -11957,31 +11952,83 @@
                 provider.addScope(YOUTUBE_READONLY_SCOPE);
                 const result = await auth.signInWithPopup(provider);
                 const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
-                const accessToken = credential && credential.accessToken;
-                if (!accessToken) throw new Error('沒有拿到YouTube存取權杖，請重新嘗試授權');
+                youtubeAccessToken = credential && credential.accessToken;
+                if (!youtubeAccessToken) throw new Error('沒有拿到YouTube存取權杖，請重新嘗試授權');
 
-                statusEl.textContent = '📥 讀取播放清單中...';
-                const items = await fetchAllPlaylistItems(playlistId, accessToken);
-                if (!items.length) throw new Error('這個播放清單目前是空的，或是沒有權限讀取，請確認清單網址正確');
+                statusEl.textContent = '📥 讀取你的播放清單中...';
+                musicPlaylistCandidates = await fetchMyPlaylists(youtubeAccessToken);
+                if (!musicPlaylistCandidates.length) throw new Error('找不到你帳號底下的任何播放清單');
+                renderPlaylistPicker();
+                statusEl.textContent = `找到 ${musicPlaylistCandidates.length} 個播放清單，選一個當做菜音樂吧`;
+            } catch (err) {
+                statusEl.textContent = '⚠️ 連接失敗：' + (err && err.message ? err.message : String(err));
+            } finally {
+                btn.disabled = false;
+            }
+        }
+        // 抓這個帳號底下自己擁有的所有播放清單（含私人清單），只抓標題跟歌曲數量，
+        // 不用一開始就把每個清單的內容都抓進來，選了哪個才去抓那個的內容，比較省API額度
+        async function fetchMyPlaylists(accessToken) {
+            const playlists = [];
+            let pageToken = '';
+            do {
+                const url = `https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50${pageToken ? `&pageToken=${pageToken}` : ''}`;
+                const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => null);
+                    throw new Error((errData && errData.error && errData.error.message) || `YouTube API回應錯誤(${res.status})`);
+                }
+                const data = await res.json();
+                (data.items || []).forEach(item => {
+                    playlists.push({
+                        id: item.id,
+                        title: (item.snippet && item.snippet.title) || '（未命名清單）',
+                        itemCount: (item.contentDetails && item.contentDetails.itemCount) || 0,
+                    });
+                });
+                pageToken = data.nextPageToken || '';
+            } while (pageToken);
+            return playlists;
+        }
+        function renderPlaylistPicker() {
+            const pickerEl = document.getElementById('music-playlist-picker');
+            pickerEl.classList.remove('hidden');
+            document.getElementById('music-playlist-list').innerHTML = musicPlaylistCandidates.map(p => `
+                <button onclick="selectMusicPlaylist('${escapeHtmlAttr(p.id)}')" class="w-full text-left px-3 py-2 rounded-xl text-sm flex items-center justify-between gap-2" style="background:var(--cream)">
+                    <span class="truncate">${escapeHtmlAttr(p.title)}</span>
+                    <span class="text-xs shrink-0" style="color:#B3A492">${p.itemCount}首</span>
+                </button>
+            `).join('');
+        }
+        // 使用者選定某個播放清單後，讀取這個清單裡所有影片的ID+標題，存進Firestore
+        async function selectMusicPlaylist(playlistId) {
+            const statusEl = document.getElementById('music-settings-status');
+            if (!youtubeAccessToken) { statusEl.textContent = '⚠️ 連接已逾時，請重新按一次連接按鈕'; return; }
+            const candidate = musicPlaylistCandidates.find(p => p.id === playlistId);
+            statusEl.textContent = '📥 讀取歌曲清單中...';
+            try {
+                const items = await fetchAllPlaylistItems(playlistId, youtubeAccessToken);
+                if (!items.length) throw new Error('這個播放清單目前是空的');
 
                 musicSettings.videoIds = items.map(i => i.videoId);
                 musicSettings.titles = items.map(i => i.title);
-                musicSettings.playlistUrl = document.getElementById('music-playlist-input').value.trim();
+                musicSettings.playlistId = playlistId;
+                musicSettings.playlistTitle = (candidate && candidate.title) || '';
                 musicSettings.enabled = true;
                 await musicSettingsDocRef().set({
                     enabled: true,
-                    playlistUrl: musicSettings.playlistUrl,
+                    playlistId,
+                    playlistTitle: musicSettings.playlistTitle,
                     videoIds: musicSettings.videoIds,
                     titles: musicSettings.titles,
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 }, { merge: true });
                 document.getElementById('music-enabled-toggle').checked = true;
+                document.getElementById('music-playlist-picker').classList.add('hidden');
                 musicOrder = []; // 清單換新了，播放順序要重新建立
                 updateMusicSettingsStatusText();
             } catch (err) {
                 statusEl.textContent = '⚠️ 讀取失敗：' + (err && err.message ? err.message : String(err));
-            } finally {
-                btn.disabled = false;
             }
         }
         // 依序抓完播放清單所有分頁，最多抓300首歌就停止（防呆用，避免異常大的清單一直抓下去）
