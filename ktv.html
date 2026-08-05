@@ -53,6 +53,17 @@
     .btn-outline { background: var(--paper); color: var(--jam); border: 1px solid var(--jam); }
     label.checkbox-row { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--espresso-soft); margin-bottom: 1rem; }
 
+    /* 分類點歌：模擬傳統KTV「語言／歌手類型」分類瀏覽的感覺，用分類組合出搜尋關鍵字，
+       不是真的資料庫索引（YouTube搜尋沒有這種結構化資料可以查） */
+    .filter-group { margin-bottom: 0.75rem; }
+    .filter-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.35rem; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .chip {
+        padding: 0.35rem 0.85rem; border-radius: 999px; border: 1px solid var(--line); background: var(--paper);
+        color: var(--espresso-soft); font-size: 0.78rem; cursor: pointer;
+    }
+    .chip.active { background: var(--jam); color: #fff; border-color: var(--jam); }
+
     .result-card, .queue-card {
         display: flex; align-items: center; gap: 0.75rem; background: var(--paper); border-radius: 1rem;
         padding: 0.6rem; margin-bottom: 0.6rem; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08);
@@ -95,8 +106,30 @@
         <div id="section-request" class="section active">
             <div id="request-login-hint" class="login-hint hidden">請先登入才能點歌，搜尋還是可以自由使用</div>
 
+            <div class="filter-group">
+                <div class="filter-label">語言</div>
+                <div class="chip-row" id="lang-chips">
+                    <button class="chip active" data-value="">不限</button>
+                    <button class="chip" data-value="華語">華語</button>
+                    <button class="chip" data-value="台語">台語</button>
+                    <button class="chip" data-value="客語">客語</button>
+                    <button class="chip" data-value="英文">英文</button>
+                    <button class="chip" data-value="日文">日文</button>
+                    <button class="chip" data-value="韓文">韓文</button>
+                </div>
+            </div>
+            <div class="filter-group">
+                <div class="filter-label">歌手類型</div>
+                <div class="chip-row" id="gender-chips">
+                    <button class="chip active" data-value="">不限</button>
+                    <button class="chip" data-value="男歌手">男歌手</button>
+                    <button class="chip" data-value="女歌手">女歌手</button>
+                    <button class="chip" data-value="團體合唱">團體／合唱</button>
+                </div>
+            </div>
+
             <div class="search-row">
-                <input type="text" id="search-input" placeholder="輸入歌名，例如：稻香" onkeydown="if(event.key==='Enter') searchSongs()">
+                <input type="text" id="search-input" placeholder="輸入歌名或歌手（選填，留空搭配上面分類也可以直接瀏覽）" onkeydown="if(event.key==='Enter') searchSongs()">
                 <button class="btn" onclick="searchSongs()" id="search-btn">搜尋</button>
             </div>
             <label class="checkbox-row">
@@ -257,12 +290,38 @@
     }
 
     // ---------------------------------------------------------------
-    // 搜尋YouTube：透過Worker呼叫（用API金鑰，不需要任何人登入授權）
+    // 分類點歌：模擬傳統KTV「語言／歌手類型」分類瀏覽，每組是單選（點一個會取消同一組
+    // 其他已選的），選好的分類會併進搜尋關鍵字裡，不是真的資料庫索引查詢（YouTube搜尋
+    // 沒有這種結構化的「這首歌是男歌手唱的」資料可以查，是用關鍵字去逼近這個瀏覽效果）
+    // ---------------------------------------------------------------
+    let selectedLang = '';
+    let selectedGender = '';
+    function setupChipGroup(containerId, onSelect) {
+        const container = document.getElementById(containerId);
+        container.querySelectorAll('.chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                container.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+                chip.classList.add('active');
+                onSelect(chip.dataset.value || '');
+            });
+        });
+    }
+    setupChipGroup('lang-chips', v => { selectedLang = v; });
+    setupChipGroup('gender-chips', v => { selectedGender = v; });
+
+    // ---------------------------------------------------------------
+    // 搜尋YouTube：透過Worker呼叫（用API金鑰，不需要任何人登入授權）。
+    // 關鍵字＝使用者打的字 + 選的分類，兩者都留空的話不會搜尋（至少要打字或選一個分類）
     // ---------------------------------------------------------------
     async function searchSongs() {
         const input = document.getElementById('search-input');
-        const query = input.value.trim();
-        if (!query) return;
+        const typedText = input.value.trim();
+        const parts = [typedText, selectedLang, selectedGender].filter(Boolean);
+        if (!parts.length) { alert('請輸入歌名／歌手，或至少選一個分類'); return; }
+        // 純靠分類瀏覽、沒打任何文字的情況下，加「精選」讓搜尋結果比較像「這個分類底下的熱門歌曲」，
+        // 而不是隨便抓到不相關的影片
+        if (!typedText) parts.push('精選');
+        const query = parts.join(' ');
         const btn = document.getElementById('search-btn');
         const resultsEl = document.getElementById('search-results');
         btn.disabled = true;
