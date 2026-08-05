@@ -1083,13 +1083,13 @@
                 <div class="mb-4">
                     <label class="font-semibold block mb-2">📏 尺寸（選填）</label>
                     <div class="grid grid-cols-2 gap-4">
-                        <input id="size-value" type="number" step="0.1" class="form-input" placeholder="例如：6">
+                        <input id="size-value" type="text" class="form-input" placeholder="例如：6 或 16x16 或 16x16x8">
                         <select id="size-unit" class="form-input">
                             <option value="吋">吋</option>
                             <option value="公分">公分</option>
                         </select>
                     </div>
-                    <p class="text-xs mt-1" style="color:var(--muted)">填了尺寸，換算份量時可以同時依尺寸（面積比）與數量計算，例如「6吋蛋糕1個」換算成「8吋蛋糕3個」；不填就只依數量換算</p>
+                    <p class="text-xs mt-1" style="color:var(--muted)">填了尺寸，換算份量時可以同時依尺寸與數量計算。支援三種寫法：單一數字（圓形/正方形，例如「6」代表6吋圓模，依邊長平方換算）、「長x寬」（長方形，依面積換算，例如「16x20」）、「長x寬x高」（依容積換算，例如「16x16x8」）；不填就只依數量換算</p>
                 </div>
                 <div class="mb-4">
                     <label class="font-semibold block mb-2">🔒 公開設定</label>
@@ -13639,7 +13639,7 @@
                     ${recipe.sizeValue ? `<p class="text-xs mb-2" style="color:var(--muted)">原始：${recipe.sizeValue}${recipe.sizeUnit} × ${recipe.servings} 個。換算時會同時依尺寸（面積比）與數量計算份量</p>` : ''}
                     <div class="flex gap-3 mb-4 flex-wrap">
                         <input id="scale-servings" value="${recipe.servings}" type="number" class="form-input flex-1" style="min-width:100px" placeholder="數量">
-                        ${recipe.sizeValue ? `<input id="scale-size" value="${recipe.sizeValue}" type="number" step="0.1" class="form-input flex-1" style="min-width:100px" placeholder="尺寸（${recipe.sizeUnit}）">` : ''}
+                        ${recipe.sizeValue ? `<input id="scale-size" value="${recipe.sizeValue}" type="text" class="form-input flex-1" style="min-width:100px" placeholder="尺寸（${recipe.sizeUnit}）">` : ''}
                         <button onclick="scaleRecipe(${recipeJson})" class="btn-amber whitespace-nowrap">換算</button>
                     </div>
                     <div class="mb-8">
@@ -16431,9 +16431,9 @@
                 const allIngRowsEmpty = [...ingContainer.querySelectorAll('[data-role="ing-name"]')].every(el => !el.value.trim());
                 if (allIngRowsEmpty) ingContainer.innerHTML = '';
                 if (data.ingredients && data.ingredients.length) {
-                    // 份量/單位優先用AI從影片裡實際判斷出來的值，AI判斷不出來（null）才退回100/g這組
-                    // 預設值讓使用者自己填，不會讓每一項食材看起來都一樣重（之前的版本就是這樣才誤導人）
-                    data.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, ing.amount || 100, ing.unit || 'g'));
+                    // 份量/單位優先用AI從影片裡實際判斷出來的值（包含模糊詞彙的合理估算），
+                    // AI真的判斷不出來（null）才退回0+「適量」，不會再顯示一個容易誤導人的固定數字
+                    data.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, ing.amount || 0, ing.unit || '適量'));
                 } else if (allIngRowsEmpty) {
                     addIngredientField();
                 }
@@ -16460,7 +16460,7 @@
                 const pathNote = data.usedTextShortcut
                     ? '📝 這次是從影片描述欄的文字直接整理出來的（比較省額度），所以沒有時間點/計時器資訊，需要的話要自己手動填'
                     : '🎬 這次有實際看過影片內容';
-                statusEl.textContent = `✅ 已加入辨識結果！食材${data.ingredients.length}項（其中${amountCount}項AI判斷出實際份量，其餘用預設值100g，請自己確認/修改）、步驟${data.steps.length}項（其中${timestampCount}項有標記時間點、${durationCount}項有帶入計時器時長）。${pathNote}——AI辨識僅供參考，請務必逐項檢查內容、時間點、份量是否正確再儲存`;
+                statusEl.textContent = `✅ 已加入辨識結果！食材${data.ingredients.length}項（其中${amountCount}項AI判斷出實際份量，其餘標示為「適量」請自己確認/修改）、步驟${data.steps.length}項（其中${timestampCount}項有標記時間點、${durationCount}項有帶入計時器時長）。${pathNote}——AI辨識僅供參考，請務必逐項檢查內容、時間點、份量是否正確再儲存`;
             } catch (err) {
                 statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
             } finally {
@@ -17257,17 +17257,39 @@
             renderMarketPricesList();
         }
 
+        // 解析尺寸字串，支援三種寫法：
+        //   單一數字（例如"6"）→ 圓形/正方形，代表直徑或邊長
+        //   長x寬（例如"16x20"或"16*20"）→ 長方形，依面積換算
+        //   長x寬x高（例如"16x16x8"）→ 立體容器，依容積換算
+        // 分隔符號接受 x、X、× 或 *，回傳一個數字陣列；格式看不懂就回傳null
+        function parseSizeDimensions(str) {
+            if (!str) return null;
+            const parts = String(str).split(/[x×*]/i).map(s => parseFloat(s.trim()));
+            if (parts.some(n => isNaN(n) || n <= 0) || parts.length > 3) return null;
+            return parts;
+        }
+        // 把尺寸陣列換算成一個「換算基準值」：單一數字時用平方（維持原本圓形直徑的換算邏輯，
+        // 面積正比於直徑平方）；兩個數字用相乘（長方形面積）；三個數字用相乘（立體容積）
+        function sizeScaleBasis(dims) {
+            if (!dims || !dims.length) return null;
+            if (dims.length === 1) return dims[0] * dims[0];
+            return dims.reduce((a, b) => a * b, 1);
+        }
         function scaleRecipe(recipe) {
             window.__lastOpenRecipe = recipe; // 記住目前開著的食譜，成本編輯完要重新整理顯示時會用到
             const newServings = parseInt(document.getElementById('scale-servings').value) || recipe.servings;
             let factor;
             if (recipe.sizeValue) {
-                // 有填尺寸：份量換算同時考慮「尺寸（面積比）」與「數量」。
-                // 圓形烘焙模具的容量大致隨直徑平方比例增減，這是烘焙常見的換算估算法，
-                // 例如 6吋→8吋，面積比約為 (8/6)^2 ≈ 1.78 倍，再乘以數量比例
+                // 有填尺寸：份量換算同時考慮「尺寸」與「數量」。
+                // 圓形烘焙模具的容量大致隨直徑平方比例增減，長方形依面積、立體容器依容積，
+                // 這幾種都是烘焙常見的換算估算法，例如 6吋→8吋圓模，面積比約為 (8/6)^2 ≈ 1.78 倍，
+                // 再乘以數量比例
                 const sizeInput = document.getElementById('scale-size');
-                const newSize = sizeInput ? (parseFloat(sizeInput.value) || recipe.sizeValue) : recipe.sizeValue;
-                const sizeRatio = Math.pow(newSize / recipe.sizeValue, 2);
+                const oldDims = parseSizeDimensions(recipe.sizeValue);
+                const newDims = sizeInput && sizeInput.value.trim() ? (parseSizeDimensions(sizeInput.value) || oldDims) : oldDims;
+                const oldBasis = sizeScaleBasis(oldDims);
+                const newBasis = sizeScaleBasis(newDims);
+                const sizeRatio = (oldBasis && newBasis) ? (newBasis / oldBasis) : 1;
                 const qtyRatio = newServings / recipe.servings;
                 factor = sizeRatio * qtyRatio;
             } else {
@@ -18172,13 +18194,17 @@
                 }
             }
 
-            const sizeValueRaw = document.getElementById('size-value').value;
+            const sizeValueRaw = document.getElementById('size-value').value.trim();
+            if (sizeValueRaw && !parseSizeDimensions(sizeValueRaw)) {
+                alert('尺寸格式看不懂，請填單一數字（例如6）、長x寬（例如16x20）、或長x寬x高（例如16x16x8），數字之間用x或*分隔');
+                return;
+            }
             const baseData = {
                 name,
                 tagline: document.getElementById('recipe-tagline').value.trim(),
                 category: document.getElementById('category').value,
                 servings: parseInt(document.getElementById('servings').value) || 1,
-                sizeValue: sizeValueRaw !== '' ? parseFloat(sizeValueRaw) : null,
+                sizeValue: sizeValueRaw !== '' ? sizeValueRaw : null,
                 sizeUnit: sizeValueRaw !== '' ? (document.getElementById('size-unit').value || '吋') : null,
                 visibility: document.getElementById('visibility').value || 'public',
                 tags: currentRecipeTags,
