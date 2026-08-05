@@ -11951,9 +11951,16 @@
                 const provider = new firebase.auth.GoogleAuthProvider();
                 provider.addScope(YOUTUBE_READONLY_SCOPE);
                 const result = await auth.signInWithPopup(provider);
-                const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
+                // 兩種拿法都試一次：新版靜態方法credentialFromResult，跟舊版直接掛在result上的credential，
+                // 有些情況其中一種會拿不到，用兩個互為備援比較保險
+                const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result) || result.credential;
                 youtubeAccessToken = credential && credential.accessToken;
-                if (!youtubeAccessToken) throw new Error('沒有拿到YouTube存取權杖，請重新嘗試授權');
+                if (!youtubeAccessToken) {
+                    // 把完整的result印到console，方便打開瀏覽器開發者工具查看Google實際回傳了什麼，
+                    // 藉此判斷是授權範圍沒生效、還是帳號沒被加進測試名單、還是其他原因
+                    console.warn('[做菜音樂] 沒有拿到accessToken，完整result如下：', result);
+                    throw new Error('沒有拿到YouTube存取權杖——最常見原因是這個Google帳號還沒被加進Cloud Console的「測試使用者」名單，或YouTube Data API還沒啟用，請打開瀏覽器開發者工具的Console分頁查看詳細資訊');
+                }
 
                 statusEl.textContent = '📥 讀取你的播放清單中...';
                 musicPlaylistCandidates = await fetchMyPlaylists(youtubeAccessToken);
@@ -11961,6 +11968,7 @@
                 renderPlaylistPicker();
                 statusEl.textContent = `找到 ${musicPlaylistCandidates.length} 個播放清單，選一個當做菜音樂吧`;
             } catch (err) {
+                console.warn('[做菜音樂] 連接失敗', err);
                 statusEl.textContent = '⚠️ 連接失敗：' + (err && err.message ? err.message : String(err));
             } finally {
                 btn.disabled = false;
