@@ -12846,6 +12846,19 @@
             iframe.src = getYoutubeEmbedUrl(youtubeUrl, seconds);
             iframe.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
+        // 教學影片的iframe網址一旦跳過時間點（seekVideo），就會永久帶著autoplay=1，之後不管
+        // 使用者按過幾次暫停，那個暫停動作本身不會改到iframe的src屬性。進出烹飪模式時，教學影片
+        // 區塊會在頁面上被搬動位置（放到作法列表最下面/搬回原位），iframe只要被搬動位置，
+        // 瀏覽器就有可能把它當成重新載入，重新載入用的還是舊的src（帶著autoplay=1），
+        // 於是就無視使用者剛剛按過的暫停、自動播放起來。在每次搬動之前，先把網址裡的
+        // autoplay=1拿掉，這樣就算真的被重新載入，也不會自動播放
+        function stripAutoplayFromVideoIframe() {
+            const iframe = document.getElementById('yt-player');
+            if (!iframe || !iframe.src) return;
+            if (iframe.src.includes('autoplay=1')) {
+                iframe.src = iframe.src.replace(/[?&]autoplay=1/, '');
+            }
+        }
 
         // ---------- 步驟計時器 ----------
         // 播放一聲像烤箱計時器一樣的「叮」聲（基音 + 泛音，快速起音、緩慢衰減）
@@ -17464,6 +17477,7 @@
             const videoSection = document.getElementById('detail-video-section');
             const stepsBlockForVideo = document.getElementById('cook-steps-block');
             if (videoSection && stepsBlockForVideo && !document.getElementById('video-section-placeholder')) {
+                stripAutoplayFromVideoIframe(); // 搬動前先拿掉網址裡的autoplay=1，避免搬動觸發iframe重新載入時無視使用者剛按過的暫停、自動播放起來
                 const placeholder = document.createElement('div');
                 placeholder.id = 'video-section-placeholder';
                 placeholder.style.display = 'none';
@@ -17568,6 +17582,7 @@
             const videoPlaceholder = document.getElementById('video-section-placeholder');
             const videoSectionBack = document.getElementById('detail-video-section');
             if (videoPlaceholder && videoSectionBack) {
+                stripAutoplayFromVideoIframe(); // 搬回原位前一樣先拿掉autoplay=1，理由跟上面進入烹飪模式那邊一樣
                 videoPlaceholder.parentNode.insertBefore(videoSectionBack, videoPlaceholder);
                 videoPlaceholder.remove();
                 videoSectionBack.style.removeProperty('margin-top');
