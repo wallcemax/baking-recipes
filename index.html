@@ -275,24 +275,15 @@
         }
         .header-dropdown-item:hover { background: var(--cream); }
 
-        /* 做菜音樂：烹飪模式時出現的小型播放器，保留看得到但不搶眼的畫面，
-           右上角小卡片的形式，搭配自訂的上一首/下一首/隨機播放按鈕 */
+        /* 做菜音樂：烹飪模式時出現的小型播放器，保留看得到但不搶眼的畫面，右下角小卡片的形式。
+           直接嵌入YouTube原生的播放清單播放器，接歌/隨機播放都是YouTube自己的播放器介面在處理，
+           所以這裡只需要包一層外框，不用自己刻控制按鈕 */
         #cooking-music-widget {
             position: fixed; bottom: calc(env(safe-area-inset-bottom) + 0.75rem); right: 0.75rem; z-index: 65;
-            width: 11.5rem; border-radius: 1rem; overflow: hidden; background: rgba(58,42,30,0.92);
+            width: 15rem; border-radius: 1rem; overflow: hidden; background: #000;
             box-shadow: 0 10px 24px -6px rgba(0,0,0,0.5);
         }
         #cooking-music-widget .music-player-frame-wrap { width: 100%; aspect-ratio: 16/9; background: #000; }
-        #cooking-music-widget .music-controls { display: flex; align-items: center; justify-content: space-between; padding: 0.4rem 0.5rem; gap: 0.25rem; }
-        #cooking-music-widget .music-ctrl-btn {
-            width: 1.9rem; height: 1.9rem; border-radius: 999px; display: flex; align-items: center; justify-content: center;
-            background: rgba(255,255,255,0.12); color: #F5EBDF; font-size: 0.85rem; flex-shrink: 0;
-        }
-        #cooking-music-widget .music-ctrl-btn.active { background: var(--jam); }
-        #cooking-music-widget .music-track-title {
-            font-size: 0.65rem; color: #F5EBDF; opacity: 0.8; padding: 0 0.5rem 0.4rem; overflow: hidden;
-            text-overflow: ellipsis; white-space: nowrap;
-        }
 
         /* 首頁歡迎Hero橫幅：溫暖漸層背景 + 手繪風裝飾插畫，取代原本樸素的空白開頭 */
         .hero-banner {
@@ -11865,19 +11856,12 @@
         }
 
         // ---------- 做菜音樂（YouTube播放清單）----------
-        // 設計原則：YouTube的播放清單只當「資料來源」用——一次性讀取清單裡每一支影片的ID+標題，
-        // 存進Firestore；實際播放永遠是「載入單一影片ID」這個站上唯一確認穩定的方式（跟食譜教學
-        // 影片同一招），完全不使用YouTube播放清單本身的嵌入/串接機制（videoseries、cuePlaylist
-        // 這類一律不用）。「下一首/上一首」單純是我們自己的程式碼決定接下來要載入哪一個影片ID，
-        // 不是交給YouTube的播放清單引擎處理——這是之前「做菜歌單」功能失敗的根本原因，這次刻意避開
+        // 設計原則（這次改版）：直接使用YouTube原生的播放清單嵌入機制（videoseries?list=...&shuffle=1），
+        // 交給YouTube自己的播放器處理接歌/隨機播放，不再自己抓每支影片ID接著播。
+        // 注意：這個機制先前在這個網站上測試失敗過（Error 153），這次是使用者已知情況下要求重新嘗試，
+        // 如果又出現一樣的問題，就能確定是這個網站的環境本身不支援這個嵌入方式，不用再猜測原因
         const YOUTUBE_READONLY_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
-        let musicSettings = { enabled: false, playlistId: '', playlistTitle: '', videoIds: [], titles: [] };
-        let musicOrder = []; // 目前的播放順序（存index），一般模式=依序0,1,2...；隨機模式=洗牌過的順序
-        let musicOrderPos = 0; // 目前播放到musicOrder裡的第幾個位置
-        let musicShuffleOn = false;
-        let ytPlayer = null;
-        let ytPlayerReady = false;
-        let ytApiReadyPromise = null;
+        let musicSettings = { enabled: false, playlistId: '', playlistTitle: '', itemCount: 0 };
         let youtubeAccessToken = null; // 只存在記憶體裡，換分頁或重新整理頁面就會消失，需要重新連接才能再抓一次清單
         let musicPlaylistCandidates = []; // 目前這次連接後列出來、可供選擇的播放清單清單
 
@@ -11895,8 +11879,7 @@
                     enabled: !!data.enabled,
                     playlistId: data.playlistId || '',
                     playlistTitle: data.playlistTitle || '',
-                    videoIds: data.videoIds || [],
-                    titles: data.titles || [],
+                    itemCount: data.itemCount || 0,
                 };
             } catch (err) {
                 console.warn('讀取做菜音樂設定失敗', err && err.message);
@@ -11920,8 +11903,8 @@
         function updateMusicSettingsStatusText() {
             const statusEl = document.getElementById('music-settings-status');
             if (!statusEl) return;
-            statusEl.textContent = musicSettings.videoIds.length
-                ? `✅ 目前使用「${musicSettings.playlistTitle || '播放清單'}」，共 ${musicSettings.videoIds.length} 首歌`
+            statusEl.textContent = musicSettings.playlistId
+                ? `✅ 目前使用「${musicSettings.playlistTitle || '播放清單'}」，共 ${musicSettings.itemCount} 首歌`
                 : '尚未選擇播放清單，請按上面的按鈕連接';
         }
         async function onMusicEnabledToggle() {
@@ -12008,175 +11991,53 @@
                 </button>
             `).join('');
         }
-        // 使用者選定某個播放清單後，讀取這個清單裡所有影片的ID+標題，存進Firestore
+        // 使用者選定某個播放清單後，直接存playlistId，不需要再另外抓每支影片的ID——
+        // 原生播放清單嵌入只需要知道「哪個播放清單」，接歌/隨機播放都交給YouTube自己處理
         async function selectMusicPlaylist(playlistId) {
             const statusEl = document.getElementById('music-settings-status');
-            if (!youtubeAccessToken) { statusEl.textContent = '⚠️ 連接已逾時，請重新按一次連接按鈕'; return; }
             const candidate = musicPlaylistCandidates.find(p => p.id === playlistId);
-            statusEl.textContent = '📥 讀取歌曲清單中...';
+            musicSettings.playlistId = playlistId;
+            musicSettings.playlistTitle = (candidate && candidate.title) || '';
+            musicSettings.itemCount = (candidate && candidate.itemCount) || 0;
+            musicSettings.enabled = true;
             try {
-                const items = await fetchAllPlaylistItems(playlistId, youtubeAccessToken);
-                if (!items.length) throw new Error('這個播放清單目前是空的');
-
-                musicSettings.videoIds = items.map(i => i.videoId);
-                musicSettings.titles = items.map(i => i.title);
-                musicSettings.playlistId = playlistId;
-                musicSettings.playlistTitle = (candidate && candidate.title) || '';
-                musicSettings.enabled = true;
                 await musicSettingsDocRef().set({
                     enabled: true,
                     playlistId,
                     playlistTitle: musicSettings.playlistTitle,
-                    videoIds: musicSettings.videoIds,
-                    titles: musicSettings.titles,
+                    itemCount: musicSettings.itemCount,
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 }, { merge: true });
                 document.getElementById('music-enabled-toggle').checked = true;
                 document.getElementById('music-playlist-picker').classList.add('hidden');
-                musicOrder = []; // 清單換新了，播放順序要重新建立
                 updateMusicSettingsStatusText();
             } catch (err) {
-                statusEl.textContent = '⚠️ 讀取失敗：' + (err && err.message ? err.message : String(err));
+                statusEl.textContent = '⚠️ 儲存失敗：' + (err && err.message ? err.message : String(err));
             }
-        }
-        // 依序抓完播放清單所有分頁，最多抓300首歌就停止（防呆用，避免異常大的清單一直抓下去）
-        async function fetchAllPlaylistItems(playlistId, accessToken) {
-            const items = [];
-            let pageToken = '';
-            do {
-                const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId=${encodeURIComponent(playlistId)}${pageToken ? `&pageToken=${pageToken}` : ''}`;
-                const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-                if (!res.ok) {
-                    const errData = await res.json().catch(() => null);
-                    throw new Error((errData && errData.error && errData.error.message) || `YouTube API回應錯誤(${res.status})`);
-                }
-                const data = await res.json();
-                (data.items || []).forEach(item => {
-                    const videoId = item.contentDetails && item.contentDetails.videoId;
-                    const title = item.snippet && item.snippet.title;
-                    // 被刪除或設為私人的影片，YouTube會回傳「Private video」「Deleted video」這種標題，
-                    // 濾掉這種項目，不然播放的時候會直接放不出來
-                    if (videoId && title && title !== 'Private video' && title !== 'Deleted video') {
-                        items.push({ videoId, title });
-                    }
-                });
-                pageToken = data.nextPageToken || '';
-            } while (pageToken && items.length < 300);
-            return items;
         }
 
-        // 動態載入YouTube IFrame Player API，只有真的要播放時才載入，不會讓所有訪客都白白多載一支script
-        function loadYoutubeIframeApi() {
-            if (ytApiReadyPromise) return ytApiReadyPromise;
-            ytApiReadyPromise = new Promise(resolve => {
-                if (window.YT && window.YT.Player) { resolve(); return; }
-                const prevCallback = window.onYouTubeIframeAPIReady;
-                window.onYouTubeIframeAPIReady = () => {
-                    if (typeof prevCallback === 'function') prevCallback();
-                    resolve();
-                };
-                const tag = document.createElement('script');
-                tag.src = 'https://www.youtube.com/iframe_api';
-                document.head.appendChild(tag);
-            });
-            return ytApiReadyPromise;
-        }
-        // 產生這次要播放的順序：一般模式依序0,1,2...；隨機模式洗牌過
-        function buildMusicOrder() {
-            const order = Array.from({ length: musicSettings.videoIds.length }, (_, i) => i);
-            if (musicShuffleOn) {
-                for (let i = order.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [order[i], order[j]] = [order[j], order[i]];
-                }
-            }
-            return order;
-        }
-        // 進烹飪模式時呼叫：顯示小工具、（第一次的話）建立YT.Player並開始播放
-        async function startCookingMusic() {
-            if (!musicSettings.enabled || !musicSettings.videoIds.length) return;
+        // 進烹飪模式時呼叫：用YouTube原生的播放清單嵌入網址（videoseries?list=...&shuffle=1），
+        // 接歌、隨機播放、上下首全部交給YouTube自己的播放器介面處理，不自己維護播放順序
+        function startCookingMusic() {
+            if (!musicSettings.enabled || !musicSettings.playlistId) return;
             const widget = document.getElementById('cooking-music-widget');
             if (!widget) return;
-            if (!musicOrder.length) { musicOrder = buildMusicOrder(); musicOrderPos = 0; }
-
-            widget.classList.remove('hidden');
-            renderMusicWidgetShell();
-
-            await loadYoutubeIframeApi();
-            const videoId = musicSettings.videoIds[musicOrder[musicOrderPos]];
-            if (!ytPlayer) {
-                ytPlayer = new YT.Player('cooking-music-iframe-target', {
-                    width: '100%', height: '100%', videoId,
-                    playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
-                    events: {
-                        onReady: () => { ytPlayerReady = true; updateMusicTrackTitle(); updateMusicPlayPauseIcon(); },
-                        onStateChange: (e) => {
-                            if (e.data === YT.PlayerState.ENDED) playNextTrack();
-                            updateMusicPlayPauseIcon();
-                        },
-                    },
-                });
-            } else if (ytPlayerReady) {
-                ytPlayer.loadVideoById(videoId);
-                updateMusicTrackTitle();
+            if (widget.dataset.built !== '1') {
+                widget.dataset.built = '1';
+                widget.innerHTML = `<div class="music-player-frame-wrap"><iframe id="cooking-music-iframe" width="100%" height="100%" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>`;
             }
+            const iframe = document.getElementById('cooking-music-iframe');
+            if (iframe) {
+                iframe.src = `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(musicSettings.playlistId)}&listType=playlist&shuffle=1&autoplay=1&playsinline=1&rel=0`;
+            }
+            widget.classList.remove('hidden');
         }
-        // 離開烹飪模式時呼叫：暫停播放、隱藏小工具（player實例保留著，下次進烹飪模式能快速接續）
+        // 離開烹飪模式時呼叫：把iframe的src清空來停止播放（比暫停更確實，重進烹飪模式時會重新從頭播放），
+        // 並隱藏小工具
         function stopCookingMusic() {
             document.getElementById('cooking-music-widget')?.classList.add('hidden');
-            if (ytPlayer && ytPlayerReady) {
-                try { ytPlayer.pauseVideo(); } catch (err) {}
-            }
-        }
-        function renderMusicWidgetShell() {
-            const widget = document.getElementById('cooking-music-widget');
-            if (!widget || widget.dataset.built === '1') return; // 只建立一次DOM結構，避免把YT.Player賴以運作的容器整個砍掉重建
-            widget.dataset.built = '1';
-            widget.innerHTML = `
-                <div class="music-player-frame-wrap"><div id="cooking-music-iframe-target" style="width:100%;height:100%"></div></div>
-                <div class="music-track-title" id="music-track-title"></div>
-                <div class="music-controls">
-                    <button class="music-ctrl-btn" onclick="toggleMusicShuffle()" id="music-shuffle-btn" title="隨機播放">🔀</button>
-                    <button class="music-ctrl-btn" onclick="playPrevTrack()" title="上一首">⏮</button>
-                    <button class="music-ctrl-btn" onclick="toggleMusicPlayPause()" id="music-playpause-btn" title="播放/暫停">⏸</button>
-                    <button class="music-ctrl-btn" onclick="playNextTrack()" title="下一首">⏭</button>
-                </div>`;
-        }
-        function updateMusicTrackTitle() {
-            const el = document.getElementById('music-track-title');
-            if (!el || !musicOrder.length) return;
-            el.textContent = musicSettings.titles[musicOrder[musicOrderPos]] || '';
-        }
-        function toggleMusicPlayPause() {
-            if (!ytPlayer || !ytPlayerReady) return;
-            if (ytPlayer.getPlayerState() === YT.PlayerState.PLAYING) ytPlayer.pauseVideo(); else ytPlayer.playVideo();
-        }
-        function updateMusicPlayPauseIcon() {
-            const btn = document.getElementById('music-playpause-btn');
-            if (!btn || !ytPlayer) return;
-            btn.textContent = ytPlayer.getPlayerState() === YT.PlayerState.PLAYING ? '⏸' : '▶';
-        }
-        function playNextTrack() {
-            if (!musicOrder.length) return;
-            musicOrderPos = (musicOrderPos + 1) % musicOrder.length;
-            if (ytPlayer && ytPlayerReady) ytPlayer.loadVideoById(musicSettings.videoIds[musicOrder[musicOrderPos]]);
-            updateMusicTrackTitle();
-        }
-        function playPrevTrack() {
-            if (!musicOrder.length) return;
-            musicOrderPos = (musicOrderPos - 1 + musicOrder.length) % musicOrder.length;
-            if (ytPlayer && ytPlayerReady) ytPlayer.loadVideoById(musicSettings.videoIds[musicOrder[musicOrderPos]]);
-            updateMusicTrackTitle();
-        }
-        function toggleMusicShuffle() {
-            musicShuffleOn = !musicShuffleOn;
-            document.getElementById('music-shuffle-btn')?.classList.toggle('active', musicShuffleOn);
-            // 重新洗牌，但把目前正在播放的這首放在新順序的第一個位置，切換隨機模式的當下不會馬上跳歌
-            const currentVideoIdx = musicOrder[musicOrderPos];
-            musicOrder = buildMusicOrder();
-            const posOfCurrent = musicOrder.indexOf(currentVideoIdx);
-            if (posOfCurrent > 0) { musicOrder.splice(posOfCurrent, 1); musicOrder.unshift(currentVideoIdx); }
-            musicOrderPos = 0;
+            const iframe = document.getElementById('cooking-music-iframe');
+            if (iframe) iframe.src = '';
         }
 
         // 點背景遮罩收起選單的邏輯，已經直接寫在遮罩元素的onclick上，不需要額外的全域監聽
