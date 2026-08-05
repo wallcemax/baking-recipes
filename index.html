@@ -1118,7 +1118,11 @@
                         </div>
                     </div>
                 </div>
-                <input id="youtube-url" class="form-input mb-6" placeholder="🎬 YouTube 影片連結（選填，例如 https://youtu.be/xxxx）">
+                <div class="flex gap-2 mb-4">
+                    <input id="youtube-url" class="form-input flex-1" placeholder="🎬 YouTube 影片連結（選填，例如 https://youtu.be/xxxx）">
+                    <button type="button" id="ai-video-recipe-btn" onclick="handleAnalyzeRecipeVideo()" class="hidden btn-sage text-sm !px-3 whitespace-nowrap" title="AI看完影片自動帶入名稱/食材/步驟/時間軸/計時器">🎬 AI影片辨識新增食譜</button>
+                </div>
+                <p id="ai-video-recipe-status" class="hidden text-xs -mt-3 mb-4" style="color:var(--chambray)"></p>
                 <div class="mb-6">
                     <div class="flex justify-between items-center mb-3">
                         <label class="font-semibold">食材</label>
@@ -11840,6 +11844,12 @@
                 adminMenuBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
             }
             if (!isAdmin()) closeDesktopAdminMenu(); // 登出或帳號切換成非管理員時，順手把選單收起來，避免殘留開著的狀態
+            // AI影片辨識新增食譜按鈕：只有管理者看得到，跟其他管理員專屬按鈕用同一套isAdmin()判斷
+            const aiVideoBtn = document.getElementById('ai-video-recipe-btn');
+            if (aiVideoBtn) {
+                aiVideoBtn.classList.toggle('hidden', !isAdmin());
+                aiVideoBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
+            }
             // 手機版漢堡選單裡的管理員專屬項目，跟電腦版用同一個isAdmin()判斷同步顯示/隱藏
             ['admin-nutrition-btn-mobile', 'admin-orphan-images-btn-mobile', 'admin-achievements-btn-mobile'].forEach(id => {
                 const btn = document.getElementById(id);
@@ -16336,6 +16346,81 @@
                 statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
             } finally {
                 event.target.value = '';
+                hideAiProcessingAnimation();
+            }
+        }
+
+        // AI影片辨識新增食譜：把貼在YouTube網址欄位裡的連結丟給Gemini看完整支影片，自動帶入
+        // 名稱/食材/步驟，並且盡量把每個步驟對應到影片時間點（跳影片時間軸欄位）、抓出發酵/烘烤
+        // 這類需要等待的時長（計時器欄位）。只有管理者看得到這顆按鈕（Worker端也有驗證，不是只藏UI）。
+        // 沿用跟拍照辨識食譜同一套「欄位已經有內容就用加的、全部空白才清空重填」的邏輯，
+        // 兩種AI輔助填表方式行為一致，不會讓使用者混淆
+        async function handleAnalyzeRecipeVideo() {
+            const urlInput = document.getElementById('youtube-url');
+            const youtubeUrl = urlInput.value.trim();
+            if (!youtubeUrl) { alert('請先在上面欄位貼上YouTube影片連結'); return; }
+            if (!getYoutubeVideoId(youtubeUrl)) { alert('看不出來這是有效的YouTube網址，請確認後再試一次'); return; }
+            if (!currentUser) { alert('請先登入才能使用這個功能'); return; }
+
+            const statusEl = document.getElementById('ai-video-recipe-status');
+            const btn = document.getElementById('ai-video-recipe-btn');
+            statusEl.textContent = '🎬 AI正在看影片中，這個比照片辨識慢很多，可能需要1-2分鐘，請耐心等候...';
+            statusEl.classList.remove('hidden');
+            btn.disabled = true;
+            showAiProcessingAnimation();
+            try {
+                const idToken = await currentUser.getIdToken();
+                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'analyze_recipe_video', youtubeUrl, idToken }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '辨識失敗');
+                const hasContent = data.name || (data.ingredients && data.ingredients.length) || (data.steps && data.steps.length);
+                if (!hasContent) {
+                    statusEl.innerHTML = `⚠️ 影片裡辨識不出食譜內容，可能不是食譜教學影片、或內容AI看不懂，麻煩手動輸入<br>
+                        <span style="color:var(--muted)">診斷資訊：${(data.raw || '（沒有任何回應內容）').replace(/</g, '&lt;')}</span>`;
+                    return;
+                }
+                // 填入食譜名稱（只有辨識到名稱、而且目前欄位是空的時候才填入，不會覆蓋掉你已經自己填好的名稱）
+                if (data.name && !document.getElementById('name').value.trim()) document.getElementById('name').value = data.name;
+
+                // 食材：跟拍照辨識食譜同一套邏輯，容器裡如果都還是空白欄位就先清掉，已經有內容的話用加的
+                const ingContainer = document.getElementById('ingredients-container');
+                const allIngRowsEmpty = [...ingContainer.querySelectorAll('[data-role="ing-name"]')].every(el => !el.value.trim());
+                if (allIngRowsEmpty) ingContainer.innerHTML = '';
+                if (data.ingredients && data.ingredients.length) {
+                    // 影片辨識只給食材名稱、不給份量單位（份量常常影片裡沒明講、亂猜反而誤導），
+                    // 用預設值(100/g)讓使用者自己填實際份量
+                    data.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, 100, 'g'));
+                } else if (allIngRowsEmpty) {
+                    addIngredientField();
+                }
+
+                // 步驟：時間戳記轉成mm:ss字串格式（跟手動輸入時間軸欄位格式一致），
+                // 計時器分鐘數直接帶進去，兩者都是AI判斷不出來就填null，欄位保持空白讓使用者自己填
+                const stepContainer = document.getElementById('steps-container');
+                const allStepRowsEmpty = [...stepContainer.querySelectorAll('[data-role="step-text"]')].every(el => !el.value.trim());
+                if (allStepRowsEmpty) stepContainer.innerHTML = '';
+                if (data.steps && data.steps.length) {
+                    data.steps.forEach(s => addStepField(
+                        s.text || '',
+                        (s.timestampSeconds !== null && s.timestampSeconds !== undefined) ? formatTimestamp(s.timestampSeconds) : '',
+                        s.durationMinutes || ''
+                    ));
+                } else if (allStepRowsEmpty) {
+                    addStepField();
+                }
+                renumberStepLabels();
+
+                const timestampCount = (data.steps || []).filter(s => s.timestampSeconds !== null && s.timestampSeconds !== undefined).length;
+                const durationCount = (data.steps || []).filter(s => s.durationMinutes).length;
+                statusEl.textContent = `✅ 已加入辨識結果！食材${data.ingredients.length}項、步驟${data.steps.length}項（其中${timestampCount}項有標記時間點、${durationCount}項有帶入計時器時長）——AI辨識僅供參考，請務必逐項檢查內容、時間點、份量是否正確再儲存`;
+            } catch (err) {
+                statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
+            } finally {
+                btn.disabled = false;
                 hideAiProcessingAnimation();
             }
         }
