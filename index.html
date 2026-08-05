@@ -637,6 +637,7 @@
                     <input id="music-public-playlist-input" placeholder="https://www.youtube.com/playlist?list=...　留空＝連接自己的播放清單" class="form-input mb-2 text-sm">
                     <p class="text-xs mb-3" style="color:#B3A492">有貼網址：直接讀取那個公開清單。沒貼網址：連接你的YouTube帳號，列出你自己的播放清單讓你選；只會讀取清單內容，不會有任何寫入或修改的權限</p>
                     <button onclick="connectYoutubeAccount()" id="music-connect-btn" class="btn-secondary text-sm !px-4 !py-2 mb-3">🔗 連接</button>
+                    <button onclick="resetMusicSettings()" id="music-reset-btn" class="hidden text-xs !px-3 !py-1.5 mb-3 ml-2" style="color:#B3A492; text-decoration:underline;">清除目前設定，重新連接</button>
                     <div id="music-playlist-picker" class="hidden mb-2">
                         <p class="text-xs mb-2" style="color:#B3A492">選一個播放清單：</p>
                         <div id="music-playlist-list" class="space-y-2"></div>
@@ -11945,6 +11946,32 @@
             statusEl.textContent = musicSettings.videoIds.length
                 ? `✅ 目前使用「${musicSettings.playlistTitle || '播放清單'}」，共 ${musicSettings.videoIds.length} 首歌`
                 : '尚未選擇播放清單，請按上面的按鈕連接';
+            document.getElementById('music-reset-btn')?.classList.toggle('hidden', !musicSettings.videoIds.length);
+        }
+        // 清除目前連接/選定的播放清單，讓使用者能直接重新開始（例如不小心連到別人的帳號、
+        // 選錯清單，不用卡在錯誤狀態裡）。只清播放清單相關資料，不會動到網站本身的登入狀態
+        async function resetMusicSettings() {
+            if (!confirm('確定要清除目前的做菜音樂設定嗎？清除後需要重新連接、重新選擇播放清單。')) return;
+            musicSettings.playlistId = '';
+            musicSettings.playlistTitle = '';
+            musicSettings.videoIds = [];
+            musicSettings.titles = [];
+            youtubeAccessToken = null; // 連帶清掉暫存的權杖，確保下次「連接」一定會重新跳出Google的帳號選擇畫面
+            musicPlaylistCandidates = [];
+            try {
+                await musicSettingsDocRef().set({
+                    playlistId: firebase.firestore.FieldValue.delete(),
+                    playlistTitle: firebase.firestore.FieldValue.delete(),
+                    videoIds: firebase.firestore.FieldValue.delete(),
+                    titles: firebase.firestore.FieldValue.delete(),
+                }, { merge: true });
+            } catch (err) {
+                console.warn('清除做菜音樂設定失敗', err && err.message);
+            }
+            document.getElementById('music-playlist-picker').classList.add('hidden');
+            const publicInput = document.getElementById('music-public-playlist-input');
+            if (publicInput) publicInput.value = '';
+            updateMusicSettingsStatusText();
         }
         async function onMusicEnabledToggle() {
             const enabled = document.getElementById('music-enabled-toggle').checked;
@@ -11996,6 +12023,7 @@
                 alert('偵測到你目前是透過App內建瀏覽器開啟，YouTube帳號授權可能無法正常運作，請改用Chrome／Safari開啟本網站再試一次。');
                 return;
             }
+            if (!currentUser) { alert('請先登入才能連接YouTube帳號'); return; }
             const statusEl = document.getElementById('music-settings-status');
             const btn = document.getElementById('music-connect-btn');
             const publicPlaylistInput = document.getElementById('music-public-playlist-input');
@@ -12009,7 +12037,16 @@
             try {
                 const provider = new firebase.auth.GoogleAuthProvider();
                 provider.addScope(YOUTUBE_READONLY_SCOPE);
-                const result = await auth.signInWithPopup(provider);
+                // 強制每次都跳出Google的「選擇帳號」畫面，不要偷偷沿用瀏覽器記住的帳號，
+                // 讓使用者每次都能清楚看到、主動選對帳號，降低選錯的機會
+                provider.setCustomParameters({ prompt: 'select_account' });
+                // 用reauthenticateWithPopup（重新驗證身份）取代signInWithPopup（重新登入）——
+                // 這是關鍵差異：signInWithPopup如果在跳窗裡選了跟目前登入不同的帳號，會直接把整個
+                // 網站的登入身份換成那個帳號；reauthenticateWithPopup則會要求「一定要跟目前登入的
+                // 帳號一致」，選錯帳號的話Firebase會直接擋下來、丟出auth/user-mismatch錯誤，
+                // 不會真的把網站登入身份换掉，這樣就算跳窗裡不小心點錯，最多就是連接失敗，
+                // 不會有「不知不覺整個網站登入身份被換掉」這種更嚴重的問題
+                const result = await currentUser.reauthenticateWithPopup(provider);
                 // 兩種拿法都試一次：新版靜態方法credentialFromResult，跟舊版直接掛在result上的credential，
                 // 有些情況其中一種會拿不到，用兩個互為備援比較保險
                 const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result) || result.credential;
@@ -12034,7 +12071,11 @@
                 }
             } catch (err) {
                 console.warn('[做菜音樂] 連接失敗', err);
-                statusEl.textContent = '⚠️ 連接失敗：' + (err && err.message ? err.message : String(err));
+                if (err && err.code === 'auth/user-mismatch') {
+                    statusEl.textContent = '⚠️ 你在跳出的視窗裡選的Google帳號，跟目前登入這個網站的帳號不是同一個，請重新按一次「連接」，這次選跟目前登入一致的帳號';
+                } else {
+                    statusEl.textContent = '⚠️ 連接失敗：' + (err && err.message ? err.message : String(err));
+                }
             } finally {
                 btn.disabled = false;
             }
