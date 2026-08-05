@@ -635,7 +635,7 @@
                 <div id="music-settings-fields" class="hidden">
                     <label class="text-xs block mb-1" style="color:#B3A492">別人公開的播放清單網址（選填）</label>
                     <input id="music-public-playlist-input" placeholder="https://www.youtube.com/playlist?list=...　留空＝連接自己的播放清單" class="form-input mb-2 text-sm">
-                    <p class="text-xs mb-3" style="color:#B3A492">有貼網址：直接讀取那個公開清單。沒貼網址：連接你的YouTube帳號，列出你自己的播放清單讓你選；只會讀取清單內容，不會有任何寫入或修改的權限</p>
+                    <p class="text-xs mb-3" style="color:#B3A492">有貼網址：直接讀取那個公開清單，不需要登入授權，之後也會自動保持更新。沒貼網址：連接你的YouTube帳號，列出你自己的播放清單讓你選；只會讀取清單內容，不會有任何寫入或修改的權限</p>
                     <button onclick="connectYoutubeAccount()" id="music-connect-btn" class="btn-secondary text-sm !px-4 !py-2 mb-3">🔗 連接</button>
                     <button onclick="resetMusicSettings()" id="music-reset-btn" class="hidden text-xs !px-3 !py-1.5 mb-3 ml-2" style="color:#B3A492; text-decoration:underline;">清除目前設定，重新連接</button>
                     <div id="music-playlist-picker" class="hidden mb-2">
@@ -11894,7 +11894,7 @@
         // 一首一首用單支影片嵌入的方式接著播」，這是唯一確認穩定的方式。隨機播放也是自己的邏輯處理：
         // 每次「下一首」都重新隨機挑一首（不是預先洗牌一次排好順序），確保整段烹飪過程都持續隨機
         const YOUTUBE_READONLY_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
-        let musicSettings = { enabled: false, playlistId: '', playlistTitle: '', videoIds: [], titles: [] };
+        let musicSettings = { enabled: false, playlistId: '', playlistTitle: '', videoIds: [], titles: [], source: '' };
         let musicCurrentIndex = 0;
         let musicShuffleOn = false;
         let ytPlayer = null;
@@ -11920,6 +11920,7 @@
                     playlistTitle: data.playlistTitle || '',
                     videoIds: data.videoIds || [],
                     titles: data.titles || [],
+                    source: data.source || '',
                 };
                 musicShuffleOn = !!data.shuffleOn; // 隨機播放開關要記住上次的選擇，不是每次都重置成關閉，
                 // 不然「有開隨機」這件事，要等進了烹飪模式之後手動點一次🔀才會生效，
@@ -11938,6 +11939,8 @@
             document.getElementById('music-playlist-picker').classList.add('hidden'); // 每次重新打開視窗都先收起清單選擇區，避免顯示上次連接時的舊資料
             updateMusicSettingsStatusText();
             pushModalHistoryState();
+            // 公開清單來源的話，打開設定視窗時順便在背景刷新一次，畫面上的歌曲數量會是最新的
+            refreshPublicPlaylistIfNeeded().then(updateMusicSettingsStatusText);
         }
         function closeMusicSettingsModal(fromPopState) {
             document.getElementById('music-settings-modal').classList.add('hidden');
@@ -11946,8 +11949,9 @@
         function updateMusicSettingsStatusText() {
             const statusEl = document.getElementById('music-settings-status');
             if (!statusEl) return;
+            const autoUpdateNote = musicSettings.source === 'public' ? '（公開清單，會自動更新）' : '';
             statusEl.textContent = musicSettings.videoIds.length
-                ? `✅ 目前使用「${musicSettings.playlistTitle || '播放清單'}」，共 ${musicSettings.videoIds.length} 首歌`
+                ? `✅ 目前使用「${musicSettings.playlistTitle || '播放清單'}」，共 ${musicSettings.videoIds.length} 首歌${autoUpdateNote}`
                 : '尚未選擇播放清單，請按上面的按鈕連接';
             document.getElementById('music-reset-btn')?.classList.toggle('hidden', !musicSettings.videoIds.length);
         }
@@ -11959,6 +11963,7 @@
             musicSettings.playlistTitle = '';
             musicSettings.videoIds = [];
             musicSettings.titles = [];
+            musicSettings.source = '';
             youtubeAccessToken = null; // 連帶清掉暫存的權杖，確保下次「連接」一定會重新跳出Google的帳號選擇畫面
             musicPlaylistCandidates = [];
             try {
@@ -11967,6 +11972,7 @@
                     playlistTitle: firebase.firestore.FieldValue.delete(),
                     videoIds: firebase.firestore.FieldValue.delete(),
                     titles: firebase.firestore.FieldValue.delete(),
+                    source: firebase.firestore.FieldValue.delete(),
                 }, { merge: true });
             } catch (err) {
                 console.warn('清除做菜音樂設定失敗', err && err.message);
@@ -12034,17 +12040,26 @@
             return youtubeConnectAuth;
         }
         async function connectYoutubeAccount() {
-            if (isInAppBrowser()) {
-                alert('偵測到你目前是透過App內建瀏覽器開啟，YouTube帳號授權可能無法正常運作，請改用Chrome／Safari開啟本網站再試一次。');
-                return;
-            }
-            if (!currentUser) { alert('請先登入才能連接YouTube帳號'); return; }
+            if (!currentUser) { alert('請先登入才能設定做菜音樂'); return; }
             const statusEl = document.getElementById('music-settings-status');
             const btn = document.getElementById('music-connect-btn');
             const publicPlaylistInput = document.getElementById('music-public-playlist-input');
             const publicPlaylistId = parsePlaylistId(publicPlaylistInput ? publicPlaylistInput.value : '');
             if (publicPlaylistInput && publicPlaylistInput.value.trim() && !publicPlaylistId) {
                 statusEl.textContent = '⚠️ 看不出來這是有效的播放清單網址或ID，請確認後再試一次';
+                return;
+            }
+            // 有貼別人的公開清單網址：這種清單本來就是公開資料，不需要登入授權、也不會跳出任何
+            // Google帳號選擇視窗，直接呼叫Worker讀取就好，而且因為不需要token，之後可以在背景
+            // 自動重新整理，不用使用者每次都手動點
+            if (publicPlaylistId) {
+                btn.disabled = true;
+                await selectPublicPlaylist(publicPlaylistId);
+                btn.disabled = false;
+                return;
+            }
+            if (isInAppBrowser()) {
+                alert('偵測到你目前是透過App內建瀏覽器開啟，YouTube帳號授權可能無法正常運作，請改用Chrome／Safari開啟本網站再試一次。');
                 return;
             }
             btn.disabled = true;
@@ -12076,17 +12091,11 @@
                     throw new Error('沒有拿到YouTube存取權杖——最常見原因是這個Google帳號還沒被加進Cloud Console的「測試使用者」名單，或YouTube Data API還沒啟用，請打開瀏覽器開發者工具的Console分頁查看詳細資訊');
                 }
 
-                if (publicPlaylistId) {
-                    // 有貼別人的公開清單網址：直接讀那個清單的內容，不用列出自己的清單選
-                    statusEl.textContent = '📥 讀取播放清單中...';
-                    await selectMusicPlaylist(publicPlaylistId); // selectMusicPlaylist內部會自動去查這個清單的標題
-                } else {
-                    statusEl.textContent = '📥 讀取你的播放清單中...';
-                    musicPlaylistCandidates = await fetchMyPlaylists(youtubeAccessToken);
-                    if (!musicPlaylistCandidates.length) throw new Error('找不到你帳號底下的任何播放清單');
-                    renderPlaylistPicker();
-                    statusEl.textContent = `找到 ${musicPlaylistCandidates.length} 個播放清單，選一個當做菜音樂吧`;
-                }
+                statusEl.textContent = '📥 讀取你的播放清單中...';
+                musicPlaylistCandidates = await fetchMyPlaylists(youtubeAccessToken);
+                if (!musicPlaylistCandidates.length) throw new Error('找不到你帳號底下的任何播放清單');
+                renderPlaylistPicker();
+                statusEl.textContent = `找到 ${musicPlaylistCandidates.length} 個播放清單，選一個當做菜音樂吧`;
             } catch (err) {
                 console.warn('[做菜音樂] 連接失敗', err);
                 statusEl.textContent = '⚠️ 連接失敗：' + (err && err.message ? err.message : String(err));
@@ -12146,6 +12155,7 @@
                 musicSettings.titles = items.map(i => i.title);
                 musicSettings.playlistId = playlistId;
                 musicSettings.playlistTitle = candidateTitle || playlistId;
+                musicSettings.source = 'own';
                 musicSettings.enabled = true;
                 await musicSettingsDocRef().set({
                     enabled: true,
@@ -12153,6 +12163,7 @@
                     playlistTitle: musicSettings.playlistTitle,
                     videoIds: musicSettings.videoIds,
                     titles: musicSettings.titles,
+                    source: 'own',
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 }, { merge: true });
                 document.getElementById('music-enabled-toggle').checked = true;
@@ -12160,6 +12171,64 @@
                 updateMusicSettingsStatusText();
             } catch (err) {
                 statusEl.textContent = '⚠️ 讀取失敗：' + (err && err.message ? err.message : String(err));
+            }
+        }
+        // 別人公開的播放清單：不需要登入授權，直接呼叫Worker（用API金鑰，不是OAuth）讀取內容。
+        // 因為不需要token，之後可以被refreshPublicPlaylistIfNeeded()在背景重複呼叫做自動更新
+        async function fetchPublicPlaylist(playlistId) {
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'get_public_playlist', playlistId }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) throw new Error((data && data.error) || `讀取失敗(${res.status})`);
+            return data; // { playlistTitle, videoIds, titles }
+        }
+        async function selectPublicPlaylist(playlistId) {
+            const statusEl = document.getElementById('music-settings-status');
+            statusEl.textContent = '📥 讀取播放清單中...';
+            try {
+                const data = await fetchPublicPlaylist(playlistId);
+                musicSettings.videoIds = data.videoIds || [];
+                musicSettings.titles = data.titles || [];
+                musicSettings.playlistId = playlistId;
+                musicSettings.playlistTitle = data.playlistTitle || playlistId;
+                musicSettings.source = 'public';
+                musicSettings.enabled = true;
+                await musicSettingsDocRef().set({
+                    enabled: true,
+                    playlistId,
+                    playlistTitle: musicSettings.playlistTitle,
+                    videoIds: musicSettings.videoIds,
+                    titles: musicSettings.titles,
+                    source: 'public',
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+                document.getElementById('music-enabled-toggle').checked = true;
+                updateMusicSettingsStatusText();
+            } catch (err) {
+                statusEl.textContent = '⚠️ 讀取失敗：' + (err && err.message ? err.message : String(err));
+            }
+        }
+        // 公開清單來源的自動更新：不需要登入、不會跳出任何授權視窗，可以放心在背景默默呼叫。
+        // 進烹飪模式、或打開設定視窗時都會呼叫這個，確保播放的清單內容跟YouTube上的最新狀態一致
+        async function refreshPublicPlaylistIfNeeded() {
+            if (musicSettings.source !== 'public' || !musicSettings.playlistId) return;
+            try {
+                const data = await fetchPublicPlaylist(musicSettings.playlistId);
+                musicSettings.videoIds = data.videoIds || musicSettings.videoIds;
+                musicSettings.titles = data.titles || musicSettings.titles;
+                musicSettings.playlistTitle = data.playlistTitle || musicSettings.playlistTitle;
+                await musicSettingsDocRef().set({
+                    videoIds: musicSettings.videoIds,
+                    titles: musicSettings.titles,
+                    playlistTitle: musicSettings.playlistTitle,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+            } catch (err) {
+                // 背景更新失敗不影響目前播放（還是用手上已經有的清單繼續播），單純記錄起來就好
+                console.warn('[做菜音樂] 背景更新公開清單失敗', err && err.message);
             }
         }
         // 查單一播放清單的標題（給貼別人公開清單網址這個情境用，這種清單不會出現在「我的清單」列表裡）
@@ -12252,6 +12321,9 @@
 
             renderMusicWidgetShell();
             widget.classList.remove('hidden');
+            // 公開清單來源的話，在背景（不await、不擋住播放）偷偷刷新一次清單內容，確保跟YouTube
+            // 上的最新狀態一致；這次播放還是先用手上現有的清單開始，不會為了等刷新結果而卡住
+            refreshPublicPlaylistIfNeeded();
 
             await loadYoutubeIframeApi();
             const videoId = musicSettings.videoIds[musicCurrentIndex];
