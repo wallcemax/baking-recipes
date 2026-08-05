@@ -275,27 +275,31 @@
         }
         .header-dropdown-item:hover { background: var(--cream); }
 
-        /* 做菜音樂：烹飪模式時出現的小型播放器，放在表頭中間偏右（烹飪模式左右分欄不是對半分，
-           左邊食材欄比較窄、右邊作法欄比較寬，用「整個畫面正中央」置中會偏進食材欄，改成靠右一點
-           對齊作法欄），不顯示影片畫面，只有時間軸、跑馬燈歌名、隨機/上一首/播放暫停/下一首四個按鈕 */
+        /* 做菜音樂：烹飪模式時插入在「食材」標題右邊、同一列並排的細長播放器，
+           不顯示影片畫面，時間軸/跑馬燈歌名/隨機/上一首/播放暫停/下一首全部擠在同一行 */
         #cooking-music-widget {
-            position: fixed; top: 10px; left: 62%; transform: translateX(-50%); z-index: 60;
-            width: min(15rem, calc(100vw - 10rem)); padding: 0.5rem 0.85rem; border-radius: 1rem;
-            background: rgba(58,42,30,0.92); box-shadow: 0 10px 24px -6px rgba(0,0,0,0.5);
+            display: flex; align-items: center; gap: 0.5rem; flex: 1 1 auto; min-width: 0;
+            padding: 0.3rem 0.6rem; border-radius: 999px; background: rgba(58,42,30,0.9);
         }
+        /* #id的優先權比.hidden這個class選擇器高，如果不額外補這條，該隱藏的時候會被上面的
+           display:flex蓋過去，導致播放器該藏的時候藏不住 */
+        #cooking-music-widget.hidden { display: none; }
         #cooking-music-widget .music-progress-track {
-            width: 100%; height: 3px; border-radius: 999px; background: rgba(255,255,255,0.22);
-            overflow: hidden; margin-bottom: 0.35rem; cursor: pointer;
+            width: 3rem; flex-shrink: 0; height: 3px; border-radius: 999px; background: rgba(255,255,255,0.22);
+            overflow: hidden; cursor: pointer;
         }
         #cooking-music-widget .music-progress-fill { height: 100%; width: 0%; background: var(--jam); }
-        #cooking-music-widget .music-title-wrap { overflow: hidden; white-space: nowrap; margin-bottom: 0.35rem; height: 1rem; }
-        #cooking-music-widget .music-title-text { display: inline-block; font-size: 0.7rem; color: #F5EBDF; }
+        #cooking-music-widget .music-title-wrap {
+            flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap;
+            display: flex; align-items: center; height: 1.4rem;
+        }
+        #cooking-music-widget .music-title-text { display: inline-block; font-size: 0.75rem; line-height: 1.4rem; color: #F5EBDF; }
         #cooking-music-widget .music-title-text.marquee { animation: music-marquee 8s linear infinite; padding-left: 100%; }
         @keyframes music-marquee { from { transform: translateX(0); } to { transform: translateX(-100%); } }
-        #cooking-music-widget .music-controls { display: flex; align-items: center; justify-content: center; gap: 0.9rem; }
+        #cooking-music-widget .music-controls { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
         #cooking-music-widget .music-ctrl-btn {
-            width: 1.8rem; height: 1.8rem; border-radius: 999px; display: flex; align-items: center; justify-content: center;
-            background: rgba(255,255,255,0.12); color: #F5EBDF; font-size: 0.8rem; flex-shrink: 0;
+            width: 1.6rem; height: 1.6rem; border-radius: 999px; display: flex; align-items: center; justify-content: center;
+            background: rgba(255,255,255,0.12); color: #F5EBDF; font-size: 0.75rem; flex-shrink: 0;
             border: none; outline: none; -webkit-tap-highlight-color: transparent; -webkit-appearance: none; appearance: none;
         }
         /* 按下去/被focus時瀏覽器預設會加一圈藍色反白或outline，這裡明確蓋掉，
@@ -309,6 +313,7 @@
         #cooking-music-widget .music-ctrl-btn.active:focus,
         #cooking-music-widget .music-ctrl-btn.active:active { background: var(--jam); }
         #cooking-music-widget .music-video-hidden { width: 0; height: 0; overflow: hidden; position: absolute; }
+
 
         /* 首頁歡迎Hero橫幅：溫暖漸層背景 + 手繪風裝飾插畫，取代原本樸素的空白開頭 */
         .hero-banner {
@@ -13395,7 +13400,7 @@
                     </div>
                     <div class="cook-split-wrap">
                     <div class="mb-10" id="cook-ingredients-block">
-                        <h3 class="font-display font-semibold text-lg mb-4">食材</h3>
+                        <h3 id="cook-ingredients-heading" class="font-display font-semibold text-lg mb-4">食材</h3>
                         <div id="detail-ingredients"></div>
                     </div>
                     <div class="mb-10" id="cook-steps-block">
@@ -17055,6 +17060,25 @@
                 stepsBlockForVideo.appendChild(videoSection); // 放在作法列表最下面，跳影片時間點不會把捲動位置拉回最上面
                 videoSection.style.setProperty('margin-top', '1.25rem', 'important');
             }
+            // 做菜音樂播放器：搬到「食材」標題右邊、同一列並排顯示，離開烹飪模式時要記得搬回原位，
+            // 用跟教學影片一樣的「留一個佔位符記住原本位置」做法
+            const ingHeading = document.getElementById('cook-ingredients-heading');
+            const musicWidget = document.getElementById('cooking-music-widget');
+            if (ingHeading && musicWidget && !document.getElementById('music-widget-placeholder')) {
+                const placeholder = document.createElement('div');
+                placeholder.id = 'music-widget-placeholder';
+                placeholder.style.display = 'none';
+                musicWidget.parentNode.insertBefore(placeholder, musicWidget);
+
+                const row = document.createElement('div');
+                row.id = 'cook-ingredients-header-row';
+                row.style.cssText = 'display:flex; align-items:center; gap:0.75rem; margin-bottom:1rem;';
+                ingHeading.parentNode.insertBefore(row, ingHeading);
+                ingHeading.style.setProperty('margin-bottom', '0', 'important');
+                ingHeading.style.setProperty('flex-shrink', '0', 'important');
+                row.appendChild(ingHeading);
+                row.appendChild(musicWidget);
+            }
 
             const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
             if (splitWrap) {
@@ -17125,6 +17149,23 @@
                 videoPlaceholder.parentNode.insertBefore(videoSectionBack, videoPlaceholder);
                 videoPlaceholder.remove();
                 videoSectionBack.style.removeProperty('margin-top');
+            }
+            // 做菜音樂播放器搬回原本位置，並拆掉烹飪模式時暫時建立的並排容器
+            const musicRow = document.getElementById('cook-ingredients-header-row');
+            const musicPlaceholder = document.getElementById('music-widget-placeholder');
+            if (musicRow) {
+                const ingHeadingBack = document.getElementById('cook-ingredients-heading');
+                const musicWidgetBack = document.getElementById('cooking-music-widget');
+                if (ingHeadingBack) {
+                    musicRow.parentNode.insertBefore(ingHeadingBack, musicRow);
+                    ingHeadingBack.style.removeProperty('margin-bottom');
+                    ingHeadingBack.style.removeProperty('flex-shrink');
+                }
+                if (musicWidgetBack && musicPlaceholder) {
+                    musicPlaceholder.parentNode.insertBefore(musicWidgetBack, musicPlaceholder);
+                    musicPlaceholder.remove();
+                }
+                musicRow.remove();
             }
             const splitWrap = content ? content.querySelector('.cook-split-wrap') : null;
             if (splitWrap) {
