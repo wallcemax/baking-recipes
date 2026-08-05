@@ -11921,6 +11921,9 @@
                     videoIds: data.videoIds || [],
                     titles: data.titles || [],
                 };
+                musicShuffleOn = !!data.shuffleOn; // 隨機播放開關要記住上次的選擇，不是每次都重置成關閉，
+                // 不然「有開隨機」這件事，要等進了烹飪模式之後手動點一次🔀才會生效，
+                // 進來的第一首歌就沒辦法吃到隨機
             } catch (err) {
                 console.warn('讀取做菜音樂設定失敗', err && err.message);
             }
@@ -12328,6 +12331,13 @@
         function toggleMusicShuffle() {
             musicShuffleOn = !musicShuffleOn;
             document.getElementById('music-shuffle-btn')?.classList.toggle('active', musicShuffleOn);
+            // 記住這次的選擇，下次進烹飪模式（甚至換一台裝置、隔天再打開）都會沿用同一個設定，
+            // 不用每次進來都要重新點一次🔀
+            if (currentUser) {
+                musicSettingsDocRef().set({ shuffleOn: musicShuffleOn }, { merge: true }).catch(err => {
+                    console.warn('儲存隨機播放設定失敗', err && err.message);
+                });
+            }
         }
         // 時間軸：YouTube IFrame API不會主動推送播放進度，要自己輪詢getCurrentTime()/getDuration()
         function startMusicProgressPolling() {
