@@ -12364,35 +12364,38 @@
 
             await loadYoutubeIframeApi();
             const videoId = musicSettings.videoIds[musicCurrentIndex];
-            if (!ytPlayer) {
-                ytPlayer = new YT.Player('cooking-music-iframe-target', {
-                    width: '100%', height: '100%', videoId,
-                    playerVars: { autoplay: 1, playsinline: 1, rel: 0, controls: 0 },
-                    events: {
-                        onReady: () => { ytPlayerReady = true; updateMusicTrackTitle(); updateMusicPlayPauseIcon(); startMusicProgressPolling(); },
-                        onStateChange: (e) => {
-                            if (e.data === YT.PlayerState.ENDED) playNextTrack();
-                            updateMusicPlayPauseIcon();
-                        },
+            // 每次進烹飪模式都重新建立一個全新的播放器實例（離開時stopCookingMusic已經把舊的徹底
+            // 銷毀掉了），不重複使用舊的player物件——之前沿用同一個player、只靠loadVideoById換歌，
+            // 遇到「離開時聲音沒真的停掉」「重進時歌名換了但實際播放的還是舊歌」這類狀態不同步的
+            // 問題，改成每次全新建立雖然多一點點開銷，但徹底避免這整類殘留狀態的bug
+            ytPlayer = new YT.Player('cooking-music-iframe-target', {
+                width: '100%', height: '100%', videoId,
+                playerVars: { autoplay: 1, playsinline: 1, rel: 0, controls: 0 },
+                events: {
+                    onReady: () => { ytPlayerReady = true; updateMusicTrackTitle(); updateMusicPlayPauseIcon(); startMusicProgressPolling(); },
+                    onStateChange: (e) => {
+                        if (e.data === YT.PlayerState.ENDED) playNextTrack();
+                        updateMusicPlayPauseIcon();
                     },
-                });
-            } else if (ytPlayerReady) {
-                ytPlayer.loadVideoById(videoId);
-                updateMusicTrackTitle();
-                startMusicProgressPolling();
-            }
+                },
+            });
         }
-        // 離開烹飪模式時呼叫：暫停播放、隱藏小工具、停止時間軸輪詢（player實例保留著，下次進烹飪模式能快速接續）
+        // 離開烹飪模式時呼叫：徹底銷毀播放器（不是只暫停），確保聲音一定會停止，
+        // 同時清空小工具內容，下次進烹飪模式會透過renderMusicWidgetShell()重新建立乾淨的畫面
         function stopCookingMusic() {
-            document.getElementById('cooking-music-widget')?.classList.add('hidden');
+            const widget = document.getElementById('cooking-music-widget');
+            widget?.classList.add('hidden');
             stopMusicProgressPolling();
-            if (ytPlayer && ytPlayerReady) {
-                try { ytPlayer.pauseVideo(); } catch (err) {}
+            if (ytPlayer) {
+                try { ytPlayer.destroy(); } catch (err) {}
             }
+            ytPlayer = null;
+            ytPlayerReady = false;
+            if (widget) { widget.innerHTML = ''; widget.dataset.built = ''; }
         }
         function renderMusicWidgetShell() {
             const widget = document.getElementById('cooking-music-widget');
-            if (!widget || widget.dataset.built === '1') return; // 只建立一次DOM結構，避免把YT.Player賴以運作的容器整個砍掉重建
+            if (!widget || widget.dataset.built === '1') return; // 每次進烹飪模式stopCookingMusic都會把dataset.built清空，所以這裡每次都會重新建立乾淨的DOM結構
             widget.dataset.built = '1';
             widget.innerHTML = `
                 <div class="music-progress-track" id="music-progress-track" onclick="seekMusicProgress(event)"><div class="music-progress-fill" id="music-progress-fill"></div></div>
