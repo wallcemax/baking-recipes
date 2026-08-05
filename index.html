@@ -11938,6 +11938,7 @@
         let ytPlayerReady = false;
         let ytApiReadyPromise = null;
         let musicProgressPollId = null;
+        let musicConsecutiveErrors = 0; // 連續幾首播放失敗（版權下架/停用嵌入等），用來防止整份清單都放不出來時無限循環卡住
         let youtubeAccessToken = null; // 只存在記憶體裡，換分頁或重新整理頁面就會消失，需要重新連接才能再抓一次清單
         let musicPlaylistCandidates = []; // 目前這次連接後列出來、可供選擇的播放清單清單
 
@@ -12375,7 +12376,23 @@
                     onReady: () => { ytPlayerReady = true; updateMusicTrackTitle(); updateMusicPlayPauseIcon(); startMusicProgressPolling(); },
                     onStateChange: (e) => {
                         if (e.data === YT.PlayerState.ENDED) playNextTrack();
+                        // 歌曲成功開始播放，代表這首沒問題，把「連續放不出來」的計數器歸零
+                        if (e.data === YT.PlayerState.PLAYING) musicConsecutiveErrors = 0;
                         updateMusicPlayPauseIcon();
+                    },
+                    // 這首歌播放失敗（常見原因：版權下架、原作者關閉嵌入播放權限、影片被移除），
+                    // 自動跳到下一首，不會整個卡在這裡不動。同時用計數器擋住「整份清單全部都放不出來」
+                    // 時陷入無限循環一直跳下一首的狀況，跳過整份清單長度都還是失敗，就停下來給提示
+                    onError: (e) => {
+                        console.warn('[做菜音樂] 這首歌播放失敗，自動跳到下一首', e.data);
+                        musicConsecutiveErrors++;
+                        if (musicConsecutiveErrors >= musicSettings.videoIds.length) {
+                            const titleEl = document.getElementById('music-title-text');
+                            if (titleEl) titleEl.textContent = '⚠️ 這份清單目前找不到能播放的歌曲';
+                            musicConsecutiveErrors = 0;
+                            return;
+                        }
+                        playNextTrack();
                     },
                 },
             });
@@ -12391,6 +12408,7 @@
             }
             ytPlayer = null;
             ytPlayerReady = false;
+            musicConsecutiveErrors = 0;
             if (widget) { widget.innerHTML = ''; widget.dataset.built = ''; }
         }
         function renderMusicWidgetShell() {
