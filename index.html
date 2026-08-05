@@ -310,6 +310,27 @@
             background: var(--line); color: var(--espresso-soft); font-size: 0.85rem; flex-shrink: 0;
         }
         .personal-list-row .plr-btn.plr-danger { background: rgba(196,69,63,0.15); color: var(--danger); }
+        /* 個人頁面儀表板：成就/做菜音樂資訊卡 */
+        .personal-info-card {
+            display: flex; align-items: center; gap: 0.85rem; padding: 1rem 1.1rem; border-radius: 1.1rem;
+            background: var(--paper); text-align: left; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08);
+        }
+        .personal-info-card:hover { background: var(--cream); }
+        .personal-info-card-icon { font-size: 1.6rem; flex-shrink: 0; }
+        .personal-info-card-text { display: flex; flex-direction: column; min-width: 0; }
+        .personal-info-card-title { font-weight: 600; }
+        .personal-info-card-sub { font-size: 0.78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* 我的食譜/我的收藏：橫向捲動的小縮圖列 */
+        .personal-scroll-row { display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 0.3rem; -webkit-overflow-scrolling: touch; }
+        .personal-scroll-item { flex-shrink: 0; width: 6.5rem; cursor: pointer; }
+        .personal-scroll-item img {
+            width: 6.5rem; height: 6.5rem; object-fit: cover; border-radius: 0.9rem; margin-bottom: 0.35rem;
+            background: var(--line);
+        }
+        .personal-scroll-item p {
+            font-size: 0.78rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; text-align: center;
+        }
         #cooking-music-widget .music-progress-track {
             width: 3rem; flex-shrink: 0; height: 3px; border-radius: 999px; background: rgba(255,255,255,0.22);
             overflow: hidden; cursor: pointer;
@@ -563,12 +584,48 @@
         <!-- 個人頁面：收藏/我的食譜共用首頁本來就有的recipes-grid，只是切換篩選狀態；
              做菜音樂/成就則沿用原本就有、已經驗證過能正常運作的視窗，不重新刻一份 -->
         <div id="personal-page-header" class="hidden mb-5 px-4 sm:px-0">
-            <button onclick="hidePersonalPage()" class="text-sm font-medium mb-3" style="color:var(--jam)">← 返回首頁</button>
-            <div class="chip-row" id="personal-page-tabs">
-                <button class="chip active" data-tab="favorites" onclick="switchPersonalTab('favorites')">❤️ 我的收藏</button>
-                <button class="chip" data-tab="mine" onclick="switchPersonalTab('mine')">📝 我的食譜</button>
-                <button class="chip" onclick="showMusicSettingsModal()">🎵 做菜音樂</button>
-                <button class="chip" onclick="showProfileModal()">🏅 成就</button>
+            <button onclick="hidePersonalPage()" class="text-sm font-medium mb-4" style="color:var(--jam)">← 返回首頁</button>
+
+            <!-- 儀表板：進入個人頁面預設看到的畫面，不是分頁切換 -->
+            <div id="personal-dashboard">
+                <div class="grid sm:grid-cols-2 gap-3 mb-6">
+                    <button onclick="showProfileModal()" class="personal-info-card">
+                        <span class="personal-info-card-icon">🏅</span>
+                        <span class="personal-info-card-text">
+                            <span class="personal-info-card-title">我的成就</span>
+                            <span id="personal-equipped-title" class="personal-info-card-sub">尚未裝備稱號</span>
+                        </span>
+                    </button>
+                    <button onclick="showMusicSettingsModal()" class="personal-info-card">
+                        <span class="personal-info-card-icon">🎵</span>
+                        <span class="personal-info-card-text">
+                            <span class="personal-info-card-title">做菜音樂</span>
+                            <span id="personal-music-status" class="personal-info-card-sub">尚未設定</span>
+                        </span>
+                    </button>
+                </div>
+
+                <div class="mb-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="font-display font-semibold">📝 我的食譜</h3>
+                        <button onclick="showPersonalFullList('mine')" class="text-xs font-medium shrink-0" style="color:var(--jam)">查看更多 →</button>
+                    </div>
+                    <div id="personal-mine-scroll" class="personal-scroll-row"></div>
+                </div>
+
+                <div class="mb-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="font-display font-semibold">❤️ 我的收藏</h3>
+                        <button onclick="showPersonalFullList('favorites')" class="text-xs font-medium shrink-0" style="color:var(--jam)">查看更多 →</button>
+                    </div>
+                    <div id="personal-fav-scroll" class="personal-scroll-row"></div>
+                </div>
+            </div>
+
+            <!-- 完整清單：按「查看更多」才會顯示，重用檔案總管風格的清單 -->
+            <div id="personal-full-list-back" class="hidden">
+                <button onclick="backToPersonalDashboard()" class="text-sm font-medium mb-3" style="color:var(--jam)">← 返回總覽</button>
+                <h3 id="personal-full-list-title" class="font-display font-semibold mb-3"></h3>
             </div>
         </div>
 
@@ -12619,8 +12676,7 @@
             document.getElementById('personal-page-header')?.classList.remove('hidden');
             document.getElementById('recipes-grid')?.classList.add('hidden');
             document.getElementById('pagination')?.classList.add('hidden');
-            document.getElementById('personal-recipe-list')?.classList.remove('hidden');
-            switchPersonalTab('favorites'); // 預設打開「我的收藏」分頁
+            backToPersonalDashboard(); // 一律從儀表板總覽開始，不是某個分頁的完整清單
             window.scrollTo({ top: 0, behavior: 'smooth' });
             pushModalHistoryState(); // 按返回鍵時要能回到首頁，不是直接跳出整個網站
         }
@@ -12639,13 +12695,58 @@
             filterRecipes();
             consumeModalHistoryState(fromPopState);
         }
-        function switchPersonalTab(tab) {
-            document.querySelectorAll('#personal-page-tabs .chip[data-tab]').forEach(c => c.classList.toggle('active', c.dataset.tab === tab));
+        // 儀表板：進入個人頁面預設看到的畫面。成就/做菜音樂卡片顯示摘要資訊，
+        // 我的食譜/我的收藏各顯示一列小縮圖（最多8筆），點縮圖直接開食譜、點「查看更多」才切到完整清單
+        function renderPersonalDashboard() {
+            // 成就卡片：顯示目前裝備的稱號
+            const titleEl = document.getElementById('personal-equipped-title');
+            if (titleEl && userProgress) {
+                const equipped = userProgress.equippedTitleId ? ACHIEVEMENT_RULES.find(r => r.id === userProgress.equippedTitleId) : null;
+                titleEl.textContent = (equipped && equipped.title) ? `目前裝備：${equipped.title.icon} ${equipped.title.name}` : '尚未裝備稱號，點擊查看';
+            }
+            // 做菜音樂卡片：顯示目前設定摘要
+            const musicEl = document.getElementById('personal-music-status');
+            if (musicEl) {
+                musicEl.textContent = (musicSettings.enabled && musicSettings.videoIds.length)
+                    ? `${musicSettings.playlistTitle || '播放清單'} · ${musicSettings.videoIds.length}首歌`
+                    : '尚未設定，點擊開始';
+            }
+            const mineRecipes = allRecipes.filter(r => currentUser && r.authorId === currentUser.uid).slice(0, 8);
+            const favRecipes = allRecipes.filter(r => userFavorites.has(r.id)).slice(0, 8);
+            renderPersonalScrollRow('personal-mine-scroll', mineRecipes, '還沒有建立過任何食譜');
+            renderPersonalScrollRow('personal-fav-scroll', favRecipes, '還沒有收藏任何食譜');
+        }
+        function renderPersonalScrollRow(containerId, recipes, emptyText) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            if (!recipes.length) { el.innerHTML = `<p class="text-sm" style="color:var(--muted)">${emptyText}</p>`; return; }
+            el.innerHTML = recipes.map(r => {
+                const img = r.imageUrl || (r.youtubeUrl && getYoutubeThumbnailUrl(r.youtubeUrl)) || CATEGORY_PLACEHOLDER_IMAGES[r.category] || CATEGORY_PLACEHOLDER_FALLBACK;
+                const recipeJson = JSON.stringify(r).replace(/"/g, '&quot;');
+                return `<div class="personal-scroll-item" onclick="showDetail(${recipeJson})">
+                    <img src="${img}" loading="lazy">
+                    <p>${escapeHtmlAttr(r.name)}</p>
+                </div>`;
+            }).join('');
+        }
+        // 「查看更多」：切到完整清單畫面（重用檔案總管風格的清單），tab是'mine'或'favorites'
+        function showPersonalFullList(tab) {
+            document.getElementById('personal-dashboard')?.classList.add('hidden');
+            document.getElementById('personal-full-list-back')?.classList.remove('hidden');
+            document.getElementById('personal-recipe-list')?.classList.remove('hidden');
+            document.getElementById('personal-full-list-title').textContent = tab === 'mine' ? '📝 我的食譜' : '❤️ 我的收藏';
             showFavoritesOnly = tab === 'favorites';
             showMyRecipesOnly = tab === 'mine';
-            document.getElementById('chip-fav')?.classList.toggle('active', showFavoritesOnly);
-            document.getElementById('chip-mine')?.classList.toggle('active', showMyRecipesOnly);
             filterRecipes();
+        }
+        // 從完整清單畫面返回儀表板總覽
+        function backToPersonalDashboard() {
+            document.getElementById('personal-dashboard')?.classList.remove('hidden');
+            document.getElementById('personal-full-list-back')?.classList.add('hidden');
+            document.getElementById('personal-recipe-list')?.classList.add('hidden');
+            showFavoritesOnly = false;
+            showMyRecipesOnly = false;
+            renderPersonalDashboard();
         }
 
         function toggleFavoritesOnly() {
