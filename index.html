@@ -261,6 +261,20 @@
             font-size: 1.15rem; flex-shrink: 0;
         }
 
+        /* 電腦版header的下拉選單：把管理員專屬功能（食材熱量管理/孤兒圖片清單/成就總覽）收進一個
+           「⚙ 管理」按鈕裡，不然這幾顆按鈕全部平鋪在header上，隨著功能越加越多only會越擠 */
+        .header-dropdown-panel {
+            position: absolute; right: 0; top: calc(100% + 0.5rem); width: 15rem; z-index: 55;
+            background: var(--paper); border-radius: 1.25rem; overflow: hidden;
+            box-shadow: 0 16px 32px -8px rgba(58,42,30,0.28), 0 0 0 1px rgba(58,42,30,0.04);
+        }
+        .header-dropdown-item {
+            width: 100%; display: flex; align-items: center; gap: 0.75rem; text-align: left;
+            padding: 0.7rem 0.9rem; color: var(--espresso); font-weight: 500; font-size: 0.9rem;
+            transition: background-color .15s ease;
+        }
+        .header-dropdown-item:hover { background: var(--cream); }
+
         /* 首頁歡迎Hero橫幅：溫暖漸層背景 + 手繪風裝飾插畫，取代原本樸素的空白開頭 */
         .hero-banner {
             position: relative; overflow: hidden; border-radius: 1.75rem;
@@ -421,7 +435,8 @@
                     <div id="user-info-mobile" class="flex items-center gap-2 shrink-0 justify-self-end"></div>
                 </div>
 
-                <!-- 電腦版：維持原本樣式不變 -->
+                <!-- 電腦版：管理員專屬功能（食材熱量管理/孤兒圖片清單/成就總覽）收進「⚙ 管理」下拉選單，
+                     不再各自平鋪佔用header版面，隨著之後功能繼續增加也不會越擠 -->
                 <div class="hidden md:flex justify-between items-center gap-3">
                     <div class="flex items-center gap-3 min-w-0">
                         <div class="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center text-2xl sm:text-3xl shrink-0" style="background:var(--jam)">🍰</div>
@@ -431,9 +446,16 @@
                     </div>
                     <div class="flex items-center gap-1 sm:gap-2 shrink-0">
                         <button onclick="showGameModal()" class="text-xl leading-none" style="color:var(--jam)" title="遊戲場" aria-label="遊戲場">🎮</button>
-                        <button id="admin-nutrition-btn" onclick="showAdminNutritionModal()" class="hidden btn-secondary !px-2.5 sm:!px-4 !py-2 sm:!py-2.5 text-xs sm:text-sm whitespace-nowrap" title="食材熱量管理">🛠<span class="hidden sm:inline"> 食材熱量管理</span></button>
-                        <button id="admin-orphan-images-btn" onclick="showOrphanedImagesModal()" class="hidden btn-secondary !px-2.5 sm:!px-4 !py-2 sm:!py-2.5 text-xs sm:text-sm whitespace-nowrap" title="孤兒圖片清單">🖼<span class="hidden sm:inline"> 孤兒圖片清單</span></button>
-                        <button id="admin-achievements-btn" onclick="showAdminAchievementsModal()" class="hidden btn-secondary !px-2.5 sm:!px-4 !py-2 sm:!py-2.5 text-xs sm:text-sm whitespace-nowrap" title="成就總覽">📋<span class="hidden sm:inline"> 成就總覽</span></button>
+                        <!-- 管理員專屬功能收進下拉選單，不再個別平鋪佔用header版面 -->
+                        <div class="relative shrink-0">
+                            <button id="desktop-admin-menu-btn" onclick="toggleDesktopAdminMenu()" class="hidden btn-secondary !px-2.5 sm:!px-4 !py-2 sm:!py-2.5 text-xs sm:text-sm whitespace-nowrap items-center gap-1" title="管理工具">⚙<span class="hidden sm:inline"> 管理</span></button>
+                            <div id="desktop-admin-menu-backdrop" class="hidden fixed inset-0 z-[54]" onclick="closeDesktopAdminMenu()"></div>
+                            <div id="desktop-admin-menu-panel" class="hidden header-dropdown-panel">
+                                <button onclick="closeDesktopAdminMenuThen(showAdminNutritionModal)" class="header-dropdown-item">🛠 食材熱量管理</button>
+                                <button onclick="closeDesktopAdminMenuThen(showOrphanedImagesModal)" class="header-dropdown-item">🖼 孤兒圖片清單</button>
+                                <button onclick="closeDesktopAdminMenuThen(showAdminAchievementsModal)" class="header-dropdown-item">📋 成就總覽</button>
+                            </div>
+                        </div>
                         <div id="user-info" class="flex items-center gap-2 sm:gap-3 shrink-0"></div>
                     </div>
                 </div>
@@ -11728,23 +11750,14 @@
             if (desktopBtn) desktopBtn.style.display = show ? '' : 'none';
             if (fabBtn) fabBtn.style.display = show ? '' : 'none';
 
-            const adminBtn = document.getElementById('admin-nutrition-btn');
-            if (adminBtn) {
+            const adminMenuBtn = document.getElementById('desktop-admin-menu-btn');
+            if (adminMenuBtn) {
                 // 這顆按鈕本身有 "hidden" class，把 inline style 清空(style.display='')
                 // 沒辦法蓋過 class 的 display:none，一定要指定實際的值才會顯示出來
-                adminBtn.classList.toggle('hidden', !isAdmin());
-                adminBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
+                adminMenuBtn.classList.toggle('hidden', !isAdmin());
+                adminMenuBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
             }
-            const adminOrphanBtn = document.getElementById('admin-orphan-images-btn');
-            if (adminOrphanBtn) {
-                adminOrphanBtn.classList.toggle('hidden', !isAdmin());
-                adminOrphanBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
-            }
-            const adminAchBtn = document.getElementById('admin-achievements-btn');
-            if (adminAchBtn) {
-                adminAchBtn.classList.toggle('hidden', !isAdmin());
-                adminAchBtn.style.display = isAdmin() ? 'inline-flex' : 'none';
-            }
+            if (!isAdmin()) closeDesktopAdminMenu(); // 登出或帳號切換成非管理員時，順手把選單收起來，避免殘留開著的狀態
             // 手機版漢堡選單裡的管理員專屬項目，跟電腦版用同一個isAdmin()判斷同步顯示/隱藏
             ['admin-nutrition-btn-mobile', 'admin-orphan-images-btn-mobile', 'admin-achievements-btn-mobile'].forEach(id => {
                 const btn = document.getElementById(id);
@@ -11776,6 +11789,23 @@
         }
         function closeMobileMenuThen(fn) {
             closeMobileMenu();
+            if (typeof fn === 'function') fn();
+        }
+        // 電腦版管理選單（收納食材熱量管理/孤兒圖片清單/成就總覽這幾個管理員專屬功能）：
+        // 邏輯比照手機版漢堡選單，但電腦版點擊背景遮罩關閉就好，不需要動到popstate/瀏覽器返回鍵
+        // 那一整套機制——電腦版使用者不會用瀏覽器返回鍵去關閉一個下拉選單，維持單純的點擊開關即可
+        function toggleDesktopAdminMenu() {
+            const panel = document.getElementById('desktop-admin-menu-panel');
+            const isOpening = panel && panel.classList.contains('hidden');
+            panel?.classList.toggle('hidden', !isOpening);
+            document.getElementById('desktop-admin-menu-backdrop')?.classList.toggle('hidden', !isOpening);
+        }
+        function closeDesktopAdminMenu() {
+            document.getElementById('desktop-admin-menu-panel')?.classList.add('hidden');
+            document.getElementById('desktop-admin-menu-backdrop')?.classList.add('hidden');
+        }
+        function closeDesktopAdminMenuThen(fn) {
+            closeDesktopAdminMenu();
             if (typeof fn === 'function') fn();
         }
         // 點背景遮罩收起選單的邏輯，已經直接寫在遮罩元素的onclick上，不需要額外的全域監聽
