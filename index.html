@@ -16385,15 +16385,31 @@
                 }
                 // 填入食譜名稱（只有辨識到名稱、而且目前欄位是空的時候才填入，不會覆蓋掉你已經自己填好的名稱）
                 if (data.name && !document.getElementById('name').value.trim()) document.getElementById('name').value = data.name;
+                // 一句話短描述：一樣是空的才填，並且觸發字數限制邏輯（超過14個中文字會自動截斷）
+                if (data.tagline && !document.getElementById('recipe-tagline').value.trim()) {
+                    document.getElementById('recipe-tagline').value = data.tagline;
+                    updateTaglineCounter();
+                }
+                // 分類：AI判斷出屬於哪一類（餅乾/蛋糕/麵包...）就直接選好下拉選單
+                if (data.category) {
+                    const categorySelect = document.getElementById('category');
+                    if ([...categorySelect.options].some(o => o.value === data.category)) categorySelect.value = data.category;
+                }
+                // 成品數量：預設值是8，跟「空白欄位」判斷不同，這裡只要AI有判斷出數字就直接覆蓋，
+                // 反正這個功能本來就是設計成貼上網址後第一個動作，使用者還沒機會自己改過這個欄位
+                if (data.servings) document.getElementById('servings').value = data.servings;
+                // 烤模/容器尺寸：同樣邏輯，AI判斷得出來就直接填
+                if (data.sizeValue) document.getElementById('size-value').value = data.sizeValue;
+                if (data.sizeUnit) document.getElementById('size-unit').value = data.sizeUnit;
 
                 // 食材：跟拍照辨識食譜同一套邏輯，容器裡如果都還是空白欄位就先清掉，已經有內容的話用加的
                 const ingContainer = document.getElementById('ingredients-container');
                 const allIngRowsEmpty = [...ingContainer.querySelectorAll('[data-role="ing-name"]')].every(el => !el.value.trim());
                 if (allIngRowsEmpty) ingContainer.innerHTML = '';
                 if (data.ingredients && data.ingredients.length) {
-                    // 影片辨識只給食材名稱、不給份量單位（份量常常影片裡沒明講、亂猜反而誤導），
-                    // 用預設值(100/g)讓使用者自己填實際份量
-                    data.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, 100, 'g'));
+                    // 份量/單位優先用AI從影片裡實際判斷出來的值，AI判斷不出來（null）才退回100/g這組
+                    // 預設值讓使用者自己填，不會讓每一項食材看起來都一樣重（之前的版本就是這樣才誤導人）
+                    data.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, ing.amount || 100, ing.unit || 'g'));
                 } else if (allIngRowsEmpty) {
                     addIngredientField();
                 }
@@ -16416,10 +16432,11 @@
 
                 const timestampCount = (data.steps || []).filter(s => s.timestampSeconds !== null && s.timestampSeconds !== undefined).length;
                 const durationCount = (data.steps || []).filter(s => s.durationMinutes).length;
+                const amountCount = (data.ingredients || []).filter(i => i.amount).length;
                 const pathNote = data.usedTextShortcut
                     ? '📝 這次是從影片描述欄的文字直接整理出來的（比較省額度），所以沒有時間點/計時器資訊，需要的話要自己手動填'
                     : '🎬 這次有實際看過影片內容';
-                statusEl.textContent = `✅ 已加入辨識結果！食材${data.ingredients.length}項、步驟${data.steps.length}項（其中${timestampCount}項有標記時間點、${durationCount}項有帶入計時器時長）。${pathNote}——AI辨識僅供參考，請務必逐項檢查內容、時間點、份量是否正確再儲存`;
+                statusEl.textContent = `✅ 已加入辨識結果！食材${data.ingredients.length}項（其中${amountCount}項AI判斷出實際份量，其餘用預設值100g，請自己確認/修改）、步驟${data.steps.length}項（其中${timestampCount}項有標記時間點、${durationCount}項有帶入計時器時長）。${pathNote}——AI辨識僅供參考，請務必逐項檢查內容、時間點、份量是否正確再儲存`;
             } catch (err) {
                 statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
             } finally {
