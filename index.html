@@ -15556,10 +15556,14 @@
                 const compressed = await compressImageForUpload(file, 1600, 0.85);
                 if (compressed === null) throw new Error('這個檔案看起來不是有效的圖片格式，請確認選的檔案正確');
                 const base64 = await fileToBase64(compressed);
+                // 這個功能一定是登入之後才能觸發到（開「我的冰箱」時已經檢查過currentUser），
+                // 這裡直接拿現有的登入狀態換一張Token，讓Worker端可以驗證呼叫者身份，
+                // 不會多跳出任何登入提示、使用體驗完全不變
+                const idToken = await currentUser.getIdToken();
                 const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'read_product_photo', imageBase64: base64, mimeType: compressed.type || 'image/jpeg' }),
+                    body: JSON.stringify({ action: 'read_product_photo', imageBase64: base64, mimeType: compressed.type || 'image/jpeg', idToken }),
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || '辨識失敗');
@@ -15603,10 +15607,13 @@
                     const base64 = await fileToBase64(compressed);
                     images.push({ data: base64, mimeType: compressed.type || 'image/jpeg' });
                 }
+                // 這個功能一定是登入之後才能觸發到（新增食譜視窗已經檢查過currentUser），
+                // 這裡直接拿現有的登入狀態換一張Token給Worker驗證，不會多跳出任何提示
+                const idToken = await currentUser.getIdToken();
                 const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'read_recipe_photo', images }),
+                    body: JSON.stringify({ action: 'read_recipe_photo', images, idToken }),
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || '辨識失敗');
@@ -17397,10 +17404,14 @@
                 return null;
             }
             try {
+                // 目前唯一會呼叫到這裡的地方是管理員面板的AI補充功能，一定已經是登入狀態，
+                // 直接換Token給Worker驗證即可，沒有登入的話currentUser會是null、getIdToken會丟例外，
+                // 直接被下面的catch接住當成失敗處理，不會整個壞掉
+                const idToken = currentUser ? await currentUser.getIdToken() : null;
                 const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt }),
+                    body: JSON.stringify({ prompt, idToken }),
                 });
                 if (!res.ok) {
                     console.warn('AI估算呼叫失敗', await res.text());
