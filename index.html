@@ -751,6 +751,36 @@
         </div>
     </div>
 
+    <!-- 烘焙日誌 Modal：私人記錄，只有本人看得到，不管是自己的食譜還是收藏別人的食譜都能寫 -->
+    <div id="baking-journal-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-lg max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">📔 烘焙日誌</h2>
+                <button onclick="closeBakingJournalModal()" class="text-3xl leading-none" style="color:var(--muted)" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <p id="baking-journal-recipe-name" class="font-semibold mb-1"></p>
+                <p class="text-xs mb-4" style="color:var(--muted)">只有你自己看得到，記錄每次做這道食譜時的調整跟結果，例如「這次鹽少放5g、糖少放10g」「外皮偏硬，下次少烤5分鐘」</p>
+
+                <button onclick="toggleJournalAddForm()" id="journal-add-toggle-btn" class="btn-sage w-full mb-4">+ 新增一筆紀錄</button>
+                <div id="journal-add-form" class="hidden mb-5 p-4 rounded-2xl" style="background:var(--cream)">
+                    <label class="text-xs block mb-1" style="color:var(--muted)">日期</label>
+                    <input id="journal-entry-date" type="date" class="form-input mb-3">
+                    <label class="text-xs block mb-1" style="color:var(--muted)">這次做了哪些調整？</label>
+                    <textarea id="journal-entry-notes" rows="2" class="form-input mb-3" placeholder="例如：鹽少放5g、糖少放10g、烤溫降到170度、發酵時間延長20分鐘"></textarea>
+                    <label class="text-xs block mb-1" style="color:var(--muted)">結果如何？</label>
+                    <textarea id="journal-entry-result" rows="2" class="form-input mb-3" placeholder="例如：外皮偏硬，下次可以少烤5分鐘；甜度剛好，這個配方定下來了"></textarea>
+                    <div class="flex gap-2">
+                        <button onclick="saveJournalEntry()" class="btn-primary flex-1">儲存</button>
+                        <button onclick="toggleJournalAddForm()" class="btn-secondary">取消</button>
+                    </div>
+                </div>
+
+                <div id="journal-entries-list"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- 食材熱量資料管理 Modal（只有管理者看得到） -->
     <div id="admin-nutrition-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
         <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
@@ -1456,6 +1486,8 @@
                 closeFridgeModal(true);
             } else if (marketModal && !marketModal.classList.contains('hidden')) {
                 closeMarketPricesModal(true);
+            } else if (document.getElementById('baking-journal-modal') && !document.getElementById('baking-journal-modal').classList.contains('hidden')) {
+                closeBakingJournalModal(true);
             } else if (mobileMenuPanel && !mobileMenuPanel.classList.contains('hidden')) {
                 closeMobileMenu(true);
             } else if (personalFullListActive) {
@@ -12096,6 +12128,91 @@
             document.getElementById('music-settings-modal').classList.add('hidden');
             consumeModalHistoryState(fromPopState);
         }
+
+        // ---------- 烘焙日誌：私人記錄，只有本人看得到，跟食譜本身的資料完全分開存 ----------
+        let journalCurrentRecipeId = null;
+        let journalCurrentRecipeName = '';
+        function showBakingJournalModal(recipe) {
+            if (!currentUser) { alert('請先登入才能使用烘焙日誌'); return; }
+            journalCurrentRecipeId = recipe.id;
+            journalCurrentRecipeName = recipe.name;
+            document.getElementById('baking-journal-recipe-name').textContent = recipe.name;
+            document.getElementById('journal-add-form').classList.add('hidden');
+            document.getElementById('journal-entry-date').value = new Date().toISOString().slice(0, 10);
+            document.getElementById('journal-entry-notes').value = '';
+            document.getElementById('journal-entry-result').value = '';
+            document.getElementById('journal-entries-list').innerHTML = '<p class="text-sm" style="color:var(--muted)">載入中...</p>';
+            document.getElementById('baking-journal-modal').classList.remove('hidden');
+            pushModalHistoryState();
+            loadJournalEntries();
+        }
+        function closeBakingJournalModal(fromPopState) {
+            document.getElementById('baking-journal-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
+        }
+        function toggleJournalAddForm() {
+            document.getElementById('journal-add-form').classList.toggle('hidden');
+        }
+        async function loadJournalEntries() {
+            const listEl = document.getElementById('journal-entries-list');
+            try {
+                // 只用兩個等於條件查詢(uid + recipeId)，不加orderBy，避免需要另外去Firebase主控台
+                // 建立複合索引；抓回來的資料量很小（同一人同一道食譜的紀錄不會太多），直接在前端排序就好
+                const snap = await db.collection('bakingJournal')
+                    .where('uid', '==', currentUser.uid)
+                    .where('recipeId', '==', journalCurrentRecipeId)
+                    .get();
+                const entries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+                if (!entries.length) {
+                    listEl.innerHTML = '<p class="text-sm text-center py-6" style="color:var(--muted)">還沒有任何紀錄，做完這道食譜後可以記一筆</p>';
+                    return;
+                }
+                listEl.innerHTML = entries.map(e => `
+                    <div class="p-4 rounded-2xl mb-3" style="background:var(--paper); box-shadow:0 4px 12px -4px rgba(58,42,30,0.08)">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-semibold">${escapeHtmlAttr(e.date || '')}</span>
+                            <button onclick="deleteJournalEntry('${e.id}')" class="text-xs" style="color:var(--danger)">刪除</button>
+                        </div>
+                        ${e.notes ? `<p class="text-sm mb-1"><span style="color:var(--muted)">調整：</span>${escapeHtmlAttr(e.notes)}</p>` : ''}
+                        ${e.result ? `<p class="text-sm"><span style="color:var(--muted)">結果：</span>${escapeHtmlAttr(e.result)}</p>` : ''}
+                    </div>
+                `).join('');
+            } catch (err) {
+                listEl.innerHTML = `<p class="text-sm" style="color:var(--danger)">載入失敗：${escapeHtmlAttr(err.message)}</p>`;
+            }
+        }
+        async function saveJournalEntry() {
+            const date = document.getElementById('journal-entry-date').value;
+            const notes = document.getElementById('journal-entry-notes').value.trim();
+            const result = document.getElementById('journal-entry-result').value.trim();
+            if (!date) { alert('請選擇日期'); return; }
+            if (!notes && !result) { alert('請至少填寫調整或結果其中一項'); return; }
+            try {
+                await db.collection('bakingJournal').add({
+                    uid: currentUser.uid,
+                    recipeId: journalCurrentRecipeId,
+                    recipeName: journalCurrentRecipeName,
+                    date, notes, result,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+                document.getElementById('journal-add-form').classList.add('hidden');
+                document.getElementById('journal-entry-notes').value = '';
+                document.getElementById('journal-entry-result').value = '';
+                loadJournalEntries();
+            } catch (err) {
+                alert('儲存失敗：' + err.message);
+            }
+        }
+        async function deleteJournalEntry(entryId) {
+            if (!confirm('確定刪除這筆紀錄？')) return;
+            try {
+                await db.collection('bakingJournal').doc(entryId).delete();
+                loadJournalEntries();
+            } catch (err) {
+                alert('刪除失敗：' + err.message);
+            }
+        }
         function updateMusicSettingsStatusText() {
             const statusEl = document.getElementById('music-settings-status');
             if (!statusEl) return;
@@ -13938,6 +14055,9 @@
                         </div>
                         <button onclick="toggleDesktopCookingMode()" class="btn-secondary hidden md:flex items-center gap-2 text-sm !py-2" title="電腦版沒有橫置螢幕，用這個按鈕手動進入沉浸式烹飪模式，按ESC鍵退出">
                             🍳 進入烹飪模式
+                        </button>
+                        <button onclick="showBakingJournalModal(${recipeJson})" class="btn-secondary flex items-center gap-2 text-sm !py-2" title="只有你自己看得到，記錄每次做這道食譜的調整跟結果">
+                            📔 我的烘焙日誌
                         </button>
                     </div>
                 </div>
