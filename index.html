@@ -293,23 +293,15 @@
             box-shadow: 0 4px 10px -2px rgba(58,42,30,0.3); flex-shrink: 0;
         }
         #cooking-video-skip-widget.hidden { display: none; }
-        /* 個人頁面用的簡易清單：檔案總管風格，一行一筆，只顯示名稱+分類，右側是操作按鈕 */
-        .personal-list-row {
-            display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; border-radius: 0.9rem;
-            background: var(--paper); margin-bottom: 0.5rem; cursor: pointer;
+        /* 個人頁面：查看更多的完整清單改成跟儀表板一致的縮圖格線 */
+        .personal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: 1.1rem 0.75rem; }
+        .personal-grid-item { width: auto; }
+        .personal-grid-item img { width: 100%; aspect-ratio: 1/1; }
+        .personal-grid-item-action {
+            position: absolute; top: 0.3rem; right: 0.3rem; width: 1.6rem; height: 1.6rem; border-radius: 999px;
+            background: rgba(58,42,30,0.75); color: #fff; display: flex; align-items: center; justify-content: center;
+            font-size: 0.7rem; border: none;
         }
-        .personal-list-row:hover { background: var(--cream); }
-        .personal-list-row .plr-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .personal-list-row .plr-category {
-            font-size: 0.72rem; padding: 0.15rem 0.6rem; border-radius: 999px; background: var(--line);
-            color: var(--espresso-soft); flex-shrink: 0; white-space: nowrap;
-        }
-        .personal-list-row .plr-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
-        .personal-list-row .plr-btn {
-            width: 2rem; height: 2rem; border-radius: 999px; display: flex; align-items: center; justify-content: center;
-            background: var(--line); color: var(--espresso-soft); font-size: 0.85rem; flex-shrink: 0;
-        }
-        .personal-list-row .plr-btn.plr-danger { background: rgba(196,69,63,0.15); color: var(--danger); }
         /* 個人頁面儀表板：成就/做菜音樂資訊卡 */
         .personal-info-card {
             display: flex; align-items: center; gap: 0.85rem; padding: 1rem 1.1rem; border-radius: 1.1rem;
@@ -592,7 +584,7 @@
                     <button onclick="showProfileModal()" class="personal-info-card">
                         <span class="personal-info-card-icon">🏅</span>
                         <span class="personal-info-card-text">
-                            <span class="personal-info-card-title">我的成就</span>
+                            <span class="personal-info-card-title">我的稱號</span>
                             <span id="personal-equipped-title" class="personal-info-card-sub">尚未裝備稱號</span>
                         </span>
                     </button>
@@ -622,10 +614,11 @@
                 </div>
             </div>
 
-            <!-- 完整清單：按「查看更多」才會顯示，重用檔案總管風格的清單 -->
+            <!-- 完整清單：按「查看更多」才會顯示，改成跟儀表板一致的小圖模式，上面加搜尋列 -->
             <div id="personal-full-list-back" class="hidden">
                 <button onclick="backToPersonalDashboard()" class="text-sm font-medium mb-3" style="color:var(--jam)">← 返回總覽</button>
                 <h3 id="personal-full-list-title" class="font-display font-semibold mb-3"></h3>
+                <input id="personal-full-list-search" type="text" class="form-input mb-4" placeholder="搜尋食譜名稱..." oninput="filterRecipes(false)">
             </div>
         </div>
 
@@ -1974,6 +1967,12 @@
             if (!userProgress) return;
             userProgress.equippedTitleId = titleId || null;
             await saveUserProgress();
+            // 立即刷新個人頁面儀表板上顯示的稱號，不用離開再重新進入才會更新
+            const titleEl = document.getElementById('personal-equipped-title');
+            if (titleEl) {
+                const equipped = titleId ? ACHIEVEMENT_RULES.find(r => r.id === titleId) : null;
+                titleEl.textContent = (equipped && equipped.title) ? `目前裝備：${equipped.title.icon} ${equipped.title.name}` : '尚未裝備稱號，點擊查看';
+            }
         }
 
         // ---------- 管理者：所有成就/稱號條件總覽 ----------
@@ -12946,7 +12945,11 @@
 
         function filterRecipes(resetPage = true) {
             if (resetPage) currentPage = 1;
-            const term = document.getElementById('search-input').value.toLowerCase().trim();
+            // 個人頁面時，首頁那個搜尋框是隱藏的，改用個人頁面自己專屬的搜尋列
+            const term = (personalPageActive
+                ? (document.getElementById('personal-full-list-search')?.value || '')
+                : document.getElementById('search-input').value
+            ).toLowerCase().trim();
             const filtered = allRecipes.filter(r => {
                 const matchesTerm = !term
                     || r.name.toLowerCase().includes(term)
@@ -12968,21 +12971,24 @@
         function renderPersonalRecipeList(recipes) {
             const list = document.getElementById('personal-recipe-list');
             if (!list) return;
+            list.classList.add('personal-grid'); // 用classList.add而不是直接蓋掉className，避免不小心清掉外面控制顯示/隱藏用的hidden class
             if (!recipes.length) {
-                list.innerHTML = `<p class="text-sm text-center py-8" style="color:var(--muted)">${showMyRecipesOnly ? '還沒有建立過任何食譜' : '還沒有收藏任何食譜'}</p>`;
+                list.innerHTML = `<p class="text-sm text-center py-8 col-span-full" style="color:var(--muted)">${showMyRecipesOnly ? '找不到符合的食譜' : '找不到符合的收藏'}</p>`;
                 return;
             }
+            const isMine = showMyRecipesOnly;
             list.innerHTML = recipes.map(r => {
-                const isMine = showMyRecipesOnly;
+                const img = r.imageUrl || (r.youtubeUrl && getYoutubeThumbnailUrl(r.youtubeUrl)) || CATEGORY_PLACEHOLDER_IMAGES[r.category] || CATEGORY_PLACEHOLDER_FALLBACK;
                 const recipeJson = JSON.stringify(r).replace(/"/g, '&quot;');
-                const actions = isMine
-                    ? `<button class="plr-btn" onclick="event.stopPropagation(); editRecipe(${recipeJson})" title="編輯"><i class="fas fa-pen"></i></button>
-                       <button class="plr-btn plr-danger" onclick="event.stopPropagation(); deleteRecipe(${recipeJson})" title="刪除"><i class="fas fa-trash"></i></button>`
-                    : `<button class="plr-btn plr-danger" onclick="event.stopPropagation(); toggleFavorite('${r.id}', event)" title="移除收藏"><i class="fas fa-heart-crack"></i></button>`;
-                return `<div class="personal-list-row" onclick="showDetail(${recipeJson})">
-                    <span class="plr-name">${escapeHtmlAttr(r.name)}</span>
-                    <span class="plr-category">${escapeHtmlAttr(r.category || '未分類')}</span>
-                    <div class="plr-actions">${actions}</div>
+                const actionBtn = isMine
+                    ? `<button class="personal-grid-item-action" onclick="event.stopPropagation(); deleteRecipe(${recipeJson})" title="刪除"><i class="fas fa-trash"></i></button>`
+                    : `<button class="personal-grid-item-action" onclick="event.stopPropagation(); toggleFavorite('${r.id}', event)" title="移除收藏"><i class="fas fa-heart-crack"></i></button>`;
+                return `<div class="personal-scroll-item personal-grid-item" onclick="${isMine ? `editRecipe(${recipeJson})` : `showDetail(${recipeJson})`}">
+                    <div style="position:relative;">
+                        <img src="${img}" loading="lazy">
+                        ${actionBtn}
+                    </div>
+                    <p>${escapeHtmlAttr(r.name)}</p>
                 </div>`;
             }).join('');
         }
