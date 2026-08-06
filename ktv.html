@@ -151,6 +151,9 @@
     .ktv-insert-btn { background: var(--honey); }
     .ktv-fav-btn { background: var(--jam); }
     .ktv-rank-badge { font-size: 0.7rem; opacity: 0.6; width: 1.3rem; flex-shrink: 0; text-align: center; }
+    /* 收藏按鈕按下去的跳動回饋，避免點了完全沒視覺反應 */
+    @keyframes fav-pop { 0% { transform: scale(1); } 45% { transform: scale(1.6); } 100% { transform: scale(1); } }
+    .fav-pop { animation: fav-pop 0.35s ease; display: inline-block; }
 
     /* ---------- 佇列（可拖曳排序） ---------- */
     .ktv-queue-item {
@@ -295,11 +298,11 @@
                     <div id="host-overlay-body">
                     <div class="overlay-panel overlay-left">
                         <div class="overlay-tabs">
-                            <button class="overlay-tab active" data-tab="search" onclick="switchOverlayTab('search')">🔍點歌</button>
-                            <button class="overlay-tab" data-tab="history" onclick="switchOverlayTab('history')">📜歷史</button>
-                            <button class="overlay-tab" data-tab="ranking" onclick="switchOverlayTab('ranking')">🔥熱門</button>
-                            <button class="overlay-tab" data-tab="myhistory" onclick="switchOverlayTab('myhistory')">📗我的</button>
-                            <button class="overlay-tab" data-tab="favorites" onclick="switchOverlayTab('favorites')">⭐最愛</button>
+                            <button class="overlay-tab active" data-tab="search" onclick="switchOverlayTab('search')">🔍搜尋點歌</button>
+                            <button class="overlay-tab" data-tab="history" onclick="switchOverlayTab('history')">📜房間歷史</button>
+                            <button class="overlay-tab" data-tab="ranking" onclick="switchOverlayTab('ranking')">🔥熱門排行</button>
+                            <button class="overlay-tab" data-tab="myhistory" onclick="switchOverlayTab('myhistory')">📗歷史歌單</button>
+                            <button class="overlay-tab" data-tab="favorites" onclick="switchOverlayTab('favorites')">❤️最愛歌曲</button>
                         </div>
                         <div id="overlay-tab-search" class="overlay-tab-content">
                             <div style="display:flex; gap:0.4rem; margin-bottom:0.6rem;">
@@ -311,7 +314,10 @@
                         <div id="overlay-tab-history" class="overlay-tab-content hidden"><div id="host-history-list"></div></div>
                         <div id="overlay-tab-ranking" class="overlay-tab-content hidden"><div id="host-ranking-list"></div></div>
                         <div id="overlay-tab-myhistory" class="overlay-tab-content hidden"><div id="host-myhistory-list"></div></div>
-                        <div id="overlay-tab-favorites" class="overlay-tab-content hidden"><div id="host-favorites-list"></div></div>
+                        <div id="overlay-tab-favorites" class="overlay-tab-content hidden">
+                            <input id="host-favorites-search" type="text" placeholder="搜尋我的最愛歌曲..." oninput="filterFavoritesList('host')" style="margin-bottom:0.6rem;">
+                            <div id="host-favorites-list"></div>
+                        </div>
                     </div>
                     <div class="overlay-panel overlay-right">
                         <h3>🎶 點歌佇列 <button class="skip-btn" onclick="advanceQueue()">⏭ 切歌</button></h3>
@@ -336,11 +342,11 @@
 
                 <div class="member-tabs">
                     <button class="member-tab active" data-tab="queue" onclick="switchMemberTab('queue')">🎶佇列</button>
-                    <button class="member-tab" data-tab="search" onclick="switchMemberTab('search')">🔍點歌</button>
-                    <button class="member-tab" data-tab="history" onclick="switchMemberTab('history')">📜歷史</button>
-                    <button class="member-tab" data-tab="ranking" onclick="switchMemberTab('ranking')">🔥熱門</button>
-                    <button class="member-tab" data-tab="myhistory" onclick="switchMemberTab('myhistory')">📗我的</button>
-                    <button class="member-tab" data-tab="favorites" onclick="switchMemberTab('favorites')">⭐最愛</button>
+                    <button class="member-tab" data-tab="search" onclick="switchMemberTab('search')">🔍搜尋點歌</button>
+                    <button class="member-tab" data-tab="history" onclick="switchMemberTab('history')">📜房間歷史</button>
+                    <button class="member-tab" data-tab="ranking" onclick="switchMemberTab('ranking')">🔥熱門排行</button>
+                    <button class="member-tab" data-tab="myhistory" onclick="switchMemberTab('myhistory')">📗歷史歌單</button>
+                    <button class="member-tab" data-tab="favorites" onclick="switchMemberTab('favorites')">❤️最愛歌曲</button>
                 </div>
                 <div id="member-tab-queue" class="member-tab-content"><div id="member-queue-list"></div></div>
                 <div id="member-tab-search" class="member-tab-content hidden">
@@ -353,7 +359,10 @@
                 <div id="member-tab-history" class="member-tab-content hidden"><div id="member-history-list"></div></div>
                 <div id="member-tab-ranking" class="member-tab-content hidden"><div id="member-ranking-list"></div></div>
                 <div id="member-tab-myhistory" class="member-tab-content hidden"><div id="member-myhistory-list"></div></div>
-                <div id="member-tab-favorites" class="member-tab-content hidden"><div id="member-favorites-list"></div></div>
+                <div id="member-tab-favorites" class="member-tab-content hidden">
+                    <input id="member-favorites-search" type="text" placeholder="搜尋我的最愛歌曲..." oninput="filterFavoritesList('member')" style="margin-bottom:0.6rem;">
+                    <div id="member-favorites-list"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -774,7 +783,7 @@
     function buildSongCard(song, kind, extra) {
         const songData = JSON.stringify({ videoId: song.videoId, title: song.title, thumbnail: song.thumbnail }).replace(/'/g, '&#39;');
         const isFav = userFavoriteVideoIds.has(song.videoId);
-        const favBtn = `<button class="ktv-fav-btn" onclick='toggleFavoriteSong(${songData})' title="${isFav ? '取消收藏' : '收藏這首歌'}">${isFav ? '💛' : '⭐'}</button>`;
+        const favBtn = `<button class="ktv-fav-btn" data-video-id="${song.videoId}" onclick='toggleFavoriteSong(${songData})' title="${isFav ? '取消收藏' : '加入最愛歌曲'}">${isFav ? '❤️' : '🤍'}</button>`;
         let subText = '';
         if (kind === 'result') subText = escapeHtmlKtv(song.channelTitle || '');
         else if (kind === 'history' || kind === 'myhistory') subText = escapeHtmlKtv(song.requestedBy || '');
@@ -823,6 +832,7 @@
                 videoId: entry.videoId, title: entry.title, thumbnail: entry.thumbnail,
                 count: firebase.firestore.FieldValue.increment(1),
             }, { merge: true }).catch(err => console.warn('更新熱門排行失敗', err));
+            recordUserHistory(entry); // 跨房間的個人歷史歌單，不是只記在這個房間裡
         } catch (err) {
             alert('點歌失敗：' + err.message);
         }
@@ -902,20 +912,29 @@
             targets.forEach(el => el.innerHTML = `<div class="empty-hint">⚠️ 載入失敗：${escapeHtmlKtv(err.message)}</div>`);
         }
     }
-    // 我的歷史：只顯示自己點過的（用房間歷史紀錄裡的requestedByUid過濾，不用另外開一個collection）
+    // 個人歷史歌單：跨房間持續保存(存在ktvUserHistory/{uid}這份文件的entries陣列裡)，
+    // 不是房間範圍的資料，換到別人的房間一樣看得到自己過去點過的歌。最多存30筆，
+    // 每次點歌都把新的一筆插到最前面，超過30筆就把最舊的壓掉
+    async function recordUserHistory(entry) {
+        if (!currentUser) return;
+        const ref = db.collection('ktvUserHistory').doc(currentUser.uid);
+        try {
+            const doc = await ref.get();
+            let entries = (doc.exists && doc.data().entries) || [];
+            entries = entries.filter(e => e.videoId !== entry.videoId); // 同一首歌再點一次，搬到最前面而不是重複列出
+            entries.unshift({ videoId: entry.videoId, title: entry.title, thumbnail: entry.thumbnail, addedAt: Date.now() });
+            if (entries.length > 30) entries = entries.slice(0, 30); // 只留最新30筆，超過的（舊的）壓掉
+            await ref.set({ uid: currentUser.uid, entries }, { merge: true });
+        } catch (err) { console.warn('記錄個人歷史歌單失敗', err); }
+    }
     async function loadMyHistoryList() {
         const targets = [document.getElementById('host-myhistory-list'), document.getElementById('member-myhistory-list')].filter(Boolean);
-        if (!targets.length || !currentRoomId || !currentUser) return;
+        if (!targets.length || !currentUser) return;
         targets.forEach(el => el.innerHTML = '<div class="empty-hint">載入中...</div>');
         try {
-            const snap = await db.collection('ktvRooms').doc(currentRoomId).collection('history')
-                .where('requestedByUid', '==', currentUser.uid).get();
-            const docs = snap.docs.map(d => d.data());
-            docs.sort((a, b) => {
-                const toMillis = t => (t && typeof t.toMillis === 'function') ? t.toMillis() : 0;
-                return toMillis(b.addedAt) - toMillis(a.addedAt);
-            });
-            const html = docs.length ? docs.map(d => buildSongCard(d, 'myhistory')).join('') : '<div class="empty-hint">你在這個房間還沒點過歌</div>';
+            const doc = await db.collection('ktvUserHistory').doc(currentUser.uid).get();
+            const entries = (doc.exists && doc.data().entries) || [];
+            const html = entries.length ? entries.map(d => buildSongCard(d, 'myhistory')).join('') : '<div class="empty-hint">你還沒有點過任何歌，快去搜尋點歌試試</div>';
             targets.forEach(el => el.innerHTML = html);
         } catch (err) {
             targets.forEach(el => el.innerHTML = `<div class="empty-hint">⚠️ 載入失敗：${escapeHtmlKtv(err.message)}</div>`);
@@ -950,21 +969,32 @@
         if (!currentUser) { alert('請先登入才能收藏歌曲'); return; }
         const docId = `${currentUser.uid}_${song.videoId}`;
         const ref = db.collection('ktvUserFavorites').doc(docId);
+        const willFavorite = !userFavoriteVideoIds.has(song.videoId);
         try {
-            if (userFavoriteVideoIds.has(song.videoId)) {
-                await ref.delete();
-                userFavoriteVideoIds.delete(song.videoId);
-            } else {
+            if (willFavorite) {
                 await ref.set({ uid: currentUser.uid, videoId: song.videoId, title: song.title, thumbnail: song.thumbnail || '', addedAt: firebase.firestore.FieldValue.serverTimestamp() });
                 userFavoriteVideoIds.add(song.videoId);
+                showKtvToast(`❤️ 已加入最愛歌曲《${song.title}》`);
+            } else {
+                await ref.delete();
+                userFavoriteVideoIds.delete(song.videoId);
+                showKtvToast(`🤍 已從最愛歌曲移除《${song.title}》`);
             }
-            // 收藏狀態變了，把目前畫面上有顯示歌曲卡片的地方都重新渲染一次，讓⭐/💛icon立刻反映最新狀態
+            // 把畫面上所有跟這首歌有關的收藏按鈕（同一首歌可能同時出現在搜尋結果+歷史+排行裡）
+            // 都更新圖示，並加上一個跳動動畫，這樣按下去有立即的視覺回饋，不用自己跑去最愛分頁確認有沒有成功
+            document.querySelectorAll(`.ktv-fav-btn[data-video-id="${song.videoId}"]`).forEach(btn => {
+                btn.textContent = willFavorite ? '❤️' : '🤍';
+                btn.title = willFavorite ? '取消收藏' : '加入最愛歌曲';
+                btn.classList.remove('fav-pop');
+                void btn.offsetWidth; // 強制reflow，讓動畫可以連續重複觸發
+                btn.classList.add('fav-pop');
+            });
             loadFavoritesList();
-            if (currentRoomData) renderRoomState();
         } catch (err) {
             alert('收藏失敗：' + err.message);
         }
     }
+    let cachedFavoriteEntries = []; // 快取完整的最愛歌曲清單，搜尋列輸入時直接在前端過濾，不用每次都重新查一次資料庫
     async function loadFavoritesList() {
         const targets = [document.getElementById('host-favorites-list'), document.getElementById('member-favorites-list')].filter(Boolean);
         if (!targets.length || !currentUser) return;
@@ -976,11 +1006,22 @@
                 const toMillis = t => (t && typeof t.toMillis === 'function') ? t.toMillis() : 0;
                 return toMillis(b.addedAt) - toMillis(a.addedAt);
             });
-            const html = docs.length ? docs.map(d => buildSongCard(d, 'favorite')).join('') : '<div class="empty-hint">還沒有收藏任何歌曲，看到喜歡的歌按⭐收藏起來吧</div>';
-            targets.forEach(el => el.innerHTML = html);
+            cachedFavoriteEntries = docs;
+            renderFavoritesList(docs, targets);
         } catch (err) {
             targets.forEach(el => el.innerHTML = `<div class="empty-hint">⚠️ 載入失敗：${escapeHtmlKtv(err.message)}</div>`);
         }
+    }
+    function renderFavoritesList(docs, targets) {
+        const html = docs.length ? docs.map(d => buildSongCard(d, 'favorite')).join('') : '<div class="empty-hint">還沒有收藏任何歌曲，看到喜歡的歌按🤍收藏起來吧</div>';
+        (targets || [document.getElementById('host-favorites-list'), document.getElementById('member-favorites-list')].filter(Boolean)).forEach(el => el.innerHTML = html);
+    }
+    // 最愛歌曲的搜尋列：純前端過濾快取好的清單，不用另外查資料庫
+    function filterFavoritesList(who) {
+        const term = document.getElementById(`${who}-favorites-search`).value.trim().toLowerCase();
+        const filtered = term ? cachedFavoriteEntries.filter(e => (e.title || '').toLowerCase().includes(term)) : cachedFavoriteEntries;
+        const target = document.getElementById(`${who}-favorites-list`);
+        if (target) renderFavoritesList(filtered, [target]);
     }
 
     // ---------------------------------------------------------------
