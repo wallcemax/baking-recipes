@@ -1728,6 +1728,7 @@
         // ---------- 使用者成就進度追蹤 ----------
         let userProgress = null; // 目前登入者的進度資料
         let authorTitleCache = {}; // uid -> {icon,name} | null，快取其他使用者的裝備稱號
+        let authorNameCache = {}; // uid -> nickname字串 | null，快取其他使用者目前設定的暱稱
 
         function defaultUserProgress() {
             return {
@@ -1985,6 +1986,21 @@
                 return title;
             } catch (err) {
                 authorTitleCache[uid] = null;
+                return null;
+            }
+        }
+        // 查詢作者「現在」設定的暱稱，不是食譜存檔那一刻寫死的舊名字。查得到才會蓋掉卡片上
+        // 顯示的名字，查不到（沒設定過暱稱、或帳號很舊）就維持原本存的authorName
+        async function fetchAuthorName(uid) {
+            if (!uid) return null;
+            if (Object.prototype.hasOwnProperty.call(authorNameCache, uid)) return authorNameCache[uid];
+            try {
+                const doc = await db.collection('userProfiles').doc(uid).get();
+                const nickname = (doc.exists && doc.data().nickname) ? doc.data().nickname : null;
+                authorNameCache[uid] = nickname;
+                return nickname;
+            } catch (err) {
+                authorNameCache[uid] = null;
                 return null;
             }
         }
@@ -5508,7 +5524,7 @@
 
         function rpgDefaultPlayer() {
             return {
-                name: (currentUser && currentUser.displayName) || '你', level: 1, exp: 0, expToNext: 20,
+                name: (userProgress && userProgress.nickname) || (currentUser && currentUser.displayName) || '你', level: 1, exp: 0, expToNext: 20,
                 hp: 30, maxHp: 30, atk: 6, def: 2, sp: 10, maxSp: 10, agi: 6,
                 gold: 50, score: 0, // score：積分系統用的累計分數，跟金幣是分開的
                 ngPlus: 0, // 周目數：0 代表第一周目，每打敗一次最終魔王 +1，怪物數值會跟著套用倍率
@@ -5942,7 +5958,7 @@
             const box = document.getElementById('rpg-dialogue-box');
             try {
                 await db.collection('rpgScores').doc(currentUser.uid).set({
-                    userId: currentUser.uid, userName: currentUser.displayName || '匿名',
+                    userId: currentUser.uid, userName: (userProgress && userProgress.nickname) || currentUser.displayName || '匿名',
                     score: state.player.score || 0, level: state.player.level,
                     cleared: !!state.player.gameCleared, // 是否已經打完最終六連戰通關
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -11684,7 +11700,7 @@
             if (!currentUser) { alert('請先登入才能上傳分數'); return; }
             try {
                 await db.collection('gameScores').add({
-                    gameId, userId: currentUser.uid, userName: currentUser.displayName || '匿名',
+                    gameId, userId: currentUser.uid, userName: (userProgress && userProgress.nickname) || currentUser.displayName || '匿名',
                     score, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 });
                 alert('分數已上傳！');
@@ -11720,10 +11736,22 @@
                 const list = document.getElementById('leaderboard-list');
                 if (!list) return;
                 if (snap.empty) { list.innerHTML = `<p class="text-sm" style="color:var(--muted)">還沒有任何紀錄，來當第一名吧！</p>`; return; }
-                list.innerHTML = snap.docs.map((doc, i) => {
-                    const d = doc.data();
+                const docs = snap.docs.map(doc => doc.data());
+                // 排行榜上存的userName是「上傳分數那一刻」的舊名字，改成顯示的時候額外查一次
+                // 這個人「現在」設定的暱稱——這樣不用去改任何一筆歷史資料，舊紀錄跟新紀錄
+                // 都會自動顯示最新的暱稱。查不到暱稱（例如帳號從沒設定過、或很舊的紀錄）
+                // 就退回顯示原本存的userName
+                const uniqueUids = [...new Set(docs.map(d => d.userId).filter(Boolean))];
+                const nicknameByUid = {};
+                await Promise.all(uniqueUids.map(uid =>
+                    db.collection('userProfiles').doc(uid).get()
+                        .then(doc => { if (doc.exists && doc.data().nickname) nicknameByUid[uid] = doc.data().nickname; })
+                        .catch(() => {})
+                ));
+                list.innerHTML = docs.map((d, i) => {
                     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-                    const nameText = gameId === 'rpg' ? `${d.userName || '匿名'}（Lv.${d.level || 1}${d.cleared ? '・已通關' : ''}）` : (d.userName || '匿名');
+                    const liveName = (d.userId && nicknameByUid[d.userId]) || d.userName || '匿名';
+                    const nameText = gameId === 'rpg' ? `${liveName}（Lv.${d.level || 1}${d.cleared ? '・已通關' : ''}）` : liveName;
                     return `<div class="flex justify-between items-center px-4 py-2.5 rounded-2xl mb-2" style="background:var(--cream)">
                         <span>${medal} ${nameText}</span>
                         <span class="font-bold" style="color:var(--jam)">${d.score}</span>
@@ -13111,7 +13139,7 @@
                     ${r.tagline ? `<p class="text-sm mb-1.5 truncate" style="color:var(--espresso-soft); font-family:'Cactus Classical Serif', serif;">${r.tagline}</p>` : ''}
                     <p class="text-sm" style="color:var(--espresso-soft); font-family:'Chiron Sung HK', serif;">${r.sizeValue ? `${r.sizeValue}${r.sizeUnit} · ` : ''}${r.servings} 個</p>
                     ${r.tags && r.tags.length ? `<div class="flex flex-wrap gap-1 mt-2">${r.tags.map(t => `<span onclick="event.stopPropagation(); searchByTag('${escapeHtmlAttr(t)}')" class="text-xs px-2 py-0.5 rounded-full cursor-pointer" style="background:var(--cream); color:var(--espresso-soft)">#${t}</span>`).join('')}</div>` : ''}
-                    <p class="text-sm text-right mt-2" style="color:var(--espresso-soft); font-family:'Chiron Sung HK', serif;"><span id="author-title-${r.id}" style="font-family:'Noto Serif TC', serif;"></span>${r.authorName||''}</p>
+                    <p class="text-sm text-right mt-2" style="color:var(--espresso-soft); font-family:'Chiron Sung HK', serif;"><span id="author-title-${r.id}" style="font-family:'Noto Serif TC', serif;"></span><span id="author-name-${r.id}">${r.authorName||''}</span></p>
                 `;
                 div.onclick = () => showDetail(r);
                 div.onkeydown = (e) => { if (e.key === 'Enter') showDetail(r); };
@@ -13121,6 +13149,11 @@
                         if (!title) return;
                         const el = document.getElementById(`author-title-${r.id}`);
                         if (el) el.textContent = `${title.icon} ${title.name} `;
+                    });
+                    fetchAuthorName(r.authorId).then(nickname => {
+                        if (!nickname) return;
+                        const el = document.getElementById(`author-name-${r.id}`);
+                        if (el) el.textContent = nickname;
                     });
                 }
             });
