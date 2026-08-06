@@ -288,7 +288,7 @@
         /* 廣告略過用的小畫面：故意做得很小，平常聽歌不會太搶眼，但遇到廣告出現略過鈕時
            還是看得到、點得到 */
         #cooking-video-skip-widget {
-            width: 6.5rem; aspect-ratio: 16/9; border-radius: 0.6rem; overflow: hidden; background: #000;
+            width: 5rem; aspect-ratio: 16/9; border-radius: 0.5rem; overflow: hidden; background: #000;
             box-shadow: 0 4px 10px -2px rgba(58,42,30,0.3); flex-shrink: 0;
         }
         #cooking-video-skip-widget.hidden { display: none; }
@@ -306,7 +306,14 @@
             overflow: hidden; max-height: calc(2 * (6.5rem + 1.6rem) + 1.1rem);
         }
         @media (max-width: 900px) {
-            .personal-section-block .personal-grid { grid-template-columns: repeat(4, 1fr); }
+            /* 手機螢幕塞不下9欄，改成固定兩列、往右一直排下去、用左右滑動瀏覽，
+               不要硬擠成4欄變5列，那樣配合外層overflow:hidden會把後面的項目直接裁切消失 */
+            .personal-section-block .personal-grid {
+                grid-template-columns: none; grid-auto-columns: 5.5rem; grid-template-rows: repeat(2, auto);
+                grid-auto-flow: column; overflow-x: auto; overflow-y: hidden; max-height: none;
+                -webkit-overflow-scrolling: touch; padding-bottom: 0.3rem;
+            }
+            .personal-section-block .personal-grid .personal-grid-item { width: 5.5rem; }
         }
         .personal-info-card { }
         /* 個人頁面儀表板：成就/做菜音樂資訊卡 */
@@ -582,7 +589,7 @@
 
         <!-- 個人頁面：收藏/我的食譜共用首頁本來就有的recipes-grid，只是切換篩選狀態；
              做菜音樂/成就則沿用原本就有、已經驗證過能正常運作的視窗，不重新刻一份 -->
-        <div id="personal-page-header" class="hidden mb-5 px-4 sm:px-0">
+        <div id="personal-page-header" class="hidden mb-5 px-4 pt-5 sm:pt-0 sm:px-0">
             <button id="personal-back-home-btn" onclick="hidePersonalPage()" class="hidden md:inline-block text-sm font-medium mb-4" style="color:var(--jam)">← 返回首頁</button>
 
             <!-- 儀表板：進入個人頁面預設看到的畫面，不是分頁切換 -->
@@ -1451,6 +1458,8 @@
                 closeMarketPricesModal(true);
             } else if (mobileMenuPanel && !mobileMenuPanel.classList.contains('hidden')) {
                 closeMobileMenu(true);
+            } else if (personalFullListActive) {
+                backToPersonalDashboard(true);
             } else if (personalPageActive) {
                 hidePersonalPage(true);
             } else {
@@ -12676,6 +12685,7 @@
         // recipes-grid + filterRecipes()（收藏/我的食譜兩個分頁只是切換篩選狀態），
         // 做菜音樂/成就則直接開原本就驗證過能正常運作的視窗，降低風險、不用重寫已經動的東西
         let personalPageActive = false;
+        let personalFullListActive = false; // 是不是在「查看更多」的完整清單畫面，用來讓返回鍵分層處理
         // 手機版底部導覽「首頁」按鈕：如果目前在個人頁面就退出來，並重置搜尋/分類篩選，
         // 回到最單純的首頁瀏覽狀態，順便捲動回最上面
         function goToHomeFromNav() {
@@ -12696,7 +12706,7 @@
             document.getElementById('personal-page-header')?.classList.remove('hidden');
             document.getElementById('recipes-grid')?.classList.add('hidden');
             document.getElementById('pagination')?.classList.add('hidden');
-            backToPersonalDashboard(); // 一律從儀表板總覽開始，不是某個分頁的完整清單
+            resetToPersonalDashboardView(); // 一律從儀表板總覽開始，不是某個分頁的完整清單
             window.scrollTo({ top: 0, behavior: 'smooth' });
             pushModalHistoryState(); // 按返回鍵時要能回到首頁，不是直接跳出整個網站
         }
@@ -12758,15 +12768,24 @@
             showFavoritesOnly = tab === 'favorites';
             showMyRecipesOnly = tab === 'mine';
             filterRecipes();
+            personalFullListActive = true;
+            pushModalHistoryState(); // 多推一層歷史紀錄，按返回鍵時會先跳回儀表板，不是直接跳出個人頁面
         }
-        // 從完整清單畫面返回儀表板總覽
-        function backToPersonalDashboard() {
+        // 純粹把畫面切回儀表板總覽，不動瀏覽器歷史紀錄——showPersonalPage()剛進入時用這個，
+        // 不能直接呼叫下面那個會consumeModalHistoryState的版本，不然會誤消耗一個根本沒推過的歷史堆疊
+        function resetToPersonalDashboardView() {
             document.getElementById('personal-dashboard')?.classList.remove('hidden');
             document.getElementById('personal-full-list-back')?.classList.add('hidden');
             document.getElementById('personal-recipe-list')?.classList.add('hidden');
             showFavoritesOnly = false;
             showMyRecipesOnly = false;
             renderPersonalDashboard();
+            personalFullListActive = false;
+        }
+        // 從完整清單畫面返回儀表板總覽（使用者按「返回總覽」或按返回鍵時走這個版本）
+        function backToPersonalDashboard(fromPopState) {
+            resetToPersonalDashboardView();
+            consumeModalHistoryState(fromPopState);
         }
 
         function toggleFavoritesOnly() {
@@ -12791,7 +12810,17 @@
                 // 一般瀏覽模式下，愛心圖示狀態早就透過toggleFavorite裡的樂觀更新處理好了，不需要整個重建，
                 // 重建的話會把正在播放到一半的收藏彈跳動畫直接打斷、看不到效果
                 if (showFavoritesOnly) filterRecipes(false);
+                // 個人頁面儀表板總覽會同時顯示「我的收藏」縮圖列，就算目前沒開著上面那個篩選，
+                // 收藏資料一變動也要跟著即時刷新，不然使用者在總覽收藏了一篇食譜，畫面完全沒反應
+                else if (personalPageActive) refreshPersonalPageView();
             }, err => console.warn('讀取我的最愛失敗', err));
+        }
+        // 個人頁面即時反應：收藏/食譜資料變動時（收藏、取消收藏、刪除、編輯…），
+        // 如果目前正在個人頁面，要主動刷新畫面，不能只靠使用者手動重新整理頁面才看得到最新結果
+        function refreshPersonalPageView() {
+            if (!personalPageActive) return;
+            if (personalFullListActive) filterRecipes(false); // 會走到renderPersonalRecipeList
+            else renderPersonalDashboard();
         }
 
         function updateFavoriteIcons(recipeId) {
@@ -12858,7 +12887,11 @@
                     const bTime = toMillis(b.createdAt) || toMillis(b.updatedAt);
                     return bTime - aTime;
                 });
-                filterRecipes(false);
+                // 個人頁面總覽（儀表板）不是靠filterRecipes()渲染的，食譜資料一有異動
+                // （新增、編輯、刪除…）要另外呼叫renderPersonalDashboard()才會跟著更新；
+                // 查看更多的完整清單、還有首頁格線，filterRecipes()內部本來就有處理好
+                if (personalPageActive && !personalFullListActive) renderPersonalDashboard();
+                else filterRecipes(false);
 
                 // 頁面重新載入後（包含 PWA 從背景被系統整個殺掉重開），自動翻回使用者離開前
                 // 正在看的那篇食譜，不用每次都從首頁重新找一次
