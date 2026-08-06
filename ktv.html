@@ -199,6 +199,8 @@
         80% { opacity: 1; }
         100% { opacity: 0; transform: translate(-50%, -50%) scale(1.05); }
     }
+    /* 成員視角沒有影片畫面可以疊加，用position:fixed蓋住整個頁面播放同一套動畫 */
+    #member-reaction-banner.show { animation: reaction-banner-pop 1.6s ease-out forwards; }
 
     /* ---------- 一般成員視角 ---------- */
     #member-view-inner { max-width: 40rem; margin: 0 auto; padding: 1rem 1.25rem; }
@@ -330,6 +332,8 @@
 
         <!-- 一般成員視角：純點歌遙控器，沒有播放畫面（因為畫面不會跟房主同步） -->
         <div id="member-view" class="hidden">
+            <div id="member-reaction-layer" style="position:fixed; inset:0; z-index:40; pointer-events:none; overflow:hidden;"></div>
+            <div id="member-reaction-banner" style="position:fixed; top:35%; left:50%; transform:translate(-50%,-50%) scale(0.7); z-index:41; font-size:1.9rem; font-weight:800; color:var(--jam); text-shadow:0 2px 10px rgba(0,0,0,0.15); opacity:0; pointer-events:none; text-align:center;"></div>
             <div id="room-info-bar">
                 <span class="room-info-left">🎤 <span id="member-room-name"></span></span>
                 <button class="btn btn-danger" onclick="leaveRoomAsMember()">離開房間</button>
@@ -427,27 +431,35 @@
     // 沒有重新整理就不會發現，變成同一個帳號可以在兩台裝置各開一間房間。改成onSnapshot即時監聽，
     // 不管從哪個裝置建立/解散房間，所有分頁都會馬上反映最新狀態
     // ---------------------------------------------------------------
+    // ---------------------------------------------------------------
+    // 「目前人在哪個房間」：不管是房主還是一般成員，同一時間只能待在一個房間裡。
+    // 用ktvUserRoomStatus這份文件即時監聽，不管從哪個裝置建立/加入/離開房間，
+    // 所有分頁都會馬上反映最新狀態，房間列表跟建立房間表單都會依這個狀態顯示/隱藏
+    // ---------------------------------------------------------------
+    let currentRoomStatus = null;
     function watchOwnRoom() {
         if (ownRoomUnsubscribe) ownRoomUnsubscribe();
-        ownRoomUnsubscribe = db.collection('ktvRooms').where('hostUid', '==', currentUser.uid).limit(1)
-            .onSnapshot(snap => {
-                const hint = document.getElementById('own-room-hint');
-                const createCard = document.getElementById('create-room-card');
-                if (!snap.empty) {
-                    const room = snap.docs[0].data();
-                    document.getElementById('own-room-name').textContent = room.name || '';
-                    hint.classList.remove('hidden');
-                    createCard.classList.add('hidden');
-                    hint.dataset.roomId = snap.docs[0].id;
-                } else {
-                    hint.classList.add('hidden');
-                    createCard.classList.remove('hidden');
-                }
-            }, err => console.warn('監聽自己的房間失敗', err));
+        ownRoomUnsubscribe = db.collection('ktvUserRoomStatus').doc(currentUser.uid).onSnapshot(doc => {
+            const hint = document.getElementById('own-room-hint');
+            const createCard = document.getElementById('create-room-card');
+            currentRoomStatus = doc.exists ? doc.data() : null;
+            if (currentRoomStatus && currentRoomStatus.roomId) {
+                document.getElementById('own-room-name').textContent =
+                    (currentRoomStatus.isHost ? '你是房主：' : '你已加入：') + (currentRoomStatus.roomName || currentRoomStatus.roomId);
+                hint.classList.remove('hidden');
+                createCard.classList.add('hidden');
+                hint.dataset.roomId = currentRoomStatus.roomId;
+                hint.dataset.isHost = currentRoomStatus.isHost ? '1' : '';
+            } else {
+                hint.classList.add('hidden');
+                createCard.classList.remove('hidden');
+            }
+        }, err => console.warn('監聽目前房間狀態失敗', err));
     }
     function rejoinOwnRoom() {
-        const roomId = document.getElementById('own-room-hint').dataset.roomId;
-        if (roomId) enterRoom(roomId, true);
+        const hint = document.getElementById('own-room-hint');
+        const roomId = hint.dataset.roomId;
+        if (roomId) enterRoom(roomId, hint.dataset.isHost === '1', currentRoomStatus && currentRoomStatus.roomName);
     }
     function loadRoomList() {
         db.collection('ktvRooms').orderBy('createdAt', 'desc').onSnapshot(snap => {
@@ -472,13 +484,18 @@
         try {
             const doc = await db.collection('ktvRooms').doc(roomId).get();
             if (!doc.exists) { alert('這個房間剛剛已經被解散了'); return; }
+            // 同一時間只能待在一個房間，不管目前是房主還是一般成員都要先擋下來
+            if (currentRoomStatus && currentRoomStatus.roomId && currentRoomStatus.roomId !== roomId) {
+                alert(`你目前已經在房間「${currentRoomStatus.roomName || currentRoomStatus.roomId}」裡，請先離開才能加入其他房間`);
+                return;
+            }
             const room = doc.data();
             if (room.passcode) {
                 pendingJoinRoomId = roomId;
                 document.getElementById('passcode-modal-input').value = '';
                 document.getElementById('passcode-modal-backdrop').classList.remove('hidden');
             } else {
-                enterRoom(roomId, room.hostUid === currentUser.uid);
+                enterRoom(roomId, room.hostUid === currentUser.uid, room.name);
             }
         } catch (err) {
             alert('加入房間失敗：' + err.message);
@@ -490,10 +507,15 @@
         try {
             const doc = await db.collection('ktvRooms').doc(roomId).get();
             if (!doc.exists) { alert('這個房間剛剛已經被解散了'); closePasscodeModal(); return; }
+            if (currentRoomStatus && currentRoomStatus.roomId && currentRoomStatus.roomId !== roomId) {
+                alert(`你目前已經在房間「${currentRoomStatus.roomName || currentRoomStatus.roomId}」裡，請先離開才能加入其他房間`);
+                closePasscodeModal();
+                return;
+            }
             const room = doc.data();
             if (room.passcode !== input) { alert('房間代碼不正確'); return; }
             closePasscodeModal();
-            enterRoom(roomId, room.hostUid === currentUser.uid);
+            enterRoom(roomId, room.hostUid === currentUser.uid, room.name);
         } catch (err) {
             alert('加入房間失敗：' + err.message);
         }
@@ -511,6 +533,11 @@
     }
     async function createRoom() {
         if (!currentUser) { alert('請先登入才能建立房間'); return; }
+        // 已經在某個房間裡（房主或成員身份都算），不能再建立新的
+        if (currentRoomStatus && currentRoomStatus.roomId) {
+            alert(`你目前已經在房間「${currentRoomStatus.roomName || currentRoomStatus.roomId}」裡，請先離開才能建立新房間`);
+            return;
+        }
         const name = document.getElementById('create-room-name').value.trim() || `${currentUser.displayName || '我'}的房間`;
         const passcode = document.getElementById('create-room-passcode').value.trim();
         const roomId = generateRoomCode();
@@ -521,17 +548,18 @@
                 queue: [], memberCount: 0,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
-            enterRoom(roomId, true);
+            enterRoom(roomId, true, name);
         } catch (err) {
             document.getElementById('lobby-status').textContent = '⚠️ 建立房間失敗：' + err.message;
         }
     }
 
     // ---------------------------------------------------------------
-    // 進入房間：切畫面(房主/成員)，加入成員名單(memberCount+1，房主自己也會被計入)，
-    // 開始即時監聽房間文件+成員名單+掌聲反應
+    // 進入房間：切畫面(房主/成員)，加入成員名單(只有真的第一次加入才會讓memberCount+1，
+    // 重複進入同一個房間不會一直疊加)，開始即時監聽房間文件+成員名單+掌聲反應，
+    // 同時寫入ktvUserRoomStatus記錄「我現在在這個房間」
     // ---------------------------------------------------------------
-    async function enterRoom(roomId, asHost) {
+    async function enterRoom(roomId, asHost, roomName) {
         currentRoomId = roomId;
         isHost = asHost;
         prevQueueQids = [];
@@ -543,11 +571,23 @@
         document.getElementById(asHost ? 'member-view' : 'host-view').classList.add('hidden');
 
         // 把自己（不管房主還是一般成員）寫進這個房間的成員名單，離開時會再刪掉。
-        // 用await確保這一步真的完成、也把錯誤印出來，方便之後如果人數異常可以從Console查
+        // 先檢查這筆成員紀錄是不是已經存在——重複進入同一個房間（重新整理頁面、
+        // 從「前往我的房間」按鈕再進來一次）不應該讓人數一直往上疊加，只有真的第一次
+        // 加入才會讓memberCount+1
         try {
-            await db.collection('ktvRooms').doc(roomId).collection('members').doc(currentUser.uid)
-                .set({ uid: currentUser.uid, name: currentUser.displayName || '匿名', joinedAt: firebase.firestore.FieldValue.serverTimestamp() });
-            await db.collection('ktvRooms').doc(roomId).update({ memberCount: firebase.firestore.FieldValue.increment(1) });
+            const memberRef = db.collection('ktvRooms').doc(roomId).collection('members').doc(currentUser.uid);
+            const existingMemberDoc = await memberRef.get();
+            const alreadyMember = existingMemberDoc.exists;
+            await memberRef.set({ uid: currentUser.uid, name: currentUser.displayName || '匿名', joinedAt: firebase.firestore.FieldValue.serverTimestamp() });
+            if (!alreadyMember) {
+                await db.collection('ktvRooms').doc(roomId).update({ memberCount: firebase.firestore.FieldValue.increment(1) });
+            }
+            // 記錄「我現在在這個房間」，離開時會清掉。這份文件是判斷「同一時間只能待在
+            // 一個房間」的唯一依據，建立/加入房間前都會先檢查這個
+            await db.collection('ktvUserRoomStatus').doc(currentUser.uid).set({
+                roomId, roomName: roomName || '', isHost: asHost,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            });
         } catch (err) {
             console.error('加入成員名單失敗', err);
         }
@@ -580,33 +620,47 @@
             }
         }, err => console.warn('房間監聽失敗', err));
 
-        // 成員名單監聽：算目前人數（不管房主還是成員都算在內）、偵測新加入的人
+        // 成員名單監聽：算目前人數（不管房主還是成員都算在內）、偵測誰加入/離開房間。
+        // 用「監聽建立的當下時間」當基準，只有joinedAt晚於這個時間點的才算是「剛剛加入」，
+        // 這樣不管房主還是一般成員，只要人在房間裡都收得到通知，也不會因為「這是我進房間後
+        // 收到的第一批資料」就誤判成新加入（之前用一個布林旗標「跳過第一次」來擋，
+        // 但這個做法沒辦法正確處理「離開」事件，也容易在時機湊巧時漏判）
+        const membersListenerAttachedAt = Date.now();
         if (membersUnsubscribe) membersUnsubscribe();
         membersUnsubscribe = db.collection('ktvRooms').doc(roomId).collection('members').onSnapshot(snap => {
             const uids = snap.docs.map(d => d.id);
-            if (isHost) {
-                snap.docChanges().forEach(change => {
-                    if (change.type === 'added' && !prevMemberUids.includes(change.doc.id) && change.doc.id !== currentUser.uid) {
+            snap.docChanges().forEach(change => {
+                const memberUid = change.doc.id;
+                if (memberUid === currentUser.uid) return; // 自己加入/離開不用通知自己
+                if (change.type === 'added') {
+                    const joinedAtMs = change.doc.data().joinedAt && change.doc.data().joinedAt.toMillis ? change.doc.data().joinedAt.toMillis() : Date.now();
+                    if (joinedAtMs >= membersListenerAttachedAt) {
                         showKtvToast(`👋 ${change.doc.data().name || '有人'} 已加入房間`);
                     }
-                });
-            }
+                } else if (change.type === 'removed' && prevMemberUids.includes(memberUid)) {
+                    showKtvToast(`🚪 ${change.doc.data().name || '有人'} 已離開房間`);
+                }
+            });
             prevMemberUids = uids;
             const countText = String(snap.size);
             ['host-member-count', 'overlay-member-count'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = countText; });
         }, err => console.warn('成員名單監聽失敗', err));
 
-        // 掌聲鼓勵反應：只有房主端需要監聽並觸發畫面上的動畫
-        if (isHost) {
-            if (reactionsUnsubscribe) reactionsUnsubscribe();
-            let reactionsFirstLoad = true;
-            reactionsUnsubscribe = db.collection('ktvRooms').doc(roomId).collection('reactions').onSnapshot(snap => {
-                if (reactionsFirstLoad) { reactionsFirstLoad = false; return; } // 剛進房間時舊的反應不要重播一次
-                snap.docChanges().forEach(change => {
-                    if (change.type === 'added') playReactionAnimation(change.doc.data());
-                });
-            }, err => console.warn('掌聲反應監聽失敗', err));
-        }
+        // 掌聲鼓勵反應：房主跟一般成員都要監聽並觸發畫面上的動畫，不是只有房主看得到。
+        // 一樣改用時間戳記比對，不用「跳過第一次」那種旗標
+        const reactionsListenerAttachedAt = Date.now();
+        if (reactionsUnsubscribe) reactionsUnsubscribe();
+        reactionsUnsubscribe = db.collection('ktvRooms').doc(roomId).collection('reactions').onSnapshot(snap => {
+            snap.docChanges().forEach(change => {
+                if (change.type !== 'added') return;
+                const reaction = change.doc.data();
+                // 自己剛剛送出的那則反應，畫面已經在sendApplause()裡立即播放過一次了，
+                // 這裡收到自己那份不用再播第二次
+                if (reaction.uid === currentUser.uid) return;
+                const createdAtMs = reaction.createdAt && reaction.createdAt.toMillis ? reaction.createdAt.toMillis() : Date.now();
+                if (createdAtMs >= reactionsListenerAttachedAt) playReactionAnimation(reaction);
+            });
+        }, err => console.warn('掌聲反應監聽失敗', err));
 
         document.getElementById(asHost ? 'host-room-name' : 'member-room-name').textContent = '';
         if (asHost) {
@@ -642,6 +696,8 @@
         db.collection('ktvRooms').doc(roomId).collection('members').doc(currentUser.uid).delete()
             .then(() => db.collection('ktvRooms').doc(roomId).update({ memberCount: firebase.firestore.FieldValue.increment(-1) }))
             .catch(err => console.warn('移除成員名單失敗', err));
+        db.collection('ktvUserRoomStatus').doc(currentUser.uid).delete()
+            .catch(err => console.warn('清除目前房間狀態失敗', err));
     }
     window.addEventListener('beforeunload', leaveMemberRecord);
 
@@ -722,6 +778,9 @@
     async function sendApplause() {
         if (!currentUser || !currentRoomId) return;
         const typeIndex = Math.floor(Math.random() * REACTION_TYPES.length);
+        // 先在自己畫面上立即播放一次，不用等Firestore寫入+監聽回來的來回時間，
+        // 點下去馬上就有反應。其他人那邊會透過下面的reactions監聽收到、各自播放
+        playReactionAnimation({ typeIndex, name: currentUser.displayName || '你', uid: currentUser.uid });
         try {
             await db.collection('ktvRooms').doc(currentRoomId).collection('reactions').add({
                 uid: currentUser.uid, name: currentUser.displayName || '有人',
@@ -731,8 +790,9 @@
     }
     function playReactionAnimation(reaction) {
         const type = REACTION_TYPES[reaction.typeIndex] || REACTION_TYPES[0];
-        const layer = document.getElementById('reaction-layer');
-        const banner = document.getElementById('reaction-banner');
+        // 房主視角疊在影片上(#reaction-layer)，一般成員視角沒有影片可疊，用蓋住整個頁面的版本
+        const layer = document.getElementById(isHost ? 'reaction-layer' : 'member-reaction-layer');
+        const banner = document.getElementById(isHost ? 'reaction-banner' : 'member-reaction-banner');
         if (!layer || !banner) return;
         // 一批表情符號從畫面底部往上飄，每個位置/飄移方向/速度都隨機一點，看起來比較自然
         for (let i = 0; i < 16; i++) {
