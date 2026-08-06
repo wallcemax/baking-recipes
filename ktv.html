@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>KTV系統 - JUST DO EAT</title>
+
+<!-- Firebase：跟主站共用同一個專案，這樣登入狀態、使用者名稱都能直接沿用，不用另外登入一次 -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+
+<style>
+    :root {
+        --cream: #FBF3E7; --paper: #FFFDF9; --espresso: #3A2A1E; --espresso-soft: #6B5847;
+        --jam: #A8324A; --jam-dark: #7A1F35; --sage: #6F8C6E; --honey: #C98A2C; --line: #EFEAE0;
+        --muted: #B3A492;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; min-height: 100vh; background: var(--cream); color: var(--espresso);
+        font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+        padding-bottom: 3rem;
+    }
+    header {
+        display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem;
+        background: var(--paper); box-shadow: 0 2px 8px rgba(58,42,30,0.06); position: sticky; top: 0; z-index: 20;
+    }
+    header h1 { font-size: 1.15rem; margin: 0; display: flex; align-items: center; gap: 0.4rem; }
+    header a { color: var(--muted); font-size: 0.8rem; text-decoration: none; }
+    .mode-switch { display: flex; gap: 0.5rem; padding: 1rem 1.25rem 0; }
+    .mode-btn {
+        flex: 1; padding: 0.7rem; border-radius: 1rem; border: none; font-size: 0.9rem; font-weight: 600;
+        background: var(--paper); color: var(--espresso-soft); cursor: pointer;
+    }
+    .mode-btn.active { background: var(--jam); color: #fff; }
+    main { max-width: 40rem; margin: 0 auto; padding: 1rem 1.25rem; }
+    .section { display: none; }
+    .section.active { display: block; }
+
+    .search-row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+    input[type="text"] {
+        flex: 1; padding: 0.75rem 1rem; border-radius: 999px; border: 1px solid var(--line);
+        background: var(--paper); font-size: 0.95rem; color: var(--espresso);
+    }
+    input[type="text"]:focus { outline: 2px solid var(--jam); outline-offset: 1px; }
+    .btn {
+        padding: 0.75rem 1.25rem; border-radius: 999px; border: none; background: var(--jam); color: #fff;
+        font-size: 0.9rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+    }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .btn-outline { background: var(--paper); color: var(--jam); border: 1px solid var(--jam); }
+    label.checkbox-row { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--espresso-soft); margin-bottom: 1rem; }
+
+    /* 分類點歌：模擬傳統KTV「語言／歌手類型」分類瀏覽的感覺，用分類組合出搜尋關鍵字，
+       不是真的資料庫索引（YouTube搜尋沒有這種結構化資料可以查） */
+    .filter-group { margin-bottom: 0.75rem; }
+    .filter-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.35rem; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .chip {
+        padding: 0.35rem 0.85rem; border-radius: 999px; border: 1px solid var(--line); background: var(--paper);
+        color: var(--espresso-soft); font-size: 0.78rem; cursor: pointer;
+    }
+    .chip.active { background: var(--jam); color: #fff; border-color: var(--jam); }
+
+    .result-card, .queue-card {
+        display: flex; align-items: center; gap: 0.75rem; background: var(--paper); border-radius: 1rem;
+        padding: 0.6rem; margin-bottom: 0.6rem; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08);
+    }
+    .result-card img, .queue-card img { width: 4.5rem; height: 2.6rem; object-fit: cover; border-radius: 0.5rem; flex-shrink: 0; background: var(--line); }
+    .result-card .info, .queue-card .info { flex: 1; min-width: 0; }
+    .result-card .title, .queue-card .title { font-size: 0.85rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .result-card .sub, .queue-card .sub { font-size: 0.72rem; color: var(--muted); margin-top: 0.15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .add-btn { flex-shrink: 0; width: 2.3rem; height: 2.3rem; border-radius: 999px; border: none; background: var(--sage); color: #fff; font-size: 1.1rem; cursor: pointer; }
+    .remove-btn { flex-shrink: 0; width: 2rem; height: 2rem; border-radius: 999px; border: none; background: var(--line); color: var(--espresso-soft); font-size: 0.9rem; cursor: pointer; }
+
+    .empty-hint { text-align: center; color: var(--muted); font-size: 0.85rem; padding: 2rem 1rem; }
+    h2.section-title { font-size: 0.95rem; margin: 1.5rem 0 0.75rem; color: var(--espresso-soft); }
+
+    /* 播放螢幕模式：大畫面播放器 + 現正/接下來播放資訊 */
+    .player-frame-wrap { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 1.25rem; overflow: hidden; margin-bottom: 1rem; }
+    .now-playing-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .now-playing-sub { font-size: 0.85rem; color: var(--muted); margin-bottom: 1rem; }
+    .screen-controls { display: flex; gap: 0.75rem; margin-bottom: 1.5rem; }
+    .up-next-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0; border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+    .up-next-item .idx { color: var(--muted); width: 1.5rem; flex-shrink: 0; }
+
+    .login-hint { text-align: center; padding: 2rem 1rem; color: var(--espresso-soft); font-size: 0.9rem; }
+    .hidden { display: none; }
+</style>
+</head>
+<body>
+    <header>
+        <h1>🎤 KTV系統</h1>
+        <a href="index.html">← 回到 JUST DO EAT</a>
+    </header>
+
+    <div class="mode-switch">
+        <button class="mode-btn active" id="mode-btn-request" onclick="switchMode('request')">🎤 我要點歌</button>
+        <button class="mode-btn" id="mode-btn-screen" onclick="switchMode('screen')">📺 播放大螢幕模式</button>
+    </div>
+
+    <main>
+        <!-- ---------- 點歌模式：搜尋YouTube影片、加入共用點歌佇列 ---------- -->
+        <div id="section-request" class="section active">
+            <div id="request-login-hint" class="login-hint hidden">請先登入才能點歌，搜尋還是可以自由使用</div>
+
+            <div class="filter-group">
+                <div class="filter-label">語言</div>
+                <div class="chip-row" id="lang-chips">
+                    <button class="chip active" data-value="">不限</button>
+                    <button class="chip" data-value="華語">華語</button>
+                    <button class="chip" data-value="台語">台語</button>
+                    <button class="chip" data-value="客語">客語</button>
+                    <button class="chip" data-value="英文">英文</button>
+                    <button class="chip" data-value="日文">日文</button>
+                    <button class="chip" data-value="韓文">韓文</button>
+                </div>
+            </div>
+            <div class="filter-group">
+                <div class="filter-label">歌手類型</div>
+                <div class="chip-row" id="gender-chips">
+                    <button class="chip active" data-value="">不限</button>
+                    <button class="chip" data-value="男歌手">男歌手</button>
+                    <button class="chip" data-value="女歌手">女歌手</button>
+                    <button class="chip" data-value="團體合唱">團體／合唱</button>
+                </div>
+            </div>
+
+            <div class="search-row">
+                <input type="text" id="search-input" placeholder="輸入歌名或歌手（選填，留空搭配上面分類也可以直接瀏覽）" onkeydown="if(event.key==='Enter') searchSongs()">
+                <button class="btn" onclick="searchSongs()" id="search-btn">搜尋</button>
+            </div>
+            <label class="checkbox-row">
+                <input type="checkbox" id="lyrics-only-toggle" checked>
+                只找歌詞版／字幕版影片（搜尋時自動加上「歌詞」關鍵字）
+            </label>
+
+            <div id="search-results"></div>
+
+            <h2 class="section-title">🎶 目前點歌佇列</h2>
+            <div id="request-queue-list"></div>
+        </div>
+
+        <!-- ---------- 播放大螢幕模式：接在電視/平板上，自動依序播放佇列裡的歌 ---------- -->
+        <div id="section-screen" class="section">
+            <div class="player-frame-wrap"><div id="ktv-player-target" style="width:100%;height:100%"></div></div>
+            <div class="now-playing-title" id="now-playing-title">目前沒有排隊中的歌曲</div>
+            <div class="now-playing-sub" id="now-playing-sub">請用手機切到「我要點歌」搜尋加入</div>
+            <div class="screen-controls">
+                <button class="btn" onclick="skipCurrentSong()">⏭ 跳過這首</button>
+            </div>
+            <h2 class="section-title">🎵 接下來播放</h2>
+            <div id="up-next-list"></div>
+        </div>
+    </main>
+
+<script>
+    // ---------------------------------------------------------------
+    // Firebase初始化：跟主站(index.html)用同一份設定，共用同一個登入狀態
+    // ---------------------------------------------------------------
+    const firebaseConfig = {
+        apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
+        authDomain: "recipe-synchronization.firebaseapp.com",
+        projectId: "recipe-synchronization",
+        storageBucket: "recipe-synchronization.firebasestorage.app",
+        messagingSenderId: "559668909743",
+        appId: "1:559668909743:web:63dc34572b98839479265a"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+    const CLOUDFLARE_AI_PROXY_URL = 'https://baking-recipes-ai.wallcemax.workers.dev/';
+
+    let currentUser = null;
+    let currentQueue = []; // 目前的點歌佇列，從Firestore即時同步下來的本機副本
+    let currentMode = 'request';
+
+    auth.onAuthStateChanged(user => {
+        currentUser = user;
+        document.getElementById('request-login-hint').classList.toggle('hidden', !!user);
+    });
+
+    // ---------------------------------------------------------------
+    // 模式切換：點歌模式(手機用) / 播放大螢幕模式(接電視/平板用)。
+    // 只有切到「播放大螢幕模式」的那台裝置才會真的建立播放器、播放聲音，
+    // 避免每個人手機點歌的同時自己手機也開始放歌
+    // ---------------------------------------------------------------
+    function switchMode(mode) {
+        currentMode = mode;
+        document.getElementById('section-request').classList.toggle('active', mode === 'request');
+        document.getElementById('section-screen').classList.toggle('active', mode === 'screen');
+        document.getElementById('mode-btn-request').classList.toggle('active', mode === 'request');
+        document.getElementById('mode-btn-screen').classList.toggle('active', mode === 'screen');
+        if (mode === 'screen') playCurrentQueueHead(); // 切進螢幕模式時，如果佇列已經有歌，馬上開始播放
+    }
+
+    // ---------------------------------------------------------------
+    // 點歌佇列：存在Firestore的 ktvQueue/main 這份文件裡，所有裝置即時同步。
+    // 用陣列存整條佇列（不是各自獨立的文件），因為佇列本身有順序性、而且同時
+    // 大概就幾十首歌，一份文件存得下，讀寫也單純
+    // ---------------------------------------------------------------
+    function queueDocRef() {
+        return db.collection('ktvQueue').doc('main');
+    }
+    function subscribeQueue() {
+        queueDocRef().onSnapshot(doc => {
+            const prevHeadId = currentQueue[0] && currentQueue[0].qid;
+            currentQueue = (doc.exists && doc.data().queue) || [];
+            renderQueueViews();
+            // 播放大螢幕模式：如果佇列最前面那首歌換了（上一首播完被拿掉、或有人加了新歌到空佇列），
+            // 就要跟著載入新的影片
+            const newHeadId = currentQueue[0] && currentQueue[0].qid;
+            if (currentMode === 'screen' && newHeadId !== prevHeadId) playCurrentQueueHead();
+        }, err => console.warn('訂閱KTV佇列失敗', err && err.message));
+    }
+    async function addSongToQueue(song) {
+        if (!currentUser) { alert('請先登入才能點歌'); return; }
+        const entry = {
+            qid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            videoId: song.videoId,
+            title: song.title,
+            thumbnail: song.thumbnail || '',
+            addedBy: currentUser.displayName || '匿名',
+            addedAt: Date.now(), // 陣列裡的元素不能用serverTimestamp()，只能用純數字時間戳
+        };
+        try {
+            await queueDocRef().set({
+                queue: firebase.firestore.FieldValue.arrayUnion(entry),
+            }, { merge: true });
+        } catch (err) {
+            alert('加入佇列失敗：' + (err && err.message ? err.message : String(err)));
+        }
+    }
+    // 把佇列最前面那首歌拿掉（歌播完自動接下一首、或按跳過都是呼叫這個）
+    async function removeFrontOfQueue() {
+        if (!currentQueue.length) return;
+        const newQueue = currentQueue.slice(1);
+        try {
+            await queueDocRef().set({ queue: newQueue }, { merge: true });
+        } catch (err) {
+            console.warn('移除佇列開頭失敗', err && err.message);
+        }
+    }
+    // 移除佇列裡指定的某一首（例如點歌的人自己反悔想取消）
+    async function removeQueueEntry(qid) {
+        const newQueue = currentQueue.filter(q => q.qid !== qid);
+        try {
+            await queueDocRef().set({ queue: newQueue }, { merge: true });
+        } catch (err) {
+            console.warn('移除指定歌曲失敗', err && err.message);
+        }
+    }
+    function skipCurrentSong() { removeFrontOfQueue(); }
+
+    // ---------------------------------------------------------------
+    // 畫面渲染：點歌模式底下的佇列預覽 + 播放螢幕模式底下的「接下來播放」清單
+    // ---------------------------------------------------------------
+    function renderQueueViews() {
+        // 點歌模式：顯示整條佇列，每首都能移除
+        const reqList = document.getElementById('request-queue-list');
+        if (!currentQueue.length) {
+            reqList.innerHTML = '<div class="empty-hint">目前還沒有人點歌，搜尋喜歡的歌曲加進來吧</div>';
+        } else {
+            reqList.innerHTML = currentQueue.map((q, i) => `
+                <div class="queue-card">
+                    <img src="${q.thumbnail || ''}" alt="">
+                    <div class="info">
+                        <div class="title">${i === 0 ? '▶ ' : ''}${escapeHtml(q.title)}</div>
+                        <div class="sub">${escapeHtml(q.addedBy || '')}點的${i === 0 ? '・現正播放' : ''}</div>
+                    </div>
+                    <button class="remove-btn" onclick="removeQueueEntry('${q.qid}')" title="移除">✕</button>
+                </div>
+            `).join('');
+        }
+
+        // 播放螢幕模式：現正播放資訊 + 接下來清單（不含現正播放那首）
+        const head = currentQueue[0];
+        document.getElementById('now-playing-title').textContent = head ? head.title : '目前沒有排隊中的歌曲';
+        document.getElementById('now-playing-sub').textContent = head ? `${head.addedBy || ''} 點的` : '請用手機切到「我要點歌」搜尋加入';
+        const upNext = currentQueue.slice(1);
+        const upNextEl = document.getElementById('up-next-list');
+        upNextEl.innerHTML = upNext.length
+            ? upNext.map((q, i) => `<div class="up-next-item"><span class="idx">${i + 1}</span><span>${escapeHtml(q.title)}（${escapeHtml(q.addedBy || '')}）</span></div>`).join('')
+            : '<div class="empty-hint">佇列已經空了，請大家繼續點歌</div>';
+    }
+    function escapeHtml(str) {
+        return String(str || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // ---------------------------------------------------------------
+    // 分類點歌：模擬傳統KTV「語言／歌手類型」分類瀏覽，每組是單選（點一個會取消同一組
+    // 其他已選的），選好的分類會併進搜尋關鍵字裡，不是真的資料庫索引查詢（YouTube搜尋
+    // 沒有這種結構化的「這首歌是男歌手唱的」資料可以查，是用關鍵字去逼近這個瀏覽效果）
+    // ---------------------------------------------------------------
+    let selectedLang = '';
+    let selectedGender = '';
+    function setupChipGroup(containerId, onSelect) {
+        const container = document.getElementById(containerId);
+        container.querySelectorAll('.chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                container.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+                chip.classList.add('active');
+                onSelect(chip.dataset.value || '');
+            });
+        });
+    }
+    setupChipGroup('lang-chips', v => { selectedLang = v; });
+    setupChipGroup('gender-chips', v => { selectedGender = v; });
+
+    // ---------------------------------------------------------------
+    // 搜尋YouTube：透過Worker呼叫（用API金鑰，不需要任何人登入授權）。
+    // 關鍵字＝使用者打的字 + 選的分類，兩者都留空的話不會搜尋（至少要打字或選一個分類）
+    // ---------------------------------------------------------------
+    async function searchSongs() {
+        const input = document.getElementById('search-input');
+        const typedText = input.value.trim();
+        const parts = [typedText, selectedLang, selectedGender].filter(Boolean);
+        if (!parts.length) { alert('請輸入歌名／歌手，或至少選一個分類'); return; }
+        // 純靠分類瀏覽、沒打任何文字的情況下，加「精選」讓搜尋結果比較像「這個分類底下的熱門歌曲」，
+        // 而不是隨便抓到不相關的影片
+        if (!typedText) parts.push('精選');
+        const query = parts.join(' ');
+        const btn = document.getElementById('search-btn');
+        const resultsEl = document.getElementById('search-results');
+        btn.disabled = true;
+        resultsEl.innerHTML = '<div class="empty-hint">搜尋中...</div>';
+        try {
+            const lyricsOnly = document.getElementById('lyrics-only-toggle').checked;
+            const finalQuery = lyricsOnly ? `${query} 歌詞` : query;
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'youtube_search', query: finalQuery }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) throw new Error(data.error || `搜尋失敗(${res.status})`);
+            const results = data.results || [];
+            resultsEl.innerHTML = results.length
+                ? results.map(r => `
+                    <div class="result-card">
+                        <img src="${r.thumbnail || ''}" alt="">
+                        <div class="info">
+                            <div class="title">${escapeHtml(r.title)}</div>
+                            <div class="sub">${escapeHtml(r.channelTitle || '')}</div>
+                        </div>
+                        <button class="add-btn" onclick='addSongToQueue(${JSON.stringify({ videoId: r.videoId, title: r.title, thumbnail: r.thumbnail }).replace(/'/g, "&#39;")})' title="加入佇列">＋</button>
+                    </div>
+                `).join('')
+                : '<div class="empty-hint">找不到符合的影片，換個關鍵字試試</div>';
+        } catch (err) {
+            resultsEl.innerHTML = `<div class="empty-hint">⚠️ ${escapeHtml(err && err.message ? err.message : String(err))}</div>`;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 播放器：只有「播放大螢幕模式」才會真的建立YT.Player。用單一影片ID載入的方式播放
+    // （跟做菜音樂功能同一招，這個網站上唯一確認穩定的YouTube嵌入方式），完全不使用
+    // YouTube播放清單的嵌入/串接機制。歌曲本身是不是有內建滾動歌詞，取決於使用者
+    // 搜尋/選歌時選了哪一支影片，播放器這邊不用另外處理歌詞顯示
+    // ---------------------------------------------------------------
+    let ytPlayer = null;
+    let ytPlayerReady = false;
+    let ytApiReadyPromise = null;
+    function loadYoutubeIframeApi() {
+        if (ytApiReadyPromise) return ytApiReadyPromise;
+        ytApiReadyPromise = new Promise(resolve => {
+            if (window.YT && window.YT.Player) { resolve(); return; }
+            const prevCallback = window.onYouTubeIframeAPIReady;
+            window.onYouTubeIframeAPIReady = () => {
+                if (typeof prevCallback === 'function') prevCallback();
+                resolve();
+            };
+            const tag = document.createElement('script');
+            tag.src = 'https://www.youtube.com/iframe_api';
+            document.head.appendChild(tag);
+        });
+        return ytApiReadyPromise;
+    }
+    async function playCurrentQueueHead() {
+        const head = currentQueue[0];
+        if (!head) return; // 佇列是空的，畫面上已經顯示「目前沒有排隊中的歌曲」，這裡不用做事
+        await loadYoutubeIframeApi();
+        if (!ytPlayer) {
+            ytPlayer = new YT.Player('ktv-player-target', {
+                width: '100%', height: '100%', videoId: head.videoId,
+                playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
+                events: {
+                    onReady: () => { ytPlayerReady = true; },
+                    onStateChange: (e) => {
+                        // 這首歌自然播完了，自動把佇列開頭拿掉接下一首（其他裝置會透過onSnapshot同步收到變化）
+                        if (e.data === YT.PlayerState.ENDED) removeFrontOfQueue();
+                    },
+                },
+            });
+        } else if (ytPlayerReady) {
+            ytPlayer.loadVideoById(head.videoId);
+        }
+    }
+
+    subscribeQueue();
+</script>
+</body>
+</html>
