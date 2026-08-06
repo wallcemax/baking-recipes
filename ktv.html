@@ -502,13 +502,23 @@
                 db.collection('ktvRooms').doc(r.id).collection('members').get()
                     .then(memberSnap => memberSnap.size).catch(() => 0)
             ));
+            // 房主名稱(hostName)是建房那一刻寫死存進房間文件裡的舊名字，不會因為房主之後
+            // 改了暱稱就跟著變——這裡額外查一次每個房主「現在」設定的暱稱，查得到就蓋掉顯示，
+            // 查不到（沒設定過暱稱）才退回顯示原本存的hostName，做法跟排行榜、食譜作者名稱
+            // 用的是同一套邏輯
+            const hostNames = await Promise.all(rooms.map(r => {
+                if (!r.hostUid) return Promise.resolve(r.hostName || '');
+                return db.collection('userProfiles').doc(r.hostUid).get()
+                    .then(doc => (doc.exists && doc.data().nickname) ? doc.data().nickname : (r.hostName || ''))
+                    .catch(() => r.hostName || '');
+            }));
             container.innerHTML = rooms.map((room, i) => {
                 const icon = room.roomIcon ? `<img src="${room.roomIcon}" class="room-icon-thumb" alt="">` : '';
                 return `<div class="room-list-item" onclick="tryJoinRoom('${room.id}')">
                     ${icon}
                     <div class="info">
                         <div class="name">${escapeHtmlKtv(room.name || room.id)}</div>
-                        <div class="sub">房主：${escapeHtmlKtv(room.hostName || '')} · 👥 ${counts[i]}人</div>
+                        <div class="sub">房主：${escapeHtmlKtv(hostNames[i])} · 👥 ${counts[i]}人</div>
                     </div>
                     ${room.passcode ? '<span class="lock-icon">🔒</span>' : ''}
                 </div>`;
