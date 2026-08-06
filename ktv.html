@@ -284,10 +284,10 @@
 
         <!-- 房主視角 -->
         <div id="host-view" class="hidden">
-            <div id="room-info-bar">
+            <div id="room-info-bar" style="display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:0.75rem;">
                 <span class="room-info-left">🎤 <span id="host-room-name"></span> · 房號 <span id="host-room-id" style="color:var(--jam)"></span> · 👥 <span id="host-member-count">1</span>人</span>
-                <button id="host-applause-btn" class="btn btn-outline" onclick="sendApplause()">👏 掌聲鼓勵</button>
-                <div class="room-info-actions">
+                <button id="host-applause-btn" class="btn btn-outline" onclick="sendApplause()" style="justify-self:center;">👏 掌聲鼓勵</button>
+                <div class="room-info-actions" style="justify-self:end;">
                     <button class="btn btn-outline" onclick="toggleFullscreen()">⛶ 全螢幕</button>
                     <div style="position:relative; display:inline-block;">
                         <button class="btn btn-outline" onclick="toggleRoomIconPicker()">🖼 房間圖案</button>
@@ -301,10 +301,12 @@
                 <div id="reaction-layer"></div>
                 <div id="reaction-banner"></div>
                 <div id="toast-stack"></div>
+                <!-- 全螢幕時：掌聲鼓勵獨立成一個置中的按鈕，跟房間資訊/解散房間那條列分開，
+                     這樣才會是畫面正上方正中央、看得到中文字+emoji，不是擠在角落的小圖示 -->
+                <button id="fullscreen-applause-btn" onclick="sendApplause()" style="position:absolute; top:0.6rem; left:50%; transform:translateX(-50%); z-index:6; background:rgba(20,14,10,0.65); backdrop-filter:blur(6px); color:#F5EBDF; border:none; border-radius:999px; padding:0.5rem 1.1rem; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap;">👏 掌聲鼓勵</button>
                 <div id="host-overlay-ui">
                     <div id="overlay-toggle-bar">
                         <span onclick="toggleOverlayExpanded()" style="flex:1; cursor:pointer;">🎤 <span id="overlay-room-name"></span> · 房號 <span class="room-code-badge" id="overlay-room-id"></span> · 👥 <span id="overlay-member-count">1</span>人 · <span id="overlay-toggle-icon">▼ 點歌／佇列</span></span>
-                        <button class="disband-inline-btn" style="background:rgba(111,140,110,0.85); margin-right:0.4rem;" onclick="sendApplause()">👏</button>
                         <button class="disband-inline-btn" onclick="leaveRoomAsHost()">解散房間</button>
                     </div>
                     <div id="host-overlay-body">
@@ -490,13 +492,15 @@
         db.collection('ktvRooms').orderBy('createdAt', 'desc').onSnapshot(async snap => {
             const container = document.getElementById('room-list-container');
             if (snap.empty) { container.innerHTML = '<p class="empty-hint">目前沒有開著的房間，建立一個新的吧</p>'; return; }
-            // 人數改成直接查真實的成員名單筆數（Firestore的count()聚合查詢），不再信任
-            // 另外維護的memberCount計數欄位——加減計數器只要漏算一次就會永遠兜不起來，
-            // 直接讀真實資料才不會再發生「人數一直增加、跟實際狀況對不上」的問題
+            // 人數改成直接查真實的成員名單筆數，不再信任另外維護的memberCount計數欄位——
+            // 加減計數器只要漏算一次就會永遠兜不起來，直接讀真實資料才不會再發生「人數一直增加、
+            // 跟實際狀況對不上」的問題。原本想用count()聚合查詢（不用抓回整份文件、比較省流量），
+            // 但目前載入的Firebase SDK版本不支援這個方法，改用最基本、確定支援的.get()方式，
+            // 直接讀取成員名單有幾筆文件(snap.size)
             const rooms = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             const counts = await Promise.all(rooms.map(r =>
-                db.collection('ktvRooms').doc(r.id).collection('members').count().get()
-                    .then(res => res.data().count).catch(() => r.memberCount || 0)
+                db.collection('ktvRooms').doc(r.id).collection('members').get()
+                    .then(memberSnap => memberSnap.size).catch(() => 0)
             ));
             container.innerHTML = rooms.map((room, i) => {
                 const icon = room.roomIcon ? `<img src="${room.roomIcon}" class="room-icon-thumb" alt="">` : '';
