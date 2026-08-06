@@ -2,11 +2,10 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<title>KTV系統 - JUST DO EAT</title>
+<title>歡唱KTV - JUST DO EAT</title>
 
-<!-- Firebase：跟主站共用同一個專案，這樣登入狀態、使用者名稱都能直接沿用，不用另外登入一次 -->
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
@@ -21,140 +20,234 @@
     body {
         margin: 0; min-height: 100vh; background: var(--cream); color: var(--espresso);
         font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
-        padding-bottom: 3rem;
     }
-    header {
-        display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem;
-        background: var(--paper); box-shadow: 0 2px 8px rgba(58,42,30,0.06); position: sticky; top: 0; z-index: 20;
-    }
-    header h1 { font-size: 1.15rem; margin: 0; display: flex; align-items: center; gap: 0.4rem; }
-    header a { color: var(--muted); font-size: 0.8rem; text-decoration: none; }
-    .mode-switch { display: flex; gap: 0.5rem; padding: 1rem 1.25rem 0; }
-    .mode-btn {
-        flex: 1; padding: 0.7rem; border-radius: 1rem; border: none; font-size: 0.9rem; font-weight: 600;
-        background: var(--paper); color: var(--espresso-soft); cursor: pointer;
-    }
-    .mode-btn.active { background: var(--jam); color: #fff; }
-    main { max-width: 40rem; margin: 0 auto; padding: 1rem 1.25rem; }
-    .section { display: none; }
-    .section.active { display: block; }
-
-    .search-row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .hidden { display: none !important; }
     input[type="text"] {
-        flex: 1; padding: 0.75rem 1rem; border-radius: 999px; border: 1px solid var(--line);
-        background: var(--paper); font-size: 0.95rem; color: var(--espresso);
+        width: 100%; padding: 0.7rem 1rem; border-radius: 999px; border: 1px solid var(--line);
+        background: var(--paper); font-size: 0.9rem; color: var(--espresso);
     }
-    input[type="text"]:focus { outline: 2px solid var(--jam); outline-offset: 1px; }
     .btn {
-        padding: 0.75rem 1.25rem; border-radius: 999px; border: none; background: var(--jam); color: #fff;
-        font-size: 0.9rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+        padding: 0.7rem 1.2rem; border-radius: 999px; border: none; background: var(--jam); color: #fff;
+        font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap;
     }
-    .btn:disabled { opacity: 0.5; cursor: default; }
     .btn-outline { background: var(--paper); color: var(--jam); border: 1px solid var(--jam); }
-    label.checkbox-row { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--espresso-soft); margin-bottom: 1rem; }
+    .btn:disabled { opacity: .5; cursor: default; }
 
-    /* 分類點歌：模擬傳統KTV「語言／歌手類型」分類瀏覽的感覺，用分類組合出搜尋關鍵字，
-       不是真的資料庫索引（YouTube搜尋沒有這種結構化資料可以查） */
-    .filter-group { margin-bottom: 0.75rem; }
-    .filter-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.35rem; }
-    .chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-    .chip {
-        padding: 0.35rem 0.85rem; border-radius: 999px; border: 1px solid var(--line); background: var(--paper);
-        color: var(--espresso-soft); font-size: 0.78rem; cursor: pointer;
+    /* ---------- 大廳（建立/加入房間） ---------- */
+    #lobby-view { max-width: 30rem; margin: 0 auto; padding: 2rem 1.25rem; }
+    #lobby-view header { text-align: center; margin-bottom: 2rem; }
+    #lobby-view header h1 { font-size: 1.6rem; margin: 0 0 0.3rem; }
+    #lobby-view header a { color: var(--muted); font-size: 0.8rem; text-decoration: none; }
+    .lobby-card {
+        background: var(--paper); border-radius: 1.5rem; padding: 1.5rem; margin-bottom: 1.25rem;
+        box-shadow: 0 10px 24px -8px rgba(58,42,30,0.12);
     }
-    .chip.active { background: var(--jam); color: #fff; border-color: var(--jam); }
+    .lobby-card h2 { font-size: 1.05rem; margin: 0 0 0.9rem; }
+    .lobby-card input { margin-bottom: 0.7rem; }
+    .lobby-card .btn { width: 100%; }
 
-    .result-card, .queue-card {
-        display: flex; align-items: center; gap: 0.75rem; background: var(--paper); border-radius: 1rem;
-        padding: 0.6rem; margin-bottom: 0.6rem; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08);
+    /* ---------- 房間內：共用列 ---------- */
+    #room-info-bar {
+        display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+        padding: 0.9rem 1.25rem; background: var(--paper); flex-wrap: wrap;
     }
-    .result-card img, .queue-card img { width: 4.5rem; height: 2.6rem; object-fit: cover; border-radius: 0.5rem; flex-shrink: 0; background: var(--line); }
-    .result-card .info, .queue-card .info { flex: 1; min-width: 0; }
-    .result-card .title, .queue-card .title { font-size: 0.85rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .result-card .sub, .queue-card .sub { font-size: 0.72rem; color: var(--muted); margin-top: 0.15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .add-btn { flex-shrink: 0; width: 2.3rem; height: 2.3rem; border-radius: 999px; border: none; background: var(--sage); color: #fff; font-size: 1.1rem; cursor: pointer; }
-    .remove-btn { flex-shrink: 0; width: 2rem; height: 2rem; border-radius: 999px; border: none; background: var(--line); color: var(--espresso-soft); font-size: 0.9rem; cursor: pointer; }
+    #room-info-bar .room-info-left { font-size: 0.9rem; font-weight: 600; }
+    #room-info-bar .room-info-actions { display: flex; gap: 0.5rem; }
 
-    .empty-hint { text-align: center; color: var(--muted); font-size: 0.85rem; padding: 2rem 1rem; }
-    h2.section-title { font-size: 0.95rem; margin: 1.5rem 0 0.75rem; color: var(--espresso-soft); }
+    /* ---------- 房主視角：影片 + 疊加控制介面 ---------- */
+    #fullscreen-wrapper {
+        position: relative; width: 100%; background: #000;
+        display: flex; flex-direction: column;
+    }
+    #ktv-yt-player-target-wrap { width: 100%; aspect-ratio: 16/9; background: #000; }
+    #host-overlay-ui {
+        display: flex; gap: 1px; background: var(--line);
+        min-height: 22rem;
+    }
+    .overlay-panel { background: var(--paper); padding: 1rem; overflow-y: auto; }
+    .overlay-left { flex: 1.1; min-width: 0; }
+    .overlay-right { flex: 1; min-width: 0; }
+    .overlay-tabs { display: flex; gap: 0.4rem; margin-bottom: 0.75rem; }
+    .overlay-tab {
+        flex: 1; padding: 0.45rem; border-radius: 0.7rem; border: none; background: var(--cream);
+        color: var(--espresso-soft); font-size: 0.78rem; font-weight: 600; cursor: pointer;
+    }
+    .overlay-tab.active { background: var(--jam); color: #fff; }
+    .overlay-right h3 { font-size: 0.95rem; margin: 0 0 0.75rem; }
 
-    /* 播放螢幕模式：大畫面播放器 + 現正/接下來播放資訊 */
-    .player-frame-wrap { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 1.25rem; overflow: hidden; margin-bottom: 1rem; }
-    .now-playing-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 0.25rem; }
-    .now-playing-sub { font-size: 0.85rem; color: var(--muted); margin-bottom: 1rem; }
-    .screen-controls { display: flex; gap: 0.75rem; margin-bottom: 1.5rem; }
-    .up-next-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0; border-bottom: 1px solid var(--line); font-size: 0.85rem; }
-    .up-next-item .idx { color: var(--muted); width: 1.5rem; flex-shrink: 0; }
+    /* 全螢幕時：影片撐滿整個螢幕，控制面板變成疊在下方的半透明面板 */
+    #fullscreen-wrapper:fullscreen { width: 100vw; height: 100vh; }
+    #fullscreen-wrapper:fullscreen #ktv-yt-player-target-wrap {
+        position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: unset; z-index: 1;
+    }
+    #fullscreen-wrapper:fullscreen #host-overlay-ui {
+        position: absolute; left: 0; right: 0; bottom: 0; height: 40%; z-index: 2;
+        background: transparent; min-height: 0;
+    }
+    #fullscreen-wrapper:fullscreen .overlay-panel {
+        background: rgba(20,14,10,0.6); backdrop-filter: blur(8px); color: #F5EBDF;
+    }
+    #fullscreen-wrapper:fullscreen .overlay-tab { background: rgba(255,255,255,0.12); color: #F5EBDF; }
+    #fullscreen-wrapper:fullscreen .overlay-tab.active { background: var(--jam); color: #fff; }
+    #fullscreen-wrapper:fullscreen .overlay-right h3 { color: #F5EBDF; }
+    #fullscreen-wrapper:fullscreen #toast-stack { top: 1rem; }
+    #fullscreen-wrapper:fullscreen input[type="text"] { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.25); }
+    #fullscreen-wrapper:fullscreen input[type="text"]::placeholder { color: rgba(255,255,255,0.6); }
 
-    .login-hint { text-align: center; padding: 2rem 1rem; color: var(--espresso-soft); font-size: 0.9rem; }
-    .hidden { display: none; }
+    /* ---------- 清單卡片共用樣式 ---------- */
+    .ktv-result-card, .ktv-history-card, .ktv-rank-card {
+        display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem; border-radius: 0.85rem;
+        margin-bottom: 0.5rem; background: rgba(255,255,255,0.04);
+    }
+    .ktv-result-card img, .ktv-history-card img, .ktv-rank-card img, .ktv-queue-item img {
+        width: 3.6rem; height: 2.1rem; object-fit: cover; border-radius: 0.4rem; flex-shrink: 0; background: var(--line);
+    }
+    .ktv-result-card .info, .ktv-history-card .info, .ktv-rank-card .info { flex: 1; min-width: 0; }
+    .ktv-result-card .title, .ktv-history-card .title, .ktv-rank-card .title, .ktv-queue-item .title {
+        font-size: 0.8rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .ktv-result-card .sub, .ktv-history-card .sub, .ktv-rank-card .sub, .ktv-queue-item .sub {
+        font-size: 0.68rem; opacity: 0.65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .ktv-add-btn, .ktv-insert-btn {
+        flex-shrink: 0; border-radius: 999px; border: none; color: #fff; cursor: pointer; font-size: 0.68rem;
+        padding: 0.3rem 0.55rem; white-space: nowrap;
+    }
+    .ktv-add-btn { background: var(--sage); }
+    .ktv-insert-btn { background: var(--honey); }
+    .ktv-rank-badge { font-size: 0.7rem; opacity: 0.6; width: 1.3rem; flex-shrink: 0; text-align: center; }
+
+    /* ---------- 佇列（可拖曳排序） ---------- */
+    .ktv-queue-item {
+        display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-radius: 0.85rem;
+        margin-bottom: 0.5rem; background: rgba(255,255,255,0.04);
+    }
+    .ktv-queue-item.dragging { opacity: 0.4; }
+    .ktv-queue-drag-handle { cursor: grab; padding: 0 0.3rem; opacity: 0.5; touch-action: none; user-select: none; }
+    .ktv-queue-item .remove-btn { flex-shrink: 0; background: none; border: none; opacity: 0.5; font-size: 0.9rem; cursor: pointer; color: inherit; }
+
+    /* ---------- 浮動點歌通知 ---------- */
+    #toast-stack {
+        position: absolute; top: 1rem; right: 1rem; z-index: 10; display: flex; flex-direction: column;
+        gap: 0.5rem; max-width: 14rem; pointer-events: none;
+    }
+    .ktv-toast {
+        background: rgba(20,14,10,0.85); color: #F5EBDF; padding: 0.55rem 0.85rem; border-radius: 0.85rem;
+        font-size: 0.75rem; box-shadow: 0 10px 24px -6px rgba(0,0,0,0.35); animation: ktv-toast-in .25s ease;
+    }
+    @keyframes ktv-toast-in { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+
+    /* ---------- 一般成員視角 ---------- */
+    #member-view-inner { max-width: 40rem; margin: 0 auto; padding: 1rem 1.25rem; }
+    #member-now-playing-bar {
+        background: var(--paper); border-radius: 1.1rem; padding: 0.85rem 1.1rem; margin-bottom: 1rem;
+        font-size: 0.9rem; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08);
+    }
+    .member-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .member-tab {
+        flex: 1; padding: 0.55rem; border-radius: 0.9rem; border: none; background: var(--paper);
+        color: var(--espresso-soft); font-size: 0.8rem; font-weight: 600; cursor: pointer;
+    }
+    .member-tab.active { background: var(--jam); color: #fff; }
+    .empty-hint { text-align: center; color: var(--muted); font-size: 0.82rem; padding: 1.5rem 1rem; }
 </style>
 </head>
 <body>
-    <header>
-        <h1>🎤 KTV系統</h1>
-        <a href="index.html">← 回到 JUST DO EAT</a>
-    </header>
 
-    <div class="mode-switch">
-        <button class="mode-btn active" id="mode-btn-request" onclick="switchMode('request')">🎤 我要點歌</button>
-        <button class="mode-btn" id="mode-btn-screen" onclick="switchMode('screen')">📺 播放大螢幕模式</button>
+    <!-- ---------- 大廳：建立或加入房間 ---------- -->
+    <div id="lobby-view">
+        <header>
+            <h1>🎤 歡唱KTV</h1>
+            <a href="index.html">← 回到 JUST DO EAT</a>
+        </header>
+        <div id="lobby-login-hint" class="lobby-card hidden" style="text-align:center; color:var(--espresso-soft)">請先登入才能建立/加入房間</div>
+        <div class="lobby-card">
+            <h2>🎉 建立新房間</h2>
+            <input id="create-room-name" type="text" placeholder="房間名稱（選填）">
+            <input id="create-room-passcode" type="text" placeholder="房間代碼（選填，留空任何人都能加入）">
+            <button class="btn" onclick="createRoom()">建立房間</button>
+        </div>
+        <div class="lobby-card">
+            <h2>🚪 加入房間</h2>
+            <input id="join-room-code" type="text" placeholder="房號（例如 A3F9K2）" style="text-transform:uppercase">
+            <input id="join-room-passcode" type="text" placeholder="房間代碼（如果房主有設定的話）">
+            <button class="btn btn-outline" onclick="joinRoom()">加入房間</button>
+        </div>
+        <p id="lobby-status" class="text-sm" style="color:var(--muted); text-align:center; font-size:0.8rem;"></p>
     </div>
 
-    <main>
-        <!-- ---------- 點歌模式：搜尋YouTube影片、加入共用點歌佇列 ---------- -->
-        <div id="section-request" class="section active">
-            <div id="request-login-hint" class="login-hint hidden">請先登入才能點歌，搜尋還是可以自由使用</div>
+    <!-- ---------- 房間內畫面 ---------- -->
+    <div id="room-view" class="hidden">
 
-            <div class="filter-group">
-                <div class="filter-label">語言</div>
-                <div class="chip-row" id="lang-chips">
-                    <button class="chip active" data-value="">不限</button>
-                    <button class="chip" data-value="華語">華語</button>
-                    <button class="chip" data-value="台語">台語</button>
-                    <button class="chip" data-value="客語">客語</button>
-                    <button class="chip" data-value="英文">英文</button>
-                    <button class="chip" data-value="日文">日文</button>
-                    <button class="chip" data-value="韓文">韓文</button>
+        <!-- 房主視角 -->
+        <div id="host-view" class="hidden">
+            <div id="room-info-bar">
+                <span class="room-info-left">🎤 <span id="host-room-name"></span> · 房號 <span id="host-room-id" style="color:var(--jam)"></span></span>
+                <div class="room-info-actions">
+                    <button class="btn btn-outline" onclick="toggleFullscreen()">⛶ 全螢幕</button>
+                    <button class="btn" style="background:var(--danger, #C4453F)" onclick="leaveRoomAsHost()">解散房間</button>
                 </div>
             </div>
-            <div class="filter-group">
-                <div class="filter-label">歌手類型</div>
-                <div class="chip-row" id="gender-chips">
-                    <button class="chip active" data-value="">不限</button>
-                    <button class="chip" data-value="男歌手">男歌手</button>
-                    <button class="chip" data-value="女歌手">女歌手</button>
-                    <button class="chip" data-value="團體合唱">團體／合唱</button>
+            <div id="fullscreen-wrapper">
+                <div id="ktv-yt-player-target-wrap"><div id="ktv-yt-player-target" style="width:100%;height:100%"></div></div>
+                <div id="toast-stack"></div>
+                <div id="host-overlay-ui">
+                    <div class="overlay-panel overlay-left">
+                        <div class="overlay-tabs">
+                            <button class="overlay-tab active" data-tab="search" onclick="switchOverlayTab('search')">🔍 點歌</button>
+                            <button class="overlay-tab" data-tab="history" onclick="switchOverlayTab('history')">📜 歷史</button>
+                            <button class="overlay-tab" data-tab="ranking" onclick="switchOverlayTab('ranking')">🔥 熱門</button>
+                        </div>
+                        <div id="overlay-tab-search" class="overlay-tab-content">
+                            <div style="display:flex; gap:0.4rem; margin-bottom:0.6rem;">
+                                <input id="host-search-input" type="text" placeholder="輸入歌名或歌手" onkeydown="if(event.key==='Enter') searchKtvSongs()">
+                                <button class="btn" style="padding:0.6rem 0.9rem" onclick="searchKtvSongs()">搜尋</button>
+                            </div>
+                            <div id="host-search-results"></div>
+                        </div>
+                        <div id="overlay-tab-history" class="overlay-tab-content hidden">
+                            <div id="host-history-list"></div>
+                        </div>
+                        <div id="overlay-tab-ranking" class="overlay-tab-content hidden">
+                            <div id="host-ranking-list"></div>
+                        </div>
+                    </div>
+                    <div class="overlay-panel overlay-right">
+                        <h3>🎶 點歌佇列（可拖曳排序）</h3>
+                        <div id="host-queue-list"></div>
+                    </div>
                 </div>
             </div>
-
-            <div class="search-row">
-                <input type="text" id="search-input" placeholder="輸入歌名或歌手（選填，留空搭配上面分類也可以直接瀏覽）" onkeydown="if(event.key==='Enter') searchSongs()">
-                <button class="btn" onclick="searchSongs()" id="search-btn">搜尋</button>
-            </div>
-            <label class="checkbox-row">
-                <input type="checkbox" id="lyrics-only-toggle" checked>
-                只找歌詞版／字幕版影片（搜尋時自動加上「歌詞」關鍵字）
-            </label>
-
-            <div id="search-results"></div>
-
-            <h2 class="section-title">🎶 目前點歌佇列</h2>
-            <div id="request-queue-list"></div>
         </div>
 
-        <!-- ---------- 播放大螢幕模式：接在電視/平板上，自動依序播放佇列裡的歌 ---------- -->
-        <div id="section-screen" class="section">
-            <div class="player-frame-wrap"><div id="ktv-player-target" style="width:100%;height:100%"></div></div>
-            <div class="now-playing-title" id="now-playing-title">目前沒有排隊中的歌曲</div>
-            <div class="now-playing-sub" id="now-playing-sub">請用手機切到「我要點歌」搜尋加入</div>
-            <div class="screen-controls">
-                <button class="btn" onclick="skipCurrentSong()">⏭ 跳過這首</button>
+        <!-- 一般成員視角：沒有播放器畫面，只有點歌+佇列 -->
+        <div id="member-view" class="hidden">
+            <div id="room-info-bar">
+                <span class="room-info-left">🎤 <span id="member-room-name"></span></span>
+                <button class="btn" style="background:var(--danger, #C4453F)" onclick="leaveRoomAsMember()">離開房間</button>
             </div>
-            <h2 class="section-title">🎵 接下來播放</h2>
-            <div id="up-next-list"></div>
+            <div id="member-view-inner">
+                <div id="member-now-playing-bar">🎵 目前歡唱：<strong id="member-now-playing-text">尚未開始，快去點一首歌吧</strong></div>
+
+                <div class="member-tabs">
+                    <button class="member-tab active" data-tab="search" onclick="switchMemberTab('search')">🔍 點歌</button>
+                    <button class="member-tab" data-tab="history" onclick="switchMemberTab('history')">📜 歷史</button>
+                    <button class="member-tab" data-tab="ranking" onclick="switchMemberTab('ranking')">🔥 熱門</button>
+                    <button class="member-tab" data-tab="queue" onclick="switchMemberTab('queue')">🎶 佇列</button>
+                </div>
+                <div id="member-tab-search" class="member-tab-content">
+                    <div style="display:flex; gap:0.4rem; margin-bottom:0.75rem;">
+                        <input id="member-search-input" type="text" placeholder="輸入歌名或歌手" onkeydown="if(event.key==='Enter') searchKtvSongs()">
+                        <button class="btn" style="padding:0.6rem 0.9rem" onclick="searchKtvSongs()">搜尋</button>
+                    </div>
+                    <div id="member-search-results"></div>
+                </div>
+                <div id="member-tab-history" class="member-tab-content hidden"><div id="member-history-list"></div></div>
+                <div id="member-tab-ranking" class="member-tab-content hidden"><div id="member-ranking-list"></div></div>
+                <div id="member-tab-queue" class="member-tab-content hidden"><div id="member-queue-list"></div></div>
+            </div>
         </div>
-    </main>
+    </div>
 
 <script>
     // ---------------------------------------------------------------
@@ -174,193 +267,365 @@
     const CLOUDFLARE_AI_PROXY_URL = 'https://baking-recipes-ai.wallcemax.workers.dev/';
 
     let currentUser = null;
-    let currentQueue = []; // 目前的點歌佇列，從Firestore即時同步下來的本機副本
-    let currentMode = 'request';
+    let currentRoomId = null;
+    let currentRoomData = null;
+    let isHost = false;
+    let roomUnsubscribe = null;
+    let prevQueueQids = [];
+    let hostLastPlayedVideoId = null;
 
     auth.onAuthStateChanged(user => {
         currentUser = user;
-        document.getElementById('request-login-hint').classList.toggle('hidden', !!user);
+        document.getElementById('lobby-login-hint').classList.toggle('hidden', !!user);
     });
 
-    // ---------------------------------------------------------------
-    // 模式切換：點歌模式(手機用) / 播放大螢幕模式(接電視/平板用)。
-    // 只有切到「播放大螢幕模式」的那台裝置才會真的建立播放器、播放聲音，
-    // 避免每個人手機點歌的同時自己手機也開始放歌
-    // ---------------------------------------------------------------
-    function switchMode(mode) {
-        currentMode = mode;
-        document.getElementById('section-request').classList.toggle('active', mode === 'request');
-        document.getElementById('section-screen').classList.toggle('active', mode === 'screen');
-        document.getElementById('mode-btn-request').classList.toggle('active', mode === 'request');
-        document.getElementById('mode-btn-screen').classList.toggle('active', mode === 'screen');
-        if (mode === 'screen') playCurrentQueueHead(); // 切進螢幕模式時，如果佇列已經有歌，馬上開始播放
+    function escapeHtmlKtv(str) {
+        return String(str || '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    }
+    function showKtvToast(message) {
+        const stack = document.getElementById('toast-stack');
+        if (!stack) return;
+        const el = document.createElement('div');
+        el.className = 'ktv-toast';
+        el.textContent = message;
+        stack.appendChild(el);
+        setTimeout(() => el.remove(), 4500);
     }
 
     // ---------------------------------------------------------------
-    // 點歌佇列：存在Firestore的 ktvQueue/main 這份文件裡，所有裝置即時同步。
-    // 用陣列存整條佇列（不是各自獨立的文件），因為佇列本身有順序性、而且同時
-    // 大概就幾十首歌，一份文件存得下，讀寫也單純
+    // 大廳：建立房間 / 加入房間。房間代碼是休閒等級的機制（像Kahoot那種房間代碼），
+    // 不是真正的安全密碼保護，純文字比對，圖個方便讓不想開放的房間有基本門檻
     // ---------------------------------------------------------------
-    function queueDocRef() {
-        return db.collection('ktvQueue').doc('main');
+    function generateRoomCode() {
+        const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 I、L、O、0、1
+        let code = '';
+        for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+        return code;
     }
-    function subscribeQueue() {
-        queueDocRef().onSnapshot(doc => {
-            const prevHeadId = currentQueue[0] && currentQueue[0].qid;
-            currentQueue = (doc.exists && doc.data().queue) || [];
-            renderQueueViews();
-            // 播放大螢幕模式：如果佇列最前面那首歌換了（上一首播完被拿掉、或有人加了新歌到空佇列），
-            // 就要跟著載入新的影片
-            const newHeadId = currentQueue[0] && currentQueue[0].qid;
-            if (currentMode === 'screen' && newHeadId !== prevHeadId) playCurrentQueueHead();
-        }, err => console.warn('訂閱KTV佇列失敗', err && err.message));
-    }
-    async function addSongToQueue(song) {
-        if (!currentUser) { alert('請先登入才能點歌'); return; }
-        const entry = {
-            qid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-            videoId: song.videoId,
-            title: song.title,
-            thumbnail: song.thumbnail || '',
-            addedBy: currentUser.displayName || '匿名',
-            addedAt: Date.now(), // 陣列裡的元素不能用serverTimestamp()，只能用純數字時間戳
-        };
+    async function createRoom() {
+        if (!currentUser) { alert('請先登入才能建立房間'); return; }
+        const name = document.getElementById('create-room-name').value.trim() || `${currentUser.displayName || '我'}的房間`;
+        const passcode = document.getElementById('create-room-passcode').value.trim();
+        const roomId = generateRoomCode();
         try {
-            await queueDocRef().set({
-                queue: firebase.firestore.FieldValue.arrayUnion(entry),
-            }, { merge: true });
-        } catch (err) {
-            alert('加入佇列失敗：' + (err && err.message ? err.message : String(err)));
-        }
-    }
-    // 把佇列最前面那首歌拿掉（歌播完自動接下一首、或按跳過都是呼叫這個）
-    async function removeFrontOfQueue() {
-        if (!currentQueue.length) return;
-        const newQueue = currentQueue.slice(1);
-        try {
-            await queueDocRef().set({ queue: newQueue }, { merge: true });
-        } catch (err) {
-            console.warn('移除佇列開頭失敗', err && err.message);
-        }
-    }
-    // 移除佇列裡指定的某一首（例如點歌的人自己反悔想取消）
-    async function removeQueueEntry(qid) {
-        const newQueue = currentQueue.filter(q => q.qid !== qid);
-        try {
-            await queueDocRef().set({ queue: newQueue }, { merge: true });
-        } catch (err) {
-            console.warn('移除指定歌曲失敗', err && err.message);
-        }
-    }
-    function skipCurrentSong() { removeFrontOfQueue(); }
-
-    // ---------------------------------------------------------------
-    // 畫面渲染：點歌模式底下的佇列預覽 + 播放螢幕模式底下的「接下來播放」清單
-    // ---------------------------------------------------------------
-    function renderQueueViews() {
-        // 點歌模式：顯示整條佇列，每首都能移除
-        const reqList = document.getElementById('request-queue-list');
-        if (!currentQueue.length) {
-            reqList.innerHTML = '<div class="empty-hint">目前還沒有人點歌，搜尋喜歡的歌曲加進來吧</div>';
-        } else {
-            reqList.innerHTML = currentQueue.map((q, i) => `
-                <div class="queue-card">
-                    <img src="${q.thumbnail || ''}" alt="">
-                    <div class="info">
-                        <div class="title">${i === 0 ? '▶ ' : ''}${escapeHtml(q.title)}</div>
-                        <div class="sub">${escapeHtml(q.addedBy || '')}點的${i === 0 ? '・現正播放' : ''}</div>
-                    </div>
-                    <button class="remove-btn" onclick="removeQueueEntry('${q.qid}')" title="移除">✕</button>
-                </div>
-            `).join('');
-        }
-
-        // 播放螢幕模式：現正播放資訊 + 接下來清單（不含現正播放那首）
-        const head = currentQueue[0];
-        document.getElementById('now-playing-title').textContent = head ? head.title : '目前沒有排隊中的歌曲';
-        document.getElementById('now-playing-sub').textContent = head ? `${head.addedBy || ''} 點的` : '請用手機切到「我要點歌」搜尋加入';
-        const upNext = currentQueue.slice(1);
-        const upNextEl = document.getElementById('up-next-list');
-        upNextEl.innerHTML = upNext.length
-            ? upNext.map((q, i) => `<div class="up-next-item"><span class="idx">${i + 1}</span><span>${escapeHtml(q.title)}（${escapeHtml(q.addedBy || '')}）</span></div>`).join('')
-            : '<div class="empty-hint">佇列已經空了，請大家繼續點歌</div>';
-    }
-    function escapeHtml(str) {
-        return String(str || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    }
-
-    // ---------------------------------------------------------------
-    // 分類點歌：模擬傳統KTV「語言／歌手類型」分類瀏覽，每組是單選（點一個會取消同一組
-    // 其他已選的），選好的分類會併進搜尋關鍵字裡，不是真的資料庫索引查詢（YouTube搜尋
-    // 沒有這種結構化的「這首歌是男歌手唱的」資料可以查，是用關鍵字去逼近這個瀏覽效果）
-    // ---------------------------------------------------------------
-    let selectedLang = '';
-    let selectedGender = '';
-    function setupChipGroup(containerId, onSelect) {
-        const container = document.getElementById(containerId);
-        container.querySelectorAll('.chip').forEach(chip => {
-            chip.addEventListener('click', () => {
-                container.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-                chip.classList.add('active');
-                onSelect(chip.dataset.value || '');
+            await db.collection('ktvRooms').doc(roomId).set({
+                name, passcode: passcode || null,
+                hostUid: currentUser.uid, hostName: currentUser.displayName || '房主',
+                queue: [],
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
-        });
+            enterRoom(roomId, true);
+        } catch (err) {
+            document.getElementById('lobby-status').textContent = '⚠️ 建立房間失敗：' + err.message;
+        }
     }
-    setupChipGroup('lang-chips', v => { selectedLang = v; });
-    setupChipGroup('gender-chips', v => { selectedGender = v; });
+    async function joinRoom() {
+        if (!currentUser) { alert('請先登入才能加入房間'); return; }
+        const roomId = document.getElementById('join-room-code').value.trim().toUpperCase();
+        const passcode = document.getElementById('join-room-passcode').value.trim();
+        if (!roomId) { alert('請輸入房號'); return; }
+        const statusEl = document.getElementById('lobby-status');
+        statusEl.textContent = '🔍 查詢房間中...';
+        try {
+            const doc = await db.collection('ktvRooms').doc(roomId).get();
+            if (!doc.exists) { statusEl.textContent = '⚠️ 找不到這個房間，請確認房號是否正確'; return; }
+            const room = doc.data();
+            if (room.passcode && room.passcode !== passcode) { statusEl.textContent = '⚠️ 房間代碼不正確'; return; }
+            statusEl.textContent = '';
+            enterRoom(roomId, room.hostUid === currentUser.uid);
+        } catch (err) {
+            statusEl.textContent = '⚠️ 加入房間失敗：' + err.message;
+        }
+    }
 
     // ---------------------------------------------------------------
-    // 搜尋YouTube：透過Worker呼叫（用API金鑰，不需要任何人登入授權）。
-    // 關鍵字＝使用者打的字 + 選的分類，兩者都留空的話不會搜尋（至少要打字或選一個分類）
+    // 進入房間：切畫面(房主/成員)，開始即時監聽房間文件
     // ---------------------------------------------------------------
-    async function searchSongs() {
-        const input = document.getElementById('search-input');
-        const typedText = input.value.trim();
-        const parts = [typedText, selectedLang, selectedGender].filter(Boolean);
-        if (!parts.length) { alert('請輸入歌名／歌手，或至少選一個分類'); return; }
-        // 純靠分類瀏覽、沒打任何文字的情況下，加「精選」讓搜尋結果比較像「這個分類底下的熱門歌曲」，
-        // 而不是隨便抓到不相關的影片
-        if (!typedText) parts.push('精選');
-        const query = parts.join(' ');
-        const btn = document.getElementById('search-btn');
-        const resultsEl = document.getElementById('search-results');
-        btn.disabled = true;
+    function enterRoom(roomId, asHost) {
+        currentRoomId = roomId;
+        isHost = asHost;
+        prevQueueQids = [];
+        hostLastPlayedVideoId = null;
+        document.getElementById('lobby-view').classList.add('hidden');
+        document.getElementById('room-view').classList.remove('hidden');
+        document.getElementById(asHost ? 'host-view' : 'member-view').classList.remove('hidden');
+        document.getElementById(asHost ? 'member-view' : 'host-view').classList.add('hidden');
+
+        if (roomUnsubscribe) roomUnsubscribe();
+        roomUnsubscribe = db.collection('ktvRooms').doc(roomId).onSnapshot(doc => {
+            if (!doc.exists) {
+                // 房主解散了房間（房間文件被刪除），所有正在這個房間裡的人都會即時收到這個通知
+                alert('🎤 房間已解散');
+                exitToLobby();
+                return;
+            }
+            const data = doc.data();
+            const newQueue = data.queue || [];
+            // 偵測佇列裡新出現的項目（不管是誰、從哪台裝置點的），跳浮動通知
+            newQueue.forEach(q => {
+                if (!prevQueueQids.includes(q.qid)) showKtvToast(`🎤 ${q.requestedBy || '有人'} 點播了《${q.title}》`);
+            });
+            prevQueueQids = newQueue.map(q => q.qid);
+
+            currentRoomData = data;
+            renderRoomState();
+
+            if (isHost) {
+                const headVideoId = newQueue[0] && newQueue[0].videoId;
+                if (headVideoId && headVideoId !== hostLastPlayedVideoId) {
+                    hostLastPlayedVideoId = headVideoId;
+                    playHostVideo(headVideoId);
+                } else if (!headVideoId) {
+                    hostLastPlayedVideoId = null;
+                }
+            }
+        }, err => console.warn('房間監聽失敗', err));
+
+        document.getElementById(asHost ? 'host-room-name' : 'member-room-name').textContent = '';
+        if (asHost) document.getElementById('host-room-id').textContent = roomId;
+        loadRankingList();
+        loadHistoryList();
+    }
+    function exitToLobby() {
+        if (roomUnsubscribe) { roomUnsubscribe(); roomUnsubscribe = null; }
+        if (ytPlayer) { try { ytPlayer.destroy(); } catch (e) {} ytPlayer = null; ytPlayerReady = false; }
+        currentRoomId = null; currentRoomData = null; isHost = false;
+        document.getElementById('room-view').classList.add('hidden');
+        document.getElementById('lobby-view').classList.remove('hidden');
+        document.getElementById('join-room-code').value = '';
+        document.getElementById('join-room-passcode').value = '';
+    }
+    // 房主離開＝解散房間，所有人都會被踢出（透過上面onSnapshot偵測到文件被刪除）
+    async function leaveRoomAsHost() {
+        if (!confirm('確定要解散這個房間嗎？所有人都會被移出房間。')) return;
+        try {
+            await db.collection('ktvRooms').doc(currentRoomId).delete();
+        } catch (err) {
+            alert('解散房間失敗：' + err.message);
+        }
+        exitToLobby();
+    }
+    // 一般成員離開：只是自己退出，房間繼續開著給其他人用
+    function leaveRoomAsMember() {
+        exitToLobby();
+    }
+
+    function renderRoomState() {
+        if (!currentRoomData) return;
+        const nameEl = document.getElementById(isHost ? 'host-room-name' : 'member-room-name');
+        if (nameEl) nameEl.textContent = currentRoomData.name || '';
+        const queue = currentRoomData.queue || [];
+        if (isHost) {
+            renderQueueList('host-queue-list', queue, true);
+        } else {
+            renderQueueList('member-queue-list', queue, false);
+            document.getElementById('member-now-playing-text').textContent = queue[0] ? queue[0].title : '尚未開始，快去點一首歌吧';
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 分頁切換（房主的疊加介面 / 一般成員的頁面）
+    // ---------------------------------------------------------------
+    function switchOverlayTab(tab) {
+        ['search', 'history', 'ranking'].forEach(t => {
+            document.getElementById(`overlay-tab-${t}`).classList.toggle('hidden', t !== tab);
+        });
+        document.querySelectorAll('.overlay-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+        if (tab === 'history') loadHistoryList();
+        if (tab === 'ranking') loadRankingList();
+    }
+    function switchMemberTab(tab) {
+        ['search', 'history', 'ranking', 'queue'].forEach(t => {
+            document.getElementById(`member-tab-${t}`).classList.toggle('hidden', t !== tab);
+        });
+        document.querySelectorAll('.member-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+        if (tab === 'history') loadHistoryList();
+        if (tab === 'ranking') loadRankingList();
+    }
+    function toggleFullscreen() {
+        const el = document.getElementById('fullscreen-wrapper');
+        if (document.fullscreenElement) document.exitFullscreen();
+        else el.requestFullscreen().catch(err => alert('無法進入全螢幕：' + err.message));
+    }
+
+    // ---------------------------------------------------------------
+    // 搜尋：不管輸入什麼，前面一律加「KTV」關鍵字，提高搜到伴唱版影片的機率
+    // ---------------------------------------------------------------
+    async function searchKtvSongs() {
+        const input = document.getElementById(isHost ? 'host-search-input' : 'member-search-input');
+        const resultsEl = document.getElementById(isHost ? 'host-search-results' : 'member-search-results');
+        const query = input.value.trim();
+        if (!query) return;
         resultsEl.innerHTML = '<div class="empty-hint">搜尋中...</div>';
         try {
-            const lyricsOnly = document.getElementById('lyrics-only-toggle').checked;
-            const finalQuery = lyricsOnly ? `${query} 歌詞` : query;
             const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'youtube_search', query: finalQuery }),
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'youtube_search', query: `KTV ${query}` }),
             });
             const data = await res.json();
             if (!res.ok || data.error) throw new Error(data.error || `搜尋失敗(${res.status})`);
             const results = data.results || [];
-            resultsEl.innerHTML = results.length
-                ? results.map(r => `
-                    <div class="result-card">
-                        <img src="${r.thumbnail || ''}" alt="">
-                        <div class="info">
-                            <div class="title">${escapeHtml(r.title)}</div>
-                            <div class="sub">${escapeHtml(r.channelTitle || '')}</div>
-                        </div>
-                        <button class="add-btn" onclick='addSongToQueue(${JSON.stringify({ videoId: r.videoId, title: r.title, thumbnail: r.thumbnail }).replace(/'/g, "&#39;")})' title="加入佇列">＋</button>
+            resultsEl.innerHTML = results.length ? results.map(r => {
+                const songData = JSON.stringify({ videoId: r.videoId, title: r.title, thumbnail: r.thumbnail }).replace(/'/g, '&#39;');
+                return `<div class="ktv-result-card">
+                    <img src="${r.thumbnail || ''}" alt="">
+                    <div class="info">
+                        <div class="title">${escapeHtmlKtv(r.title)}</div>
+                        <div class="sub">${escapeHtmlKtv(r.channelTitle || '')}</div>
                     </div>
-                `).join('')
-                : '<div class="empty-hint">找不到符合的影片，換個關鍵字試試</div>';
+                    <button class="ktv-add-btn" onclick='addSongToQueue(${songData})'>＋ 點歌</button>
+                    <button class="ktv-insert-btn" onclick='addSongToQueue(${songData}, true)'>⚡ 插播</button>
+                </div>`;
+            }).join('') : '<div class="empty-hint">找不到符合的影片，換個關鍵字試試</div>';
         } catch (err) {
-            resultsEl.innerHTML = `<div class="empty-hint">⚠️ ${escapeHtml(err && err.message ? err.message : String(err))}</div>`;
-        } finally {
-            btn.disabled = false;
+            resultsEl.innerHTML = `<div class="empty-hint">⚠️ ${escapeHtmlKtv(err.message)}</div>`;
         }
     }
 
     // ---------------------------------------------------------------
-    // 播放器：只有「播放大螢幕模式」才會真的建立YT.Player。用單一影片ID載入的方式播放
-    // （跟做菜音樂功能同一招，這個網站上唯一確認穩定的YouTube嵌入方式），完全不使用
-    // YouTube播放清單的嵌入/串接機制。歌曲本身是不是有內建滾動歌詞，取決於使用者
-    // 搜尋/選歌時選了哪一支影片，播放器這邊不用另外處理歌詞顯示
+    // 點歌：加進房間佇列，同時記一筆房間歷史紀錄，並更新全域熱門排行計數
+    // ---------------------------------------------------------------
+    async function addSongToQueue(song, insertNext) {
+        if (!currentUser) { alert('請先登入才能點歌'); return; }
+        if (!currentRoomId || !currentRoomData) return;
+        const entry = {
+            qid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            videoId: song.videoId, title: song.title, thumbnail: song.thumbnail || '',
+            requestedBy: currentUser.displayName || '匿名', requestedByUid: currentUser.uid,
+            addedAt: Date.now(),
+        };
+        const queue = (currentRoomData.queue || []).slice();
+        if (insertNext && queue.length) queue.splice(1, 0, entry); // 插播：排在現正播放的下一首
+        else queue.push(entry);
+        try {
+            await db.collection('ktvRooms').doc(currentRoomId).update({ queue });
+            db.collection('ktvRooms').doc(currentRoomId).collection('history').add({
+                videoId: entry.videoId, title: entry.title, thumbnail: entry.thumbnail,
+                requestedBy: entry.requestedBy, addedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            }).catch(err => console.warn('寫入房間歷史紀錄失敗', err));
+            db.collection('ktvGlobalSongStats').doc(entry.videoId).set({
+                videoId: entry.videoId, title: entry.title, thumbnail: entry.thumbnail,
+                count: firebase.firestore.FieldValue.increment(1),
+            }, { merge: true }).catch(err => console.warn('更新熱門排行失敗', err));
+        } catch (err) {
+            alert('點歌失敗：' + err.message);
+        }
+    }
+    async function removeQueueItem(qid) {
+        if (!isHost || !currentRoomData) return;
+        const queue = (currentRoomData.queue || []).filter(q => q.qid !== qid);
+        try {
+            await db.collection('ktvRooms').doc(currentRoomId).update({ queue });
+        } catch (err) { console.warn('移除歌曲失敗', err); }
+    }
+
+    // ---------------------------------------------------------------
+    // 佇列渲染：房主可以拖曳排序（用Pointer Events，滑鼠/觸控都支援），一般成員唯讀
+    // ---------------------------------------------------------------
+    function renderQueueList(containerId, queue, draggable) {
+        const el = document.getElementById(containerId);
+        if (!el) return;
+        if (!queue.length) { el.innerHTML = '<div class="empty-hint">目前還沒有人點歌</div>'; return; }
+        el.innerHTML = queue.map((q, i) => `
+            <div class="ktv-queue-item" data-qid="${q.qid}">
+                ${draggable ? `<span class="ktv-queue-drag-handle" onpointerdown="startQueueDrag(event, '${q.qid}')">⠿</span>` : ''}
+                <img src="${q.thumbnail || ''}" alt="">
+                <div class="info" style="flex:1; min-width:0;">
+                    <div class="title">${i === 0 ? '▶ ' : ''}${escapeHtmlKtv(q.title)}</div>
+                    <div class="sub">${escapeHtmlKtv(q.requestedBy || '')}點的${i === 0 ? '・現正歡唱' : ''}</div>
+                </div>
+                ${draggable ? `<button class="remove-btn" onclick="removeQueueItem('${q.qid}')" title="移除">✕</button>` : ''}
+            </div>
+        `).join('');
+    }
+    // 拖曳排序：用Pointer Events統一處理滑鼠跟觸控，拖完之後依畫面上最終順序整份寫回Firestore
+    function startQueueDrag(e, qid) {
+        if (!isHost) return;
+        e.preventDefault();
+        const item = e.target.closest('.ktv-queue-item');
+        const list = document.getElementById('host-queue-list');
+        const items = () => [...list.querySelectorAll('.ktv-queue-item')];
+        item.classList.add('dragging');
+
+        function onMove(ev) {
+            const y = ev.clientY;
+            const afterEl = items().find(el => {
+                if (el === item) return false;
+                const rect = el.getBoundingClientRect();
+                return y < rect.top + rect.height / 2;
+            });
+            if (afterEl) list.insertBefore(item, afterEl);
+            else list.appendChild(item);
+        }
+        function onUp() {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            item.classList.remove('dragging');
+            const newOrderQids = items().map(el => el.dataset.qid);
+            const queue = currentRoomData.queue || [];
+            const reordered = newOrderQids.map(id => queue.find(q => q.qid === id)).filter(Boolean);
+            db.collection('ktvRooms').doc(currentRoomId).update({ queue: reordered })
+                .catch(err => { console.warn('拖曳排序失敗', err); renderQueueList('host-queue-list', queue, true); });
+        }
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+    }
+
+    // ---------------------------------------------------------------
+    // 歷史點歌紀錄：這個房間點過的歌，新到舊排列
+    // ---------------------------------------------------------------
+    async function loadHistoryList() {
+        const targets = [document.getElementById('host-history-list'), document.getElementById('member-history-list')].filter(Boolean);
+        if (!targets.length || !currentRoomId) return;
+        targets.forEach(el => el.innerHTML = '<div class="empty-hint">載入中...</div>');
+        try {
+            const snap = await db.collection('ktvRooms').doc(currentRoomId).collection('history').orderBy('addedAt', 'desc').limit(30).get();
+            const html = snap.empty ? '<div class="empty-hint">這個房間還沒有點歌紀錄</div>' : snap.docs.map(doc => {
+                const h = doc.data();
+                return `<div class="ktv-history-card">
+                    <img src="${h.thumbnail || ''}" alt="">
+                    <div class="info">
+                        <div class="title">${escapeHtmlKtv(h.title)}</div>
+                        <div class="sub">${escapeHtmlKtv(h.requestedBy || '')}</div>
+                    </div>
+                    <button class="ktv-add-btn" onclick='addSongToQueue(${JSON.stringify({ videoId: h.videoId, title: h.title, thumbnail: h.thumbnail }).replace(/'/g, "&#39;")})'>＋</button>
+                </div>`;
+            }).join('');
+            targets.forEach(el => el.innerHTML = html);
+        } catch (err) {
+            targets.forEach(el => el.innerHTML = `<div class="empty-hint">⚠️ 載入失敗：${escapeHtmlKtv(err.message)}</div>`);
+        }
+    }
+    // ---------------------------------------------------------------
+    // 熱門點歌排行：全域累計，不分房間、不分時間，依點歌次數排序
+    // ---------------------------------------------------------------
+    async function loadRankingList() {
+        const targets = [document.getElementById('host-ranking-list'), document.getElementById('member-ranking-list')].filter(Boolean);
+        if (!targets.length) return;
+        targets.forEach(el => el.innerHTML = '<div class="empty-hint">載入中...</div>');
+        try {
+            const snap = await db.collection('ktvGlobalSongStats').orderBy('count', 'desc').limit(20).get();
+            const html = snap.empty ? '<div class="empty-hint">還沒有任何點歌紀錄</div>' : snap.docs.map((doc, i) => {
+                const s = doc.data();
+                return `<div class="ktv-rank-card">
+                    <span class="ktv-rank-badge">${i + 1}</span>
+                    <img src="${s.thumbnail || ''}" alt="">
+                    <div class="info">
+                        <div class="title">${escapeHtmlKtv(s.title)}</div>
+                        <div class="sub">被點過 ${s.count || 0} 次</div>
+                    </div>
+                    <button class="ktv-add-btn" onclick='addSongToQueue(${JSON.stringify({ videoId: s.videoId, title: s.title, thumbnail: s.thumbnail }).replace(/'/g, "&#39;")})'>＋</button>
+                </div>`;
+            }).join('');
+            targets.forEach(el => el.innerHTML = html);
+        } catch (err) {
+            targets.forEach(el => el.innerHTML = `<div class="empty-hint">⚠️ 載入失敗：${escapeHtmlKtv(err.message)}</div>`);
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 房主播放器：跟做菜音樂功能同一招，只用單一影片ID載入播放，這個網站上唯一確認穩定的
+    // YouTube嵌入方式，完全不使用YouTube播放清單的嵌入/串接機制
     // ---------------------------------------------------------------
     let ytPlayer = null;
     let ytPlayerReady = false;
@@ -380,28 +645,29 @@
         });
         return ytApiReadyPromise;
     }
-    async function playCurrentQueueHead() {
-        const head = currentQueue[0];
-        if (!head) return; // 佇列是空的，畫面上已經顯示「目前沒有排隊中的歌曲」，這裡不用做事
+    async function playHostVideo(videoId) {
         await loadYoutubeIframeApi();
         if (!ytPlayer) {
-            ytPlayer = new YT.Player('ktv-player-target', {
-                width: '100%', height: '100%', videoId: head.videoId,
+            ytPlayer = new YT.Player('ktv-yt-player-target', {
+                width: '100%', height: '100%', videoId,
                 playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
                 events: {
                     onReady: () => { ytPlayerReady = true; },
-                    onStateChange: (e) => {
-                        // 這首歌自然播完了，自動把佇列開頭拿掉接下一首（其他裝置會透過onSnapshot同步收到變化）
-                        if (e.data === YT.PlayerState.ENDED) removeFrontOfQueue();
-                    },
+                    onStateChange: (e) => { if (e.data === YT.PlayerState.ENDED) advanceQueue(); },
                 },
             });
         } else if (ytPlayerReady) {
-            ytPlayer.loadVideoById(head.videoId);
+            ytPlayer.loadVideoById(videoId);
         }
     }
-
-    subscribeQueue();
+    // 歌播完了：把佇列最前面那首拿掉，接下一首（其他裝置會透過onSnapshot同步收到變化）
+    async function advanceQueue() {
+        if (!currentRoomData || !currentRoomId) return;
+        const newQueue = (currentRoomData.queue || []).slice(1);
+        try {
+            await db.collection('ktvRooms').doc(currentRoomId).update({ queue: newQueue });
+        } catch (err) { console.warn('推進佇列失敗', err); }
+    }
 </script>
 </body>
 </html>
