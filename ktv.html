@@ -14,7 +14,7 @@
     :root {
         --cream: #FBF3E7; --paper: #FFFDF9; --espresso: #3A2A1E; --espresso-soft: #6B5847;
         --jam: #A8324A; --jam-dark: #7A1F35; --sage: #6F8C6E; --honey: #C98A2C; --line: #EFEAE0;
-        --muted: #B3A492;
+        --muted: #B3A492; --danger: #C4453F;
     }
     * { box-sizing: border-box; }
     body {
@@ -22,7 +22,7 @@
         font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     .hidden { display: none !important; }
-    input[type="text"] {
+    input[type="text"], input[type="password"] {
         width: 100%; padding: 0.7rem 1rem; border-radius: 999px; border: 1px solid var(--line);
         background: var(--paper); font-size: 0.9rem; color: var(--espresso);
     }
@@ -31,13 +31,14 @@
         font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap;
     }
     .btn-outline { background: var(--paper); color: var(--jam); border: 1px solid var(--jam); }
+    .btn-danger { background: var(--danger); }
     .btn:disabled { opacity: .5; cursor: default; }
 
-    /* ---------- 大廳（建立/加入房間） ---------- */
-    #lobby-view { max-width: 30rem; margin: 0 auto; padding: 2rem 1.25rem; }
-    #lobby-view header { text-align: center; margin-bottom: 2rem; }
-    #lobby-view header h1 { font-size: 1.6rem; margin: 0 0 0.3rem; }
-    #lobby-view header a { color: var(--muted); font-size: 0.8rem; text-decoration: none; }
+    /* ---------- 房間列表 ---------- */
+    #room-list-view { max-width: 32rem; margin: 0 auto; padding: 2rem 1.25rem; }
+    #room-list-view header { text-align: center; margin-bottom: 1.5rem; }
+    #room-list-view header h1 { font-size: 1.6rem; margin: 0 0 0.3rem; }
+    #room-list-view header a { color: var(--muted); font-size: 0.8rem; text-decoration: none; }
     .lobby-card {
         background: var(--paper); border-radius: 1.5rem; padding: 1.5rem; margin-bottom: 1.25rem;
         box-shadow: 0 10px 24px -8px rgba(58,42,30,0.12);
@@ -45,8 +46,21 @@
     .lobby-card h2 { font-size: 1.05rem; margin: 0 0 0.9rem; }
     .lobby-card input { margin-bottom: 0.7rem; }
     .lobby-card .btn { width: 100%; }
+    #own-room-hint {
+        background: rgba(201,138,44,0.12); border-radius: 1.1rem; padding: 1rem 1.2rem; margin-bottom: 1.25rem;
+        font-size: 0.85rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;
+    }
+    .room-list-item {
+        display: flex; align-items: center; gap: 0.75rem; background: var(--paper); border-radius: 1.1rem;
+        padding: 0.85rem 1.1rem; margin-bottom: 0.6rem; cursor: pointer; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08);
+    }
+    .room-list-item:hover { background: var(--cream); }
+    .room-list-item .info { flex: 1; min-width: 0; }
+    .room-list-item .name { font-weight: 600; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .room-list-item .sub { font-size: 0.72rem; color: var(--muted); }
+    .room-list-item .lock-icon { flex-shrink: 0; opacity: 0.6; }
 
-    /* ---------- 房間內：共用列 ---------- */
+    /* ---------- 房間內：非全螢幕時的共用列 ---------- */
     #room-info-bar {
         display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
         padding: 0.9rem 1.25rem; background: var(--paper); flex-wrap: wrap;
@@ -75,14 +89,28 @@
     .overlay-tab.active { background: var(--jam); color: #fff; }
     .overlay-right h3 { font-size: 0.95rem; margin: 0 0 0.75rem; }
 
-    /* 全螢幕時：影片撐滿整個螢幕，控制面板變成疊在下方的半透明面板 */
+    /* 全螢幕時：影片撐滿整個螢幕，控制面板變成「上方一條可點擊展開的資訊列」，
+       預設收合、往下拉才展開，避免蓋住歌詞（歌詞通常在畫面下方，所以面板不能放下面） */
     #fullscreen-wrapper:fullscreen { width: 100vw; height: 100vh; }
     #fullscreen-wrapper:fullscreen #ktv-yt-player-target-wrap {
         position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: unset; z-index: 1;
     }
     #fullscreen-wrapper:fullscreen #host-overlay-ui {
-        position: absolute; left: 0; right: 0; bottom: 0; height: 40%; z-index: 2;
-        background: transparent; min-height: 0;
+        position: absolute; left: 0; right: 0; top: 0; bottom: auto; z-index: 3;
+        background: transparent; min-height: 0; flex-direction: column; gap: 0;
+    }
+    #fullscreen-wrapper:not(:fullscreen) #overlay-toggle-bar { display: none; } /* 非全螢幕不需要這條收合列 */
+    #overlay-toggle-bar {
+        display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+        padding: 0.7rem 1.1rem; background: rgba(20,14,10,0.65); backdrop-filter: blur(6px);
+        color: #F5EBDF; font-size: 0.82rem; cursor: pointer;
+    }
+    #overlay-toggle-bar .room-code-badge { color: var(--honey); font-weight: 700; }
+    #fullscreen-wrapper:fullscreen #host-overlay-body {
+        max-height: 0; overflow: hidden; transition: max-height .25s ease;
+    }
+    #fullscreen-wrapper:fullscreen #host-overlay-ui.expanded #host-overlay-body {
+        max-height: 60vh; display: flex;
     }
     #fullscreen-wrapper:fullscreen .overlay-panel {
         background: rgba(20,14,10,0.6); backdrop-filter: blur(8px); color: #F5EBDF;
@@ -90,7 +118,7 @@
     #fullscreen-wrapper:fullscreen .overlay-tab { background: rgba(255,255,255,0.12); color: #F5EBDF; }
     #fullscreen-wrapper:fullscreen .overlay-tab.active { background: var(--jam); color: #fff; }
     #fullscreen-wrapper:fullscreen .overlay-right h3 { color: #F5EBDF; }
-    #fullscreen-wrapper:fullscreen #toast-stack { top: 1rem; }
+    #fullscreen-wrapper:fullscreen #toast-stack { top: 3.2rem; }
     #fullscreen-wrapper:fullscreen input[type="text"] { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.25); }
     #fullscreen-wrapper:fullscreen input[type="text"]::placeholder { color: rgba(255,255,255,0.6); }
 
@@ -126,7 +154,7 @@
     .ktv-queue-drag-handle { cursor: grab; padding: 0 0.3rem; opacity: 0.5; touch-action: none; user-select: none; }
     .ktv-queue-item .remove-btn { flex-shrink: 0; background: none; border: none; opacity: 0.5; font-size: 0.9rem; cursor: pointer; color: inherit; }
 
-    /* ---------- 浮動點歌通知 ---------- */
+    /* ---------- 浮動通知（點歌/加入房間） ---------- */
     #toast-stack {
         position: absolute; top: 1rem; right: 1rem; z-index: 10; display: flex; flex-direction: column;
         gap: 0.5rem; max-width: 14rem; pointer-events: none;
@@ -137,43 +165,68 @@
     }
     @keyframes ktv-toast-in { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
 
-    /* ---------- 一般成員視角 ---------- */
+    /* ---------- 一般成員視角：簡化成點歌遙控器，只有佇列(上)+搜尋(下) ---------- */
     #member-view-inner { max-width: 40rem; margin: 0 auto; padding: 1rem 1.25rem; }
     #member-now-playing-bar {
         background: var(--paper); border-radius: 1.1rem; padding: 0.85rem 1.1rem; margin-bottom: 1rem;
         font-size: 0.9rem; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08);
     }
-    .member-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
-    .member-tab {
-        flex: 1; padding: 0.55rem; border-radius: 0.9rem; border: none; background: var(--paper);
-        color: var(--espresso-soft); font-size: 0.8rem; font-weight: 600; cursor: pointer;
-    }
-    .member-tab.active { background: var(--jam); color: #fff; }
+    #member-queue-section h3, #member-search-section h3 { font-size: 0.95rem; margin: 0 0 0.6rem; }
+    #member-queue-section { margin-bottom: 1.5rem; }
     .empty-hint { text-align: center; color: var(--muted); font-size: 0.82rem; padding: 1.5rem 1rem; }
+
+    /* ---------- 密碼輸入小視窗 ---------- */
+    #passcode-modal-backdrop {
+        position: fixed; inset: 0; background: rgba(58,42,30,0.4); z-index: 50;
+        display: flex; align-items: center; justify-content: center; padding: 1.25rem;
+    }
+    #passcode-modal { background: var(--paper); border-radius: 1.5rem; padding: 1.5rem; width: 100%; max-width: 22rem; }
+    #passcode-modal h3 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+    #passcode-modal input { margin-bottom: 1rem; }
+    #passcode-modal .btn-row { display: flex; gap: 0.6rem; }
+    #passcode-modal .btn-row .btn { flex: 1; }
 </style>
 </head>
 <body>
 
-    <!-- ---------- 大廳：建立或加入房間 ---------- -->
-    <div id="lobby-view">
+    <!-- ---------- 房間列表：建立新房間 / 目前存在的房間清單 ---------- -->
+    <div id="room-list-view">
         <header>
             <h1>🎤 歡唱KTV</h1>
             <a href="index.html">← 回到 JUST DO EAT</a>
         </header>
         <div id="lobby-login-hint" class="lobby-card hidden" style="text-align:center; color:var(--espresso-soft)">請先登入才能建立/加入房間</div>
-        <div class="lobby-card">
+
+        <!-- 已經有房間在開的時候顯示這個，取代建立房間的表單 -->
+        <div id="own-room-hint" class="hidden">
+            <span>🎤 你已經有一個進行中的房間：<strong id="own-room-name"></strong>，請先解散才能建立新房間</span>
+            <button class="btn" onclick="rejoinOwnRoom()">前往我的房間</button>
+        </div>
+
+        <div id="create-room-card" class="lobby-card">
             <h2>🎉 建立新房間</h2>
             <input id="create-room-name" type="text" placeholder="房間名稱（選填）">
             <input id="create-room-passcode" type="text" placeholder="房間代碼（選填，留空任何人都能加入）">
             <button class="btn" onclick="createRoom()">建立房間</button>
         </div>
+
         <div class="lobby-card">
-            <h2>🚪 加入房間</h2>
-            <input id="join-room-code" type="text" placeholder="房號（例如 A3F9K2）" style="text-transform:uppercase">
-            <input id="join-room-passcode" type="text" placeholder="房間代碼（如果房主有設定的話）">
-            <button class="btn btn-outline" onclick="joinRoom()">加入房間</button>
+            <h2>🚪 目前開著的房間</h2>
+            <div id="room-list-container"><p class="empty-hint">載入中...</p></div>
         </div>
-        <p id="lobby-status" class="text-sm" style="color:var(--muted); text-align:center; font-size:0.8rem;"></p>
+        <p id="lobby-status" style="color:var(--muted); text-align:center; font-size:0.8rem;"></p>
+    </div>
+
+    <!-- 加入有密碼的房間時跳出來輸入密碼 -->
+    <div id="passcode-modal-backdrop" class="hidden">
+        <div id="passcode-modal">
+            <h3>🔒 這個房間需要代碼</h3>
+            <input id="passcode-modal-input" type="text" placeholder="輸入房間代碼">
+            <div class="btn-row">
+                <button class="btn" onclick="confirmJoinWithPasscode()">加入</button>
+                <button class="btn btn-outline" onclick="closePasscodeModal()">取消</button>
+            </div>
+        </div>
     </div>
 
     <!-- ---------- 房間內畫面 ---------- -->
@@ -182,16 +235,21 @@
         <!-- 房主視角 -->
         <div id="host-view" class="hidden">
             <div id="room-info-bar">
-                <span class="room-info-left">🎤 <span id="host-room-name"></span> · 房號 <span id="host-room-id" style="color:var(--jam)"></span></span>
+                <span class="room-info-left">🎤 <span id="host-room-name"></span> · 房號 <span id="host-room-id" style="color:var(--jam)"></span> · 👥 <span id="host-member-count">1</span>人</span>
                 <div class="room-info-actions">
                     <button class="btn btn-outline" onclick="toggleFullscreen()">⛶ 全螢幕</button>
-                    <button class="btn" style="background:var(--danger, #C4453F)" onclick="leaveRoomAsHost()">解散房間</button>
+                    <button class="btn btn-danger" onclick="leaveRoomAsHost()">解散房間</button>
                 </div>
             </div>
             <div id="fullscreen-wrapper">
                 <div id="ktv-yt-player-target-wrap"><div id="ktv-yt-player-target" style="width:100%;height:100%"></div></div>
                 <div id="toast-stack"></div>
                 <div id="host-overlay-ui">
+                    <div id="overlay-toggle-bar" onclick="toggleOverlayExpanded()">
+                        <span>🎤 <span id="overlay-room-name"></span> · 房號 <span class="room-code-badge" id="overlay-room-id"></span> · 👥 <span id="overlay-member-count">1</span>人</span>
+                        <span id="overlay-toggle-icon">▼ 點歌／佇列</span>
+                    </div>
+                    <div id="host-overlay-body">
                     <div class="overlay-panel overlay-left">
                         <div class="overlay-tabs">
                             <button class="overlay-tab active" data-tab="search" onclick="switchOverlayTab('search')">🔍 點歌</button>
@@ -216,35 +274,32 @@
                         <h3>🎶 點歌佇列（可拖曳排序）</h3>
                         <div id="host-queue-list"></div>
                     </div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- 一般成員視角：沒有播放器畫面，只有點歌+佇列 -->
+        <!-- 一般成員視角：純點歌遙控器，只有佇列(上)+搜尋(下)，沒有播放畫面（因為畫面不會跟房主同步） -->
         <div id="member-view" class="hidden">
             <div id="room-info-bar">
                 <span class="room-info-left">🎤 <span id="member-room-name"></span></span>
-                <button class="btn" style="background:var(--danger, #C4453F)" onclick="leaveRoomAsMember()">離開房間</button>
+                <button class="btn btn-danger" onclick="leaveRoomAsMember()">離開房間</button>
             </div>
             <div id="member-view-inner">
                 <div id="member-now-playing-bar">🎵 目前歡唱：<strong id="member-now-playing-text">尚未開始，快去點一首歌吧</strong></div>
 
-                <div class="member-tabs">
-                    <button class="member-tab active" data-tab="search" onclick="switchMemberTab('search')">🔍 點歌</button>
-                    <button class="member-tab" data-tab="history" onclick="switchMemberTab('history')">📜 歷史</button>
-                    <button class="member-tab" data-tab="ranking" onclick="switchMemberTab('ranking')">🔥 熱門</button>
-                    <button class="member-tab" data-tab="queue" onclick="switchMemberTab('queue')">🎶 佇列</button>
+                <div id="member-queue-section">
+                    <h3>🎶 目前佇列</h3>
+                    <div id="member-queue-list"></div>
                 </div>
-                <div id="member-tab-search" class="member-tab-content">
+                <div id="member-search-section">
+                    <h3>🔍 點歌</h3>
                     <div style="display:flex; gap:0.4rem; margin-bottom:0.75rem;">
                         <input id="member-search-input" type="text" placeholder="輸入歌名或歌手" onkeydown="if(event.key==='Enter') searchKtvSongs()">
                         <button class="btn" style="padding:0.6rem 0.9rem" onclick="searchKtvSongs()">搜尋</button>
                     </div>
                     <div id="member-search-results"></div>
                 </div>
-                <div id="member-tab-history" class="member-tab-content hidden"><div id="member-history-list"></div></div>
-                <div id="member-tab-ranking" class="member-tab-content hidden"><div id="member-ranking-list"></div></div>
-                <div id="member-tab-queue" class="member-tab-content hidden"><div id="member-queue-list"></div></div>
             </div>
         </div>
     </div>
@@ -271,12 +326,16 @@
     let currentRoomData = null;
     let isHost = false;
     let roomUnsubscribe = null;
+    let membersUnsubscribe = null;
     let prevQueueQids = [];
+    let prevMemberUids = [];
     let hostLastPlayedVideoId = null;
+    let pendingJoinRoomId = null; // 等待輸入密碼的房間ID
 
     auth.onAuthStateChanged(user => {
         currentUser = user;
         document.getElementById('lobby-login-hint').classList.toggle('hidden', !!user);
+        if (user) { checkOwnRoom(); loadRoomList(); }
     });
 
     function escapeHtmlKtv(str) {
@@ -293,9 +352,84 @@
     }
 
     // ---------------------------------------------------------------
-    // 大廳：建立房間 / 加入房間。房間代碼是休閒等級的機制（像Kahoot那種房間代碼），
-    // 不是真正的安全密碼保護，純文字比對，圖個方便讓不想開放的房間有基本門檻
+    // 房間列表：顯示目前所有開著的房間＋人數＋是否需要密碼；同時檢查自己是不是已經
+    // 有一個進行中的房間（有的話不能再建立新的，房主必須先解散舊房間）
     // ---------------------------------------------------------------
+    async function checkOwnRoom() {
+        try {
+            const snap = await db.collection('ktvRooms').where('hostUid', '==', currentUser.uid).limit(1).get();
+            const hint = document.getElementById('own-room-hint');
+            const createCard = document.getElementById('create-room-card');
+            if (!snap.empty) {
+                const room = snap.docs[0].data();
+                document.getElementById('own-room-name').textContent = room.name || '';
+                hint.classList.remove('hidden');
+                createCard.classList.add('hidden');
+                hint.dataset.roomId = snap.docs[0].id;
+            } else {
+                hint.classList.add('hidden');
+                createCard.classList.remove('hidden');
+            }
+        } catch (err) { console.warn('檢查自己的房間失敗', err); }
+    }
+    function rejoinOwnRoom() {
+        const roomId = document.getElementById('own-room-hint').dataset.roomId;
+        if (roomId) enterRoom(roomId, true);
+    }
+    function loadRoomList() {
+        db.collection('ktvRooms').orderBy('createdAt', 'desc').onSnapshot(snap => {
+            const container = document.getElementById('room-list-container');
+            if (snap.empty) { container.innerHTML = '<p class="empty-hint">目前沒有開著的房間，建立一個新的吧</p>'; return; }
+            container.innerHTML = snap.docs.map(doc => {
+                const room = doc.data();
+                const roomId = doc.id;
+                return `<div class="room-list-item" onclick="tryJoinRoom('${roomId}')">
+                    <div class="info">
+                        <div class="name">${escapeHtmlKtv(room.name || roomId)}</div>
+                        <div class="sub">房主：${escapeHtmlKtv(room.hostName || '')} · 👥 ${room.memberCount || 0}人</div>
+                    </div>
+                    ${room.passcode ? '<span class="lock-icon">🔒</span>' : ''}
+                </div>`;
+            }).join('');
+        }, err => console.warn('讀取房間列表失敗', err));
+    }
+    // 點房間列表項目：沒密碼直接加入，有密碼跳出密碼輸入視窗
+    async function tryJoinRoom(roomId) {
+        if (!currentUser) { alert('請先登入才能加入房間'); return; }
+        try {
+            const doc = await db.collection('ktvRooms').doc(roomId).get();
+            if (!doc.exists) { alert('這個房間剛剛已經被解散了'); return; }
+            const room = doc.data();
+            if (room.passcode) {
+                pendingJoinRoomId = roomId;
+                document.getElementById('passcode-modal-input').value = '';
+                document.getElementById('passcode-modal-backdrop').classList.remove('hidden');
+            } else {
+                enterRoom(roomId, room.hostUid === currentUser.uid);
+            }
+        } catch (err) {
+            alert('加入房間失敗：' + err.message);
+        }
+    }
+    async function confirmJoinWithPasscode() {
+        const input = document.getElementById('passcode-modal-input').value.trim();
+        const roomId = pendingJoinRoomId;
+        try {
+            const doc = await db.collection('ktvRooms').doc(roomId).get();
+            if (!doc.exists) { alert('這個房間剛剛已經被解散了'); closePasscodeModal(); return; }
+            const room = doc.data();
+            if (room.passcode !== input) { alert('房間代碼不正確'); return; }
+            closePasscodeModal();
+            enterRoom(roomId, room.hostUid === currentUser.uid);
+        } catch (err) {
+            alert('加入房間失敗：' + err.message);
+        }
+    }
+    function closePasscodeModal() {
+        document.getElementById('passcode-modal-backdrop').classList.add('hidden');
+        pendingJoinRoomId = null;
+    }
+
     function generateRoomCode() {
         const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 I、L、O、0、1
         let code = '';
@@ -311,7 +445,7 @@
             await db.collection('ktvRooms').doc(roomId).set({
                 name, passcode: passcode || null,
                 hostUid: currentUser.uid, hostName: currentUser.displayName || '房主',
-                queue: [],
+                queue: [], memberCount: 0,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
             enterRoom(roomId, true);
@@ -319,49 +453,36 @@
             document.getElementById('lobby-status').textContent = '⚠️ 建立房間失敗：' + err.message;
         }
     }
-    async function joinRoom() {
-        if (!currentUser) { alert('請先登入才能加入房間'); return; }
-        const roomId = document.getElementById('join-room-code').value.trim().toUpperCase();
-        const passcode = document.getElementById('join-room-passcode').value.trim();
-        if (!roomId) { alert('請輸入房號'); return; }
-        const statusEl = document.getElementById('lobby-status');
-        statusEl.textContent = '🔍 查詢房間中...';
-        try {
-            const doc = await db.collection('ktvRooms').doc(roomId).get();
-            if (!doc.exists) { statusEl.textContent = '⚠️ 找不到這個房間，請確認房號是否正確'; return; }
-            const room = doc.data();
-            if (room.passcode && room.passcode !== passcode) { statusEl.textContent = '⚠️ 房間代碼不正確'; return; }
-            statusEl.textContent = '';
-            enterRoom(roomId, room.hostUid === currentUser.uid);
-        } catch (err) {
-            statusEl.textContent = '⚠️ 加入房間失敗：' + err.message;
-        }
-    }
 
     // ---------------------------------------------------------------
-    // 進入房間：切畫面(房主/成員)，開始即時監聽房間文件
+    // 進入房間：切畫面(房主/成員)，加入成員名單(memberCount+1)，開始即時監聽房間文件+成員名單
     // ---------------------------------------------------------------
     function enterRoom(roomId, asHost) {
         currentRoomId = roomId;
         isHost = asHost;
         prevQueueQids = [];
+        prevMemberUids = [];
         hostLastPlayedVideoId = null;
-        document.getElementById('lobby-view').classList.add('hidden');
+        document.getElementById('room-list-view').classList.add('hidden');
         document.getElementById('room-view').classList.remove('hidden');
         document.getElementById(asHost ? 'host-view' : 'member-view').classList.remove('hidden');
         document.getElementById(asHost ? 'member-view' : 'host-view').classList.add('hidden');
 
+        // 把自己寫進這個房間的成員名單，離開時會再刪掉
+        const memberRef = db.collection('ktvRooms').doc(roomId).collection('members').doc(currentUser.uid);
+        memberRef.set({ uid: currentUser.uid, name: currentUser.displayName || '匿名', joinedAt: firebase.firestore.FieldValue.serverTimestamp() })
+            .then(() => db.collection('ktvRooms').doc(roomId).update({ memberCount: firebase.firestore.FieldValue.increment(1) }))
+            .catch(err => console.warn('加入成員名單失敗', err));
+
         if (roomUnsubscribe) roomUnsubscribe();
         roomUnsubscribe = db.collection('ktvRooms').doc(roomId).onSnapshot(doc => {
             if (!doc.exists) {
-                // 房主解散了房間（房間文件被刪除），所有正在這個房間裡的人都會即時收到這個通知
                 alert('🎤 房間已解散');
                 exitToLobby();
                 return;
             }
             const data = doc.data();
             const newQueue = data.queue || [];
-            // 偵測佇列裡新出現的項目（不管是誰、從哪台裝置點的），跳浮動通知
             newQueue.forEach(q => {
                 if (!prevQueueQids.includes(q.qid)) showKtvToast(`🎤 ${q.requestedBy || '有人'} 點播了《${q.title}》`);
             });
@@ -381,20 +502,57 @@
             }
         }, err => console.warn('房間監聽失敗', err));
 
+        // 成員名單監聽：算目前人數、偵測新加入的人（只有房主端需要跳「XXX已加入房間」通知）
+        if (membersUnsubscribe) membersUnsubscribe();
+        membersUnsubscribe = db.collection('ktvRooms').doc(roomId).collection('members').onSnapshot(snap => {
+            const uids = snap.docs.map(d => d.id);
+            if (isHost) {
+                snap.docChanges().forEach(change => {
+                    if (change.type === 'added' && !prevMemberUids.includes(change.doc.id) && change.doc.id !== currentUser.uid) {
+                        showKtvToast(`👋 ${change.doc.data().name || '有人'} 已加入房間`);
+                    }
+                });
+            }
+            prevMemberUids = uids;
+            const countText = String(snap.size);
+            ['host-member-count', 'overlay-member-count'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = countText; });
+        }, err => console.warn('成員名單監聽失敗', err));
+
         document.getElementById(asHost ? 'host-room-name' : 'member-room-name').textContent = '';
-        if (asHost) document.getElementById('host-room-id').textContent = roomId;
+        if (asHost) {
+            document.getElementById('host-room-id').textContent = roomId;
+            document.getElementById('overlay-room-id').textContent = roomId;
+            // 房主建立/進入房間後自動全螢幕，需要使用者手勢才能觸發，這裡緊接在建立房間的點擊事件內，
+            // 大部分瀏覽器允許在使用者互動後的同一輪呼叫鏈裡要求全螢幕
+            const wrapper = document.getElementById('fullscreen-wrapper');
+            wrapper.requestFullscreen().catch(() => {}); // 失敗就算了（例如瀏覽器政策不允許），不用跳錯誤打斷使用者
+        }
         loadRankingList();
         loadHistoryList();
     }
     function exitToLobby() {
         if (roomUnsubscribe) { roomUnsubscribe(); roomUnsubscribe = null; }
+        if (membersUnsubscribe) { membersUnsubscribe(); membersUnsubscribe = null; }
+        leaveMemberRecord();
         if (ytPlayer) { try { ytPlayer.destroy(); } catch (e) {} ytPlayer = null; ytPlayerReady = false; }
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
         currentRoomId = null; currentRoomData = null; isHost = false;
         document.getElementById('room-view').classList.add('hidden');
-        document.getElementById('lobby-view').classList.remove('hidden');
-        document.getElementById('join-room-code').value = '';
-        document.getElementById('join-room-passcode').value = '';
+        document.getElementById('room-list-view').classList.remove('hidden');
+        checkOwnRoom();
     }
+    // 把自己從成員名單移除、人數減一。這是「盡力而為」的機制：正常按離開房間會確實執行，
+    // 但如果使用者直接關掉分頁/瀏覽器，這段程式碼可能來不及跑完，人數統計偶爾可能因此出現誤差，
+    // 這是純前端＋Firestore（沒有像即時資料庫那種onDisconnect機制）架構下難以完全避免的限制
+    function leaveMemberRecord() {
+        if (!currentRoomId || !currentUser) return;
+        const roomId = currentRoomId;
+        db.collection('ktvRooms').doc(roomId).collection('members').doc(currentUser.uid).delete()
+            .then(() => db.collection('ktvRooms').doc(roomId).update({ memberCount: firebase.firestore.FieldValue.increment(-1) }))
+            .catch(err => console.warn('移除成員名單失敗', err));
+    }
+    window.addEventListener('beforeunload', leaveMemberRecord);
+
     // 房主離開＝解散房間，所有人都會被踢出（透過上面onSnapshot偵測到文件被刪除）
     async function leaveRoomAsHost() {
         if (!confirm('確定要解散這個房間嗎？所有人都會被移出房間。')) return;
@@ -414,6 +572,8 @@
         if (!currentRoomData) return;
         const nameEl = document.getElementById(isHost ? 'host-room-name' : 'member-room-name');
         if (nameEl) nameEl.textContent = currentRoomData.name || '';
+        const overlayNameEl = document.getElementById('overlay-room-name');
+        if (overlayNameEl) overlayNameEl.textContent = currentRoomData.name || '';
         const queue = currentRoomData.queue || [];
         if (isHost) {
             renderQueueList('host-queue-list', queue, true);
@@ -424,21 +584,17 @@
     }
 
     // ---------------------------------------------------------------
-    // 分頁切換（房主的疊加介面 / 一般成員的頁面）
+    // 房主全螢幕疊加介面：頂端一條收合列，點擊展開/收合搜尋+歷史+熱門+佇列面板，
+    // 預設收合，避免遮住畫面下方常見的歌詞顯示區域
     // ---------------------------------------------------------------
+    function toggleOverlayExpanded() {
+        document.getElementById('host-overlay-ui').classList.toggle('expanded');
+    }
     function switchOverlayTab(tab) {
         ['search', 'history', 'ranking'].forEach(t => {
             document.getElementById(`overlay-tab-${t}`).classList.toggle('hidden', t !== tab);
         });
         document.querySelectorAll('.overlay-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-        if (tab === 'history') loadHistoryList();
-        if (tab === 'ranking') loadRankingList();
-    }
-    function switchMemberTab(tab) {
-        ['search', 'history', 'ranking', 'queue'].forEach(t => {
-            document.getElementById(`member-tab-${t}`).classList.toggle('hidden', t !== tab);
-        });
-        document.querySelectorAll('.member-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
         if (tab === 'history') loadHistoryList();
         if (tab === 'ranking') loadRankingList();
     }
@@ -575,7 +731,7 @@
     // 歷史點歌紀錄：這個房間點過的歌，新到舊排列
     // ---------------------------------------------------------------
     async function loadHistoryList() {
-        const targets = [document.getElementById('host-history-list'), document.getElementById('member-history-list')].filter(Boolean);
+        const targets = [document.getElementById('host-history-list')].filter(Boolean);
         if (!targets.length || !currentRoomId) return;
         targets.forEach(el => el.innerHTML = '<div class="empty-hint">載入中...</div>');
         try {
@@ -600,7 +756,7 @@
     // 熱門點歌排行：全域累計，不分房間、不分時間，依點歌次數排序
     // ---------------------------------------------------------------
     async function loadRankingList() {
-        const targets = [document.getElementById('host-ranking-list'), document.getElementById('member-ranking-list')].filter(Boolean);
+        const targets = [document.getElementById('host-ranking-list')].filter(Boolean);
         if (!targets.length) return;
         targets.forEach(el => el.innerHTML = '<div class="empty-hint">載入中...</div>');
         try {
