@@ -59,6 +59,7 @@
     .room-list-item .name { font-weight: 600; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .room-list-item .sub { font-size: 0.72rem; color: var(--muted); }
     .room-list-item .lock-icon { flex-shrink: 0; opacity: 0.6; }
+    .room-icon-thumb { width: 2.2rem; height: 2.2rem; border-radius: 0.6rem; object-fit: cover; flex-shrink: 0; background: var(--cream); }
 
     /* ---------- 房間內：非全螢幕時的共用列 ---------- */
     #room-info-bar {
@@ -249,11 +250,14 @@
             <button class="btn" onclick="rejoinOwnRoom()">前往我的房間</button>
         </div>
 
-        <div id="create-room-card" class="lobby-card">
-            <h2>🎉 建立新房間</h2>
-            <input id="create-room-name" type="text" placeholder="房間名稱（選填）">
-            <input id="create-room-passcode" type="text" placeholder="房間代碼（選填，留空任何人都能加入）">
-            <button class="btn" onclick="createRoom()">建立房間</button>
+        <div id="create-room-card" class="lobby-card" style="display:flex; align-items:center; gap:1.1rem; flex-wrap:wrap;">
+            <img src="https://res.cloudinary.com/bumzwp9g/image/upload/v1786012690/music_10913194_tncreb.png" alt="" style="width:4rem; height:4rem; object-fit:contain; flex-shrink:0;">
+            <div style="flex:1; min-width:12rem;">
+                <h2 style="margin-bottom:0.6rem;">🎉 建立新房間</h2>
+                <input id="create-room-name" type="text" placeholder="房間名稱（選填）">
+                <input id="create-room-passcode" type="text" placeholder="房間代碼（選填，留空任何人都能加入）">
+                <button class="btn" onclick="createRoom()">建立房間</button>
+            </div>
         </div>
 
         <div class="lobby-card">
@@ -282,8 +286,13 @@
         <div id="host-view" class="hidden">
             <div id="room-info-bar">
                 <span class="room-info-left">🎤 <span id="host-room-name"></span> · 房號 <span id="host-room-id" style="color:var(--jam)"></span> · 👥 <span id="host-member-count">1</span>人</span>
+                <button id="host-applause-btn" class="btn btn-outline" onclick="sendApplause()">👏 掌聲鼓勵</button>
                 <div class="room-info-actions">
                     <button class="btn btn-outline" onclick="toggleFullscreen()">⛶ 全螢幕</button>
+                    <div style="position:relative; display:inline-block;">
+                        <button class="btn btn-outline" onclick="toggleRoomIconPicker()">🖼 房間圖案</button>
+                        <div id="room-icon-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.6rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.25); display:grid; grid-template-columns:repeat(4,1fr); gap:0.4rem; z-index:20; width:11rem;"></div>
+                    </div>
                     <button class="btn btn-danger" onclick="leaveRoomAsHost()">解散房間</button>
                 </div>
             </div>
@@ -295,6 +304,7 @@
                 <div id="host-overlay-ui">
                     <div id="overlay-toggle-bar">
                         <span onclick="toggleOverlayExpanded()" style="flex:1; cursor:pointer;">🎤 <span id="overlay-room-name"></span> · 房號 <span class="room-code-badge" id="overlay-room-id"></span> · 👥 <span id="overlay-member-count">1</span>人 · <span id="overlay-toggle-icon">▼ 點歌／佇列</span></span>
+                        <button class="disband-inline-btn" style="background:rgba(111,140,110,0.85); margin-right:0.4rem;" onclick="sendApplause()">👏</button>
                         <button class="disband-inline-btn" onclick="leaveRoomAsHost()">解散房間</button>
                     </div>
                     <div id="host-overlay-body">
@@ -389,6 +399,7 @@
     const CLOUDFLARE_AI_PROXY_URL = 'https://baking-recipes-ai.wallcemax.workers.dev/';
 
     let currentUser = null;
+    let myDisplayName = null; // 快取自己的顯示名稱：優先用個人頁面設定的暱稱，沒設定就退回Google帳號名稱
     let currentRoomId = null;
     let currentRoomData = null;
     let isHost = false;
@@ -414,6 +425,20 @@
 
     function escapeHtmlKtv(str) {
         return String(str || '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    }
+    // 解析自己的顯示名稱：優先用「個人頁面」設定的暱稱，沒設定就退回原本的Google帳號名稱。
+    // 只查一次快取起來，不用每次點歌/送掌聲都重新查一次資料庫
+    async function resolveMyDisplayName() {
+        if (myDisplayName) return myDisplayName;
+        if (!currentUser) return '';
+        try {
+            const doc = await db.collection('userProfiles').doc(currentUser.uid).get();
+            const nickname = doc.exists ? (doc.data().nickname || '') : '';
+            myDisplayName = nickname.trim() || currentUser.displayName || '匿名';
+        } catch (err) {
+            myDisplayName = currentUser.displayName || '匿名';
+        }
+        return myDisplayName;
     }
     function showKtvToast(message) {
         const stack = document.getElementById('toast-stack');
@@ -462,16 +487,24 @@
         if (roomId) enterRoom(roomId, hint.dataset.isHost === '1', currentRoomStatus && currentRoomStatus.roomName);
     }
     function loadRoomList() {
-        db.collection('ktvRooms').orderBy('createdAt', 'desc').onSnapshot(snap => {
+        db.collection('ktvRooms').orderBy('createdAt', 'desc').onSnapshot(async snap => {
             const container = document.getElementById('room-list-container');
             if (snap.empty) { container.innerHTML = '<p class="empty-hint">目前沒有開著的房間，建立一個新的吧</p>'; return; }
-            container.innerHTML = snap.docs.map(doc => {
-                const room = doc.data();
-                const roomId = doc.id;
-                return `<div class="room-list-item" onclick="tryJoinRoom('${roomId}')">
+            // 人數改成直接查真實的成員名單筆數（Firestore的count()聚合查詢），不再信任
+            // 另外維護的memberCount計數欄位——加減計數器只要漏算一次就會永遠兜不起來，
+            // 直接讀真實資料才不會再發生「人數一直增加、跟實際狀況對不上」的問題
+            const rooms = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const counts = await Promise.all(rooms.map(r =>
+                db.collection('ktvRooms').doc(r.id).collection('members').count().get()
+                    .then(res => res.data().count).catch(() => r.memberCount || 0)
+            ));
+            container.innerHTML = rooms.map((room, i) => {
+                const icon = room.roomIcon ? `<img src="${room.roomIcon}" class="room-icon-thumb" alt="">` : '';
+                return `<div class="room-list-item" onclick="tryJoinRoom('${room.id}')">
+                    ${icon}
                     <div class="info">
-                        <div class="name">${escapeHtmlKtv(room.name || roomId)}</div>
-                        <div class="sub">房主：${escapeHtmlKtv(room.hostName || '')} · 👥 ${room.memberCount || 0}人</div>
+                        <div class="name">${escapeHtmlKtv(room.name || room.id)}</div>
+                        <div class="sub">房主：${escapeHtmlKtv(room.hostName || '')} · 👥 ${counts[i]}人</div>
                     </div>
                     ${room.passcode ? '<span class="lock-icon">🔒</span>' : ''}
                 </div>`;
@@ -490,7 +523,9 @@
                 return;
             }
             const room = doc.data();
-            if (room.passcode) {
+            // 房主重新加入自己的房間，不用再輸入密碼——不然萬一忘記自己設的密碼，
+            // 會連自己的房間都進不去，變成刪不掉、也管理不了
+            if (room.passcode && room.hostUid !== currentUser.uid) {
                 pendingJoinRoomId = roomId;
                 document.getElementById('passcode-modal-input').value = '';
                 document.getElementById('passcode-modal-backdrop').classList.remove('hidden');
@@ -538,14 +573,15 @@
             alert(`你目前已經在房間「${currentRoomStatus.roomName || currentRoomStatus.roomId}」裡，請先離開才能建立新房間`);
             return;
         }
-        const name = document.getElementById('create-room-name').value.trim() || `${currentUser.displayName || '我'}的房間`;
+        const myName = await resolveMyDisplayName();
+        const name = document.getElementById('create-room-name').value.trim() || `${myName}的房間`;
         const passcode = document.getElementById('create-room-passcode').value.trim();
         const roomId = generateRoomCode();
         try {
             await db.collection('ktvRooms').doc(roomId).set({
                 name, passcode: passcode || null,
-                hostUid: currentUser.uid, hostName: currentUser.displayName || '房主',
-                queue: [], memberCount: 0,
+                hostUid: currentUser.uid, hostName: myName,
+                queue: [], roomIcon: null,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
             enterRoom(roomId, true, name);
@@ -555,9 +591,10 @@
     }
 
     // ---------------------------------------------------------------
-    // 進入房間：切畫面(房主/成員)，加入成員名單(只有真的第一次加入才會讓memberCount+1，
-    // 重複進入同一個房間不會一直疊加)，開始即時監聽房間文件+成員名單+掌聲反應，
-    // 同時寫入ktvUserRoomStatus記錄「我現在在這個房間」
+    // 進入房間：切畫面(房主/成員)，把自己加進成員名單，開始即時監聽房間文件+成員名單+掌聲反應，
+    // 同時寫入ktvUserRoomStatus記錄「我現在在這個房間」。人數一律直接從成員名單的真實筆數
+    // 計算（count()聚合查詢或監聽的snap.size），不再另外維護一個計數欄位，避免計數跟實際
+    // 狀況兜不起來的問題
     // ---------------------------------------------------------------
     async function enterRoom(roomId, asHost, roomName) {
         currentRoomId = roomId;
@@ -571,17 +608,12 @@
         document.getElementById(asHost ? 'member-view' : 'host-view').classList.add('hidden');
 
         // 把自己（不管房主還是一般成員）寫進這個房間的成員名單，離開時會再刪掉。
-        // 先檢查這筆成員紀錄是不是已經存在——重複進入同一個房間（重新整理頁面、
-        // 從「前往我的房間」按鈕再進來一次）不應該讓人數一直往上疊加，只有真的第一次
-        // 加入才會讓memberCount+1
+        // 用.set()是因為同一個人重複進入同一個房間，文件ID(=uid)一樣，只是覆寫同一筆，
+        // 不會變成好幾筆重複資料
         try {
             const memberRef = db.collection('ktvRooms').doc(roomId).collection('members').doc(currentUser.uid);
-            const existingMemberDoc = await memberRef.get();
-            const alreadyMember = existingMemberDoc.exists;
-            await memberRef.set({ uid: currentUser.uid, name: currentUser.displayName || '匿名', joinedAt: firebase.firestore.FieldValue.serverTimestamp() });
-            if (!alreadyMember) {
-                await db.collection('ktvRooms').doc(roomId).update({ memberCount: firebase.firestore.FieldValue.increment(1) });
-            }
+            const myName = await resolveMyDisplayName();
+            await memberRef.set({ uid: currentUser.uid, name: myName, joinedAt: firebase.firestore.FieldValue.serverTimestamp() });
             // 記錄「我現在在這個房間」，離開時會清掉。這份文件是判斷「同一時間只能待在
             // 一個房間」的唯一依據，建立/加入房間前都會先檢查這個
             await db.collection('ktvUserRoomStatus').doc(currentUser.uid).set({
@@ -687,14 +719,15 @@
         document.getElementById('room-view').classList.add('hidden');
         document.getElementById('room-list-view').classList.remove('hidden');
     }
-    // 把自己從成員名單移除、人數減一。這是「盡力而為」的機制：正常按離開房間會確實執行，
-    // 但如果使用者直接關掉分頁/瀏覽器，這段程式碼可能來不及跑完，人數統計偶爾可能因此出現誤差，
-    // 這是純前端＋Firestore（沒有像即時資料庫那種onDisconnect機制）架構下難以完全避免的限制
+    // 把自己從成員名單移除。這是「盡力而為」的機制：正常按離開房間會確實執行，
+    // 但如果使用者直接關掉分頁/瀏覽器，這段程式碼可能來不及跑完，人數統計偶爾可能因此短暫
+    // 出現誤差，這是純前端＋Firestore（沒有像即時資料庫那種onDisconnect機制）架構下難以完全
+    // 避免的限制；但因為人數是直接讀真實名單筆數算出來的，不是另外維護的計數器，
+    // 就算某次沒清乾淨，等使用者下次重新整理房間列表時數字也會自動修正回來，不會一直累積誤差
     function leaveMemberRecord() {
         if (!currentRoomId || !currentUser) return;
         const roomId = currentRoomId;
         db.collection('ktvRooms').doc(roomId).collection('members').doc(currentUser.uid).delete()
-            .then(() => db.collection('ktvRooms').doc(roomId).update({ memberCount: firebase.firestore.FieldValue.increment(-1) }))
             .catch(err => console.warn('移除成員名單失敗', err));
         db.collection('ktvUserRoomStatus').doc(currentUser.uid).delete()
             .catch(err => console.warn('清除目前房間狀態失敗', err));
@@ -765,6 +798,40 @@
     }
 
     // ---------------------------------------------------------------
+    // 房間圖案：房主可以從7張圖裡選一張，設定後房間列表的名稱前面會顯示這個圖案
+    // ---------------------------------------------------------------
+    const ROOM_ICON_OPTIONS = [
+        'https://res.cloudinary.com/bumzwp9g/image/upload/v1786012690/karaoke_3040142_tzon5y.png',
+        'https://res.cloudinary.com/bumzwp9g/image/upload/v1786012690/music_14852655_zul9op.png',
+        'https://res.cloudinary.com/bumzwp9g/image/upload/v1786012690/karaoke_3931576_qzvy7c.png',
+        'https://res.cloudinary.com/bumzwp9g/image/upload/v1786012690/karaoke_2445497_ourspd.png',
+        'https://res.cloudinary.com/bumzwp9g/image/upload/v1786012690/sound_11365157_jsb2yg.png',
+        'https://res.cloudinary.com/bumzwp9g/image/upload/v1786012690/karaoke_6431432_azesf2.png',
+        'https://res.cloudinary.com/bumzwp9g/image/upload/v1786012690/karaoke_1323595_qt3nht.png',
+    ];
+    function toggleRoomIconPicker() {
+        const picker = document.getElementById('room-icon-picker');
+        if (picker.classList.contains('hidden')) {
+            picker.innerHTML = ROOM_ICON_OPTIONS.map(url =>
+                `<img src="${url}" onclick="selectRoomIcon('${url}')" style="width:2.3rem; height:2.3rem; object-fit:contain; border-radius:0.5rem; cursor:pointer; padding:0.2rem; background:var(--cream);">`
+            ).join('');
+            picker.classList.remove('hidden');
+        } else {
+            picker.classList.add('hidden');
+        }
+    }
+    async function selectRoomIcon(url) {
+        if (!isHost || !currentRoomId) return;
+        try {
+            await db.collection('ktvRooms').doc(currentRoomId).update({ roomIcon: url });
+            document.getElementById('room-icon-picker').classList.add('hidden');
+            showKtvToast('🖼 房間圖案已更新');
+        } catch (err) {
+            alert('設定房間圖案失敗：' + err.message);
+        }
+    }
+
+    // ---------------------------------------------------------------
     // 掌聲鼓勵：成員按下去，寫一筆反應事件到房間的reactions子集合，房主端監聽到就在
     // 播放畫面上疊一個動畫。準備好幾種不同的動畫效果，每次隨機挑一種，不會每次都一樣
     // ---------------------------------------------------------------
@@ -780,10 +847,10 @@
         const typeIndex = Math.floor(Math.random() * REACTION_TYPES.length);
         // 先在自己畫面上立即播放一次，不用等Firestore寫入+監聽回來的來回時間，
         // 點下去馬上就有反應。其他人那邊會透過下面的reactions監聽收到、各自播放
-        playReactionAnimation({ typeIndex, name: currentUser.displayName || '你', uid: currentUser.uid });
+        playReactionAnimation({ typeIndex, name: await resolveMyDisplayName(), uid: currentUser.uid });
         try {
             await db.collection('ktvRooms').doc(currentRoomId).collection('reactions').add({
-                uid: currentUser.uid, name: currentUser.displayName || '有人',
+                uid: currentUser.uid, name: await resolveMyDisplayName(),
                 typeIndex, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
         } catch (err) { console.warn('送出掌聲失敗', err); }
@@ -875,7 +942,7 @@
         const entry = {
             qid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             videoId: song.videoId, title: song.title, thumbnail: song.thumbnail || '',
-            requestedBy: currentUser.displayName || '匿名', requestedByUid: currentUser.uid,
+            requestedBy: await resolveMyDisplayName(), requestedByUid: currentUser.uid,
             addedAt: Date.now(),
         };
         const queue = (currentRoomData.queue || []).slice();

@@ -595,6 +595,15 @@
 
             <!-- 儀表板：進入個人頁面預設看到的畫面，不是分頁切換 -->
             <div id="personal-dashboard">
+                <div class="personal-info-card mb-3" style="cursor:default;">
+                    <span class="personal-info-card-icon">✏️</span>
+                    <span class="personal-info-card-text" style="flex:1;">
+                        <span class="personal-info-card-title">我的暱稱</span>
+                        <span class="personal-info-card-sub">設定後全站優先顯示暱稱，不填則維持顯示原本的名稱</span>
+                    </span>
+                    <input id="personal-nickname-input" type="text" placeholder="輸入暱稱（選填）" maxlength="12" style="flex:0 0 8rem; padding:0.4rem 0.8rem; border-radius:999px; border:1px solid var(--line); font-size:0.85rem;">
+                    <button onclick="saveNickname()" class="text-xs font-medium shrink-0" style="color:var(--jam)">儲存</button>
+                </div>
                 <div class="grid sm:grid-cols-2 gap-3 mb-6">
                     <button onclick="showProfileModal()" class="personal-info-card">
                         <span class="personal-info-card-icon">🏅</span>
@@ -1758,6 +1767,17 @@
             await recordLogin();
         }
 
+        // 暱稱：設定後優先於原本的Google帳號名稱顯示，沒填就維持原本的顯示方式。
+        // 存在userProgress裡（跟稱號資料放一起），同時也會同步一份到公開可讀的userProfiles，
+        // 這樣其他人（包含KTV房間裡的其他人）才看得到你設定的暱稱
+        async function saveNickname() {
+            if (!currentUser) { alert('請先登入才能設定暱稱'); return; }
+            if (!userProgress) userProgress = { equippedTitleId: null };
+            const nickname = document.getElementById('personal-nickname-input').value.trim().slice(0, 12);
+            userProgress.nickname = nickname;
+            await saveUserProgress();
+            alert(nickname ? `暱稱已更新為「${nickname}」` : '已清空暱稱，改回顯示原本的名稱');
+        }
         async function saveUserProgress() {
             if (!currentUser || !userProgress) return;
             try {
@@ -1765,11 +1785,12 @@
             } catch (err) {
                 console.warn('儲存成就進度失敗', err && err.message);
             }
-            // 同步一份公開可讀的最小資料（只有裝備的稱號），給其他人瀏覽食譜時查詢顯示用
+            // 同步一份公開可讀的最小資料（暱稱+裝備的稱號），給其他人瀏覽食譜、或在KTV系統裡查詢顯示用
             try {
                 const equipped = userProgress.equippedTitleId ? ACHIEVEMENT_RULES.find(r => r.id === userProgress.equippedTitleId) : null;
                 await db.collection('userProfiles').doc(currentUser.uid).set({
                     displayName: currentUser.displayName || '',
+                    nickname: userProgress.nickname || '',
                     equippedTitle: (equipped && equipped.title) ? { icon: equipped.title.icon, name: equipped.title.name } : null,
                 });
                 authorTitleCache[currentUser.uid] = (equipped && equipped.title) ? equipped.title : null;
@@ -12849,6 +12870,9 @@
         // 儀表板：進入個人頁面預設看到的畫面。成就/做菜音樂卡片顯示摘要資訊，
         // 我的食譜/我的收藏各顯示一列小縮圖（最多8筆），點縮圖直接開食譜、點「查看更多」才切到完整清單
         function renderPersonalDashboard() {
+            // 暱稱輸入框：帶入目前設定的暱稱（沒設定就留空）
+            const nicknameInput = document.getElementById('personal-nickname-input');
+            if (nicknameInput && userProgress) nicknameInput.value = userProgress.nickname || '';
             // 成就卡片：顯示目前裝備的稱號
             const titleEl = document.getElementById('personal-equipped-title');
             if (titleEl && userProgress) {
