@@ -75,16 +75,6 @@
         display: flex; flex-direction: column;
     }
     #ktv-yt-player-target-wrap { width: 100%; aspect-ratio: 16/9; background: #000; }
-    /* 疊在影片正上方的細條，點下去進全螢幕。z-index一定要比iframe高，而且本身要是
-       真實的DOM元素蓋在iframe上面——直接點在iframe(YouTube影片)本體上，點擊事件會被
-       iframe整個吃掉,不會傳到外層，所以才需要這條專門疊上去接點擊的細條 */
-    #fullscreen-reenter-strip {
-        position: absolute; top: 0; left: 0; right: 0; height: 2.6rem; z-index: 5;
-        display: flex; align-items: center; justify-content: center;
-        background: linear-gradient(to bottom, rgba(20,14,10,0.55), transparent);
-        color: #F5EBDF; font-size: 0.8rem; font-weight: 600; cursor: pointer;
-    }
-    #fullscreen-wrapper:fullscreen #fullscreen-reenter-strip { display: none; } /* 全螢幕時不需要這條，避免擋住上方的疊加介面收合列 */
     #host-overlay-ui {
         display: flex; gap: 1px; background: var(--line);
         min-height: 22rem;
@@ -297,18 +287,13 @@
 
         <!-- 房主視角 -->
         <div id="host-view" class="hidden">
-            <!-- 非全螢幕狀態刻意只留一顆進入全螢幕的按鈕，畫面乾淨不雜亂；
-                 其餘所有控制項（房間資訊、掌聲鼓勵、房間圖案、解散房間）都收進下面
-                 全螢幕才會出現的疊加介面裡。這裡刻意留空，不放任何按鈕 -->
-            <div id="room-info-bar"></div>
+            <!-- 非全螢幕狀態只顯示一顆置中的全螢幕按鈕，其餘所有控制項（房間資訊、
+                 掌聲鼓勵、房間圖案、解散房間）都收進下面全螢幕才會出現的疊加介面裡 -->
+            <div id="room-info-bar" style="display:flex; justify-content:center; padding:0.6rem;">
+                <button class="btn" onclick="toggleFullscreen()">⛶ 全螢幕開始使用</button>
+            </div>
             <div id="fullscreen-wrapper">
                 <div id="ktv-yt-player-target-wrap"><div id="ktv-yt-player-target" style="width:100%;height:100%"></div></div>
-                <!-- 這條細條疊在影片最上方，只在非全螢幕時顯示，點下去進全螢幕。
-                     一定要用這種「疊在上面的真實元素」來接點擊，不能只在外層容器加onclick——
-                     因為YouTube的iframe會把點擊整個吃掉，事件不會傳到外層，點在影片本體上
-                     直接連去YouTube，外層的onclick永遠不會被觸發，這也是「退出全螢幕後點影片
-                     回不去」這個問題的根本原因 -->
-                <div id="fullscreen-reenter-strip" onclick="toggleFullscreen()">⛶ 點擊進入全螢幕</div>
                 <div id="reaction-layer"></div>
                 <div id="reaction-banner"></div>
                 <div id="toast-stack"></div>
@@ -1340,7 +1325,7 @@
                 // controls:0 關掉YouTube自己的原生控制列（暫停/字幕/設定/音量/全螢幕鍵），
                 // 不然那些原生UI元素會佔掉影片畫面的點擊區域，蓋住外層我們自己疊上去的
                 // 「點擊進入全螢幕」細線跟其他控制項，變成點了沒反應
-                playerVars: { autoplay: 1, playsinline: 1, rel: 0, controls: 0 },
+                playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
                 events: {
                     onReady: () => { ytPlayerReady = true; },
                     onStateChange: (e) => { if (e.data === YT.PlayerState.ENDED) advanceQueue(); },
