@@ -244,7 +244,7 @@
     /* 指針改用CSS邊框畫出細長的等腰三角形，不是用emoji符號——emoji本身接近正三角形，
        旋轉角度再大視覺上也很難分辨，細長的三角形旋轉起來位移會被放大很多、看得很清楚 */
     #wheel-pointer, #member-wheel-pointer {
-        position: absolute; top: 0; left: 50%; width: 0; height: 0;
+        position: absolute; top: 0.5rem; left: 50%; width: 0; height: 0;
         border-left: 0.5rem solid transparent; border-right: 0.5rem solid transparent;
         border-top: 1.9rem solid #F5EBDF;
         transform: translateX(-50%) rotate(0deg); transform-origin: 50% 0%;
@@ -525,14 +525,14 @@
         }
         return myDisplayName;
     }
-    function showKtvToast(message) {
+    function showKtvToast(message, durationMs) {
         const stack = document.getElementById(isHost ? 'toast-stack' : 'member-toast-stack');
         if (!stack) return;
         const el = document.createElement('div');
         el.className = 'ktv-toast';
         el.textContent = message;
         stack.appendChild(el);
-        setTimeout(() => el.remove(), 4500);
+        setTimeout(() => el.remove(), durationMs || 4500);
     }
 
     // ---------------------------------------------------------------
@@ -766,7 +766,7 @@
             const notice = data.nextUpAnnouncement;
             if (notice && notice.announcedAt && notice.announcedAt > lastNextUpAnnouncedAt) {
                 lastNextUpAnnouncedAt = notice.announcedAt;
-                showKtvToast(`⏰ 快結束了！下一位 ${notice.requestedBy || '有人'} 請準備：《${notice.title}》`);
+                showKtvToast(`🎵 接下來為您播放下一首：《${notice.title}》（${notice.requestedBy || '有人'}點的，請準備）`, 8000);
             }
 
             // 命運輪盤：發起/轉動/結果，全部透過這個房間監聽同步給所有裝置
@@ -1551,8 +1551,8 @@
                 <h3 style="font-size:1.05rem; font-weight:800; margin-bottom:0.2rem;">🎡 ${escapeHtmlKtv(wheelEvent.initiatedBy)} 發起了命運輪盤</h3>
                 <p style="font-size:0.85rem; margin-bottom:0.5rem;">事件：<strong>${escapeHtmlKtv(wheelEvent.eventText)}</strong></p>
                 <div class="wheel-dial-wrap" id="wheel-dial-wrap">
-                    <div id="${pointerId}">▼</div>
-                    <div id="${oppPointerId}">▲</div>
+                    <div id="${pointerId}"></div>
+                    <div id="${oppPointerId}"></div>
                     <canvas id="${canvasId}" width="216" height="216"></canvas>
                 </div>
                 <p class="wheel-result-banner" id="wheel-status-text"></p>
@@ -1629,17 +1629,30 @@
         const spins = 5 + Math.floor(Math.random() * 4);
         const spinMs = 3600 + Math.floor(Math.random() * 900);
 
-        // 依照特效類型，決定轉盤最終要停在哪個角度。彎曲/往回彈這兩種刻意不要停在「正好卡在
-        // 交界線上」這種模稜兩可的位置——那樣只要動畫計算有一點點誤差，就可能會讓人搞不清楚
-        // 到底跨過線了沒有。改成明確地讓轉盤停在「鄰居格子裡面一小段距離」的位置，看起來像是
-        // 剛好壓線過去、但實際上已經確定落在鄰居的地盤裡，不會有模稜兩可的情況
+        // 乾淨、可驗證的角度計算：給一個目標格子索引，算出「絕對旋轉角度」，保證(1)一定比
+        // minAfterDeg大(確保動畫是往同一個方向繼續轉，不會突然反方向跳)、(2)一定精準對齊
+        // 讓那個格子的中心真的落在指針底下。之前用「currentRot加減一段公式」手動推算，很容易
+        // 算錯（一陣風重轉、往回彈這兩個特效之前的視覺結果跟廣播結果對不起來，就是這樣算錯的），
+        // 現在統一都用這個函式算，不用再手動兜公式
+        function angleForIndex(idx, offsetWithinSeg, minAfterDeg, extraSpins) {
+            const offset = offsetWithinSeg === undefined ? 0.5 : offsetWithinSeg; // 0~1，0.5是正中央
+            const targetMod = (((-(idx * segAngle + segAngle * offset)) % 360) + 360) % 360;
+            const baseCount = Math.ceil(((minAfterDeg || 0) - targetMod) / 360);
+            return (baseCount + (extraSpins || 0)) * 360 + targetMod;
+        }
+
+        // 正常停止的時候，落點不要每次都精準卡在格子正中央——那樣每次停在同一個人身上時，
+        // 指針位置都長得一模一樣，會顯得死板不自然。改成在格子範圍內隨機取一個位置
+        // (避開太靠近邊緣、容易誤判成別格的範圍)，看起來比較像真實轉盤會有的隨機感
+        const normalOffset = 0.25 + Math.random() * 0.5; // 落在格子中間偏一點的範圍內，不會太靠邊界
+
         let landingDeg;
-        if (outcomeType === 2) landingDeg = -(((baseIndex - 1 + n) % n) * segAngle + segAngle * 0.78); // 鄰居格子裡、靠近跟baseIndex的交界那一側
-        else if (outcomeType === 4) landingDeg = -(((baseIndex + 1) % n) * segAngle + segAngle * 0.22); // 同樣道理，另一側鄰居
-        else landingDeg = -(baseIndex * segAngle + segAngle / 2);
+        if (outcomeType === 2) landingDeg = angleForIndex(baseIndex, 0.5, 0, spins); // 先讓人以為要停在baseIndex，等一下才彈到鄰居
+        else if (outcomeType === 4) landingDeg = angleForIndex(baseIndex, 0.5 + 0.42, 0, spins); // 落在baseIndex靠近後一格邊界那一側，等一下指針彎過去
+        else landingDeg = angleForIndex(baseIndex, normalOffset, 0, spins);
 
         let currentRot = 0;
-        const targetRot = spins * 360 + landingDeg;
+        const targetRot = landingDeg;
         const startTime = Date.now();
         function animateMainSpin() {
             const t = Math.min((Date.now() - startTime) / spinMs, 1);
@@ -1653,11 +1666,14 @@
 
         function onMainSpinDone() {
             if (outcomeType === 2) {
-                // 先明顯衝過交界線一點，讓人以為要停在baseIndex這邊了，然後才彈回鄰居格子裡定案，
-                // 這樣「剛好過線又彈回去變別人」的感覺才會出來
-                const overshoot = currentRot + segAngle * 0.7;
+                // 先明顯衝過交界線一點(繼續往同方向多轉一小段，看起來像要越過baseIndex)，
+                // 再彈回鄰居格子中央定案——鄰居的角度一樣用angleForIndex算，保證跟最終
+                // 公布的resultName對得起來
+                const neighborIdx = (baseIndex - 1 + n) % n;
+                const overshoot = currentRot + segAngle * 0.55;
+                const bounceBack = angleForIndex(neighborIdx, 0.5, overshoot);
                 animateTween(canvasId, participants, currentRot, overshoot, 380, () => {
-                    animateTween(canvasId, participants, overshoot, targetRot, 480, () => finishAfterDelay());
+                    animateTween(canvasId, participants, overshoot, bounceBack, 480, () => finishAfterDelay());
                 });
             } else if (outcomeType === 3) {
                 // 空間轉移：交換另外兩個(不是中獎者)的名字文字，純視覺效果，中獎結果不變
@@ -1694,10 +1710,12 @@
             } else if (outcomeType === 6) {
                 if (statusText) statusText.textContent = '🌬️ 一陣風吹來了...';
                 setTimeout(() => {
-                    // 用wheelEvent裡已經決定好的resultName反推它在participants的位置，直接轉到那格
+                    // 用wheelEvent裡已經決定好的resultUid反推它在participants的位置，用乾淨的
+                    // angleForIndex算出正確角度直接轉到那格——之前這裡手動兜公式算錯了
+                    // (currentRot的餘數被重複算了一次)，導致畫面停的位置跟廣播出去的結果對不起來
                     const targetIdx = participants.findIndex(p => p.uid === wheelEvent.resultUid);
                     const idx = targetIdx >= 0 ? targetIdx : baseIndex;
-                    const newTarget = currentRot + 360 * 2 - (idx * segAngle + segAngle / 2 - (((currentRot % 360) + 360) % 360));
+                    const newTarget = angleForIndex(idx, 0.5, currentRot, 2);
                     animateTween(canvasId, participants, currentRot, newTarget, 2000, () => finishAfterDelay());
                 }, 900);
             } else if (outcomeType === 7) {
