@@ -116,7 +116,7 @@
         max-height: 0; overflow: hidden; transition: max-height .25s ease;
     }
     #fullscreen-wrapper:fullscreen #host-overlay-ui.expanded #host-overlay-body {
-        max-height: 65vh; display: flex;
+        max-height: 42vh; display: flex;
     }
     #fullscreen-wrapper:fullscreen .overlay-panel {
         background: rgba(20,14,10,0.6); backdrop-filter: blur(8px); color: #F5EBDF;
@@ -464,6 +464,7 @@
     // 所有分頁都會馬上反映最新狀態，房間列表跟建立房間表單都會依這個狀態顯示/隱藏
     // ---------------------------------------------------------------
     let currentRoomStatus = null;
+    let hasAutoResumed = false; // 這次頁面載入有沒有已經自動恢復過房間，只在剛載入時做一次，避免之後手動離開房間又被強制拉回去
     function watchOwnRoom() {
         if (ownRoomUnsubscribe) ownRoomUnsubscribe();
         ownRoomUnsubscribe = db.collection('ktvUserRoomStatus').doc(currentUser.uid).onSnapshot(doc => {
@@ -477,6 +478,13 @@
                 createCard.classList.add('hidden');
                 hint.dataset.roomId = currentRoomStatus.roomId;
                 hint.dataset.isHost = currentRoomStatus.isHost ? '1' : '';
+                // 重新整理頁面（或第一次打開這個頁面）發現本來就在某個房間，直接自動幫使用者
+                // 重新進入，不用等使用者手動點「前往我的房間」——這樣重新整理也不會把人踢出房間，
+                // 也不用靠beforeunload這種不可靠、容易誤判的機制去偵測「使用者是不是真的離開了」
+                if (!hasAutoResumed && !currentRoomId) {
+                    hasAutoResumed = true;
+                    enterRoom(currentRoomStatus.roomId, currentRoomStatus.isHost, currentRoomStatus.roomName);
+                }
             } else {
                 hint.classList.add('hidden');
                 createCard.classList.remove('hidden');
@@ -746,7 +754,11 @@
         db.collection('ktvUserRoomStatus').doc(currentUser.uid).delete()
             .catch(err => console.warn('清除目前房間狀態失敗', err));
     }
-    window.addEventListener('beforeunload', leaveMemberRecord);
+    // 注意：這裡刻意不註冊beforeunload事件去清除房間狀態，因為beforeunload在單純按F5
+    // 重新整理的時候也會觸發，如果拿它來清除ktvUserRoomStatus，重新整理=系統誤判成
+    // 「已經離開房間」，狀態被清掉之後又能重新建立房間，變成無限建房的bug。
+    // 改成下面watchOwnRoom()偵測到「本來就在某個房間」時自動重新進入，取代原本這種
+    // 不可靠的離開偵測機制
 
     // 房主離開＝解散房間，所有人都會被踢出（透過上面onSnapshot偵測到文件被刪除）
     async function leaveRoomAsHost() {
@@ -897,12 +909,36 @@
     // ---------------------------------------------------------------
     // 搜尋：不管輸入什麼，前面一律加「KTV」關鍵字，提高搜到伴唱版影片的機率
     // ---------------------------------------------------------------
+    // 把搜尋關鍵字轉成可以當Firestore文件ID用的安全字串（去掉斜線等不合法字元、統一小寫去空白）
+    function sanitizeSearchCacheKey(query) {
+        return query.trim().toLowerCase().replace(/[\/\.\#\$\[\]]/g, '_').slice(0, 200) || 'empty';
+    }
+    // 搜尋：優先從Firestore快取讀（不管是誰之前搜過同樣的關鍵字，結果都共用），完全不消耗
+    // YouTube Data API的每日配額。快取結果下面一律附一顆「深度搜尋」按鈕，只有使用者真的
+    // 對快取結果不滿意、自己按下去，才會真的呼叫YouTube API即時搜尋（那個才會消耗配額）
     async function searchKtvSongs() {
         const input = document.getElementById(isHost ? 'host-search-input' : 'member-search-input');
         const resultsEl = document.getElementById(isHost ? 'host-search-results' : 'member-search-results');
         const query = input.value.trim();
         if (!query) return;
-        resultsEl.innerHTML = '<div class="empty-hint">搜尋中...</div>';
+        resultsEl.innerHTML = '<div class="empty-hint">查詢快取中...</div>';
+        try {
+            const cacheKey = sanitizeSearchCacheKey(query);
+            const doc = await db.collection('ktvSearchCache').doc(cacheKey).get();
+            const cachedResults = (doc.exists && doc.data().results) || [];
+            renderSearchResultsWithDeepSearch(cachedResults, resultsEl, !cachedResults.length);
+        } catch (err) {
+            resultsEl.innerHTML = `<div class="empty-hint">⚠️ ${escapeHtmlKtv(err.message)}</div>`;
+        }
+    }
+    // 深度搜尋：真的呼叫YouTube Data API即時搜尋，會消耗每日配額。搜到的結果會存回Firestore
+    // 快取，之後任何人（不只自己）搜同樣的關鍵字都能直接沿用，不用再消耗配額
+    async function deepSearchKtvSongs() {
+        const input = document.getElementById(isHost ? 'host-search-input' : 'member-search-input');
+        const resultsEl = document.getElementById(isHost ? 'host-search-results' : 'member-search-results');
+        const query = input.value.trim();
+        if (!query) return;
+        resultsEl.innerHTML = '<div class="empty-hint">深度搜尋中（呼叫YouTube即時查詢）...</div>';
         try {
             const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -911,10 +947,20 @@
             const data = await res.json();
             if (!res.ok || data.error) throw new Error(data.error || `搜尋失敗(${res.status})`);
             const results = data.results || [];
-            resultsEl.innerHTML = results.length ? results.map(r => buildSongCard(r, 'result')).join('') : '<div class="empty-hint">找不到符合的影片，換個關鍵字試試</div>';
+            const cacheKey = sanitizeSearchCacheKey(query);
+            db.collection('ktvSearchCache').doc(cacheKey).set({
+                query, results, updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            }).catch(err => console.warn('寫入搜尋快取失敗', err));
+            renderSearchResultsWithDeepSearch(results, resultsEl, false);
         } catch (err) {
             resultsEl.innerHTML = `<div class="empty-hint">⚠️ ${escapeHtmlKtv(err.message)}</div>`;
         }
+    }
+    function renderSearchResultsWithDeepSearch(results, resultsEl, isEmpty) {
+        const cardsHtml = results.length
+            ? results.map(r => buildSongCard(r, 'result')).join('')
+            : `<div class="empty-hint">${isEmpty ? '目前沒有快取結果' : '找不到符合的影片，換個關鍵字試試'}</div>`;
+        resultsEl.innerHTML = cardsHtml + `<button class="btn btn-outline" style="width:100%; margin-top:0.6rem;" onclick="deepSearchKtvSongs()">🔍 深度搜尋（呼叫YouTube即時查詢）</button>`;
     }
 
     // ---------------------------------------------------------------
