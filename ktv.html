@@ -88,7 +88,7 @@
         color: var(--espresso-soft); font-size: 0.72rem; font-weight: 600; cursor: pointer;
     }
     .overlay-tab.active { background: var(--jam); color: #fff; }
-    .overlay-right h3 { font-size: 0.95rem; margin: 0 0 0.6rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+    .overlay-right h3 { font-size: 0.95rem; margin: 0 0 0.6rem; display: flex; align-items: center; gap: 0.5rem; }
     .skip-btn { font-size: 0.68rem; padding: 0.3rem 0.6rem; border-radius: 999px; border: none; background: var(--honey); color: #fff; cursor: pointer; white-space: nowrap; }
 
     /* 全螢幕時：影片撐滿整個螢幕，控制面板變成「上方一條可點擊展開的資訊列」，
@@ -101,7 +101,10 @@
         position: absolute; left: 0; right: 0; top: 0; bottom: auto; z-index: 3;
         background: transparent; min-height: 0; flex-direction: column; gap: 0;
     }
-    #fullscreen-wrapper:not(:fullscreen) #overlay-toggle-bar { display: none; } /* 非全螢幕不需要這條收合列 */
+    /* 這是關鍵：整個疊加介面(不只是收合列，包含底下的搜尋/歷史/佇列所有內容)都只在全螢幕時顯示，
+       非全螢幕狀態完全隱藏，畫面上只會看到播放器本身 */
+    #fullscreen-wrapper:not(:fullscreen) #host-overlay-ui { display: none; }
+    #fullscreen-wrapper:not(:fullscreen) #overlay-toggle-bar { display: none; }
     #overlay-toggle-bar {
         display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
         padding: 0.7rem 1.1rem; background: rgba(20,14,10,0.65); backdrop-filter: blur(6px);
@@ -286,11 +289,9 @@
         <div id="host-view" class="hidden">
             <!-- 非全螢幕狀態刻意只留一顆進入全螢幕的按鈕，畫面乾淨不雜亂；
                  其餘所有控制項（房間資訊、掌聲鼓勵、房間圖案、解散房間）都收進下面
-                 全螢幕才會出現的疊加介面裡 -->
-            <div id="room-info-bar" style="display:flex; justify-content:center; padding:0.6rem;">
-                <button class="btn" onclick="toggleFullscreen()">⛶ 進入全螢幕開始使用</button>
-            </div>
-            <div id="fullscreen-wrapper">
+                 全螢幕才會出現的疊加介面裡。這裡刻意留空，不放任何按鈕 -->
+            <div id="room-info-bar"></div>
+            <div id="fullscreen-wrapper" onclick="if(!document.fullscreenElement) toggleFullscreen()">
                 <div id="ktv-yt-player-target-wrap"><div id="ktv-yt-player-target" style="width:100%;height:100%"></div></div>
                 <div id="reaction-layer"></div>
                 <div id="reaction-banner"></div>
@@ -303,7 +304,7 @@
                         <span onclick="toggleOverlayExpanded()" style="flex:1; cursor:pointer;">🎤 <span id="overlay-room-name"></span> · 房號 <span class="room-code-badge" id="overlay-room-id"></span> · 👥 <span id="overlay-member-count">1</span>人 · <span id="overlay-toggle-icon">▼ 點歌／佇列</span></span>
                         <div style="position:relative; display:inline-block;">
                             <button class="disband-inline-btn" style="background:rgba(201,138,44,0.85); margin-right:0.4rem;" onclick="toggleRoomIconPicker()">🖼 房間圖案</button>
-                            <div id="room-icon-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.6rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.25); display:grid; grid-template-columns:repeat(4,1fr); gap:0.4rem; z-index:20; width:11rem;"></div>
+                            <div id="room-icon-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.6rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.35); display:grid; grid-template-columns:repeat(4,1fr); gap:0.4rem; z-index:999; width:11rem;"></div>
                         </div>
                         <button class="disband-inline-btn" onclick="leaveRoomAsHost()">解散房間</button>
                     </div>
@@ -344,6 +345,7 @@
         <div id="member-view" class="hidden">
             <div id="member-reaction-layer" style="position:fixed; inset:0; z-index:40; pointer-events:none; overflow:hidden;"></div>
             <div id="member-reaction-banner" style="position:fixed; top:35%; left:50%; transform:translate(-50%,-50%) scale(0.7); z-index:41; font-size:1.9rem; font-weight:800; color:var(--jam); text-shadow:0 2px 10px rgba(0,0,0,0.15); opacity:0; pointer-events:none; text-align:center;"></div>
+            <div id="member-toast-stack" style="position:fixed; top:1rem; right:1rem; left:1rem; z-index:42; display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; pointer-events:none;"></div>
             <div id="room-info-bar">
                 <span class="room-info-left">🎤 <span id="member-room-name"></span></span>
                 <button class="btn btn-danger" onclick="leaveRoomAsMember()">離開房間</button>
@@ -423,6 +425,30 @@
         }
     });
 
+    // 連線狀態提示：只是簡單監聽瀏覽器本身的網路連線狀態（不是Firestore專屬的連線狀態，
+    // Firestore的SDK沒有提供簡單的「目前有沒有連上」監聽器），斷線時至少讓使用者知道
+    // 「畫面卡住是因為網路不通」，不是網站本身壞掉，恢復連線後提示也會跟著消失
+    function showConnectionBanner(offline) {
+        let banner = document.getElementById('ktv-connection-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'ktv-connection-banner';
+            banner.style.cssText = 'position:fixed; top:0; left:0; right:0; z-index:9999; text-align:center; padding:0.5rem; font-size:0.8rem; font-weight:600; color:#fff;';
+            document.body.appendChild(banner);
+        }
+        if (offline) {
+            banner.textContent = '⚠️ 網路連線中斷，資料可能無法即時更新';
+            banner.style.background = 'var(--danger)';
+            banner.style.display = 'block';
+        } else {
+            banner.textContent = '✅ 已恢復連線';
+            banner.style.background = 'var(--sage)';
+            setTimeout(() => { banner.style.display = 'none'; }, 2500);
+        }
+    }
+    window.addEventListener('offline', () => showConnectionBanner(true));
+    window.addEventListener('online', () => showConnectionBanner(false));
+
     function escapeHtmlKtv(str) {
         return String(str || '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
     }
@@ -441,7 +467,7 @@
         return myDisplayName;
     }
     function showKtvToast(message) {
-        const stack = document.getElementById('toast-stack');
+        const stack = document.getElementById(isHost ? 'toast-stack' : 'member-toast-stack');
         if (!stack) return;
         const el = document.createElement('div');
         el.className = 'ktv-toast';
@@ -489,10 +515,24 @@
             }
         }, err => console.warn('監聽目前房間狀態失敗', err));
     }
+    // 在使用者點擊當下、還沒開始任何await非同步等待之前，就先切換畫面+要求全螢幕。
+    // 瀏覽器只認「使用者剛點擊的那一瞬間」算數，中間如果先跑了好幾個await查資料庫，
+    // 等真的要全螢幕的時候瀏覽器會認為這個授權已經過期而拒絕，畫面就會卡在非全螢幕、
+    // 什麼控制項都看不到的狀態。所以這個函式必須在onclick一開始就同步呼叫
+    function prepareHostViewForFullscreen() {
+        document.getElementById('room-list-view').classList.add('hidden');
+        document.getElementById('room-view').classList.remove('hidden');
+        document.getElementById('host-view').classList.remove('hidden');
+        document.getElementById('member-view').classList.add('hidden');
+        const wrapper = document.getElementById('fullscreen-wrapper');
+        if (wrapper) wrapper.requestFullscreen().catch(() => {});
+    }
     function rejoinOwnRoom() {
         const hint = document.getElementById('own-room-hint');
         const roomId = hint.dataset.roomId;
-        if (roomId) enterRoom(roomId, hint.dataset.isHost === '1', currentRoomStatus && currentRoomStatus.roomName);
+        if (!roomId) return;
+        if (hint.dataset.isHost === '1') prepareHostViewForFullscreen(); // 已知是房主，點擊當下立刻要求全螢幕
+        enterRoom(roomId, hint.dataset.isHost === '1', currentRoomStatus && currentRoomStatus.roomName);
     }
     function loadRoomList() {
         db.collection('ktvRooms').orderBy('createdAt', 'desc').onSnapshot(async snap => {
@@ -593,6 +633,7 @@
             alert(`你目前已經在房間「${currentRoomStatus.roomName || currentRoomStatus.roomId}」裡，請先離開才能建立新房間`);
             return;
         }
+        prepareHostViewForFullscreen(); // 建立房間的人一定是房主，點擊當下立刻切畫面+要求全螢幕
         const myName = await resolveMyDisplayName();
         const name = document.getElementById('create-room-name').value.trim() || `${myName}的房間`;
         const passcode = document.getElementById('create-room-passcode').value.trim();
@@ -877,7 +918,26 @@
                 uid: currentUser.uid, name: await resolveMyDisplayName(),
                 typeIndex, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
+            cleanupOldReactions(); // 順手清掉這個房間裡的舊反應紀錄，不用另外跑排程
         } catch (err) { console.warn('送出掌聲失敗', err); }
+    }
+    // 掌聲反應這個子集合只會一直新增、沒有人會去讀舊資料，放著不管長期會一直累積。
+    // 每次有人送新的掌聲，順便清掉5分鐘前的舊紀錄——量不大，用最簡單的方式處理，
+    // 不用另外架設排程機制（例如Cloud Functions）
+    let lastReactionCleanupAt = 0;
+    async function cleanupOldReactions() {
+        const now = Date.now();
+        if (now - lastReactionCleanupAt < 60000) return; // 一分鐘內清過就先不用再清一次，避免太頻繁查詢
+        lastReactionCleanupAt = now;
+        try {
+            const fiveMinAgo = firebase.firestore.Timestamp.fromMillis(now - 5 * 60 * 1000);
+            const snap = await db.collection('ktvRooms').doc(currentRoomId).collection('reactions')
+                .where('createdAt', '<', fiveMinAgo).get();
+            if (snap.empty) return;
+            const batch = db.batch();
+            snap.docs.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+        } catch (err) { console.warn('清理舊掌聲紀錄失敗', err); }
     }
     function playReactionAnimation(reaction) {
         const type = REACTION_TYPES[reaction.typeIndex] || REACTION_TYPES[0];
@@ -1018,6 +1078,10 @@
                 count: firebase.firestore.FieldValue.increment(1),
             }, { merge: true }).catch(err => console.warn('更新熱門排行失敗', err));
             recordUserHistory(entry); // 跨房間的個人歷史歌單，不是只記在這個房間裡
+            // 告訴點歌的人自己排第幾位，不是只有跳「點播了什麼」的通知卻不知道還要等多久
+            const position = queue.findIndex(q => q.qid === entry.qid) + 1;
+            const positionText = position === 1 ? '現在就是你（下一首播放）' : `目前排第 ${position} 位`;
+            showKtvToast(`🎵 已加入佇列，${positionText}`);
         } catch (err) {
             alert('點歌失敗：' + err.message);
         }
@@ -1133,7 +1197,7 @@
         if (!targets.length) return;
         targets.forEach(el => el.innerHTML = '<div class="empty-hint">載入中...</div>');
         try {
-            const snap = await db.collection('ktvGlobalSongStats').orderBy('count', 'desc').limit(20).get();
+            const snap = await db.collection('ktvGlobalSongStats').orderBy('count', 'desc').limit(100).get();
             const html = snap.empty ? '<div class="empty-hint">還沒有任何點歌紀錄</div>' : snap.docs.map((doc, i) => buildSongCard(doc.data(), 'ranking', { rank: i + 1 })).join('');
             targets.forEach(el => el.innerHTML = html);
         } catch (err) {
