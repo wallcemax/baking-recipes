@@ -84,8 +84,8 @@
     .overlay-right { flex: 1; min-width: 0; }
     .overlay-tabs { display: flex; gap: 0.35rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
     .overlay-tab {
-        flex: 1 1 auto; min-width: 4rem; padding: 0.4rem; border-radius: 0.7rem; border: none; background: var(--cream);
-        color: var(--espresso-soft); font-size: 0.72rem; font-weight: 600; cursor: pointer;
+        flex: 1 1 auto; min-width: 4.2rem; padding: 0.5rem; border-radius: 0.7rem; border: none; background: var(--cream);
+        color: var(--espresso-soft); font-size: 0.86rem; font-weight: 600; cursor: pointer;
     }
     .overlay-tab.active { background: var(--jam); color: #fff; }
     .overlay-right h3 { font-size: 0.95rem; margin: 0 0 0.6rem; display: flex; align-items: center; gap: 0.5rem; }
@@ -98,7 +98,7 @@
         position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: unset; z-index: 1;
     }
     #fullscreen-wrapper:fullscreen #host-overlay-ui {
-        position: absolute; left: 0; right: 0; top: 0; bottom: auto; z-index: 3;
+        position: absolute; left: 0; right: 0; top: 0; bottom: auto; z-index: 15;
         background: transparent; min-height: 0; flex-direction: column; gap: 0;
     }
     /* 這是關鍵：整個疊加介面(不只是收合列，包含底下的搜尋/歷史/佇列所有內容)都只在全螢幕時顯示，
@@ -232,25 +232,32 @@
         font-size: 0.9rem; background: rgba(255,255,255,0.15); color: #fff;
     }
     .wheel-input-row input::placeholder { color: rgba(255,255,255,0.6); }
-    .wheel-dial-wrap { position: relative; width: 13.5rem; height: 13.5rem; margin: 1rem auto; }
-    .wheel-dial-wrap canvas { border-radius: 50%; box-shadow: 0 0 0 5px rgba(255,255,255,0.18), 0 10px 26px -6px rgba(0,0,0,0.55); }
+    /* wrap刻意比轉盤本身還要高一截，上下各留一塊給指針專用的空間——指針用「正值」定位在
+       這塊留白裡，不是用負值offset讓指針跑到容器外面。之前用負值定位，在overflow-y:auto的
+       捲動容器裡常常會被裁掉一部分（瀏覽器計算可捲動範圍時，不一定會把負值定位的子元素
+       算進去），這是「指針只露出一點點」這個問題的根本原因 */
+    .wheel-dial-wrap { position: relative; width: 13.5rem; height: 17rem; margin: 0.5rem auto 1rem; }
+    .wheel-dial-wrap canvas {
+        position: absolute; top: 1.9rem; left: 0; border-radius: 50%;
+        box-shadow: 0 0 0 5px rgba(255,255,255,0.18), 0 10px 26px -6px rgba(0,0,0,0.55);
+    }
     /* 指針改用CSS邊框畫出細長的等腰三角形，不是用emoji符號——emoji本身接近正三角形，
        旋轉角度再大視覺上也很難分辨，細長的三角形旋轉起來位移會被放大很多、看得很清楚 */
     #wheel-pointer, #member-wheel-pointer {
-        position: absolute; top: -1.7rem; left: 50%; width: 0; height: 0;
+        position: absolute; top: 0; left: 50%; width: 0; height: 0;
         border-left: 0.5rem solid transparent; border-right: 0.5rem solid transparent;
-        border-top: 2.1rem solid #F5EBDF;
+        border-top: 1.9rem solid #F5EBDF;
         transform: translateX(-50%) rotate(0deg); transform-origin: 50% 0%;
         z-index: 2; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.55));
         transition: transform 0.7s cubic-bezier(.34,1.56,.64,1), opacity 0.35s ease, transform 0.35s ease;
     }
-    /* 「指到對面」用：跟上面同一根指針共用外觀，只是放在底部、預設完全隱藏(scale 0)。
+    /* 「指到對面」用：跟上面同一根指針共用外觀，只是放在wrap底部、預設完全隱藏(scale 0)。
        這個特效發生時，上面那根會縮小消失、這根同時放大出現，感覺像是同一根指針「移到」
        對面去了，畫面上不會同時看到兩根都很明顯的指針 */
     #wheel-pointer-opposite, #member-wheel-pointer-opposite {
-        position: absolute; bottom: -1.7rem; left: 50%; width: 0; height: 0;
+        position: absolute; bottom: 0; left: 50%; width: 0; height: 0;
         border-left: 0.5rem solid transparent; border-right: 0.5rem solid transparent;
-        border-bottom: 2.1rem solid #F5EBDF;
+        border-bottom: 1.9rem solid #F5EBDF;
         transform: translateX(-50%) scale(0); transform-origin: 50% 100%;
         z-index: 2; filter: drop-shadow(0 -3px 4px rgba(0,0,0,0.55));
         transition: transform 0.6s cubic-bezier(.34,1.56,.64,1);
@@ -333,7 +340,7 @@
                 <div id="toast-stack"></div>
                 <!-- 全螢幕時：掌聲鼓勵+命運輪盤獨立成一組置中的按鈕，跟房間資訊/解散房間那條列分開，
                      這樣才會是畫面正上方正中央、看得到中文字+emoji，不是擠在角落的小圖示 -->
-                <div style="position:absolute; top:0.6rem; left:50%; transform:translateX(-50%); z-index:6; display:flex; gap:0.5rem;">
+                <div style="position:absolute; top:0.95rem; left:50%; transform:translateX(-50%); z-index:6; display:flex; gap:0.5rem;">
                     <button id="fullscreen-applause-btn" onclick="sendApplause()" style="background:rgba(20,14,10,0.65); backdrop-filter:blur(6px); color:#F5EBDF; border:none; border-radius:999px; padding:0.5rem 1.1rem; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap;">👏 掌聲鼓勵</button>
                     <button onclick="openWheelModal()" style="background:rgba(168,50,74,0.75); backdrop-filter:blur(6px); color:#fff; border:none; border-radius:999px; padding:0.5rem 1.1rem; font-size:0.85rem; font-weight:600; cursor:pointer; white-space:nowrap;">🎡 命運輪盤</button>
                 </div>
@@ -1457,11 +1464,14 @@
         if (!currentUser || !currentRoomId) return;
         const input = document.getElementById(isHost ? 'wheel-event-input' : 'member-wheel-event-input');
         const eventText = input ? input.value.trim() : '';
-        if (!eventText) { alert('請輸入這次輪盤的事件內容'); return; }
+        if (!eventText) { showKtvToast('⚠️ 請輸入這次輪盤的事件內容'); return; }
         try {
             const membersSnap = await db.collection('ktvRooms').doc(currentRoomId).collection('members').get();
             const participants = membersSnap.docs.map(d => ({ uid: d.id, name: d.data().name || '匿名' }));
-            if (participants.length < 2) { alert('房間裡至少要有2個人才能轉輪盤'); return; }
+            // 人數不足的提示改用跟其他通知一樣的toast，不要用原生alert()——瀏覽器的alert()是
+            // 系統層級的對話框，跳出來會強制把頁面踢出全螢幕，這是之前「訊息跳出來就離開全螢幕」
+            // 這個問題的原因
+            if (participants.length < 2) { showKtvToast('⚠️ 房間裡至少要有2個人才能轉輪盤'); return; }
             const myName = await resolveMyDisplayName();
             await db.collection('ktvRooms').doc(currentRoomId).update({
                 wheelEvent: {
@@ -1472,7 +1482,7 @@
                 },
             });
         } catch (err) {
-            alert('發起輪盤失敗：' + err.message);
+            showKtvToast('⚠️ 發起輪盤失敗：' + err.message);
         }
     }
     // 每一種特效結果的「總時長」(毫秒)，全部裝置都是照這個時間各自倒數顯示結果通知，
