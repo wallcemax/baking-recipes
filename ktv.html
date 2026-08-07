@@ -772,14 +772,17 @@
             });
         }, err => console.warn('掌聲反應監聽失敗', err));
 
-        document.getElementById(asHost ? 'host-room-name' : 'member-room-name').textContent = '';
+        // host-room-name/host-room-id這兩個舊元素在上次把room-info-bar清空時已經拿掉了，
+        // 房主的房間資訊現在只顯示在疊加介面的overlay-room-name/overlay-room-id裡
         if (asHost) {
-            document.getElementById('host-room-id').textContent = roomId;
+            document.getElementById('overlay-room-name').textContent = roomName || '';
             document.getElementById('overlay-room-id').textContent = roomId;
             // 房主建立/進入房間後自動全螢幕，需要使用者手勢才能觸發，這裡緊接在建立房間的點擊事件內，
             // 大部分瀏覽器允許在使用者互動後的同一輪呼叫鏈裡要求全螢幕
             const wrapper = document.getElementById('fullscreen-wrapper');
             wrapper.requestFullscreen().catch(() => {}); // 失敗就算了（例如瀏覽器政策不允許），不用跳錯誤打斷使用者
+        } else {
+            document.getElementById('member-room-name').textContent = '';
         }
         loadRankingList();
         loadHistoryList();
@@ -848,8 +851,10 @@
 
     function renderRoomState() {
         if (!currentRoomData) return;
-        const nameEl = document.getElementById(isHost ? 'host-room-name' : 'member-room-name');
-        if (nameEl) nameEl.textContent = currentRoomData.name || '';
+        if (!isHost) {
+            const nameEl = document.getElementById('member-room-name');
+            if (nameEl) nameEl.textContent = currentRoomData.name || '';
+        }
         const overlayNameEl = document.getElementById('overlay-room-name');
         if (overlayNameEl) overlayNameEl.textContent = currentRoomData.name || '';
         const queue = currentRoomData.queue || [];
