@@ -75,6 +75,16 @@
         display: flex; flex-direction: column;
     }
     #ktv-yt-player-target-wrap { width: 100%; aspect-ratio: 16/9; background: #000; }
+    /* 疊在影片正上方的細條，點下去進全螢幕。z-index一定要比iframe高，而且本身要是
+       真實的DOM元素蓋在iframe上面——直接點在iframe(YouTube影片)本體上，點擊事件會被
+       iframe整個吃掉,不會傳到外層，所以才需要這條專門疊上去接點擊的細條 */
+    #fullscreen-reenter-strip {
+        position: absolute; top: 0; left: 0; right: 0; height: 2.6rem; z-index: 5;
+        display: flex; align-items: center; justify-content: center;
+        background: linear-gradient(to bottom, rgba(20,14,10,0.55), transparent);
+        color: #F5EBDF; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+    }
+    #fullscreen-wrapper:fullscreen #fullscreen-reenter-strip { display: none; } /* 全螢幕時不需要這條，避免擋住上方的疊加介面收合列 */
     #host-overlay-ui {
         display: flex; gap: 1px; background: var(--line);
         min-height: 22rem;
@@ -291,8 +301,14 @@
                  其餘所有控制項（房間資訊、掌聲鼓勵、房間圖案、解散房間）都收進下面
                  全螢幕才會出現的疊加介面裡。這裡刻意留空，不放任何按鈕 -->
             <div id="room-info-bar"></div>
-            <div id="fullscreen-wrapper" onclick="if(!document.fullscreenElement) toggleFullscreen()">
+            <div id="fullscreen-wrapper">
                 <div id="ktv-yt-player-target-wrap"><div id="ktv-yt-player-target" style="width:100%;height:100%"></div></div>
+                <!-- 這條細條疊在影片最上方，只在非全螢幕時顯示，點下去進全螢幕。
+                     一定要用這種「疊在上面的真實元素」來接點擊，不能只在外層容器加onclick——
+                     因為YouTube的iframe會把點擊整個吃掉，事件不會傳到外層，點在影片本體上
+                     直接連去YouTube，外層的onclick永遠不會被觸發，這也是「退出全螢幕後點影片
+                     回不去」這個問題的根本原因 -->
+                <div id="fullscreen-reenter-strip" onclick="toggleFullscreen()">⛶ 點擊進入全螢幕</div>
                 <div id="reaction-layer"></div>
                 <div id="reaction-banner"></div>
                 <div id="toast-stack"></div>
@@ -663,6 +679,7 @@
         prevQueueQids = [];
         prevMemberUids = [];
         hostLastPlayedVideoId = null;
+        resetReactionUiState(); // 多一層保險，確保不會帶著上一個房間殘留的掌聲動畫狀態進到新房間
         document.getElementById('room-list-view').classList.add('hidden');
         document.getElementById('room-view').classList.remove('hidden');
         document.getElementById(asHost ? 'host-view' : 'member-view').classList.remove('hidden');
@@ -776,9 +793,24 @@
         leaveMemberRecord();
         if (ytPlayer) { try { ytPlayer.destroy(); } catch (e) {} ytPlayer = null; ytPlayerReady = false; }
         if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        resetReactionUiState(); // 清掉掌聲動畫的殘留狀態，避免下次進房間/進全螢幕時被意外重播
         currentRoomId = null; currentRoomData = null; isHost = false;
         document.getElementById('room-view').classList.add('hidden');
         document.getElementById('room-list-view').classList.remove('hidden');
+    }
+    // 掌聲動畫用的.show這個class，動畫播完之後只是視覺上停在透明(opacity:0)，
+    // class本身沒有被拿掉，元素其實還在「動畫完成但保留最後一格」的狀態。離開房間時
+    // 明確拿掉這個class、清空文字內容，確保下次進房間(尤其自動進全螢幕觸發版面重新計算時)
+    // 不會意外把這個殘留的動畫重新播放一次，變成「文字跳出來但沒有飄動表情符號」的假動畫
+    function resetReactionUiState() {
+        ['reaction-banner', 'member-reaction-banner'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) { el.classList.remove('show'); el.textContent = ''; }
+        });
+        ['reaction-layer', 'member-reaction-layer'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '';
+        });
     }
     // 把自己從成員名單移除。這是「盡力而為」的機制：正常按離開房間會確實執行，
     // 但如果使用者直接關掉分頁/瀏覽器，這段程式碼可能來不及跑完，人數統計偶爾可能因此短暫
