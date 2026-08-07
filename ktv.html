@@ -234,19 +234,28 @@
     .wheel-input-row input::placeholder { color: rgba(255,255,255,0.6); }
     .wheel-dial-wrap { position: relative; width: 13.5rem; height: 13.5rem; margin: 1rem auto; }
     .wheel-dial-wrap canvas { border-radius: 50%; box-shadow: 0 0 0 5px rgba(255,255,255,0.18), 0 10px 26px -6px rgba(0,0,0,0.55); }
+    /* 指針改用CSS邊框畫出細長的等腰三角形，不是用emoji符號——emoji本身接近正三角形，
+       旋轉角度再大視覺上也很難分辨，細長的三角形旋轉起來位移會被放大很多、看得很清楚 */
     #wheel-pointer, #member-wheel-pointer {
-        position: absolute; top: -0.9rem; left: 50%; transform: translateX(-50%) rotate(0deg);
-        font-size: 1.6rem; z-index: 2; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.5));
+        position: absolute; top: -1.7rem; left: 50%; width: 0; height: 0;
+        border-left: 0.5rem solid transparent; border-right: 0.5rem solid transparent;
+        border-top: 2.1rem solid #F5EBDF;
+        transform: translateX(-50%) rotate(0deg); transform-origin: 50% 0%;
+        z-index: 2; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.55));
+        transition: transform 0.7s cubic-bezier(.34,1.56,.64,1), opacity 0.35s ease, transform 0.35s ease;
     }
-    /* 「指針變長指到對面」用的影子指針，平常藏著，只有這個特效發生時才從底部冒出來，
-       這樣才能真的視覺上指向轉盤另一端，而不是把原本朝上的指針拉長（拉長只會更朝上，
-       沒辦法真的碰到對面，這是之前版本的問題） */
+    /* 「指到對面」用：跟上面同一根指針共用外觀，只是放在底部、預設完全隱藏(scale 0)。
+       這個特效發生時，上面那根會縮小消失、這根同時放大出現，感覺像是同一根指針「移到」
+       對面去了，畫面上不會同時看到兩根都很明顯的指針 */
     #wheel-pointer-opposite, #member-wheel-pointer-opposite {
-        position: absolute; bottom: -0.9rem; left: 50%; transform: translateX(-50%) rotate(180deg) scale(0);
-        font-size: 1.6rem; z-index: 2; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.5));
-        transition: transform 0.5s cubic-bezier(.34,1.56,.64,1);
+        position: absolute; bottom: -1.7rem; left: 50%; width: 0; height: 0;
+        border-left: 0.5rem solid transparent; border-right: 0.5rem solid transparent;
+        border-bottom: 2.1rem solid #F5EBDF;
+        transform: translateX(-50%) scale(0); transform-origin: 50% 100%;
+        z-index: 2; filter: drop-shadow(0 -3px 4px rgba(0,0,0,0.55));
+        transition: transform 0.6s cubic-bezier(.34,1.56,.64,1);
     }
-    #wheel-pointer-opposite.show, #member-wheel-pointer-opposite.show { transform: translateX(-50%) rotate(180deg) scale(1); }
+    #wheel-pointer-opposite.show, #member-wheel-pointer-opposite.show { transform: translateX(-50%) scale(1); }
     .wheel-result-banner { font-size: 1.2rem; font-weight: 800; margin-top: 0.8rem; min-height: 1.6rem; }
 
     /* ---------- 密碼輸入小視窗 ---------- */
@@ -1472,7 +1481,7 @@
     // 巢狀的setTimeout），只要中間任何一步出錯或邏輯漏接，負責廣播的那一步就永遠不會執行到。
     // 現在改成：轉動的當下就已經決定好最終結果並廣播出去，動畫只是「演給大家看」，
     // 通知本身不依賴動畫有沒有順利播完
-    const WHEEL_OUTCOME_DURATION = { 1: 4600, 2: 5500, 3: 4600, 4: 5200, 5: 5100, 6: 7600, 7: 6800 };
+    const WHEEL_OUTCOME_DURATION = { 1: 4700, 2: 5700, 3: 4700, 4: 5700, 5: 5400, 6: 7700, 7: 6200 };
     const WHEEL_COLORS = ['#A8324A','#C98A2C','#6F8C6E','#5B7A96','#7A1F35','#8A5A28','#3A6B5A','#4A5B7A','#9C4A6A','#B08A3C','#5A7A9C','#7A9C5A'];
     // 轉動：任何人都可以按，在這裡就直接決定好「最終結果」（哪一種特效、最後中獎的是誰），
     // 立刻整包廣播出去。彎曲指到隔壁/往回彈變鄰居這幾種特效，都會讓「最終結果」跟「一開始
@@ -1596,6 +1605,7 @@
         const statusText = document.getElementById('wheel-status-text');
         const canvas = document.getElementById(canvasId);
         if (!canvas || !pointer) return;
+        pointer.style.opacity = '1';
         pointer.style.transform = 'translateX(-50%) rotate(0deg)';
         if (oppPointer) oppPointer.classList.remove('show');
         if (dialWrap) { dialWrap.style.transition = ''; dialWrap.style.transform = ''; }
@@ -1605,20 +1615,22 @@
         const segAngle = 360 / n;
         const baseIndex = wheelEvent.baseResultIndex || 0;
         const outcomeType = wheelEvent.outcomeType || 1;
-        const spins = 5 + Math.floor(Math.random() * 3);
+        // 圈數跟總轉動時間都加一點隨機浮動，每次轉起來速度感覺不會完全一樣，比較不死板
+        const spins = 5 + Math.floor(Math.random() * 4);
+        const spinMs = 3600 + Math.floor(Math.random() * 900);
 
-        // 依照特效類型，決定轉盤要停在「某一格的正中央」還是「兩格交界處」——
-        // 往回彈/指針彎曲這兩種一定要停在交界處，這樣「往鄰居那邊偏一點」才會真的
-        // 跨進鄰居的格子，不然指針就算動了視覺上還是指著同一個人（這是之前版本的問題）
+        // 依照特效類型，決定轉盤最終要停在哪個角度。彎曲/往回彈這兩種刻意不要停在「正好卡在
+        // 交界線上」這種模稜兩可的位置——那樣只要動畫計算有一點點誤差，就可能會讓人搞不清楚
+        // 到底跨過線了沒有。改成明確地讓轉盤停在「鄰居格子裡面一小段距離」的位置，看起來像是
+        // 剛好壓線過去、但實際上已經確定落在鄰居的地盤裡，不會有模稜兩可的情況
         let landingDeg;
-        if (outcomeType === 2) landingDeg = -(baseIndex * segAngle); // 交界：baseIndex前一格與baseIndex之間
-        else if (outcomeType === 4) landingDeg = -((baseIndex + 1) * segAngle); // 交界：baseIndex與後一格之間
-        else landingDeg = -(baseIndex * segAngle + segAngle / 2); // 一般都是格子正中央
+        if (outcomeType === 2) landingDeg = -(((baseIndex - 1 + n) % n) * segAngle + segAngle * 0.78); // 鄰居格子裡、靠近跟baseIndex的交界那一側
+        else if (outcomeType === 4) landingDeg = -(((baseIndex + 1) % n) * segAngle + segAngle * 0.22); // 同樣道理，另一側鄰居
+        else landingDeg = -(baseIndex * segAngle + segAngle / 2);
 
         let currentRot = 0;
         const targetRot = spins * 360 + landingDeg;
         const startTime = Date.now();
-        const spinMs = 4000;
         function animateMainSpin() {
             const t = Math.min((Date.now() - startTime) / spinMs, 1);
             const eased = 1 - Math.pow(1 - t, 3); // ease-out
@@ -1631,13 +1643,11 @@
 
         function onMainSpinDone() {
             if (outcomeType === 2) {
-                // 衝過頭進鄰居格子，再彈回真正的鄰居格子中心
-                const overshoot = currentRot + segAngle * 0.55;
-                const bounceBack = spins * 360 - ((baseIndex - 1 + n) % n) * segAngle - segAngle / 2;
-                animateTween(canvasId, participants, currentRot, overshoot, 350, () => {
-                    animateTween(canvasId, participants, overshoot, bounceBack, 450, () => {
-                        finish();
-                    });
+                // 先明顯衝過交界線一點，讓人以為要停在baseIndex這邊了，然後才彈回鄰居格子裡定案，
+                // 這樣「剛好過線又彈回去變別人」的感覺才會出來
+                const overshoot = currentRot + segAngle * 0.7;
+                animateTween(canvasId, participants, currentRot, overshoot, 380, () => {
+                    animateTween(canvasId, participants, overshoot, targetRot, 480, () => finishAfterDelay());
                 });
             } else if (outcomeType === 3) {
                 // 空間轉移：交換另外兩個(不是中獎者)的名字文字，純視覺效果，中獎結果不變
@@ -1652,16 +1662,25 @@
                 }
                 drawWheelCanvas(canvasId, participants, currentRot, overrideNames);
                 if (statusText) statusText.textContent = '✨ 發生了空間轉移！';
-                finish();
+                finishAfterDelay();
             } else if (outcomeType === 4) {
-                // 停在交界處之後，指針彎向後一格，真正中獎的人就是那一格
-                pointer.style.transform = 'translateX(-50%) rotate(24deg)';
-                finish();
+                // 指針先小幅度左右搖擺猶豫一下（增加緊張感），最後才彎向鄰居格子那一側定案
+                pointer.style.transition = 'transform 0.18s ease-in-out';
+                pointer.style.transform = 'translateX(-50%) rotate(-10deg)';
+                setTimeout(() => { pointer.style.transform = 'translateX(-50%) rotate(14deg)'; }, 180);
+                setTimeout(() => {
+                    pointer.style.transition = 'transform 0.5s cubic-bezier(.34,1.56,.64,1)';
+                    pointer.style.transform = 'translateX(-50%) rotate(30deg)';
+                }, 380);
+                finishAfterDelay(900);
             } else if (outcomeType === 5) {
-                // 底部的影子指針冒出來，指向對面那一格——這才是真的「指到對面」，
-                // 不是把同一根指針拉長（拉長只會朝同一個方向更遠，沒辦法碰到對面）
+                // 原本朝上的指針縮小消失，底部的指針同時放大冒出來，感覺像同一根指針「移到」對面，
+                // 不會同時看到兩根都很明顯的指針
+                pointer.style.transition = 'transform 0.5s ease, opacity 0.5s ease';
+                pointer.style.transform = 'translateX(-50%) scale(0)';
+                pointer.style.opacity = '0';
                 if (oppPointer) oppPointer.classList.add('show');
-                finish();
+                finishAfterDelay(600);
             } else if (outcomeType === 6) {
                 if (statusText) statusText.textContent = '🌬️ 一陣風吹來了...';
                 setTimeout(() => {
@@ -1669,7 +1688,7 @@
                     const targetIdx = participants.findIndex(p => p.uid === wheelEvent.resultUid);
                     const idx = targetIdx >= 0 ? targetIdx : baseIndex;
                     const newTarget = currentRot + 360 * 2 - (idx * segAngle + segAngle / 2 - (((currentRot % 360) + 360) % 360));
-                    animateTween(canvasId, participants, currentRot, newTarget, 2000, () => finish());
+                    animateTween(canvasId, participants, currentRot, newTarget, 2000, () => finishAfterDelay());
                 }, 900);
             } else if (outcomeType === 7) {
                 if (statusText) statusText.textContent = '💨 轉盤越轉越快...';
@@ -1681,19 +1700,23 @@
                 }
                 (function flySpin() {
                     const elapsed = Date.now() - flyStart;
-                    if (elapsed > 1400) { finish(); return; }
+                    if (elapsed > 1400) { finishAfterDelay(); return; }
                     flyRot += 25; // 飛走的同時持續加速旋轉，不是凍結畫面
                     drawWheelCanvas(canvasId, participants, flyRot);
                     requestAnimationFrame(flySpin);
                 })();
                 if (statusText) setTimeout(() => { statusText.textContent = '😱 轉盤直接滾走了！'; }, 500);
             } else {
-                finish();
+                finishAfterDelay();
             }
         }
-        function finish() {
-            const msg = wheelEvent.noWinner ? '😱 沒有人被選中！' : `🎯 命運之神決定了：${wheelEvent.resultName}`;
-            if (statusText) statusText.textContent = msg;
+        // 動畫的最後一步只更新畫面上的小字提示，真正「跳出右上角通知」的時機統一交給
+        // handleWheelEventUpdate()按照這個特效類型固定的時長處理，不是這裡自己決定，
+        // 這樣才能確保全部裝置的通知時機一致，也不會因為這支動畫函式中途出錯而漏發通知
+        function finishAfterDelay(extraDelayMs) {
+            setTimeout(() => {
+                if (statusText) statusText.textContent = wheelEvent.noWinner ? '😱 沒有人被選中！' : `🎯 命運之神決定了：${wheelEvent.resultName}`;
+            }, extraDelayMs || 0);
         }
     }
     // 小工具：讓canvas從一個角度平滑轉到另一個角度，給彈回/重轉這種需要中途轉一小段的效果用
@@ -1717,20 +1740,24 @@
         if (!wheelEvent || !wheelEvent.active) return;
         if (wheelEvent.phase === 'spinning' && wheelEvent.spinToken && wheelEvent.spinToken !== lastScheduledWheelToken) {
             lastScheduledWheelToken = wheelEvent.spinToken;
-            const duration = WHEEL_OUTCOME_DURATION[wheelEvent.outcomeType] || 4600;
+            const duration = WHEEL_OUTCOME_DURATION[wheelEvent.outcomeType] || 4700;
+            // 動畫播完之後等1秒，先把輪盤視窗關掉，再跳出右上角通知——不是通知先跳、視窗
+            // 隔幾秒才慢慢關掉，這樣結果公布跟畫面收起來的節奏比較乾脆
             setTimeout(() => {
-                const msg = wheelEvent.noWinner
-                    ? `😱 命運之神也沒轍！沒有人被選中，${wheelEvent.initiatedBy} 只好自己來：${wheelEvent.eventText}`
-                    : `🎯 命運之神決定了：${wheelEvent.resultName} ${wheelEvent.eventText}`;
-                showKtvToast(msg);
-                setTimeout(closeWheelModal, 3000); // 結果公布看幾秒之後自動關閉視窗
+                setTimeout(() => {
+                    closeWheelModal();
+                    const msg = wheelEvent.noWinner
+                        ? `😱 命運之神也沒轍！沒有人被選中，${wheelEvent.initiatedBy} 只好自己來：${wheelEvent.eventText}`
+                        : `🎯 命運之神決定了：${wheelEvent.resultName} ${wheelEvent.eventText}`;
+                    showKtvToast(msg);
+                }, 1000);
             }, duration);
             // 只有發起人的裝置負責在結果公布之後把輪盤狀態收掉，恢復成可以重新發起，
             // 避免每台裝置都各自嘗試寫入造成衝突
             if (currentUser && currentUser.uid === wheelEvent.initiatedByUid) {
                 setTimeout(() => {
                     db.collection('ktvRooms').doc(currentRoomId).update({ wheelEvent: { active: false } }).catch(() => {});
-                }, duration + 3200);
+                }, duration + 1500);
             }
         }
         const modal = document.getElementById(isHost ? 'wheel-modal' : 'member-wheel-modal');
