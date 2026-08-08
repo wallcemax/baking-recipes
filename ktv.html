@@ -356,12 +356,13 @@
                         </div>
                         <button class="disband-inline-btn" onclick="leaveRoomAsHost()">解散房間</button>
                     </div>
-                    <!-- 修改密碼小視窗 -->
-                    <div id="change-passcode-modal" class="hidden" style="position:absolute; inset:0; z-index:60; background:rgba(20,14,10,0.5); display:flex; align-items:center; justify-content:center; padding:1.5rem;">
+                    <!-- 修改密碼小視窗：改成position:fixed，不會再受父層host-overlay-ui不正常的
+                         高度影響，一定會相對整個螢幕置中，不會跑到畫面外面看不到輸入框 -->
+                    <div id="change-passcode-modal" class="hidden" style="position:fixed; inset:0; z-index:70; background:rgba(20,14,10,0.5); display:flex; align-items:center; justify-content:center; padding:1.5rem;">
                         <div style="background:var(--paper); border-radius:1rem; padding:1.2rem; width:100%; max-width:20rem; text-align:center;">
                             <h3 style="font-weight:800; margin-bottom:0.6rem;">🔒 修改房間密碼</h3>
                             <p style="font-size:0.8rem; color:var(--espresso-soft); margin-bottom:0.6rem;">直接輸入新密碼即可，不用輸入原本的密碼；留空代表拿掉密碼</p>
-                            <input id="change-passcode-input" type="text" placeholder="輸入新密碼（留空＝不設密碼）" style="width:100%; margin-bottom:0.8rem;">
+                            <input id="change-passcode-input" type="password" placeholder="輸入新密碼（留空＝不設密碼）" style="width:100%; margin-bottom:0.8rem;">
                             <div style="display:flex; gap:0.5rem;">
                                 <button class="btn btn-outline" style="flex:1;" onclick="closeChangePasscodeModal()">取消</button>
                                 <button class="btn" style="flex:1;" onclick="confirmChangePasscode()">確認修改</button>
@@ -779,6 +780,7 @@
         if (roomUnsubscribe) roomUnsubscribe();
         let lastNextUpAnnouncedAt = 0;
         let lastKnownWheelEnabled = null; // 記錄上一次已知的開關狀態，第一次載入不用跳通知，之後有變化才要跳
+        let lastSeenKickedAt = 0; // 記錄處理過的踢除時間點，避免同一次踢除重複處理
         roomUnsubscribe = db.collection('ktvRooms').doc(roomId).onSnapshot(doc => {
             if (!doc.exists) {
                 alert('🎤 房間已解散');
@@ -786,6 +788,20 @@
                 return;
             }
             const data = doc.data();
+
+            // 自己被踢除的偵測：透過房間文件的監聽器(不是members子集合監聽，這個更主動、更即時)。
+            // 偵測到之後自己清掉自己的ktvUserRoomStatus——房主沒有權限直接清這份資料，只能
+            // 靠被踢的人自己動手，不然重新整理頁面時，「F5自動恢復進房間」的邏輯還是會把
+            // 自己重新加回房間，等於白踢
+            const kicked = data.kickedInfo;
+            if (kicked && kicked.uid === currentUser.uid && kicked.kickedAt > lastSeenKickedAt) {
+                lastSeenKickedAt = kicked.kickedAt;
+                db.collection('ktvUserRoomStatus').doc(currentUser.uid).delete().catch(() => {});
+                alert('😢 你已經被房主移出這個房間');
+                exitToLobby();
+                return;
+            }
+
             const newQueue = data.queue || [];
             newQueue.forEach(q => {
                 if (!prevQueueQids.includes(q.qid)) showKtvToast(`🎤 ${q.requestedBy || '有人'} 點播了《${q.title}》`);
@@ -1068,7 +1084,7 @@
         picker.innerHTML = currentMemberList.map(m => {
             const isMe = m.uid === currentUser.uid;
             return `<div style="display:flex; align-items:center; justify-content:space-between; padding:0.4rem 0.3rem; gap:0.5rem;">
-                <span style="font-size:0.82rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtmlKtv(m.name)}${isMe ? '（我）' : ''}</span>
+                <span style="font-size:0.82rem; color:var(--espresso); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtmlKtv(m.name)}${isMe ? '（我）' : ''}</span>
                 ${isMe ? '' : `<button onclick="kickMember('${m.uid}', '${escapeHtmlKtv(m.name).replace(/'/g, "\\'")}')" style="background:var(--danger); color:#fff; border:none; border-radius:999px; width:1.4rem; height:1.4rem; font-size:0.75rem; cursor:pointer; flex-shrink:0;">✕</button>`}
             </div>`;
         }).join('');
@@ -1078,6 +1094,14 @@
         if (!confirm(`確定要把「${name}」移出房間嗎？`)) return;
         try {
             await db.collection('ktvRooms').doc(currentRoomId).collection('members').doc(uid).delete();
+            // 房主沒有權限直接清除被踢者自己的ktvUserRoomStatus(那份資料規則上只有本人能寫)，
+            // 只刪members子集合的話，被踢的人重新整理頁面時，「F5自動恢復進房間」的邏輯
+            // 還是會看到自己的ktvUserRoomStatus指向這個房間，就會被重新加回members，等於白踢。
+            // 改成在房間文件上寫一個kickedInfo標記，被踢的人自己的裝置透過房間監聽器看到後，
+            // 會自己清掉自己的ktvUserRoomStatus——這樣才是真正踢乾淨，而且幾乎是即時的
+            await db.collection('ktvRooms').doc(currentRoomId).update({
+                kickedInfo: { uid, name, kickedAt: Date.now() },
+            });
             showKtvToast(`👢 已將 ${name} 移出房間`);
         } catch (err) {
             alert('踢除成員失敗：' + err.message);
@@ -1760,8 +1784,8 @@
                     <span>開放成員使用命運輪盤</span>
                     <label style="position:relative; display:inline-block; width:2.6rem; height:1.5rem;">
                         <input type="checkbox" id="wheel-enabled-toggle" ${wheelEnabled ? 'checked' : ''} onchange="toggleWheelEnabled(this.checked)" style="opacity:0; width:0; height:0;">
-                        <span style="position:absolute; inset:0; background:${wheelEnabled ? 'var(--jam)' : 'rgba(255,255,255,0.25)'}; border-radius:999px; transition:background .2s;"></span>
-                        <span style="position:absolute; left:${wheelEnabled ? '1.25rem' : '0.15rem'}; top:0.15rem; width:1.2rem; height:1.2rem; background:#fff; border-radius:50%; transition:left .2s;"></span>
+                        <span id="wheel-toggle-track" style="position:absolute; inset:0; background:${wheelEnabled ? 'var(--jam)' : 'rgba(255,255,255,0.25)'}; border-radius:999px; transition:background .2s;"></span>
+                        <span id="wheel-toggle-knob" style="position:absolute; left:${wheelEnabled ? '1.25rem' : '0.15rem'}; top:0.15rem; width:1.2rem; height:1.2rem; background:#fff; border-radius:50%; transition:left .2s;"></span>
                     </label>
                 </div>
             ` : '';
@@ -1779,10 +1803,15 @@
         }
         buildWheelSkeleton(wheelEvent);
     }
-    // 房主開關命運輪盤功能：關閉的話成員畫面上的「命運輪盤」按鈕會即時消失，
-    // 開啟則即時出現，兩種情況都要跳通知讓大家知道
+    // 房主開關命運輪盤功能：點下去馬上更新軌道/圓點的視覺樣式(不用等資料庫寫入完成、
+    // 也不用等重新渲染整個視窗)，才會有即時滑動的效果，不是點了要關掉視窗再打開才看得到變化。
+    // 成員畫面上的按鈕會即時消失/出現，兩種情況都要跳通知讓大家知道
     async function toggleWheelEnabled(enabled) {
         if (!isHost || !currentRoomId) return;
+        const track = document.getElementById('wheel-toggle-track');
+        const knob = document.getElementById('wheel-toggle-knob');
+        if (track) track.style.background = enabled ? 'var(--jam)' : 'rgba(255,255,255,0.25)';
+        if (knob) knob.style.left = enabled ? '1.25rem' : '0.15rem';
         try {
             await db.collection('ktvRooms').doc(currentRoomId).update({ wheelEnabled: enabled });
         } catch (err) {
