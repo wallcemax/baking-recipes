@@ -480,6 +480,7 @@
     let prevMemberUids = [];
     let currentMemberList = []; // 目前房間裡的成員名單快取，成員列表下拉選單顯示用
     let hostLastPlayedVideoId = null;
+    let hostSessionStartMs = null; // 這次擔任房主是從什麼時候開始的，離開房間時用來累加時數統計(給戴著助聽器的稱號用)
     let nextUpAnnouncedForVideo = null; // 目前這首歌是不是已經廣播過「快結束了，下一位請準備」，避免每秒輪詢重複廣播
     let nextUpPollTimer = null;
     let pendingJoinRoomId = null; // 等待輸入密碼的房間ID
@@ -755,6 +756,7 @@
         resetReactionUiState(); // 多一層保險，確保不會帶著上一個房間殘留的掌聲動畫狀態進到新房間
         lastPlayedWheelSpinToken = null;
         lastAnnouncedWheelResultAt = 0;
+        if (asHost) hostSessionStartMs = Date.now(); // 記錄這次擔任房主的開始時間，離開房間時用來累加時數統計
         document.getElementById('room-list-view').classList.add('hidden');
         document.getElementById('room-view').classList.remove('hidden');
         document.getElementById(asHost ? 'host-view' : 'member-view').classList.remove('hidden');
@@ -921,6 +923,17 @@
         if (reactionsUnsubscribe) { reactionsUnsubscribe(); reactionsUnsubscribe = null; }
         if (wheelUnsubscribe) { wheelUnsubscribe(); wheelUnsubscribe = null; }
         if (nextUpPollTimer) { clearInterval(nextUpPollTimer); nextUpPollTimer = null; }
+        // 這次擔任房主的時長累加進統計，給首頁「戴著助聽器的」稱號判定用。
+        // 用小時為單位(不是分鐘)，跟成就規則裡的threshold:48對齊
+        if (isHost && hostSessionStartMs && currentUser) {
+            const hours = (Date.now() - hostSessionStartMs) / 3600000;
+            hostSessionStartMs = null;
+            if (hours > 0) {
+                db.collection('userProgress').doc(currentUser.uid).set({
+                    ktvHostHours: firebase.firestore.FieldValue.increment(hours),
+                }, { merge: true }).catch(err => console.warn('更新房主時數統計失敗', err));
+            }
+        }
         leaveMemberRecord();
         if (ytPlayer) { try { ytPlayer.destroy(); } catch (e) {} ytPlayer = null; ytPlayerReady = false; }
         if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -1312,6 +1325,12 @@
                 count: firebase.firestore.FieldValue.increment(1),
             }, { merge: true }).catch(err => console.warn('更新熱門排行失敗', err));
             recordUserHistory(entry); // 跨房間的個人歷史歌單，不是只記在這個房間裡
+            // 累加點歌次數統計，給首頁「K歌之王」稱號判定用。ktv.html跟index.html是不同頁面，
+            // 沒辦法直接呼叫index.html裡判定稱號解鎖的邏輯，這裡只負責把統計數字寫進
+            // 跟index.html共用的userProgress文件，下次回首頁時checkUnlocks()就會自動判定
+            db.collection('userProgress').doc(currentUser.uid).set({
+                ktvSongsPointed: firebase.firestore.FieldValue.increment(1),
+            }, { merge: true }).catch(err => console.warn('更新點歌次數統計失敗', err));
             // 告訴點歌的人自己排第幾位，不是只有跳「點播了什麼」的通知卻不知道還要等多久
             const position = queue.findIndex(q => q.qid === entry.qid) + 1;
             const positionText = position === 1 ? '現在就是你（下一首播放）' : `目前排第 ${position} 位`;
@@ -2050,6 +2069,14 @@
                 ? `🎡 ${wheelEvent.initiatedBy} 發起了命運輪盤 事件：${wheelEvent.eventText}，但是他偷偷把自己的名字拿掉了！😏`
                 : `🎡 ${wheelEvent.initiatedBy} 發起了命運輪盤：${wheelEvent.eventText}`;
             showWheelAnnounceBanner(announceText);
+            // 如果自己就是這次被輪盤指定的目標，累加自己的「被指定次數」統計，給首頁
+            // 「地獄倒楣鬼」稱號判定用。這裡一定要由被選中的人自己的裝置寫，因為Firestore
+            // 規則只允許本人寫自己的userProgress，房主或其他人的裝置沒有權限幫忙寫
+            if (!wheelEvent.noWinner && currentUser && wheelEvent.resultUid === currentUser.uid) {
+                db.collection('userProgress').doc(currentUser.uid).set({
+                    wheelTargetedCount: firebase.firestore.FieldValue.increment(1),
+                }, { merge: true }).catch(err => console.warn('更新被指定次數統計失敗', err));
+            }
             const spinDuration = (wheelEvent.spinMs || 4000) + (WHEEL_MODE_EXTRA_MS[wheelEvent.mode] || 700);
 
             // 字幕先單獨顯示3秒，消失之後，全部裝置自動打開輪盤視窗顯示靜止的轉盤，

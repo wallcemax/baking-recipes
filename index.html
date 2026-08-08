@@ -265,7 +265,7 @@
         /* 電腦版header的下拉選單：把管理員專屬功能（食材熱量管理/孤兒圖片清單/成就總覽）收進一個
            「⚙ 管理」按鈕裡，不然這幾顆按鈕全部平鋪在header上，隨著功能越加越多only會越擠 */
         .header-dropdown-panel {
-            position: absolute; right: 0; top: calc(100% + 0.5rem); width: 15rem; z-index: 55;
+            position: absolute; right: 0; top: calc(100% + 0.5rem); width: 15rem; z-index: 200;
             background: var(--paper); border-radius: 1.25rem; overflow: hidden;
             box-shadow: 0 16px 32px -8px rgba(58,42,30,0.28), 0 0 0 1px rgba(58,42,30,0.04);
         }
@@ -1637,6 +1637,12 @@
             // ---- 異世界料理者：被魔王擊敗累計次數 ----
             { id: 'rpg_boss_loss_5', type: 'rpgBossLossCount', threshold: 5, title: { icon: '🤮', name: '難吃的' }, achievement: { name: '我覺得不錯吃阿', desc: '這應該不算是自我感覺良好吧？' } },
             { id: 'rpg_game_cleared', type: 'rpgGameCleared', threshold: 1, title: { icon: '😋', name: '美味的' }, achievement: { name: '十里坡劍神', desc: '你真的玩不膩也！' } },
+            // ---- KTV系統：點歌累計次數 ----
+            { id: 'ktv_songs_50', type: 'ktvSongsPointed', threshold: 50, title: { icon: '🎤', name: 'K歌之王' }, achievement: { name: '膨大海當水喝', desc: '聽說拿酒來開嗓是錯的...' } },
+            // ---- KTV系統：命運輪盤被指定為目標累計次數 ----
+            { id: 'wheel_targeted_20', type: 'wheelTargetedCount', threshold: 20, title: { icon: '👻', name: '地獄倒楣鬼' }, achievement: { name: '幸與不幸', desc: '真不知道該說是幸運還是衰小。' } },
+            // ---- KTV系統：擔任房主累計時數 ----
+            { id: 'ktv_host_48h', type: 'ktvHostHours', threshold: 48, title: { icon: '🦻', name: '戴著助聽器的' }, achievement: { name: '不需要耳塞', desc: '助聽器拿掉就可以忍受別人所不能忍的。' } },
 
             // ---- 大功告成：蛋糕/糕餅 ----
             { id: 'finish_cake_1', type: 'categoryFinish', category: '蛋糕/糕餅', threshold: 1, achievement: { name: '你喜歡吃鹹的還是甜的?', desc: '真讓人欲罷不能。' } },
@@ -1765,8 +1771,9 @@
                 console.warn('讀取成就進度失敗', err && err.message);
                 userProgress = defaultUserProgress();
             }
-            // 暱稱資料要等這裡才讀得到，補一次更新首頁的歡迎文字（一開始currentUser剛登入的
-            // 當下userProgress還沒讀出來，只能先用Google帳號名稱頂著，這裡讀到暱稱後再蓋一次）
+            // 暱稱資料要等這裡才讀得到，這裡讀到之後正式顯示歡迎文字的完整內容（帳號剛登入
+            // 那一刻userProgress還沒讀出來，畫面上刻意先只顯示「歡迎回來」不帶名字，避免
+            // 先閃一下Google帳號名稱才變成暱稱）
             const heroName = document.getElementById('hero-greeting-name');
             if (heroName && currentUser) {
                 const name = (userProgress && userProgress.nickname) || currentUser.displayName || '朋友';
@@ -1850,6 +1857,9 @@
                     case 'ingredientKeyword': current = (userProgress.ingredientKeywordCounts || {})[rule.id] || 0; break;
                     case 'rpgBossLossCount': current = userProgress.rpgBossLossCount || 0; break;
                     case 'rpgGameCleared': current = userProgress.rpgGameCleared ? 1 : 0; break;
+                    case 'ktvSongsPointed': current = userProgress.ktvSongsPointed || 0; break;
+                    case 'wheelTargetedCount': current = userProgress.wheelTargetedCount || 0; break;
+                    case 'ktvHostHours': current = userProgress.ktvHostHours || 0; break;
                 }
                 if (current >= rule.threshold) {
                     if (rule.title && !userProgress.unlockedTitleIds.includes(rule.id)) {
@@ -1882,6 +1892,9 @@
                 case 'ingredientKeyword': return `食材名稱含有「${rule.keywords.join('、')}」累計使用 ${rule.threshold} 次（可跨食譜累計）`;
                 case 'rpgBossLossCount': return `在異世界料理者中被魔王擊敗五次`;
                 case 'rpgGameCleared': return `在異世界料理者中通關`;
+                case 'ktvSongsPointed': return `在KTV系統中累計點播 ${rule.threshold} 首歌`;
+                case 'wheelTargetedCount': return `在命運輪盤中累計被指定為目標 ${rule.threshold} 次`;
+                case 'ktvHostHours': return `在KTV系統中累計擔任房主 ${rule.threshold} 小時`;
                 default: return '';
             }
         }
@@ -12803,7 +12816,10 @@
         auth.onAuthStateChanged(user => {
             currentUser = user;
             const heroName = document.getElementById('hero-greeting-name');
-            if (heroName) heroName.textContent = user ? `歡迎回來，${user.displayName || '朋友'}` : '歡迎光臨';
+            // 這裡刻意不先塞Google帳號名稱——如果先顯示displayName、等一下loadUserProgress()
+            // 讀到暱稱之後才又蓋掉，會有「先閃一下錯的名字才變成暱稱」的問題。改成先顯示
+            // 不帶名字的版本，等loadUserProgress()確定暱稱資料以後再統一顯示正確名稱
+            if (heroName) heroName.textContent = user ? '歡迎回來' : '歡迎光臨';
             const info = document.getElementById('user-info');
             const infoMobile = document.getElementById('user-info-mobile');
             if (user) {
