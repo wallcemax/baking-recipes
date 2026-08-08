@@ -250,7 +250,7 @@
        整體外框尺寸(1.5rem寬、2.85rem高)、支點位置都跟原本三角形版本一致，只是換了畫法，
        旋轉的幾何關係完全不變 */
     #wheel-pointer, #member-wheel-pointer {
-        position: absolute; top: 10.45rem; left: 50%; width: 1.5rem; height: 2.85rem;
+        position: absolute; top: 10.7rem; left: 50%; width: 1.5rem; height: 2.85rem;
         margin-left: -0.75rem;
         transform: rotate(0deg); transform-origin: 50% 96.5%;
         z-index: 2; filter: drop-shadow(0 -3px 4px rgba(0,0,0,0.55));
@@ -334,7 +334,7 @@
                 <!-- 命運輪盤視窗：一定要放在fullscreen-wrapper裡面，不能離開全螢幕看得到，
                      否則全螢幕狀態下這個視窗會直接消失不見（全螢幕API的規則：只有全螢幕元素
                      本身跟它的子孫節點才會顯示） -->
-                <div id="wheel-modal" class="hidden" style="position:absolute; inset:0; z-index:50; background:rgba(20,14,10,0.55); backdrop-filter:blur(3px); display:flex; align-items:flex-start; justify-content:center; padding:1.2rem 1.5rem; overflow-y:auto;">
+                <div id="wheel-modal" class="hidden" style="position:absolute; inset:0; z-index:50; background:rgba(20,14,10,0.28); backdrop-filter:blur(1.5px); display:flex; align-items:flex-start; justify-content:center; padding:1.2rem 1.5rem; overflow-y:auto;">
                     <div id="wheel-modal-inner" style="max-width:26rem; width:100%; color:#F5EBDF; text-align:center;"></div>
                 </div>
                 <div id="host-overlay-ui">
@@ -390,7 +390,7 @@
             <div id="member-reaction-layer" style="position:fixed; inset:0; z-index:40; pointer-events:none; overflow:hidden;"></div>
             <div id="member-reaction-banner" style="position:fixed; top:35%; left:50%; transform:translate(-50%,-50%) scale(0.7); z-index:41; font-size:1.9rem; font-weight:800; color:var(--jam); text-shadow:0 2px 10px rgba(0,0,0,0.15); opacity:0; pointer-events:none; text-align:center;"></div>
             <div id="member-toast-stack" style="position:fixed; top:1rem; right:1rem; left:1rem; z-index:60; display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; pointer-events:none;"></div>
-            <div id="member-wheel-modal" class="hidden" style="position:fixed; inset:0; z-index:50; background:rgba(20,14,10,0.6); backdrop-filter:blur(3px); display:flex; align-items:flex-start; justify-content:center; padding:1.2rem 1.5rem; overflow-y:auto;">
+            <div id="member-wheel-modal" class="hidden" style="position:fixed; inset:0; z-index:50; background:rgba(20,14,10,0.32); backdrop-filter:blur(1.5px); display:flex; align-items:flex-start; justify-content:center; padding:1.2rem 1.5rem; overflow-y:auto;">
                 <div id="member-wheel-modal-inner" style="max-width:26rem; width:100%; color:#F5EBDF; text-align:center;"></div>
             </div>
             <div id="room-info-bar">
@@ -1505,22 +1505,6 @@
         if (idx < 0) idx = 0;
         return idx;
     }
-    // 檢查骰到的分鐘數離交界線有多近，夠近的話有機率觸發指針歪曲，並且直接靠「往前/往後
-    // 一小段會不會換人」來判斷歪的方向該指定誰——這是最直覺的判定方式，不用另外推公式。
-    // 判定範圍依格子寬度比例調整(至少6分鐘)，不是固定死的±2分鐘——固定±2分鐘搭配30%機率，
-    // 整體出現機率會低於1%，實際測試幾乎看不到，等於做了等於沒做
-    function checkBoundaryTilt(minute, n) {
-        const segMin = CLOCK_TOTAL_MINUTES / n;
-        const window = Math.max(6, Math.round(segMin * 0.1));
-        const baseIdx = getSegmentIndexForMinute(minute, n);
-        const idxLeft = getSegmentIndexForMinute(minute - window, n);
-        const idxRight = getSegmentIndexForMinute(minute + window, n);
-        const nearLeft = idxLeft !== baseIdx;
-        const nearRight = idxRight !== baseIdx;
-        if (nearLeft && Math.random() < 0.45) return { dir: -1, idx: idxLeft };
-        if (nearRight && Math.random() < 0.45) return { dir: 1, idx: idxRight };
-        return null;
-    }
     // 每一種模式額外需要的演出時間(毫秒)，用來抓「結果公布」的正確時機
     const WHEEL_MODE_EXTRA_MS = { normal: 700, teleport: 2600, brokenPointer: 2100, windRespin: 3100, rollAway: 2200, cheaterRemoved: 1700 };
     const WHEEL_COLORS = ['#FF4D6D','#FFA630','#3DDC97','#4CC9F0','#B983FF','#FFD23F','#06D6A0','#F72585','#4361EE','#FF9F1C','#7209B7','#00B4D8'];
@@ -1566,15 +1550,6 @@
             const wheelParticipants = mode === 'cheaterRemoved' ? participants.filter(p => p.uid !== myUid) : participants;
             const wn = wheelParticipants.length;
 
-            // 只有普通停止才會檢查「靠近邊界線」這件事：往前/往後一小段會不會換人，
-            // 換人的那一側才有機率真的觸發指針歪曲，直接用這個判斷該歪向誰，不用另外推公式
-            let boundaryTilt = 0; // -1往左歪、0不歪、1往右歪
-            let tiltTargetIdx = null;
-            if (mode === 'normal') {
-                const tilt = checkBoundaryTilt(rolledMinute, wn);
-                if (tilt) { boundaryTilt = tilt.dir; tiltTargetIdx = tilt.idx; }
-            }
-
             // 空間傳送：先判斷這次物理上真的指到誰(一樣用分鐘制骰)，再隨機指定另一位交換對象，
             // 傳送特效套用之後，真正中獎的是被交換進來的那個人
             let teleportFromIdx = null, teleportToIdx = null;
@@ -1598,7 +1573,7 @@
             if (mode === 'teleport') finalIndex = teleportToIdx;
             else if (mode === 'brokenPointer') finalIndex = brokenTargetIdx;
             else if (mode === 'windRespin') finalIndex = getSegmentIndexForMinute(windRespinMinute, wn);
-            else if (mode === 'normal' || mode === 'cheaterRemoved') finalIndex = boundaryTilt ? tiltTargetIdx : getSegmentIndexForMinute(rolledMinute, wn);
+            else if (mode === 'normal' || mode === 'cheaterRemoved') finalIndex = getSegmentIndexForMinute(rolledMinute, wn);
             const finalName = finalIndex === null ? null : wheelParticipants[finalIndex].name;
             const finalUid = finalIndex === null ? null : wheelParticipants[finalIndex].uid;
 
@@ -1607,7 +1582,7 @@
                     active: true, phase: 'spinning',
                     initiatedBy: myName, initiatedByUid: currentUser.uid,
                     eventText, participants: wheelParticipants,
-                    mode, spins, spinMs, finalRotationMod, boundaryTilt,
+                    mode, spins, spinMs, finalRotationMod,
                     teleportFromIdx, teleportToIdx, windRespinMod, brokenTargetIdx,
                     resultUid: finalUid, resultName: finalName, noWinner,
                     spinToken: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -1641,7 +1616,11 @@
         if (!container) return;
         const canvasId = isHost ? 'wheel-canvas' : 'member-wheel-canvas';
         const pointerId = isHost ? 'wheel-pointer' : 'member-wheel-pointer';
-        if (!document.getElementById(canvasId)) {
+        // 用data屬性記錄「目前這份骨架是哪一場輪盤(spinToken)建的」，只要偵測到是新的
+        // spinToken就一定重建骨架——之前只檢查canvas元素存不存在，但關閉視窗不會真的把DOM
+        // 移除掉，導致下一個人發起新輪盤時，畫面還顯示著上一位的發起人名字跟事件文字沒更新
+        if (container.dataset.spinToken !== wheelEvent.spinToken) {
+            container.dataset.spinToken = wheelEvent.spinToken || '';
             container.innerHTML = `
                 <h3 style="font-size:1.05rem; font-weight:800; margin-bottom:0.2rem;">🎡 ${escapeHtmlKtv(wheelEvent.initiatedBy)} 發起了命運輪盤</h3>
                 <p style="font-size:0.85rem; margin-bottom:0.5rem;">事件：<strong>${escapeHtmlKtv(wheelEvent.eventText)}</strong></p>
@@ -1736,7 +1715,6 @@
         const canvas = document.getElementById(canvasId);
         if (!canvas || !pointer) return;
         pointer.style.transition = 'none';
-        pointer.style.top = '10.125rem'; // 重置回預設位置(轉盤圓心當支點)
         pointer.style.opacity = '1';
         pointer.style.transform = 'rotate(0deg) scale(1)';
         void pointer.offsetWidth; // 強制瀏覽器套用上面的重置，下面重新設定transition才不會被跳過
@@ -1841,22 +1819,6 @@
                     const target = angleTo(wheelEvent.windRespinMod, currentRot, 2);
                     animateTween(canvasId, participants, currentRot, target, 2000, () => { currentRot = target; finishAfterDelay(); });
                 }, 900);
-            } else if (wheelEvent.boundaryTilt) {
-                // 普通模式但落點靠近邊界線、觸發了30%的搖擺機率：指針先猶豫擺動，
-                // 最後彎向跨過邊界那一側定案。指針現在是從轉盤圓心當支點，要真的轉過
-                // 一整個格子的角度(segAngle)才會確實指到鄰居——跟「指針斷掉飛到目標」
-                // 用的是同一套幾何公式，不是隨便抓一個看起來差不多的小角度
-                const segAngle = 360 / n;
-                const dir = wheelEvent.boundaryTilt; // -1表示鄰居在前一格、1表示鄰居在後一格
-                const targetDeg = dir * segAngle;
-                pointer.style.transition = 'transform 0.22s ease-in-out';
-                pointer.style.transform = `rotate(${-dir * segAngle * 0.22}deg)`;
-                setTimeout(() => { pointer.style.transform = `rotate(${dir * segAngle * 0.3}deg)`; }, 220);
-                setTimeout(() => {
-                    pointer.style.transition = 'transform 0.5s cubic-bezier(.34,1.56,.64,1)';
-                    pointer.style.transform = `rotate(${targetDeg}deg)`;
-                }, 460);
-                finishAfterDelay(980);
             } else if (mode === 'cheaterRemoved') {
                 // 轉盤上本來就沒有發起人的名字了(建立轉盤的時候就先排除掉)，正常轉停之後
                 // 才揭曉發起人耍了這個小手段，製造一點反差笑點
@@ -1883,8 +1845,7 @@
                     } else if (mode === 'windRespin') {
                         statusText.textContent = `🎯 命運之神決定了：${getPhysicalWinnerInfo(wheelEvent.windRespinMod, participants).name}`;
                     } else {
-                        let idx = getPhysicalWinnerInfo(currentRot, participants).index;
-                        if (wheelEvent.boundaryTilt) idx = ((idx + wheelEvent.boundaryTilt) % n + n) % n;
+                        const idx = getPhysicalWinnerInfo(currentRot, participants).index;
                         statusText.textContent = `🎯 命運之神決定了：${participants[idx].name}`;
                     }
                 }
@@ -1930,8 +1891,12 @@
         if (wheelEvent.phase === 'spinning' && wheelEvent.spinToken && wheelEvent.spinToken !== lastScheduledWheelToken) {
             lastScheduledWheelToken = wheelEvent.spinToken;
             // 立刻在畫面正中央跳出「OOO發起了命運輪盤」，全部裝置都要馬上看到，
-            // 跟掌聲鼓勵一樣不用打開視窗才有反應
-            showWheelAnnounceBanner(`🎡 ${wheelEvent.initiatedBy} 發起了命運輪盤：${wheelEvent.eventText}`);
+            // 跟掌聲鼓勵一樣不用打開視窗才有反應。如果是「偷偷拿掉名字」這個特效，
+            // 一開始的公告就直接揭曉，不用等轉盤停下才知道
+            const announceText = wheelEvent.mode === 'cheaterRemoved'
+                ? `🎡 ${wheelEvent.initiatedBy} 發起了命運輪盤 事件：${wheelEvent.eventText}，但是他偷偷把自己的名字拿掉了！😏`
+                : `🎡 ${wheelEvent.initiatedBy} 發起了命運輪盤：${wheelEvent.eventText}`;
+            showWheelAnnounceBanner(announceText);
             const spinDuration = (wheelEvent.spinMs || 4000) + (WHEEL_MODE_EXTRA_MS[wheelEvent.mode] || 700);
 
             // 字幕先單獨顯示3秒，消失之後，全部裝置自動打開輪盤視窗顯示靜止的轉盤，
