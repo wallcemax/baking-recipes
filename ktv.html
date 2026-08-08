@@ -246,14 +246,17 @@
         position: absolute; top: 2.85rem; left: 0; border-radius: 50%;
         box-shadow: 0 0 0 6px rgba(255,255,255,0.18), 0 12px 32px -6px rgba(0,0,0,0.55);
     }
-    /* 指針改用CSS邊框畫出細長的等腰三角形，不是用emoji符號——emoji本身接近正三角形，
-       旋轉角度再大視覺上也很難分辨，細長的三角形旋轉起來位移會被放大很多、看得很清楚 */
+    /* 指針改成從轉盤圓心當支點、預設朝上指，像時鐘的指針一樣。用border-bottom畫出
+       向上的細長三角形，支點(transform-origin)放在三角形底部，精準對齊轉盤圓心
+       (2.85rem canvas上緣偏移 + 10.125rem半徑 = 12.975rem，三角形本身2.85rem高，
+       所以整個元素的top要再往上扣掉高度)。這樣旋轉起來的幾何關係，跟「指針斷掉飛到
+       目標」用的是同一套公式，不用再臨時把支點搬到圓心，斷裂特效的動作會更自然順暢 */
     #wheel-pointer, #member-wheel-pointer {
-        position: absolute; top: 0.9rem; left: 50%; width: 0; height: 0;
+        position: absolute; top: 10.125rem; left: 50%; width: 0; height: 0;
         border-left: 0.75rem solid transparent; border-right: 0.75rem solid transparent;
-        border-top: 2.85rem solid #F5EBDF;
-        transform: translateX(-50%) rotate(0deg); transform-origin: 50% 0%;
-        z-index: 2; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.55));
+        border-bottom: 2.85rem solid #F5EBDF;
+        transform: translateX(-50%) rotate(0deg); transform-origin: 50% 100%;
+        z-index: 2; filter: drop-shadow(0 -3px 4px rgba(0,0,0,0.55));
         transition: transform 0.7s cubic-bezier(.34,1.56,.64,1), opacity 0.35s ease, transform 0.35s ease;
     }
     .wheel-result-banner { font-size: 1.2rem; font-weight: 800; margin-top: 0.8rem; min-height: 1.6rem; }
@@ -1708,7 +1711,7 @@
         const canvas = document.getElementById(canvasId);
         if (!canvas || !pointer) return;
         pointer.style.transition = 'none';
-        pointer.style.top = '0.9rem'; // 重置回預設位置，避免上次「指針斷掉」特效把支點移到圓心後沒有重置
+        pointer.style.top = '10.125rem'; // 重置回預設位置(轉盤圓心當支點)
         pointer.style.opacity = '1';
         pointer.style.transform = 'translateX(-50%) rotate(0deg) scale(1)';
         void pointer.offsetWidth; // 強制瀏覽器套用上面的重置，下面重新設定transition才不會被跳過
@@ -1782,15 +1785,12 @@
                 finishAfterDelay(2400);
             } else if (mode === 'brokenPointer') {
                 // 指針斷掉飛起旋轉，砸到全新的隨機目標——這個特效轉盤完全不會再轉動，
-                // 只有指針自己脫離原本的位置，暫時把支點移到轉盤圓心，繞著圓心旋轉飛過去，
-                // 精準指向目標那一格。之前的版本會連轉盤一起轉，不符合「轉盤不動」的要求
+                // 只有指針自己脫離原本的位置、旋轉飛過去，精準指向目標那一格。
+                // 因為指針現在預設就是以轉盤圓心當支點，不用再像之前那樣臨時搬動位置，
+                // 斷裂的動作可以直接接著原本的支點做，看起來更自然順暢
                 if (statusText) statusText.textContent = '💥 指針斷掉了！';
                 const segAngle = 360 / n;
-                // 把指針的支點從「靠近轉盤上緣」暫時改成「轉盤正中央」，這樣才能繞著圓心
-                // 旋轉飛到任何角度，不是只能在頂端小幅度搖擺
-                const wheelCenterTop = '12.975rem';
-                pointer.style.transition = 'transform 0.4s cubic-bezier(.5,-0.4,.8,.3), opacity 0.4s ease, top 0s';
-                pointer.style.top = wheelCenterTop;
+                pointer.style.transition = 'transform 0.4s cubic-bezier(.5,-0.4,.8,.3), opacity 0.4s ease';
                 pointer.style.transform = 'translateX(-50%) rotate(200deg) scale(0.55)';
                 pointer.style.opacity = '0.2';
                 setTimeout(() => {
@@ -1816,19 +1816,20 @@
                 }, 900);
             } else if (wheelEvent.boundaryTilt) {
                 // 普通模式但落點靠近邊界線、觸發了30%的搖擺機率：指針先猶豫擺動，
-                // 最後彎向跨過邊界那一側定案。往右要用負值旋轉、往左要用正值旋轉——
-                // CSS的rotate()正值是順時針，但指針是從頂端支點往下垂掛的形狀，
-                // 順時針轉反而讓下面的尖端往左邊擺，方向要對調才會符合直覺
-                const dir = wheelEvent.boundaryTilt; // -1左、1右
-                const cssSign = dir > 0 ? -1 : 1;
-                pointer.style.transition = 'transform 0.18s ease-in-out';
-                pointer.style.transform = `translateX(-50%) rotate(${-cssSign * 10}deg)`;
-                setTimeout(() => { pointer.style.transform = `translateX(-50%) rotate(${cssSign * 14}deg)`; }, 180);
+                // 最後彎向跨過邊界那一側定案。指針現在是從轉盤圓心當支點，要真的轉過
+                // 一整個格子的角度(segAngle)才會確實指到鄰居——跟「指針斷掉飛到目標」
+                // 用的是同一套幾何公式，不是隨便抓一個看起來差不多的小角度
+                const segAngle = 360 / n;
+                const dir = wheelEvent.boundaryTilt; // -1表示鄰居在前一格、1表示鄰居在後一格
+                const targetDeg = dir * segAngle;
+                pointer.style.transition = 'transform 0.22s ease-in-out';
+                pointer.style.transform = `translateX(-50%) rotate(${-dir * segAngle * 0.22}deg)`;
+                setTimeout(() => { pointer.style.transform = `translateX(-50%) rotate(${dir * segAngle * 0.3}deg)`; }, 220);
                 setTimeout(() => {
                     pointer.style.transition = 'transform 0.5s cubic-bezier(.34,1.56,.64,1)';
-                    pointer.style.transform = `translateX(-50%) rotate(${cssSign * 32}deg)`;
-                }, 380);
-                finishAfterDelay(900);
+                    pointer.style.transform = `translateX(-50%) rotate(${targetDeg}deg)`;
+                }, 460);
+                finishAfterDelay(980);
             } else {
                 finishAfterDelay();
             }
