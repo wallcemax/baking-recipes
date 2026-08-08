@@ -4111,6 +4111,7 @@
             document.removeEventListener('keydown', rpgKeyHandler);
             if (rpgWatchdogTimer) { clearInterval(rpgWatchdogTimer); rpgWatchdogTimer = null; }
             if (typeof rpgHoldEnd === 'function') rpgHoldEnd();
+            if (typeof rpgStopBgm === 'function') rpgStopBgm(); // 離開遊戲時要停掉背景音樂，不然回到選單音樂還會繼續播
             rpgState = null;
         }
         // 關閉異世界料理者：game.html是獨立頁面，沒有像index.html那樣的modal外層容器，
@@ -4944,8 +4945,11 @@
             {
                 const titleEl = document.getElementById('game-modal-title');
                 titleEl.textContent = `🗺️ ${map.name}`;
-                // 地圖名稱置中顯示在畫面正中間（用絕對定位，不受旁邊關閉按鈕擠壓），離開地圖畫面時（closeRpgModal）會重設回預設樣式
-                titleEl.style.cssText = 'position:absolute; left:50%; transform:translateX(-50%); white-space:nowrap; pointer-events:none;';
+                // 這裡改成單純置中(text-align)，不脫離文件流。原本用position:absolute是為了配合
+                // 舊版index.html那種「標題列旁邊有關閉按鈕要閃避」的獨立header結構，但game.html裡
+                // 這個元素只是普通文件流中的<h2>，設成絕對定位會讓它不再佔用版面空間，導致底下的
+                // 地圖名稱直接蓋在血量資訊那一行上面——離開地圖畫面時（renderGameMenu）會重設回預設樣式
+                titleEl.style.cssText = 'text-align:center;';
             }
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="flex justify-between items-center mb-2 text-xs" style="color:var(--muted); max-width:520px; margin-left:auto; margin-right:auto;">
@@ -8129,11 +8133,18 @@
                 setTimeout(() => { if (el) el.style.transform = 'translateX(0)'; }, 90);
             }, 140);
         }
-        // 凱的一般攻擊專用：箭矢（圖2(11,9)）從凱的位置飛向目標，命中的同時開始飄傷害數字
+        // 凱的一般攻擊專用：箭矢（圖2(11,9)）從凱的位置飛向目標，命中的同時開始飄傷害數字。
+        // 這裡改用原始視窗座標(跟rpgFloatDamage()同一套已驗證可行的模式)，不透過
+        // rpgElementCenter()那個「相對#game-modal-body容器」的座標——原本混用兩套不同的
+        // 座標基準(容器相對座標 配 position:fixed視窗定位)，導致箭矢飛到完全不對的位置
         function rpgFireArrowProjectile(fromDomId, toDomId) {
-            const from = rpgElementCenter(fromDomId);
-            const to = rpgElementCenter(toDomId);
-            if (!from || !to) return;
+            const fromEl = document.getElementById(fromDomId);
+            const toEl = document.getElementById(toDomId);
+            if (!fromEl || !toEl) return;
+            const fRect = fromEl.getBoundingClientRect();
+            const tRect = toEl.getBoundingClientRect();
+            const from = { x: fRect.left + fRect.width / 2, y: fRect.top + fRect.height / 2 };
+            const to = { x: tRect.left + tRect.width / 2, y: tRect.top + tRect.height / 2 };
             const [col, row] = RPG_TOWN_TILES.arrow_kai;
             const size = 20;
             const z = size / 16;
