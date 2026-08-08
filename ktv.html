@@ -1220,7 +1220,14 @@
     }
     // 搜尋：優先從Firestore快取讀（不管是誰之前搜過同樣的關鍵字，結果都共用），完全不消耗
     // YouTube Data API的每日配額。快取結果下面一律附一顆「深度搜尋」按鈕，只有使用者真的
-    // 對快取結果不滿意、自己按下去，才會真的呼叫YouTube API即時搜尋（那個才會消耗配額）
+    // 對快取結果不滿意、自己按下去，才會真的呼叫YouTube API即時搜尋（那個才會消耗配額）。
+    //
+    // 另外維護一份「歌曲索引」(ktvSongIndex)：之前的設計是整包搜尋結果照「搜尋關鍵字」存，
+    // 例如搜「五月天」找到「孫悟空-五月天」這首歌，結果之後搜「孫悟空」卻完全比對不到，
+    // 因為快取只認當初存進去的那個關鍵字文件。改成每次深度搜尋找到的歌，同時也拆開存成
+    // 獨立的一份索引文件(用videoId當key，同一首歌不會重複存)，之後不管用什麼關鍵字搜，
+    // 除了查關鍵字本身的快取，也會額外去這份索引裡比對「歌名有沒有包含這個關鍵字」，
+    // 這樣「孫悟空」也能搜到之前搜「五月天」時找到的那首歌
     async function searchKtvSongs() {
         const input = document.getElementById(isHost ? 'host-search-input' : 'member-search-input');
         const resultsEl = document.getElementById(isHost ? 'host-search-results' : 'member-search-results');
@@ -1229,12 +1236,53 @@
         resultsEl.innerHTML = '<div class="empty-hint">查詢快取中...</div>';
         try {
             const cacheKey = sanitizeSearchCacheKey(query);
-            const doc = await db.collection('ktvSearchCache').doc(cacheKey).get();
-            const cachedResults = (doc.exists && doc.data().results) || [];
-            renderSearchResultsWithDeepSearch(cachedResults, resultsEl, !cachedResults.length);
+            const [keywordDoc, indexMatches] = await Promise.all([
+                db.collection('ktvSearchCache').doc(cacheKey).get(),
+                searchKtvSongIndexByTitle(query),
+            ]);
+            const keywordResults = (keywordDoc.exists && keywordDoc.data().results) || [];
+            // 合併兩邊的結果，用videoId去重(同一首歌可能兩邊都有)
+            const seen = new Set();
+            const merged = [];
+            [...keywordResults, ...indexMatches].forEach(r => {
+                if (r && r.videoId && !seen.has(r.videoId)) { seen.add(r.videoId); merged.push(r); }
+            });
+            renderSearchResultsWithDeepSearch(merged, resultsEl, !merged.length);
         } catch (err) {
             resultsEl.innerHTML = `<div class="empty-hint">⚠️ ${escapeHtmlKtv(err.message)}</div>`;
         }
+    }
+    // 從歌曲索引裡比對「歌名有沒有包含這個關鍵字」，不限於當初搜尋這首歌用的關鍵字。
+    // Firestore沒有內建的「文字包含」查詢，這裡用「抓一批最近有更新過的索引、前端自己比對」
+    // 的簡單做法，對這種個人／小型多人使用的KTV系統規模來說，讀取量完全在合理範圍內
+    async function searchKtvSongIndexByTitle(query) {
+        try {
+            const lower = query.trim().toLowerCase();
+            if (!lower) return [];
+            const snap = await db.collection('ktvSongIndex').orderBy('updatedAt', 'desc').limit(500).get();
+            return snap.docs
+                .map(d => d.data())
+                .filter(r => r.titleLower && r.titleLower.includes(lower));
+        } catch (err) {
+            console.warn('查詢歌曲索引失敗', err);
+            return [];
+        }
+    }
+    // 深度搜尋找到的每一首歌，同時攤平寫進歌曲索引(用videoId當文件ID，同一首歌重複搜到
+    // 只會更新同一筆，不會愈存愈多份重複資料)
+    function upsertKtvSongIndex(results) {
+        if (!results || !results.length) return;
+        const batch = db.batch();
+        results.forEach(r => {
+            if (!r.videoId) return;
+            const ref = db.collection('ktvSongIndex').doc(r.videoId);
+            batch.set(ref, {
+                videoId: r.videoId, title: r.title || '', thumbnail: r.thumbnail || '',
+                titleLower: (r.title || '').toLowerCase(),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        });
+        batch.commit().catch(err => console.warn('寫入歌曲索引失敗', err));
     }
     // 深度搜尋：真的呼叫YouTube Data API即時搜尋，會消耗每日配額。搜到的結果會存回Firestore
     // 快取，之後任何人（不只自己）搜同樣的關鍵字都能直接沿用，不用再消耗配額
@@ -1256,6 +1304,7 @@
             db.collection('ktvSearchCache').doc(cacheKey).set({
                 query, results, updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             }).catch(err => console.warn('寫入搜尋快取失敗', err));
+            upsertKtvSongIndex(results); // 同時攤平存進歌曲索引，之後用歌名裡的關鍵字也搜得到
             renderSearchResultsWithDeepSearch(results, resultsEl, false);
         } catch (err) {
             resultsEl.innerHTML = `<div class="empty-hint">⚠️ ${escapeHtmlKtv(err.message)}</div>`;
