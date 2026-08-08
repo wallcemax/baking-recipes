@@ -1,0 +1,2339 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>🎮 遊戲場 - JUST DO EAT</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#A8324A">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    <link rel="icon" href="icon-192.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700;900&family=Noto+Sans+TC:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+    <style>
+        :root {
+            --cream: #FBF3E7;
+            --paper: #FFFDF9;
+            --espresso: #3A2A1E;
+            --espresso-soft: #6B5847;
+            --jam: #A8324A;
+            --jam-dark: #862A3D;
+            --honey: #C98A2C;
+            --sage: #6F8C6E;
+            --chambray: #5B7A96;
+            --line: #E8DCC8;
+            --muted: #B3A492;
+            --danger: #C4453F;
+        }
+        * { -webkit-tap-highlight-color: transparent; }
+        body {
+            background: var(--cream);
+            background-image: url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1200,q_auto,f_auto/v1785422181/freepik_edit_eikbec.png');
+            background-image: image-set(
+                url('https://res.cloudinary.com/bumzwp9g/image/upload/w_900,q_auto,f_auto/v1785422181/freepik_edit_eikbec.png') 1x,
+                url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1800,q_auto,f_auto/v1785422181/freepik_edit_eikbec.png') 2x
+            );
+            background-size: cover; background-position: center top; background-attachment: fixed; background-repeat: no-repeat;
+            color: var(--espresso);
+            font-family: 'Noto Sans TC', system-ui, -apple-system, sans-serif;
+        }
+        .font-display { font-family: 'cwTeXYen', 'Noto Serif TC', serif; letter-spacing: 0.02em; }
+        .btn-primary, .btn-secondary, .btn-amber, .btn-sage, .chip {
+            font-family: 'cwTeXYen', 'Noto Sans TC', sans-serif;
+        }
+        *:focus-visible { outline: 2px solid var(--jam); outline-offset: 2px; border-radius: 4px; }
+
+        /* recipe card with pie-crust scalloped bottom edge */
+        .recipe-card {
+            position: relative;
+            background: rgba(255,253,249,0.88);
+            border: 1px solid var(--line);
+            border-radius: 1.5rem 1.5rem 0 0;
+            padding-bottom: 1.5rem;
+            transition: transform .25s ease, box-shadow .25s ease;
+            cursor: pointer;
+        }
+        .recipe-card:hover, .recipe-card:focus-visible {
+            transform: translateY(-4px);
+            box-shadow: 0 16px 28px -12px rgba(58,42,30,0.25);
+        }
+        /* 卡片hover時再加一點點縮放，跟原本的上浮陰影疊加，質感更明顯一些 */
+        .recipe-card:hover, .recipe-card:focus-visible { transform: translateY(-4px) scale(1.012); }
+
+        /* 食譜卡片圖片：統一裁切比例，底部加一點漸層讓文字（如果疊在圖片上）好讀，
+           沒有圖片的食譜用漸層+大emoji當預設插畫，不會整塊空白 */
+        .recipe-card-image-wrap {
+            position: relative; width: 100%; aspect-ratio: 4 / 3;
+            border-radius: 1rem; overflow: hidden; margin-bottom: 0.75rem;
+            background: linear-gradient(135deg, #F4E4EA, #FCE9C8);
+        }
+        .recipe-card-image-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .3s ease; }
+        .recipe-card:hover .recipe-card-image-wrap img { transform: scale(1.05); }
+        .recipe-card-image-wrap::after {
+            content: ""; position: absolute; inset: 0;
+            background: linear-gradient(to top, rgba(58,42,30,0.18), transparent 55%);
+            pointer-events: none;
+        }
+        .recipe-card-image-placeholder {
+            width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+            font-size: 2.75rem; opacity: .55;
+        }
+
+        /* 收藏愛心點擊的小彈跳動畫 */
+        @keyframes heartPop {
+            0% { transform: scale(1); }
+            35% { transform: scale(1.5) rotate(-8deg); }
+            60% { transform: scale(0.92); }
+            100% { transform: scale(1); }
+        }
+        .fav-btn.pop i { animation: heartPop .4s ease; }
+
+        /* Modal淡入：只要modal-backdrop這個元素從hidden變成顯示，就會自動套用這個動畫，
+           不用另外改任何一個開啟modal的JS函式 */
+        @keyframes modalFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes modalSheetUp { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .modal-backdrop:not(.hidden) { animation: modalFadeIn .18s ease; }
+        .modal-backdrop:not(.hidden) > .sheet-panel { animation: modalSheetUp .22s cubic-bezier(.2,.8,.3,1); }
+
+        /* 骨架屏載入動畫：資料還在讀取時用灰色色塊佔位，取代純文字「載入中」 */
+        @keyframes skeletonShimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+        .skeleton {
+            background: linear-gradient(90deg, #EFE6D8 25%, #F6EFE3 50%, #EFE6D8 75%);
+            background-size: 200% 100%;
+            animation: skeletonShimmer 1.4s ease-in-out infinite;
+            border-radius: 1rem;
+        }
+
+        /* 空狀態（查無資料、清單是空的...）統一的插圖樣式 */
+        .empty-state { text-align: center; padding: 3rem 1rem; color: var(--muted); }
+        .empty-state .empty-state-icon { font-size: 3rem; margin-bottom: 0.75rem; opacity: .7; }
+
+        /* 價格/熱量這類數字，統一用等寬數字對齊，掃視比較好對齊 */
+        .num-tabular { font-variant-numeric: tabular-nums; font-family: "LXGW WenKai Mono TC", monospace; }
+
+        /* Toast提示（取代alert()）：右上角滑入，幾秒後自動淡出消失 */
+        #toast-container {
+            position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 9999;
+            display: flex; flex-direction: column-reverse; gap: 0.6rem; align-items: center;
+            max-width: min(90vw, 360px); pointer-events: none;
+        }
+        #toast-container .toast-item { pointer-events: auto; }
+        @keyframes toastSlideIn { from { transform: translateY(120%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .toast-item {
+            background: var(--espresso); color: #fff; padding: 0.85rem 1.15rem;
+            border-radius: 1rem; font-size: 0.9rem; line-height: 1.5;
+            box-shadow: 0 10px 24px -8px rgba(0,0,0,0.35);
+            animation: toastSlideIn .28s cubic-bezier(.2,.8,.3,1);
+            transition: opacity .25s ease, transform .25s ease;
+        }
+        .toast-item.toast-leaving { opacity: 0; transform: translateY(20px); }
+        .toast-item.toast-success { background: var(--sage); }
+        .toast-item.toast-error { background: #A6362F; }
+
+        /* 圖片淡入：img載入完成前先透明，onload時淡入，避免圖片突然彈出 */
+        .fade-img { opacity: 0; transition: opacity .45s ease; }
+        .fade-img.loaded { opacity: 1; }
+
+        /* 食譜步驟編號徽章：實心圓圈數字，取代純文字編號，比較好抓重點 */
+        .step-badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 1.75rem; height: 1.75rem; border-radius: 999px; flex-shrink: 0;
+            background: var(--jam); color: #fff; font-weight: 700; font-size: 0.85rem;
+            font-family: 'Noto Serif TC', serif;
+        }
+
+        /* 成就徽章卡片：依稀有度給不同的邊框/光暈顏色 */
+        .badge-card {
+            position: relative; border-radius: 1.25rem; padding: 1rem;
+            text-align: center; border: 2px solid var(--line); background: var(--paper);
+            transition: transform .2s ease;
+        }
+        .badge-card:hover { transform: translateY(-2px); }
+        .badge-card.locked { opacity: .45; filter: grayscale(.6); }
+        .badge-card .badge-icon { font-size: 2.25rem; margin-bottom: 0.4rem; }
+        .badge-card.rarity-common { border-color: #B8C4B8; }
+        .badge-card.rarity-rare { border-color: #6F8C6E; box-shadow: 0 0 0 1px rgba(111,140,110,0.25); }
+        .badge-card.rarity-epic { border-color: #A8324A; box-shadow: 0 0 16px -4px rgba(168,50,74,0.45); }
+        .badge-card.rarity-legendary { border-color: var(--honey); box-shadow: 0 0 20px -2px rgba(201,138,44,0.55); }
+
+        .form-input {
+            width: 100%; padding: 0.9rem 1.15rem;
+            border: 1px solid var(--line); border-radius: 1rem;
+            background: var(--paper); font-size: 1rem; color: var(--espresso);
+            transition: border-color .2s, box-shadow .2s;
+        }
+        .form-input::placeholder { color: var(--muted); }
+        .form-input:focus { outline: none; border-color: var(--jam); box-shadow: 0 0 0 3px rgba(168,50,74,0.14); }
+
+        /* 搜尋欄疊加文字太長超出可視範圍時，用跑馬燈效果水平捲動顯示。
+           固定用inline-block(不只是套用marquee時才用)，是因為預設的inline元素量測scrollWidth
+           不太可靠，容易量不準，導致判斷「有沒有超出」這個邏輯失效 */
+        #search-placeholder-text {
+            display: inline-block;
+            max-width: 100%;
+        }
+        #search-placeholder-text.marquee {
+            animation: search-marquee 9s linear infinite;
+            padding-left: 100%; /* 從輸入框最右邊開始，往左捲動 */
+            max-width: none;
+        }
+        @keyframes search-marquee {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-100%); }
+        }
+
+        .btn-primary {
+            background: var(--jam); color: #fff; border-radius: 999px;
+            padding: 0.95rem 1.75rem; font-weight: 600; transition: background .2s, transform .1s;
+        }
+        .btn-primary:hover { background: var(--jam-dark); }
+        .btn-primary:active { transform: scale(.97); }
+        .btn-primary:disabled { opacity: .6; cursor: not-allowed; }
+        .btn-secondary {
+            background: var(--cream); color: var(--espresso); border: 1px solid var(--line);
+            border-radius: 999px; padding: 0.95rem 1.75rem; font-weight: 600; transition: background .2s;
+        }
+        .btn-secondary:hover { background: #F1E7D6; }
+        .btn-danger { background: var(--danger); color: #fff; border-radius: 999px; padding: 0.95rem 1.75rem; font-weight: 600; transition: background .2s; }
+        .btn-danger:hover { background: #A6362F; }
+        .btn-amber { background: var(--honey); color: #fff; border-radius: 999px; padding: 0.95rem 1.75rem; font-weight: 600; transition: background .2s; }
+        .btn-amber:hover { background: #AC7420; }
+        .btn-sage { background: var(--chambray); color: #fff; border-radius: 999px; padding: 0.95rem 1.75rem; font-weight: 600; transition: background .2s; }
+        .btn-sage:hover { background: #4A6883; }
+
+        .chip {
+            padding: 0.55rem 1.1rem; border-radius: 999px; border: 1px solid var(--line);
+            background: var(--paper); color: var(--espresso-soft); font-size: 0.95rem;
+            white-space: nowrap; transition: all .2s; flex-shrink: 0;
+        }
+        .chip.active { background: var(--jam); color: #fff; border-color: var(--jam); }
+        .chip-row { display: flex; gap: 0.5rem; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; padding-bottom: 2px; }
+        .chip-row::-webkit-scrollbar { display: none; }
+
+        /* 手機底部導覽列美化：浮動毛玻璃質感 + 選中狀態底色 + 按壓回饋，中央新增按鈕加上柔和光暈 */
+        #mobile-bottom-nav {
+            background: rgba(253, 250, 244, 0.88);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border-top: 1px solid rgba(0,0,0,0.05);
+            box-shadow: 0 -6px 24px rgba(74, 46, 30, 0.08);
+        }
+        #mobile-bottom-nav .nav-btn {
+            border-radius: 1rem; transition: transform .15s ease, background-color .2s ease, color .2s ease;
+            font-size: 0.8rem;
+        }
+        #mobile-bottom-nav .nav-btn:active { transform: scale(0.90); }
+        #mobile-bottom-nav .nav-btn.nav-active { color: var(--jam) !important; background: rgba(168, 50, 74, 0.08); }
+        #mobile-bottom-nav .nav-fab {
+            box-shadow: 0 6px 18px rgba(168, 50, 74, 0.38), 0 0 0 6px rgba(253, 250, 244, 0.9);
+            transition: transform .15s ease;
+        }
+        #mobile-bottom-nav .nav-fab:active { transform: scale(0.92); }
+
+        /* 手機版漢堡選單：開關按鈕跟選單項目的樣式 */
+        .mobile-menu-toggle-btn {
+            width: 2.5rem; height: 2.5rem; border-radius: 0.9rem; display: flex; align-items: center; justify-content: center;
+            font-size: 1.3rem; line-height: 1; color: var(--jam); background: rgba(168,50,74,0.08);
+            transition: transform .15s ease, background-color .2s ease;
+        }
+        .mobile-menu-toggle-btn:active { transform: scale(0.9); background: rgba(168,50,74,0.16); }
+        .mobile-menu-item {
+            width: 100%; display: flex; align-items: center; gap: 0.85rem; text-align: left;
+            padding: 0.8rem 0.75rem; border-radius: 1rem; color: var(--espresso); font-weight: 500;
+            transition: background-color .15s ease, transform .1s ease;
+        }
+        .mobile-menu-item:active { transform: scale(0.98); background: var(--cream); }
+        .mobile-menu-item-icon {
+            width: 2.25rem; height: 2.25rem; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center;
+            font-size: 1.15rem; flex-shrink: 0;
+        }
+
+        /* 電腦版header的下拉選單：把管理員專屬功能（食材熱量管理/孤兒圖片清單/成就總覽）收進一個
+           「⚙ 管理」按鈕裡，不然這幾顆按鈕全部平鋪在header上，隨著功能越加越多only會越擠 */
+        .header-dropdown-panel {
+            position: absolute !important; right: 0; top: calc(100% + 0.5rem); width: 15rem; z-index: 9999 !important;
+            background: var(--paper); border-radius: 1.25rem; overflow: hidden;
+            box-shadow: 0 16px 32px -8px rgba(58,42,30,0.28), 0 0 0 1px rgba(58,42,30,0.04);
+        }
+        .header-dropdown-item {
+            width: 100%; display: flex; align-items: center; gap: 0.75rem; text-align: left;
+            padding: 0.7rem 0.9rem; color: var(--espresso); font-weight: 500; font-size: 0.9rem;
+            transition: background-color .15s ease;
+        }
+        .header-dropdown-item:hover { background: var(--cream); }
+
+        /* 做菜音樂：烹飪模式時插入在「食材」標題右邊、同一列並排的細長播放器，
+           不顯示影片畫面，時間軸/跑馬燈歌名/隨機/上一首/播放暫停/下一首全部擠在同一行 */
+        #cooking-music-widget {
+            display: flex; align-items: center; gap: 0.5rem; flex: 1 1 auto; min-width: 0;
+            padding: 0.3rem 0.6rem; border-radius: 999px; background: rgba(58,42,30,0.9);
+        }
+        /* #id的優先權比.hidden這個class選擇器高，如果不額外補這條，該隱藏的時候會被上面的
+           display:flex蓋過去，導致播放器該藏的時候藏不住 */
+        #cooking-music-widget.hidden { display: none; }
+        /* 廣告略過用的小畫面：故意做得很小，平常聽歌不會太搶眼，但遇到廣告出現略過鈕時
+           還是看得到、點得到 */
+        #cooking-video-skip-widget {
+            width: 6.5rem; aspect-ratio: 16/9; border-radius: 0.6rem; overflow: hidden; background: #000;
+            box-shadow: 0 4px 10px -2px rgba(58,42,30,0.3); flex-shrink: 0;
+        }
+        #cooking-video-skip-widget.hidden { display: none; }
+        /* 個人頁面：查看更多的完整清單改成跟儀表板一致的縮圖格線 */
+        .personal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: 1.1rem 0.75rem; }
+        .personal-grid-item { width: auto; }
+        .personal-grid-item img { width: 100%; aspect-ratio: 1/1; }
+        /* 儀表板上的我的食譜/我的收藏區塊：限制成固定9欄的格線，最多兩列共18筆，
+           半透明白色背景加上區塊感，跟旁邊的成就/音樂卡片明顯分開 */
+        .personal-section-block {
+            background: rgba(255,253,249,0.65); border-radius: 1.25rem; padding: 1.1rem 1.1rem 0.9rem;
+        }
+        .personal-section-block .personal-grid {
+            grid-template-columns: repeat(9, 1fr); grid-template-rows: repeat(2, auto); grid-auto-flow: row;
+            overflow: hidden; max-height: calc(2 * (6.5rem + 1.6rem) + 1.1rem);
+        }
+        @media (max-width: 900px) {
+            /* 手機螢幕塞不下9欄，改成固定兩列、往右一直排下去、用左右滑動瀏覽，
+               不要硬擠成4欄變5列，那樣配合外層overflow:hidden會把後面的項目直接裁切消失 */
+            .personal-section-block .personal-grid {
+                grid-template-columns: none; grid-auto-columns: 5.5rem; grid-template-rows: repeat(2, auto);
+                grid-auto-flow: column; overflow-x: auto; overflow-y: hidden; max-height: none;
+                -webkit-overflow-scrolling: touch; padding-bottom: 0.3rem;
+            }
+            .personal-section-block .personal-grid .personal-grid-item { width: 5.5rem; }
+        }
+        .personal-info-card { }
+        /* 個人頁面儀表板：成就/做菜音樂資訊卡 */
+        .personal-info-card {
+            display: flex; align-items: center; gap: 0.85rem; padding: 1rem 1.1rem; border-radius: 1.1rem;
+            background: var(--paper); text-align: left; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08);
+        }
+        .personal-info-card:hover { background: var(--cream); }
+        .personal-info-card-icon { font-size: 1.6rem; flex-shrink: 0; }
+        .personal-info-card-text { display: flex; flex-direction: column; min-width: 0; }
+        .personal-info-card-title { font-weight: 600; }
+        .personal-info-card-sub { font-size: 0.78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* 我的食譜/我的收藏：橫向捲動的小縮圖列 */
+        .personal-scroll-row { display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 0.3rem; -webkit-overflow-scrolling: touch; }
+        .personal-scroll-item { flex-shrink: 0; width: 6.5rem; cursor: pointer; }
+        .personal-scroll-item img {
+            width: 6.5rem; height: 6.5rem; object-fit: cover; border-radius: 0.9rem; margin-bottom: 0.35rem;
+            background: var(--line);
+        }
+        .personal-scroll-item p {
+            font-size: 0.78rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; text-align: center;
+        }
+        #cooking-music-widget .music-progress-track {
+            width: 3rem; flex-shrink: 0; height: 3px; border-radius: 999px; background: rgba(255,255,255,0.22);
+            overflow: hidden; cursor: pointer;
+        }
+        #cooking-music-widget .music-progress-fill { height: 100%; width: 0%; background: var(--jam); }
+        #cooking-music-widget .music-title-wrap {
+            flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap;
+            display: flex; align-items: center; height: 1.4rem;
+        }
+        #cooking-music-widget .music-title-text { display: inline-block; font-size: 0.75rem; line-height: 1.4rem; color: #F5EBDF; }
+        #cooking-music-widget .music-title-text.marquee { animation: music-marquee 14s linear infinite; padding-left: 100%; }
+        @keyframes music-marquee { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+        #cooking-music-widget .music-controls { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
+        #cooking-music-widget .music-ctrl-btn {
+            width: 1.6rem; height: 1.6rem; border-radius: 999px; display: flex; align-items: center; justify-content: center;
+            background: rgba(255,255,255,0.12); color: #F5EBDF; font-size: 0.75rem; flex-shrink: 0;
+            border: none; outline: none; -webkit-tap-highlight-color: transparent; -webkit-appearance: none; appearance: none;
+        }
+        /* 按下去/被focus時瀏覽器預設會加一圈藍色反白或outline，這裡明確蓋掉，
+           統一改成跟平常一樣的半透明白底，只有真的「隨機播放開啟中」才會變成強調色 */
+        #cooking-music-widget .music-ctrl-btn:focus,
+        #cooking-music-widget .music-ctrl-btn:active,
+        #cooking-music-widget .music-ctrl-btn:focus-visible {
+            outline: none; background: rgba(255,255,255,0.12);
+        }
+        #cooking-music-widget .music-ctrl-btn.active,
+        #cooking-music-widget .music-ctrl-btn.active:focus,
+        #cooking-music-widget .music-ctrl-btn.active:active { background: var(--jam); }
+        #cooking-music-widget .music-video-hidden { width: 0; height: 0; overflow: hidden; position: absolute; }
+
+
+        /* 首頁歡迎Hero橫幅：溫暖漸層背景 + 手繪風裝飾插畫，取代原本樸素的空白開頭 */
+        .hero-banner {
+            position: relative; overflow: hidden; border-radius: 1.75rem;
+            background-image: url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1200,q_auto,f_auto/v1785416137/Hero1_ivluzw.png');
+            background-image: image-set(
+                url('https://res.cloudinary.com/bumzwp9g/image/upload/w_800,q_auto,f_auto/v1785416137/Hero1_ivluzw.png') 1x,
+                url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1600,q_auto,f_auto/v1785416137/Hero1_ivluzw.png') 2x
+            );
+            background-size: cover; background-position: center right;
+        }
+        .hero-banner::before {
+            content: ''; position: absolute; inset: 0;
+            background: linear-gradient(90deg, rgba(251,243,231,0.94) 0%, rgba(251,243,231,0.75) 35%, rgba(251,243,231,0.15) 62%, rgba(251,243,231,0) 78%);
+        }
+        .hero-content { position: relative; z-index: 1; max-width: 60%; }
+        .hero-banner header, .hero-banner .hero-content { position: relative; z-index: 1; }
+        .hero-banner .chip { background: rgba(255,253,249,0.75); }
+        .hero-banner .form-input { background: rgba(255,253,249,0.8); }
+        .hero-banner .chip.active { background: var(--jam); color: #fff; }
+        #extra-filter-chips .chip, #category-chips .chip {
+            font-family: "LXGW WenKai TC", 'Noto Sans TC', sans-serif;
+            font-weight: 600;
+        }
+        /* 食譜詳細頁裡的一般內文(食材清單、步驟文字等)套用LXGW WenKai TC，
+           標題類(.font-display)跟已經個別指定字型的元素(如食譜名稱)不受影響，會維持各自的字型 */
+        #detail-modal { font-family: "LXGW WenKai TC", 'Noto Sans TC', sans-serif; }
+        .hero-greeting { font-family: 'cwTeXYen', 'Noto Serif TC', serif; font-size: 1.5rem; font-weight: 700; color: var(--espresso); margin-bottom: 0.35rem; }
+        .hero-subtitle { font-size: 0.95rem; color: var(--espresso-soft); }
+        .hero-categories { position: relative; z-index: 1; }
+
+        /* 各視窗標題列背景圖的共用樣式：只在標題那一條放照片，下面清單維持純色背景方便閱讀 */
+        .modal-photo-header {
+            position: relative; overflow: hidden;
+            background-size: cover; background-position: center right;
+        }
+        .modal-photo-header::before {
+            content: ''; position: absolute; inset: 0;
+            background: linear-gradient(90deg, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.7) 40%, rgba(255,255,255,0.15) 70%, rgba(255,255,255,0) 85%);
+        }
+        .modal-photo-header > * { position: relative; z-index: 1; }
+        @media (max-width: 640px) {
+            .hero-content { max-width: 68%; }
+            .hero-greeting { font-size: 1.15rem; }
+            .hero-subtitle { font-size: 0.8rem; }
+            /* 手機版已經有底部導覽列涵蓋採購/冰箱/市場/最愛，這排快速標籤只留「我的食譜」就好，不用重複 */
+            #extra-filter-chips .chip:not(#chip-mine) { display: none; }
+            /* 手機版的熱門分類標籤不用侷限寬度閃避照片，直接橫跨整個寬度疊在底圖上即可 */
+            .hero-categories { max-width: none; }
+        }
+        /* 桌機（>=768px）版面寬度足夠，改用自動換行取代橫向捲動，
+           避免分類標籤在寬螢幕上被裁切、看起來像消失或跑版 */
+        @media (min-width: 768px) {
+            .chip-row { flex-wrap: wrap; overflow-x: visible; padding-bottom: 0; }
+        }
+
+        .modal-backdrop { background: rgba(58,42,30,0.55); }
+        .sheet-panel { animation: sheetUp .35s cubic-bezier(.22,1,.36,1); }
+        @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        @media (min-width: 768px) {
+            @keyframes sheetUp { from { transform: translateY(16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .sheet-panel { animation: none; }
+            .recipe-card { transition: none; }
+        }
+
+        /* 異世界料理者這款遊戲用全螢幕呈現，畫面比較大、比較沉浸 */
+        #game-modal.rpg-fullscreen > div {
+            width: 100vw; max-width: 100vw; height: 100vh; max-height: 100vh;
+            border-radius: 0; margin: 0;
+        }
+        #game-modal.rpg-fullscreen { align-items: stretch; justify-content: stretch; }
+
+        .fav-btn {
+            width: 2.25rem; height: 2.25rem; border-radius: 999px;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(255,255,255,0.92);
+        }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; }
+
+        /* 完成慶祝彈窗 */
+        @keyframes celebratePop { from { transform: scale(.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .celebrate-pop { animation: celebratePop .35s cubic-bezier(.22,1,.36,1); }
+
+        /* 五種「大功告成」慶祝變化組合共用的 emoji 動畫 */
+        @keyframes celebrateRise {
+            0% { transform: translateY(0) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            100% { transform: translateY(-100vh) rotate(20deg); opacity: 0; }
+        }
+        @keyframes celebrateFall {
+            0% { transform: translateY(0) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            100% { transform: translateY(100vh) rotate(-20deg); opacity: 0; }
+        }
+        @keyframes celebrateBurst {
+            0% { transform: translate(-50%, -50%) scale(.3); opacity: 0; }
+            15% { opacity: 1; transform: translate(-50%, -50%) scale(1.15); }
+            100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(.8); opacity: 0; }
+        }
+
+        /* 虛擬廚房挑戰賽：切菜食材的倒數消失動畫、燒焦時的搞笑抖動動畫 */
+        @keyframes dashPop {
+            0% { transform: scale(1); opacity: 1; }
+            70% { transform: scale(1); opacity: 1; }
+            100% { transform: scale(0.5); opacity: 0.2; }
+        }
+        @keyframes dashShake {
+            0%, 100% { transform: translateX(0) rotate(0deg); }
+            20% { transform: translateX(-8px) rotate(-6deg); }
+            40% { transform: translateX(8px) rotate(6deg); }
+            60% { transform: translateX(-6px) rotate(-4deg); }
+            80% { transform: translateX(6px) rotate(4deg); }
+        }
+        .dash-shake { animation: dashShake 0.5s ease-in-out 2; }
+
+        /* 廚房挑戰賽・烘焙賽道：節奏拌料的圓圈長大動畫 */
+        @keyframes dashRhythmGrow {
+            0% { width: 20px; height: 20px; opacity: 0.9; }
+            100% { width: 172px; height: 172px; opacity: 0.5; }
+        }
+
+        /* 神廚火候控制：完美區間的發光呼吸動畫 */
+        @keyframes qteZoneGlow {
+            0%, 100% { filter: brightness(1); }
+            50% { filter: brightness(1.18); }
+        }
+
+        /* 步驟勾選 */
+        .step-checkbox i { transition: color .2s; }
+        .step-row { transition: opacity .2s; }
+
+        /* 手機/平板橫向：極簡料理模式的樣式改由 JavaScript 直接寫入 inline style（見 applyCookingMode 函式），
+           不再依賴 @media 查詢或 CSS 變數繼承——inline style 優先權最高，不會被任何 CSS 規則覆蓋掉，
+           避免不同瀏覽器/PWA 對 media query 支援度不一致導致樣式套用不了的問題 */
+        .cook-mode-text-lg { font-size: 1.15em !important; }
+    </style>
+</head>
+<body style="background:var(--cream); color:var(--espresso);">
+    <div class="max-w-2xl mx-auto min-h-screen" style="background:var(--paper);">
+        <header class="px-4 sm:px-6 py-4 flex items-center justify-between border-b" style="border-color:var(--line)">
+            <div class="flex items-center gap-2 min-w-0">
+                <div class="w-9 h-9 rounded-xl flex items-center justify-center text-xl shrink-0" style="background:var(--jam)">🎮</div>
+                <h1 class="font-display text-xl font-bold truncate">遊戲場</h1>
+            </div>
+            <a href="index.html" class="text-sm font-medium shrink-0" style="color:var(--jam); text-decoration:none;">← 回到 JUST DO EAT</a>
+        </header>
+        <div id="game-login-hint" class="hidden text-center py-20 px-4" style="color:var(--espresso-soft)">
+            <p class="text-lg mb-2">🔒 請先登入才能玩遊戲</p>
+            <p class="text-sm">回到 <a href="index.html" style="color:var(--jam)">首頁</a> 登入之後再回來這裡</p>
+        </div>
+        <div id="game-modal-body-wrap" class="hidden px-4 sm:px-6 py-6">
+            <h2 class="font-display text-xl sm:text-2xl font-bold mb-4" id="game-modal-title">🎮 遊戲場</h2>
+            <div id="game-modal-body"></div>
+        </div>
+    </div>
+<script>
+        const firebaseConfig = {
+          apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
+          authDomain: "recipe-synchronization.firebaseapp.com",
+          projectId: "recipe-synchronization",
+          storageBucket: "recipe-synchronization.firebasestorage.app",
+          messagingSenderId: "559668909743",
+          appId: "1:559668909743:web:63dc34572b98839479265a"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
+
+        let currentUser = null;
+        let userProgress = null;
+
+        // 跟index.html共用同一個Firebase專案+同樣的LOCAL持久化設定，只要在index.html登入過，
+        // 這裡會自動偵測到已經登入的狀態，不用重新登入一次(跟ktv.html是同一套做法)
+        auth.onAuthStateChanged(async user => {
+            currentUser = user;
+            document.getElementById('game-login-hint').classList.toggle('hidden', !!user);
+            document.getElementById('game-modal-body-wrap').classList.toggle('hidden', !user);
+            if (user) {
+                try {
+                    const doc = await db.collection('userProgress').doc(user.uid).get();
+                    userProgress = doc.exists ? doc.data() : {};
+                } catch (err) {
+                    userProgress = {};
+                }
+                renderGameMenu();
+            }
+        });
+        // ---------- 音效系統(從index.html移植過來的簡化版，只保留這五個小遊戲會用到的音效) ----------
+        let sharedAudioCtx = null;
+        function ensureAudioContext() {
+            try {
+                if (!sharedAudioCtx) sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume().catch(() => {});
+            } catch (e) {}
+        }
+        function playGameTone(freq, duration, gain, delay, waveType, options) {
+            try {
+                ensureAudioContext();
+                const ctx = sharedAudioCtx;
+                if (!ctx) return;
+                options = options || {};
+                const t0 = ctx.currentTime + (delay || 0);
+                const master = ctx.createGain();
+                master.gain.value = 1;
+                if (options.filterFreq) {
+                    const filter = ctx.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.value = options.filterFreq;
+                    filter.Q.value = options.filterQ || 0.7;
+                    master.connect(filter); filter.connect(ctx.destination);
+                } else {
+                    master.connect(ctx.destination);
+                }
+                const makeOsc = (f, g, type, detune) => {
+                    const osc = ctx.createOscillator();
+                    const og = ctx.createGain();
+                    osc.type = type || waveType || 'sine';
+                    osc.frequency.value = f;
+                    if (detune) osc.detune.value = detune;
+                    osc.connect(og); og.connect(master);
+                    og.gain.setValueAtTime(0.0001, t0);
+                    og.gain.exponentialRampToValueAtTime(Math.max(g, 0.0002), t0 + (options.attack || 0.012));
+                    og.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+                    osc.start(t0);
+                    osc.stop(t0 + duration + 0.03);
+                };
+                makeOsc(freq, gain, waveType, 0);
+                if (!options.noHarmonic) makeOsc(freq * 2, gain * 0.22, waveType === 'sine' ? 'triangle' : waveType, 4);
+                if (options.subOctave) makeOsc(freq / 2, gain * 0.35, 'sine', -4);
+                if (options.percussive) {
+                    const bufSize = Math.floor(ctx.sampleRate * 0.05);
+                    const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+                    const data = buf.getChannelData(0);
+                    for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufSize);
+                    const noise = ctx.createBufferSource();
+                    noise.buffer = buf;
+                    const nf = ctx.createBiquadFilter();
+                    nf.type = 'highpass'; nf.frequency.value = 800;
+                    const ng = ctx.createGain();
+                    ng.gain.setValueAtTime(gain * 0.5, t0);
+                    ng.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.06);
+                    noise.connect(nf); nf.connect(ng); ng.connect(ctx.destination);
+                    noise.start(t0);
+                }
+            } catch (e) {}
+        }
+        function playSfx(type) {
+            switch (type) {
+                case 'success': playGameTone(880, 0.12, 0.28); playGameTone(1318, 0.18, 0.24, 0.09); break;
+                case 'perfect': playGameTone(1046, 0.1, 0.3); playGameTone(1318, 0.1, 0.26, 0.08); playGameTone(1568, 0.2, 0.24, 0.16); break;
+                case 'fail': playGameTone(220, 0.3, 0.3, 0, 'sawtooth'); break;
+                case 'burnt': playGameTone(160, 0.35, 0.3, 0, 'sawtooth'); playGameTone(110, 0.4, 0.26, 0.12, 'sawtooth'); break;
+                case 'click': playGameTone(600, 0.06, 0.16); break;
+                case 'chop': playGameTone(320, 0.05, 0.22, 0, 'square'); break;
+                case 'buy': playGameTone(700, 0.08, 0.2); playGameTone(950, 0.1, 0.16, 0.05); break;
+                case 'sell': playGameTone(500, 0.08, 0.2); playGameTone(350, 0.1, 0.16, 0.05); break;
+                case 'tick': playGameTone(440, 0.04, 0.1); break;
+                case 'news': playGameTone(760, 0.09, 0.22); playGameTone(1140, 0.12, 0.18, 0.06); break;
+            }
+        }
+        // ---------- 從index.html移植的小工具函式 ----------
+        function getYoutubeVideoId(url) {
+            if (!url) return null;
+            const watchMatch = url.match(/[?&]v=([^&]+)/);
+            const shortMatch = url.match(/youtu\.be\/([^?&]+)/);
+            const embedMatch = url.match(/embed\/([^?&]+)/);
+            const shortsMatch = url.match(/shorts\/([^?&]+)/);
+            if (watchMatch) return watchMatch[1];
+            if (shortMatch) return shortMatch[1];
+            if (embedMatch) return embedMatch[1];
+            if (shortsMatch) return shortsMatch[1];
+            return null;
+        }
+        function getYoutubeThumbnailUrl(url) {
+            const videoId = getYoutubeVideoId(url);
+            return videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null;
+        }
+        function convertToMilliliters(amount, unit) {
+            switch ((unit || '').trim().toLowerCase()) {
+                case 'ml': case '毫升': return amount;
+                case 'l': case '公升': return amount * 1000;
+                case 'tbsp': case '大匙': case '湯匙': return amount * 15;
+                case 'tsp': case '茶匙': case '小匙': return amount * 5;
+                case 'cup': case '杯': return amount * 240;
+                default: return null;
+            }
+        }
+        const COUNT_UNIT_WORDS = ['顆', '粒', '個', '顆粒', '根', '條', '片', '球', '把', '串', '瓣', '塊', '朵', '支', '尾', '隻'];
+        // 這三個函式在index.html的完整版本，是查一份非常龐大的台灣食品營養資料庫本地備援表(上千行)，
+        // 這裡簡化成直接回傳null——不影響正確性，因為呼叫端(resolveIngredientNutritionNoAI等)
+        // 本來就是「Firestore共用快取查不到 → 才會退回這幾個本地查詢函式 → 查不到就是查不到，
+        // 那筆食材/食譜直接跳過」的設計，本來就有「查不到」的容錯路徑，只是這裡讓它必定落在
+        // 「查不到」這條路徑，不會影響遊戲正常運作，只是极少數Firestore還沒建立過快取的冷門食材
+        // 可能不會被選進遊戲的候選菜單池
+        function guessIngredientDensity(name) { return null; }
+        function guessIngredientNutrition(name) { return null; }
+        function guessPieceWeight(name) { return null; }
+        // 追蹤目前在遊戲場的哪個畫面('hub'=遊戲選單、'game'=正在玩、'leaderboard'=排行榜)，
+        // 從index.html移植過來的變數，五個小遊戲的程式碼內部都還會設定這個值
+        let currentGameScreen = 'hub';
+        function renderGameMenu() {
+            currentGameScreen = 'hub';
+            qteCleanup();
+            stockGameCleanup();
+            dashGameCleanup();
+            dinerGameCleanup();
+            tinyDinerCleanup();
+            document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
+            document.getElementById('game-modal-title').style.cssText = ''; // 重設地圖名稱的置中樣式，避免殘留影響其他畫面
+            document.getElementById('game-modal-body').innerHTML = `
+                <button onclick="playSfx('click'); startQteGame()" class="w-full p-5 rounded-2xl text-left mb-4 modal-photo-header" style="border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s; background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785682735/chef_ug0nwa.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785682735/chef_ug0nwa.png') 2x);">
+                    <img src="https://res.cloudinary.com/bumzwp9g/image/upload/w_120,q_auto,f_auto/v1785682735/chef_ug0nwa.png" class="w-14 h-14 rounded-xl object-cover mb-2" alt="">
+                    <p class="font-display font-bold text-lg">神廚火候控制</p>
+                    <p class="text-xs mt-1" style="color:var(--espresso-soft)">指針單向掃過，快狠準按到完美區間分數最高！越後面關卡越難</p>
+                </button>
+                <button onclick="playSfx('click'); startStockGame()" class="w-full p-5 rounded-2xl text-left mb-4 modal-photo-header" style="border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s; background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785684035/Exchange_ilzhii.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785684035/Exchange_ilzhii.png') 2x);">
+                    <img src="https://res.cloudinary.com/bumzwp9g/image/upload/w_120,q_auto,f_auto/v1785684035/Exchange_ilzhii.png" class="w-14 h-14 rounded-xl object-cover mb-2" alt="">
+                    <p class="font-display font-bold text-lg">食材期貨大亨</p>
+                    <p class="text-xs mt-1" style="color:var(--espresso-soft)">30 天內低買高賣食材賺取利潤，留意新聞快訊，判斷價格走勢！</p>
+                </button>
+                <button onclick="playSfx('click'); startDashGame()" class="w-full p-5 rounded-2xl text-left mb-4 modal-photo-header" style="border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s; background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785684431/Several_chefs_gz3gxl.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785684431/Several_chefs_gz3gxl.png') 2x);">
+                    <img src="https://res.cloudinary.com/bumzwp9g/image/upload/w_120,q_auto,f_auto/v1785684431/Several_chefs_gz3gxl.png" class="w-14 h-14 rounded-xl object-cover mb-2" alt="">
+                    <p class="font-display font-bold text-lg">虛擬廚房挑戰賽</p>
+                    <p class="text-xs mt-1" style="color:var(--espresso-soft)">隨機抽到的菜色不同，玩法也不一樣：快炒要切菜顧火、烘焙要抓節奏顧烤箱、冷藏甜點要搶時間擺盤！過關後還會推薦同分類的真食譜給你。</p>
+                </button>
+                <button onclick="playSfx('click'); startDinerGame()" class="w-full p-5 rounded-2xl text-left mb-4 modal-photo-header" style="border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s; background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785683327/Midnight_Diner_yuvmbp.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785683327/Midnight_Diner_yuvmbp.png') 2x);">
+                    <img src="https://res.cloudinary.com/bumzwp9g/image/upload/w_120,q_auto,f_auto/v1785683327/Midnight_Diner_yuvmbp.png" class="w-14 h-14 rounded-xl object-cover mb-2" alt="">
+                    <p class="font-display font-bold text-lg">深夜食堂</p>
+                    <p class="text-xs mt-1" style="color:var(--espresso-soft)">文字生存冒險，撐過 20 天的離奇夜晚，別讓生命、名聲或資金歸零！</p>
+                </button>
+                <button onclick="playSfx('click'); startTinyDinerGame()" class="w-full p-5 rounded-2xl text-left mb-4 modal-photo-header" style="border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s; background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785684057/Small_restaurant_wqdswc.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785684057/Small_restaurant_wqdswc.png') 2x);">
+                    <img src="https://res.cloudinary.com/bumzwp9g/image/upload/w_120,q_auto,f_auto/v1785684057/Small_restaurant_wqdswc.png" class="w-14 h-14 rounded-xl object-cover mb-2" alt="">
+                    <p class="font-display font-bold text-lg">小餐廳經營模擬</p>
+                    <p class="text-xs mt-1" style="color:var(--espresso-soft)">用平台真實食譜的熱量換算售價，排菜單、抓備料量，經營 10 天看誰賺最多！</p>
+                </button>
+                <p class="text-xs text-center mb-4" style="color:var(--muted)">🗺️ 異世界料理者暫時還在原本的頁面，之後會搬過來這裡</p>
+                <div>
+                    <div class="modal-photo-header rounded-2xl px-4 py-4 mb-3" style="background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785486362/Achievement_gqdqic.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785486362/Achievement_gqdqic.png') 2x);">
+                        <h3 class="font-display font-semibold text-lg mb-3">🏆 排行榜</h3>
+                        <div class="flex gap-2 flex-wrap">
+                            <button onclick="showLeaderboard('qte')" class="chip">神廚火候控制</button>
+                            <button onclick="showLeaderboard('stock')" class="chip">食材期貨大亨</button>
+                            <button onclick="showLeaderboard('dash')" class="chip">廚房挑戰賽</button>
+                            <button onclick="showLeaderboard('diner')" class="chip">深夜食堂</button>
+                            <button onclick="showLeaderboard('tinydiner')" class="chip">餐廳經營</button>
+                        </div>
+                    </div>
+                    <div id="leaderboard-list"><p class="text-sm" style="color:var(--muted)">點上面的按鈕看排行榜</p></div>
+                </div>
+            `;
+        }
+
+        // ---------- 神廚火候控制（QTE）----------
+        const QTE_DISHES = [
+            { name: '松露濃湯', tip: '溫度達到 85 度時關火' },
+            { name: '奶油白醬義大利麵', tip: '醬汁收到剛好濃稠時關火' },
+            { name: '炙燒和牛', tip: '油溫達到七分熟油亮時起鍋' },
+            { name: '法式吐司', tip: '兩面呈現金黃色時翻面' },
+            { name: '焦糖布丁', tip: '糖漿呈現琥珀色時離火' },
+        ];
+        let qteState = null;
+
+        function qteKeyHandler(e) {
+            if (e.code === 'Space') { e.preventDefault(); qteAction(); }
+        }
+        function qteCleanup() {
+            if (qteState) {
+                qteState.running = false;
+                if (qteState.rafId) cancelAnimationFrame(qteState.rafId);
+            }
+            document.removeEventListener('keydown', qteKeyHandler);
+            qteState = null;
+        }
+
+        function startQteGame() {
+            if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            currentGameScreen = 'game';
+            qteCleanup();
+            ensureAudioContext(); // 在按下「開始」這個真正的點擊當下解鎖音效
+            document.getElementById('game-modal-title').textContent = '🔥 神廚火候控制';
+            qteState = { round: 0, totalRounds: 5, score: 0, running: false, position: 0, speed: 1.3, zoneStart: 40, zoneWidth: 16, rafId: null, resultLock: false };
+            renderQteRound();
+        }
+
+        function renderQteRound() {
+            const state = qteState;
+            if (!state) return;
+            if (state.round >= state.totalRounds) { qteCleanup(); showGameOverScreen('qte', state.score); return; }
+            const dish = QTE_DISHES[state.round % QTE_DISHES.length];
+            // 難度隨回合遞增：指針變快、綠色完美區間變窄
+            state.speed = 1.3 + state.round * 0.4;
+            state.zoneWidth = Math.max(18 - state.round * 2, 8);
+            state.zoneStart = 8 + Math.random() * (92 - state.zoneWidth - 8);
+            state.position = 0;
+            state.resultLock = false;
+
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center mb-4">
+                    <p class="text-sm" style="color:var(--muted)">第 ${state.round + 1} / ${state.totalRounds} 關 ・ 分數：<span id="qte-score-num">${state.score}</span></p>
+                    <p class="font-display text-lg font-bold mt-1">正在製作「${dish.name}」</p>
+                    <p class="text-sm mt-1" style="color:var(--jam)">請在${dish.tip}！越快越準分數越高</p>
+                </div>
+                <div style="position:relative; height:40px; border-radius:999px; overflow:hidden; background:linear-gradient(90deg, #EFEAE0, #E4DACB); box-shadow:inset 0 2px 6px rgba(58,42,30,0.15);">
+                    <div style="position:absolute; top:0; bottom:0; left:${state.zoneStart}%; width:${state.zoneWidth}%; background:linear-gradient(180deg, #9BC49B, #7FAE7F); box-shadow:0 0 14px 2px rgba(111,140,110,0.55); animation:qteZoneGlow 1.1s ease-in-out infinite;"></div>
+                    <div id="qte-pointer" style="position:absolute; top:-6px; bottom:-6px; width:6px; background:var(--jam); left:0%; border-radius:999px; box-shadow:0 0 10px 2px rgba(168,50,74,0.6);"></div>
+                </div>
+                <p id="qte-feedback" class="text-center font-display text-2xl font-bold mt-6" style="min-height:2.5rem;"></p>
+                <button id="qte-action-btn" onclick="qteAction()" class="btn-primary w-full mt-4 text-lg">🔥 關火！（電腦可按空白鍵）</button>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">放棄遊戲</button>
+            `;
+            state.running = true;
+            document.addEventListener('keydown', qteKeyHandler);
+            qteLoop();
+        }
+
+        function qteLoop() {
+            const state = qteState;
+            if (!state || !state.running) return;
+            state.position += state.speed; // 單向掃過，不會來回彈跳，強調「第一次」的反應
+            const pointer = document.getElementById('qte-pointer');
+            if (pointer) pointer.style.left = Math.min(state.position, 100) + '%';
+            if (state.position >= 100) { qteResolve(false); return; }
+            state.rafId = requestAnimationFrame(qteLoop);
+        }
+
+        function qteAction() {
+            const state = qteState;
+            if (!state || !state.running || state.resultLock) return;
+            const inZone = state.position >= state.zoneStart && state.position <= state.zoneStart + state.zoneWidth;
+            qteResolve(inZone);
+        }
+
+        // inZone 為 false 代表沒按到（含超出範圍沒按到的情況）；分數同時看「有沒有按到」跟「按到當下離區間入口多近」
+        function qteResolve(inZone) {
+            const state = qteState;
+            if (!state || state.resultLock) return;
+            state.resultLock = true;
+            state.running = false;
+            if (state.rafId) cancelAnimationFrame(state.rafId);
+            document.removeEventListener('keydown', qteKeyHandler);
+
+            const feedback = document.getElementById('qte-feedback');
+            const actionBtn = document.getElementById('qte-action-btn');
+            let roundScore = 0;
+            if (inZone) {
+                const positionInZone = (state.position - state.zoneStart) / state.zoneWidth; // 0=剛進區間(最快)，1=快出區間(較慢)
+                const speedFactor = 1 - Math.max(0, Math.min(1, positionInZone));
+                roundScore = Math.round(100 * (0.5 + 0.5 * speedFactor));
+                state.score += roundScore;
+                document.getElementById('qte-score-num').textContent = state.score;
+                if (speedFactor > 0.75) {
+                    if (feedback) { feedback.textContent = `✨ 快狠準！特級料理！+${roundScore}`; feedback.style.color = 'var(--sage)'; }
+                    playSfx('perfect');
+                } else {
+                    if (feedback) { feedback.textContent = `👍 成功關火！+${roundScore}`; feedback.style.color = 'var(--sage)'; }
+                    playSfx('success');
+                }
+                if (navigator.vibrate) navigator.vibrate([60]);
+            } else {
+                if (feedback) { feedback.textContent = '🔥 燒焦了…'; feedback.style.color = 'var(--danger)'; }
+                playSfx('burnt');
+                if (navigator.vibrate) navigator.vibrate([150, 60, 150]);
+            }
+            if (actionBtn) actionBtn.disabled = true;
+            setTimeout(() => { if (qteState === state) { state.round++; renderQteRound(); } }, 1200);
+        }
+
+        // ---------- 遊戲結束畫面 + 排行榜（給之後陸續新增的遊戲共用）----------
+        // ---------- 食材期貨大亨（低買高賣，含新聞事件影響價格走勢）----------
+        const STOCK_INGREDIENT_POOL = [
+            { id: 'beef', name: '🥩 牛肉', basePrice: 450 },
+            { id: 'egg', name: '🥚 雞蛋', basePrice: 80 },
+            { id: 'truffle', name: '🍄 松露', basePrice: 2200 },
+            { id: 'flour', name: '🌾 麵粉', basePrice: 35 },
+            { id: 'salmon', name: '🐟 鮭魚', basePrice: 380 },
+            { id: 'cheese', name: '🧀 起司', basePrice: 260 },
+            { id: 'coffee', name: '☕ 咖啡豆', basePrice: 550 },
+            { id: 'vegetable', name: '🥬 時蔬', basePrice: 40 },
+        ];
+        // ingredientMatch 對到特定食材；沒有指定的新聞會隨機影響某一項食材
+        const STOCK_NEWS = [
+            { text: '今年冬天極寒，雞蛋產量暴跌！', ingredientMatch: '雞蛋', direction: 1 },
+            { text: '牧場爆發傳染病，牛肉供應緊張！', ingredientMatch: '牛肉', direction: 1 },
+            { text: '義大利松露大豐收，價格可能鬆動', ingredientMatch: '松露', direction: -1 },
+            { text: '寒流來襲，時蔬產量吃緊', ingredientMatch: '時蔬', direction: 1 },
+            { text: '咖啡產地豪雨成災，期貨價格看漲', ingredientMatch: '咖啡豆', direction: 1 },
+            { text: '鮭魚養殖大豐收，供給大增', ingredientMatch: '鮭魚', direction: -1 },
+            { text: '國際運費飆漲，進口食材成本上升', ingredientMatch: null, direction: 1 },
+            { text: '小農契作計畫上線，本地食材供應增加', ingredientMatch: null, direction: -1 },
+            { text: '網紅餐廳大量採購，市場搶購潮湧現', ingredientMatch: null, direction: 1 },
+            { text: '食安風波爆發，消費者需求驟減', ingredientMatch: null, direction: -1 },
+        ];
+        let stockGameState = null;
+        const STOCK_LOT = 5;
+
+        function stockGameCleanup() {
+            if (stockGameState && stockGameState.intervalId) clearInterval(stockGameState.intervalId);
+            stockGameState = null;
+        }
+
+        function startStockGame() {
+            if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            currentGameScreen = 'game';
+            qteCleanup();
+            stockGameCleanup();
+            ensureAudioContext(); // 在按下「開始」這個真正的點擊當下解鎖音效
+            const pool = [...STOCK_INGREDIENT_POOL].sort(() => Math.random() - 0.5).slice(0, 5);
+            const ingredients = pool.map(p => ({ ...p, price: p.basePrice, lastChangePct: 0, held: 0 }));
+            stockGameState = { day: 0, totalDays: 30, cash: 100000, ingredients, priceBias: {}, newsLog: [], intervalId: null, secondsLeft: 5 };
+            renderStockBoard();
+            stockGameState.intervalId = setInterval(() => {
+                const state = stockGameState;
+                if (!state) return;
+                state.secondsLeft--;
+                updateStockTimerLabel();
+                if (state.secondsLeft <= 0) {
+                    state.secondsLeft = 5;
+                    tickStockDay();
+                }
+            }, 1000);
+        }
+
+        function updateStockTimerLabel() {
+            const el = document.getElementById('stock-timer');
+            if (el && stockGameState) el.textContent = stockGameState.secondsLeft;
+        }
+
+        function triggerStockNews() {
+            const state = stockGameState;
+            const news = STOCK_NEWS[Math.floor(Math.random() * STOCK_NEWS.length)];
+            let targetIng = news.ingredientMatch ? state.ingredients.find(i => i.name.includes(news.ingredientMatch)) : null;
+            if (!targetIng) targetIng = state.ingredients[Math.floor(Math.random() * state.ingredients.length)];
+            state.priceBias[targetIng.id] = { direction: news.direction, daysLeft: 3 + Math.floor(Math.random() * 2) };
+            state.newsLog.unshift(`📰 第${state.day + 1}天：${news.text}（${targetIng.name}走勢${news.direction > 0 ? '看漲' : '看跌'}）`);
+            state.newsLog = state.newsLog.slice(0, 5);
+            playSfx('news');
+        }
+
+        function tickStockDay() {
+            const state = stockGameState;
+            if (!state) return;
+            state.day++;
+            playSfx('tick');
+            Object.keys(state.priceBias).forEach(id => {
+                if (state.priceBias[id].daysLeft > 0) state.priceBias[id].daysLeft--;
+            });
+            if (Math.random() < 0.35) triggerStockNews();
+            state.ingredients.forEach(ing => {
+                const bias = state.priceBias[ing.id];
+                const biasDirection = (bias && bias.daysLeft > 0) ? bias.direction : 0;
+                let changePct = (Math.random() * 0.16 - 0.08); // 基礎波動 -8% ~ +8%
+                if (biasDirection !== 0) changePct += biasDirection * (0.03 + Math.random() * 0.05); // 新聞帶來的額外偏移
+                ing.price = Math.max(1, ing.price * (1 + changePct));
+                ing.lastChangePct = changePct;
+            });
+            if (state.day >= state.totalDays) { endStockGame(); return; }
+            renderStockBoard();
+        }
+
+        function stockTrade(ingId, action) {
+            const state = stockGameState;
+            if (!state) return;
+            const ing = state.ingredients.find(i => i.id === ingId);
+            if (!ing) return;
+            if (action === 'buy') {
+                const cost = ing.price * STOCK_LOT;
+                if (state.cash < cost) return;
+                state.cash -= cost;
+                ing.held += STOCK_LOT;
+                playSfx('buy');
+            } else {
+                if (ing.held < STOCK_LOT) return;
+                state.cash += ing.price * STOCK_LOT;
+                ing.held -= STOCK_LOT;
+                playSfx('sell');
+            }
+            renderStockBoard();
+        }
+
+        function renderStockBoard() {
+            const state = stockGameState;
+            if (!state) return;
+            const totalHoldingsValue = state.ingredients.reduce((sum, ing) => sum + ing.price * ing.held, 0);
+            const totalAsset = state.cash + totalHoldingsValue;
+            document.getElementById('game-modal-title').textContent = '📈 食材期貨大亨';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="flex justify-between items-center mb-1 text-sm">
+                    <p>第 ${state.day} / ${state.totalDays} 天 ・ 下次變動：<span id="stock-timer" class="font-semibold" style="color:var(--jam)">${state.secondsLeft}</span>s</p>
+                    <p>總資產：<span class="font-bold text-base" style="color:var(--jam)">$${Math.round(totalAsset).toLocaleString()}</span></p>
+                </div>
+                <p class="text-xs mb-3" style="color:var(--muted)">現金：$${Math.round(state.cash).toLocaleString()}</p>
+                <!-- 新聞區固定高度、內部自己捲動，不會把下面買賣區擠下去 -->
+                <div class="mb-3 space-y-1 rounded-2xl" style="max-height:84px; overflow-y:auto; background:rgba(244,228,234,0.4); padding:6px;">${state.newsLog.length ? state.newsLog.map((n, i) => `<p class="text-xs px-3 py-1.5 rounded-xl" style="background:var(--cream); color:var(--espresso-soft); ${i === 0 ? 'border-left:3px solid var(--jam);' : ''}">${n}</p>`).join('') : '<p class="text-xs px-2" style="color:var(--muted)">市場平靜，還沒有新聞</p>'}</div>
+                <div class="mb-4">
+                    ${state.ingredients.map(ing => {
+                        const isUp = ing.lastChangePct > 0, isDown = ing.lastChangePct < 0;
+                        const changeColor = isUp ? 'var(--danger)' : isDown ? 'var(--sage)' : 'var(--muted)';
+                        const borderColor = isUp ? 'var(--danger)' : isDown ? 'var(--sage)' : 'var(--line)';
+                        const changeLabel = state.day === 0 ? '' : `${isUp ? '▲' : isDown ? '▼' : '－'} ${(Math.abs(ing.lastChangePct) * 100).toFixed(1)}%`;
+                        const canBuy = state.cash >= ing.price * STOCK_LOT;
+                        const canSell = ing.held >= STOCK_LOT;
+                        return `<div class="px-4 py-3 rounded-2xl mb-2" style="background:var(--cream); border-left:4px solid ${borderColor}; transition:border-color .3s;">
+                            <div class="flex justify-between items-center mb-1">
+                                <p class="font-semibold">${ing.name}</p>
+                                <p class="font-bold">$${Math.round(ing.price).toLocaleString()} <span class="text-xs font-semibold" style="color:${changeColor}">${changeLabel}</span></p>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <p class="text-xs" style="color:var(--muted)">持有 ${ing.held}</p>
+                                <div class="flex gap-1.5">
+                                    <button onclick="stockTrade('${ing.id}','buy')" ${canBuy ? '' : 'disabled'} class="btn-amber !px-3 !py-1 text-xs" style="${canBuy ? '' : 'opacity:.4'}">⬆️ 買 ${STOCK_LOT}</button>
+                                    <button onclick="stockTrade('${ing.id}','sell')" ${canSell ? '' : 'disabled'} class="btn-secondary !px-3 !py-1 text-xs" style="${canSell ? '' : 'opacity:.4'}">⬇️ 賣 ${STOCK_LOT}</button>
+                                </div>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full">放棄遊戲</button>
+            `;
+        }
+
+        function endStockGame() {
+            const state = stockGameState;
+            if (!state) return;
+            if (state.intervalId) clearInterval(state.intervalId);
+            const totalHoldingsValue = state.ingredients.reduce((sum, ing) => sum + ing.price * ing.held, 0);
+            const finalAsset = Math.round(state.cash + totalHoldingsValue);
+            const startingCash = 100000;
+            const profitPct = (finalAsset - startingCash) / startingCash;
+            // 分數改用「獲利百分比 x 1000」，不要直接用資產金額，這樣才能跟其他遊戲的分數量級對齊，
+            // 不會出現一個遊戲幾百分、另一個遊戲幾百萬分這種不成比例的落差；最低 0 分（賠錢不會扣成負分）
+            const score = Math.max(0, Math.round(profitPct * 1000));
+            const detail = `最終資產：$${finalAsset.toLocaleString()}（起始資金 $100,000，獲利 ${(profitPct * 100).toFixed(1)}%）`;
+            stockGameState = null;
+            showGameOverScreen('stock', score, detail);
+        }
+
+        // ---------- 虛擬廚房挑戰賽（切菜 → 火候 → 結算，過關後推薦同分類真食譜）----------
+        // 虛擬廚房挑戰賽：依料理種類分成三條不同玩法的賽道，抽到不同菜會玩到完全不一樣的小遊戲
+        //   stir（快炒烹飪：中/西/日式、其他）  → 切菜 + 火候控制
+        //   bake（烘焙：蛋糕/麵包/餅乾塔派）    → 節奏拌料 + 烤箱蓄熱計時
+        //   chill（冷藏組裝：健康餐/慕斯布丁/寶寶食品）→ 食材擺盤 + 裝飾加分
+        const DASH_DISHES = [
+            { name: '奶油炒野菇', category: '西式烹飪', track: 'stir', ingredients: ['🍄', '🧈', '🧄', '🌿'] },
+            { name: '蔥爆牛肉', category: '中式烹飪', track: 'stir', ingredients: ['🥩', '🧅', '🧄', '🌶️'] },
+            { name: '照燒雞腿', category: '日式烹飪', track: 'stir', ingredients: ['🍗', '🧅', '🍯', '🌰'] },
+            { name: '田園蔬菜沙拉', category: '健康餐', track: 'chill', ingredients: ['🥬', '🍅', '🥕', '🧀'] },
+            { name: '蜂蜜檸檬磅蛋糕', category: '蛋糕/糕餅', track: 'bake', ingredients: ['🍋', '🍯', '🥚', '🧈'] },
+            { name: '蒜香奶油餐包', category: '麵包/包子', track: 'bake', ingredients: ['🌾', '🧈', '🧄', '🥛'] },
+            { name: '檸檬奶酥塔', category: '餅乾/塔派', track: 'bake', ingredients: ['🍋', '🧈', '🌾', '🥚'] },
+            { name: '芒果奶酪', category: '慕斯/布丁', track: 'chill', ingredients: ['🥭', '🍮', '🥛', '🍯'] },
+            { name: '南瓜蔬菜泥', category: '寶寶食品', track: 'chill', ingredients: ['🎃', '🥕', '🍚', '🍌'] },
+            { name: '私房萬用醬料', category: '其他', track: 'stir', ingredients: ['🧄', '🌶️', '🍯', '🧂'] },
+        ];
+        let dashGameState = null;
+
+        function dashGameCleanup() {
+            if (dashGameState) {
+                if (dashGameState.chopTimeoutId) clearTimeout(dashGameState.chopTimeoutId);
+                if (dashGameState.heatRafId) cancelAnimationFrame(dashGameState.heatRafId);
+                if (dashGameState.rhythmTimeoutId) clearTimeout(dashGameState.rhythmTimeoutId);
+                if (dashGameState.ovenRafId) cancelAnimationFrame(dashGameState.ovenRafId);
+                if (dashGameState.platingTimerId) clearTimeout(dashGameState.platingTimerId);
+                if (dashGameState.garnishTimers) dashGameState.garnishTimers.forEach(t => clearTimeout(t));
+                dashGameState.heatRunning = false;
+                dashGameState.ovenRunning = false;
+            }
+            dashGameState = null;
+        }
+
+        function startDashGame() {
+            if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            currentGameScreen = 'game';
+            qteCleanup(); stockGameCleanup(); dashGameCleanup();
+            ensureAudioContext(); // 在按下「開始」這個真正的點擊當下解鎖音效
+            const dish = DASH_DISHES[Math.floor(Math.random() * DASH_DISHES.length)];
+            dashGameState = {
+                dish,
+                primaryHits: 0, primaryTotal: dish.ingredients.length, // 三條賽道共用：第一階段命中數/總數
+                secondaryHits: 0, secondaryTotal: 1,                    // 三條賽道共用：第二階段命中數/總數
+                chopIndex: 0, chopResolved: false, chopTimeoutId: null,
+                heatRunning: false, heatRafId: null,
+                rhythmIndex: 0, rhythmResolved: false, rhythmTimeoutId: null,
+                ovenRunning: false, ovenRafId: null, ovenLevel: 0,
+                platingPlaced: {}, platingTimeLeft: 6.0, platingTimerId: null,
+                garnishHits: 0, garnishTotal: 4, garnishActive: -1, garnishRound: 0, garnishTimers: [],
+            };
+            if (dish.track === 'bake') renderDashRhythmRound();
+            else if (dish.track === 'chill') renderDashPlatingRound();
+            else renderDashChopRound();
+        }
+
+        // ============== 賽道 A・快炒烹飪：切菜 + 火候控制 ==============
+        function renderDashChopRound() {
+            const state = dashGameState;
+            if (!state) return;
+            if (state.chopIndex >= state.primaryTotal) { startDashHeat(); return; }
+            const dish = state.dish;
+            const emoji = dish.ingredients[state.chopIndex];
+            state.chopResolved = false;
+            document.getElementById('game-modal-title').textContent = `🔪 備料切菜（${dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-center text-sm mb-2" style="color:var(--muted)">第 ${state.chopIndex + 1}/${state.primaryTotal} 項食材 ・ 命中 <span style="color:var(--jam); font-weight:600">${state.primaryHits}</span></p>
+                <div class="flex justify-center items-center rounded-3xl" style="height:200px; background:radial-gradient(circle, rgba(244,228,234,0.6), transparent 70%);">
+                    <button onclick="dashChopHit()" class="text-7xl" style="animation: dashPop 0.9s linear forwards; filter:drop-shadow(0 6px 10px rgba(58,42,30,0.25));">${emoji}</button>
+                </div>
+                <p class="text-center text-xs" style="color:var(--muted)">食材消失前點一下切它！</p>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-4">放棄遊戲</button>
+            `;
+            state.chopTimeoutId = setTimeout(() => {
+                if (state.chopResolved) return;
+                state.chopResolved = true;
+                playSfx('fail');
+                state.chopIndex++;
+                setTimeout(renderDashChopRound, 200);
+            }, 900);
+        }
+        function dashChopHit() {
+            const state = dashGameState;
+            if (!state || state.chopResolved) return;
+            state.chopResolved = true;
+            clearTimeout(state.chopTimeoutId);
+            state.primaryHits++;
+            playSfx('chop');
+            if (navigator.vibrate) navigator.vibrate([30]);
+            state.chopIndex++;
+            setTimeout(renderDashChopRound, 200);
+        }
+
+        function startDashHeat() {
+            const state = dashGameState;
+            if (!state) return;
+            state.heatPosition = 0;
+            state.heatDirection = 1;
+            state.heatSpeed = 2.2;
+            state.heatZoneWidth = 14;
+            state.heatZoneStart = 15 + Math.random() * (85 - state.heatZoneWidth - 15);
+            document.getElementById('game-modal-title').textContent = `🔥 火候控制（${state.dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-center text-sm mb-4" style="color:var(--jam)">在綠色區間按下「起鍋」，火太大會焦、太小會生！</p>
+                <div style="position:relative; height:40px; border-radius:999px; overflow:hidden; background:linear-gradient(90deg, #EFEAE0, #E4DACB); box-shadow:inset 0 2px 6px rgba(58,42,30,0.15);">
+                    <div style="position:absolute; top:0; bottom:0; left:${state.heatZoneStart}%; width:${state.heatZoneWidth}%; background:linear-gradient(180deg, #9BC49B, #7FAE7F); box-shadow:0 0 14px 2px rgba(111,140,110,0.55); animation:qteZoneGlow 1.1s ease-in-out infinite;"></div>
+                    <div id="dash-heat-pointer" style="position:absolute; top:-6px; bottom:-6px; width:6px; background:var(--jam); left:0%; border-radius:999px; box-shadow:0 0 10px 2px rgba(168,50,74,0.6);"></div>
+                </div>
+                <button onclick="dashHeatAction()" class="btn-primary w-full mt-6 text-lg">🍳 起鍋！</button>
+            `;
+            state.heatRunning = true;
+            dashHeatLoop();
+        }
+        function dashHeatLoop() {
+            const state = dashGameState;
+            if (!state || !state.heatRunning) return;
+            state.heatPosition += state.heatDirection * state.heatSpeed;
+            if (state.heatPosition >= 100) { state.heatPosition = 100; state.heatDirection = -1; }
+            if (state.heatPosition <= 0) { state.heatPosition = 0; state.heatDirection = 1; }
+            const pointer = document.getElementById('dash-heat-pointer');
+            if (pointer) pointer.style.left = state.heatPosition + '%';
+            state.heatRafId = requestAnimationFrame(dashHeatLoop);
+        }
+        function dashHeatAction() {
+            const state = dashGameState;
+            if (!state || !state.heatRunning) return;
+            state.heatRunning = false;
+            if (state.heatRafId) cancelAnimationFrame(state.heatRafId);
+            const success = state.heatPosition >= state.heatZoneStart && state.heatPosition <= state.heatZoneStart + state.heatZoneWidth;
+            state.secondaryHits = success ? 1 : 0;
+            playSfx(success ? 'success' : 'burnt');
+            if (navigator.vibrate) navigator.vibrate(success ? [60] : [150, 60, 150]);
+            finishDashGame();
+        }
+
+        // ============== 賽道 B・烘焙：節奏拌料 + 烤箱蓄熱計時 ==============
+        const DASH_RHYTHM_TOTAL = 5;
+        function renderDashRhythmRound() {
+            const state = dashGameState;
+            if (!state) return;
+            if (state.rhythmIndex >= DASH_RHYTHM_TOTAL) { startDashOven(); return; }
+            state.rhythmResolved = false;
+            document.getElementById('game-modal-title').textContent = `🥣 節奏拌料（${state.dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-center text-sm mb-2" style="color:var(--muted)">第 ${state.rhythmIndex + 1}/${DASH_RHYTHM_TOTAL} 下 ・ 命中 <span style="color:var(--jam); font-weight:600">${state.primaryHits}</span></p>
+                <div class="flex justify-center items-center" style="height:200px;">
+                    <div style="position:relative; width:172px; height:172px;">
+                        <div style="position:absolute; inset:0; border-radius:999px; border:4px solid var(--honey);"></div>
+                        <div id="dash-rhythm-ring" style="position:absolute; inset:0; margin:auto; width:20px; height:20px; border-radius:999px; background:var(--jam); animation:dashRhythmGrow 1.15s linear forwards;"></div>
+                    </div>
+                </div>
+                <button onclick="dashRhythmTap()" class="btn-primary w-full mt-4 text-lg">🥄 攪拌！</button>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-2">放棄遊戲</button>
+            `;
+            state.rhythmTimeoutId = setTimeout(() => {
+                if (state.rhythmResolved) return;
+                state.rhythmResolved = true;
+                playSfx('fail');
+                state.rhythmIndex++;
+                setTimeout(renderDashRhythmRound, 200);
+            }, 1200);
+        }
+        function dashRhythmTap() {
+            const state = dashGameState;
+            if (!state || state.rhythmResolved) return;
+            const ring = document.getElementById('dash-rhythm-ring');
+            if (!ring) return;
+            const size = ring.getBoundingClientRect().width;
+            // 圓圈長到接近外框（172px）時點下去才算準
+            const hit = size >= 128 && size <= 172;
+            state.rhythmResolved = true;
+            clearTimeout(state.rhythmTimeoutId);
+            if (hit) { state.primaryHits++; playSfx('chop'); if (navigator.vibrate) navigator.vibrate([30]); }
+            else { playSfx('fail'); }
+            state.rhythmIndex++;
+            setTimeout(renderDashRhythmRound, 200);
+        }
+
+        function startDashOven() {
+            const state = dashGameState;
+            if (!state) return;
+            state.ovenLevel = 0;
+            state.ovenRunning = false;
+            state.ovenZoneStart = 55 + Math.random() * 15; // 目標區間偏高，烤箱要蓄熱到一定程度才好
+            state.ovenZoneWidth = 14;
+            document.getElementById('game-modal-title').textContent = `🔥 烤箱計時（${state.dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-center text-sm mb-4" style="color:var(--jam)">按住「加熱」蓄熱，熱度進到綠色區間時放開！</p>
+                <div style="position:relative; height:200px; width:60px; margin:0 auto; border-radius:999px; overflow:hidden; background:linear-gradient(180deg, #E4DACB, #EFEAE0); box-shadow:inset 0 2px 6px rgba(58,42,30,0.15);">
+                    <div style="position:absolute; left:0; right:0; bottom:${state.ovenZoneStart}%; height:${state.ovenZoneWidth}%; background:linear-gradient(180deg, #7FAE7F, #9BC49B); box-shadow:0 0 14px 2px rgba(111,140,110,0.55); animation:qteZoneGlow 1.1s ease-in-out infinite;"></div>
+                    <div id="dash-oven-fill" style="position:absolute; left:0; right:0; bottom:0; height:0%; background:linear-gradient(180deg, #E8A33D, var(--danger));"></div>
+                </div>
+                <button id="dash-oven-btn" class="btn-primary w-full mt-6 text-lg select-none" style="touch-action:none;">🔥 按住加熱</button>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-2">放棄遊戲</button>
+            `;
+            const btn = document.getElementById('dash-oven-btn');
+            if (btn) {
+                btn.addEventListener('pointerdown', e => { e.preventDefault(); dashOvenStart(); });
+                btn.addEventListener('pointerup', e => { e.preventDefault(); dashOvenRelease(); });
+                btn.addEventListener('pointerleave', e => { e.preventDefault(); dashOvenRelease(); });
+            }
+        }
+        function dashOvenStart() {
+            const state = dashGameState;
+            if (!state || state.ovenRunning) return;
+            state.ovenRunning = true;
+            dashOvenLoop();
+        }
+        function dashOvenLoop() {
+            const state = dashGameState;
+            if (!state || !state.ovenRunning) return;
+            state.ovenLevel = Math.min(100, state.ovenLevel + 1.8);
+            const fill = document.getElementById('dash-oven-fill');
+            if (fill) fill.style.height = state.ovenLevel + '%';
+            if (state.ovenLevel >= 100) { dashOvenRelease(); return; }
+            state.ovenRafId = requestAnimationFrame(dashOvenLoop);
+        }
+        function dashOvenRelease() {
+            const state = dashGameState;
+            if (!state || !state.ovenRunning) return;
+            state.ovenRunning = false;
+            if (state.ovenRafId) cancelAnimationFrame(state.ovenRafId);
+            const success = state.ovenLevel >= state.ovenZoneStart && state.ovenLevel <= state.ovenZoneStart + state.ovenZoneWidth;
+            state.secondaryHits = success ? 1 : 0;
+            playSfx(success ? 'success' : 'burnt');
+            if (navigator.vibrate) navigator.vibrate(success ? [60] : [150, 60, 150]);
+            finishDashGame();
+        }
+
+        // ============== 賽道 C・冷藏組裝：食材擺盤 + 裝飾加分 ==============
+        function renderDashPlatingRound() {
+            const state = dashGameState;
+            if (!state) return;
+            state.platingPlaced = {};
+            state.platingTimeLeft = 6.0;
+            document.getElementById('game-modal-title').textContent = `🍽️ 食材擺盤（${state.dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = dashPlatingHTML();
+            dashPlatingTimerLoop();
+        }
+        function dashPlatingHTML() {
+            const state = dashGameState;
+            const dish = state.dish;
+            const positions = [{ top: '10%', left: '50%' }, { top: '50%', left: '87%' }, { top: '88%', left: '50%' }, { top: '50%', left: '13%' }];
+            const slotsHtml = dish.ingredients.map((emoji, i) => {
+                const placed = !!state.platingPlaced[i];
+                const pos = positions[i] || positions[0];
+                return `<button ${placed ? 'disabled' : `onclick="dashPlatingPlace(${i})"`} style="position:absolute; top:${pos.top}; left:${pos.left}; transform:translate(-50%,-50%); width:56px; height:56px; border-radius:999px; border:2px dashed ${placed ? 'var(--sage)' : '#D9C9A8'}; background:${placed ? 'rgba(159,196,159,0.3)' : 'rgba(255,255,255,0.6)'}; display:flex; align-items:center; justify-content:center; font-size:1.6rem;">${placed ? emoji : '？'}</button>`;
+            }).join('');
+            return `
+                <p class="text-center text-sm mb-2" style="color:var(--muted)">時間內把所有食材點上盤子！剩餘 <span id="dash-plating-timer" style="color:var(--jam); font-weight:600">${state.platingTimeLeft.toFixed(1)}</span> 秒</p>
+                <div style="position:relative; width:220px; height:220px; margin:0 auto 16px; border-radius:999px; background:radial-gradient(circle, rgba(244,228,234,0.6), transparent 70%); border:3px solid var(--paper);">
+                    ${slotsHtml}
+                </div>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full">放棄遊戲</button>
+            `;
+        }
+        function dashPlatingTimerLoop() {
+            const state = dashGameState;
+            if (!state || state.primaryHits >= state.primaryTotal) return;
+            state.platingTimeLeft -= 0.1;
+            const timerEl = document.getElementById('dash-plating-timer');
+            if (timerEl) timerEl.textContent = Math.max(0, state.platingTimeLeft).toFixed(1);
+            if (state.platingTimeLeft <= 0) { startDashGarnish(); return; }
+            state.platingTimerId = setTimeout(dashPlatingTimerLoop, 100);
+        }
+        function dashPlatingPlace(i) {
+            const state = dashGameState;
+            if (!state || state.platingPlaced[i]) return;
+            state.platingPlaced[i] = true;
+            state.primaryHits++;
+            playSfx('chop');
+            if (navigator.vibrate) navigator.vibrate([30]);
+            document.getElementById('game-modal-body').innerHTML = dashPlatingHTML();
+            if (state.primaryHits >= state.primaryTotal) { clearTimeout(state.platingTimerId); setTimeout(startDashGarnish, 300); }
+        }
+
+        function startDashGarnish() {
+            const state = dashGameState;
+            if (!state) return;
+            if (state.platingTimerId) clearTimeout(state.platingTimerId);
+            state.garnishHits = 0;
+            state.garnishTotal = 4;
+            state.garnishActive = -1;
+            state.garnishRound = 0;
+            document.getElementById('game-modal-title').textContent = `✨ 裝飾加分（${state.dish.name}）`;
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-center text-sm mb-4" style="color:var(--muted)">閃光出現時點一下加分！</p>
+                <div style="position:relative; width:220px; height:180px; margin:0 auto;">
+                    ${[0, 1, 2, 3].map(i => `<button id="dash-garnish-${i}" onclick="dashGarnishTap(${i})" style="position:absolute; width:52px; height:52px; border-radius:999px; background:var(--cream); border:2px solid var(--line); transition:background .15s, box-shadow .15s; ${['top:0;left:8%', 'top:0;right:8%', 'bottom:0;left:8%', 'bottom:0;right:8%'][i]}"></button>`).join('')}
+                </div>
+            `;
+            dashGarnishNextFlash();
+        }
+        function dashGarnishNextFlash() {
+            const state = dashGameState;
+            if (!state) return;
+            state.garnishRound++;
+            if (state.garnishRound > state.garnishTotal) { finishDashGame(); return; }
+            const idx = Math.floor(Math.random() * 4);
+            state.garnishActive = idx;
+            const btn = document.getElementById(`dash-garnish-${idx}`);
+            if (btn) { btn.style.background = 'var(--honey)'; btn.style.boxShadow = '0 0 16px 4px rgba(232,163,61,0.6)'; }
+            state.garnishTimers.push(setTimeout(() => {
+                if (state.garnishActive === idx) {
+                    if (btn) { btn.style.background = 'var(--cream)'; btn.style.boxShadow = 'none'; }
+                    state.garnishActive = -1;
+                    dashGarnishNextFlash();
+                }
+            }, 700));
+        }
+        function dashGarnishTap(i) {
+            const state = dashGameState;
+            if (!state || state.garnishActive !== i) return;
+            state.garnishHits++;
+            state.secondaryHits = state.garnishHits;
+            state.secondaryTotal = state.garnishTotal;
+            state.garnishActive = -1;
+            playSfx('chop');
+            if (navigator.vibrate) navigator.vibrate([30]);
+            const btn = document.getElementById(`dash-garnish-${i}`);
+            if (btn) { btn.style.background = 'var(--sage)'; btn.style.boxShadow = 'none'; }
+            setTimeout(dashGarnishNextFlash, 150);
+        }
+
+        // 結算：三條賽道統一用「第一階段命中率(佔60分) + 第二階段命中率(佔30分)」計分，
+        // 燒焦時有搞笑抖動動畫，並推薦同分類真食譜
+        function finishDashGame() {
+            const state = dashGameState;
+            if (!state) return;
+            const primaryScore = Math.round(state.primaryHits / state.primaryTotal * 60);
+            const secondaryScore = Math.round(state.secondaryHits / state.secondaryTotal * 30);
+            const score = primaryScore + secondaryScore;
+            let rating, emoji;
+            if (state.primaryHits === state.primaryTotal && state.secondaryHits === state.secondaryTotal) { rating = '特級料理'; emoji = '✨'; }
+            else if (state.primaryHits >= state.primaryTotal / 2 || state.secondaryHits >= state.secondaryTotal / 2) { rating = '普通'; emoji = '🍽️'; }
+            else { rating = '燒焦了！'; emoji = '🔥😱'; }
+            const dish = state.dish;
+            dashGameState = null;
+            renderDashResult(rating, emoji, score, dish);
+        }
+
+        function renderDashResult(rating, emoji, score, dish) {
+            document.getElementById('game-modal-title').textContent = '🍽️ 廚房挑戰賽';
+            const isBurnt = rating === '燒焦了！';
+            const isPerfect = rating === '特級料理';
+            const cardBg = isBurnt ? 'linear-gradient(180deg, #FBEAE7, #FBF3E7)' : isPerfect ? 'linear-gradient(180deg, #FCF2DC, #FBF3E7)' : 'var(--paper)';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-6 rounded-3xl mb-4" style="background:${cardBg}">
+                    <div class="text-6xl mb-3 ${isBurnt ? 'dash-shake' : 'celebrate-pop'}">${emoji}</div>
+                    <p class="font-display text-2xl font-bold mb-1" style="color:${isBurnt ? 'var(--danger)' : 'var(--jam)'}">${rating}</p>
+                    <p class="text-sm mb-4" style="color:var(--muted)">「${dish.name}」挑戰結束 ・ 分數：<span class="font-bold" style="color:var(--honey)">${score}</span></p>
+                    <div class="flex gap-3 justify-center flex-wrap">
+                        <button onclick="submitGameScore('dash', ${score})" class="btn-primary">上傳分數到排行榜</button>
+                        <button onclick="renderGameMenu()" class="btn-secondary">返回選單</button>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="font-display font-semibold text-base mb-3">😋 想試試真正的「${dish.category}」食譜嗎？</h3>
+                    <div id="dash-recommend-list"><p class="text-sm" style="color:var(--muted)">載入推薦中…</p></div>
+                </div>
+            `;
+            loadDashRecommendations(dish.category);
+        }
+
+        async function loadDashRecommendations(category) {
+            try {
+                const snap = await db.collection('recipes').where('category', '==', category).limit(15).get();
+                const candidates = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => !r.visibility || r.visibility === 'public');
+                const picks = candidates.sort(() => Math.random() - 0.5).slice(0, 3);
+                const list = document.getElementById('dash-recommend-list');
+                if (!list) return;
+                if (picks.length === 0) { list.innerHTML = `<p class="text-sm" style="color:var(--muted)">目前這個分類還沒有食譜，去新增一篇吧！</p>`; return; }
+                list.innerHTML = picks.map((r, i) => `
+                    <div onclick="dashOpenRecipe(${i})" class="flex items-center gap-3 px-4 py-3 rounded-2xl mb-2 cursor-pointer" style="background:var(--cream)">
+                        ${r.imageUrl ? `<img src="${r.imageUrl}" class="w-12 h-12 rounded-xl object-cover shrink-0">` : (r.youtubeUrl && getYoutubeThumbnailUrl(r.youtubeUrl)) ? `<img src="${getYoutubeThumbnailUrl(r.youtubeUrl)}" class="w-12 h-12 rounded-xl object-cover shrink-0">` : `<div class="w-12 h-12 rounded-xl flex items-center justify-center text-xl shrink-0" style="background:var(--line)">🍽️</div>`}
+                        <div class="min-w-0">
+                            <p class="font-medium truncate">${r.name}</p>
+                            <p class="text-xs" style="color:var(--muted)">${r.servings} 個</p>
+                        </div>
+                    </div>
+                `).join('');
+                window.__dashRecommendPicks = picks; // 暫存，給下面點擊用真正的食譜物件開啟詳細頁
+            } catch (err) {
+                const list = document.getElementById('dash-recommend-list');
+                if (list) list.innerHTML = `<p class="text-sm" style="color:var(--danger)">推薦載入失敗：${err.message}</p>`;
+            }
+        }
+
+        const DINER_EVENTS = [
+            { cat: 'A', name: `黑道大哥`, story: `今天來了一位黑道大哥，要求你在拉麵裡加巧克力，說是「試膽量」。`, a: `婉拒並招待一碗招牌湯底當賠罪`, b: `咬牙照做，端出巧克力拉麵`, c: `用高超廚藝說服他改喝真正厲害的隱藏版辣湯` },
+            { cat: 'A', name: `工程師`, story: `一位工程師客人堅持要你「用科學方法」精準控制湯頭溫度到小數點後一位。`, a: `耐心解釋手感也是一種精準`, b: `勉強拿出溫度計配合演出`, c: `現場展示職人手感，準到讓他心服口服` },
+            { cat: 'A', name: `外星人`, story: `一位自稱外星人的客人，堅持地球的鹽對他來說是「毒藥」，要求特調湯頭。`, a: `禮貌拒絕特殊要求`, b: `硬著頭皮試著調一份無鹽版本`, c: `運用調味知識做出風味不減的低鈉版本` },
+            { cat: 'A', name: `忍者`, story: `一位忍者客人要求「無聲無息」地上菜，不能發出任何碗筷聲響。`, a: `婉拒這種特殊服務`, b: `小心翼翼配合他的要求`, c: `展現多年練就的輕手輕腳端菜絕活` },
+            { cat: 'A', name: `武林高手`, story: `一位武林高手客人堅持要「以武會友」，要你用鍋鏟接他一招。`, a: `婉拒切磋，專心做生意`, b: `硬著頭皮接招試試看`, c: `以多年顛鍋功夫穩穩接下，贏得滿堂彩` },
+            { cat: 'A', name: `偶像`, story: `一位當紅偶像戴著口罩低調光顧，卻被眼尖的路人認出。`, a: `低調協助他從後門離開`, b: `順勢讓他多留一會兒簽名合照`, c: `巧妙安排座位，讓他能安心用完餐再走` },
+            { cat: 'A', name: `網紅`, story: `一位網紅客人堅持要直播「開箱」你的廚房內部。`, a: `婉拒進廚房直播`, b: `答應讓他簡單拍一下`, c: `設計一套適合鏡頭又不影響作業的拍攝動線` },
+            { cat: 'A', name: `美食家`, story: `一位知名美食家微服私訪，質疑你的湯頭「少了層次」。`, a: `虛心接受批評`, b: `跟他爭辯自己的堅持`, c: `現場加碼展示私房秘方調味` },
+            { cat: 'A', name: `阿嬤`, story: `一位阿嬤客人堅持要教你「古法秘方」，說你煮的湯少了媽媽的味道。`, a: `禮貌婉拒，維持自己的配方`, b: `虛心照阿嬤說的方式試試看`, c: `融合阿嬤的建議調整出更好的版本` },
+            { cat: 'A', name: `小學生`, story: `一群小學生湊零用錢，只夠買半碗拉麵，卻堅持要吃你的招牌口味。`, a: `婉拒但送他們幾片配料`, b: `半價賣給他們招牌口味`, c: `巧手調配出小份量但一樣好吃的版本` },
+            { cat: 'A', name: `魔法師`, story: `一位自稱魔法師的客人，堅持要用「魔法」幫你的湯頭加持。`, a: `婉拒這種特殊服務`, b: `半信半疑讓他試試看`, c: `順勢配合演出，用真功夫證明湯頭本身夠好` },
+            { cat: 'A', name: `吸血鬼`, story: `一位打扮成吸血鬼的客人堅持只在深夜出沒，要求延長營業時間。`, a: `婉拒延長營業`, b: `破例為他多開一小時`, c: `談出彈性的深夜限定時段` },
+            { cat: 'A', name: `狼人`, story: `一位客人自稱狼人，說滿月的晚上食量會變成平常的三倍。`, a: `婉拒破例加大份量`, b: `硬著頭皮多煮三倍份量`, c: `設計加大版套餐滿足他又不虧本` },
+            { cat: 'A', name: `機器人`, story: `一位打扮成機器人的客人，堅持要精確到公克的食材秤重服務。`, a: `婉拒這種精密要求`, b: `勉強找出秤子配合演出`, c: `展現職人手感，準度不輸秤子讓他驚豔` },
+            { cat: 'A', name: `AI`, story: `一位自稱是「AI」化身的客人，說能預測你店裡明天的生意好壞。`, a: `婉拒聽這種預測`, b: `好奇聽聽看他怎麼說`, c: `跟他討論經營策略，順勢學到一手` },
+            { cat: 'A', name: `警察`, story: `一位警察客人吃到一半接到通報，急著出勤卻還沒付錢。`, a: `揮手讓他先去忙，帳先記著`, b: `堅持先結帳才能走`, c: `幫他打包帶走，順便送上加油打氣的話` },
+            { cat: 'A', name: `消防員`, story: `一位消防員客人剛救火回來，滿身煙味，要求最快最補的一碗麵。`, a: `端出現成的家常口味`, b: `隨便煮一碗應付`, c: `特別調製一碗高熱量的體力恢復版拉麵` },
+            { cat: 'A', name: `和尚`, story: `一位和尚客人堅持只吃全素，卻指定要用你的葷湯底調味。`, a: `婉拒違背素食原則的做法`, b: `硬著頭皮用葷湯調味`, c: `特別熬製一鍋純素高湯滿足他` },
+            { cat: 'A', name: `海盜`, story: `一位打扮成海盜的客人，堅持要用「藏寶圖」抵一碗麵錢。`, a: `婉拒收下這種抵帳方式`, b: `半信半疑收下藏寶圖`, c: `鑑定藏寶圖真偽，順勢談出合理交易` },
+            { cat: 'A', name: `總裁`, story: `一位總裁客人堅持要包下整條巷子的攤位，只為了一個人用餐。`, a: `婉拒這種誇張要求`, b: `順勢答應這筆大生意`, c: `談出合理的部分包場方案` },
+            { cat: 'A', name: `黑道大哥`, story: `黑道大哥帶著小弟包場，要求今晚只做他們的生意，其他客人一律請走。`, a: `低頭道歉，說明小店做不起這種陣仗`, b: `照辦，請其他客人先行離開`, c: `端出招牌菜色，試圖說服他們讓其他客人一起用餐` },
+            { cat: 'A', name: `工程師`, story: `工程師客人抱怨你的排隊系統太落後，主動要幫你寫一套排隊 App。`, a: `婉拒好意，怕出狀況`, b: `答應讓他試試看`, c: `跟他討論怎麼設計才符合小吃店真正的需求` },
+            { cat: 'A', name: `外星人`, story: `外星人客人用奇怪的手勢付款，看起來像是某種不明貨幣。`, a: `婉拒這種付款方式`, b: `收下，好奇心驅使先收再說`, c: `跟他交涉，用食材技藝換取「真正有用」的東西` },
+            { cat: 'A', name: `忍者`, story: `忍者客人吃完飯直接消失無蹤，留下一張寫著「感謝」的紙條，沒付錢。`, a: `認了這頓，當作積德`, b: `追出去看能不能要回錢`, c: `用職人直覺猜出他會回來，靜靜等待` },
+            { cat: 'A', name: `武林高手`, story: `武林高手客人說你的拉麵「內力不足」，湯頭少了點真氣。`, a: `笑笑帶過不放心上`, b: `照他建議調整口味`, c: `現場展現熬湯真功夫說服他刮目相看` },
+            { cat: 'A', name: `偶像`, story: `偶像客人指定要「跟廣告拍攝時一模一樣」的擺盤。`, a: `婉拒還原不出來的要求`, b: `盡力模仿廣告畫面擺盤`, c: `用專業擺盤技巧做出更好看的版本` },
+            { cat: 'A', name: `網紅`, story: `網紅客人吃完後說要給一星負評，除非你請他吃霸王餐。`, a: `堅持原則不妥協`, b: `妥協招待這一餐`, c: `用真材實料的說明扭轉他的評價` },
+            { cat: 'A', name: `美食家`, story: `美食家客人要求看你熬湯的「獨家秘方筆記」。`, a: `婉拒透露商業機密`, b: `半推半就給他看部分內容`, c: `用言語巧妙帶過，展現真本事說服他` },
+            { cat: 'A', name: `阿嬤`, story: `阿嬤客人每次來都要多要幾根蔥，說是「疼你才這樣」。`, a: `微笑照給，不計較`, b: `婉轉解釋成本問題`, c: `額外加碼送阿嬤一份小菜表達心意` },
+            { cat: 'A', name: `小學生`, story: `小學生客人吵著要「隱藏版彩色拉麵」，說同學都吃過。`, a: `解釋沒有這種菜色`, b: `隨口answer敷衍過去`, c: `用天然食材調出繽紛版本滿足他們` },
+            { cat: 'A', name: `魔法師`, story: `魔法師客人說能用咒語辨別食材新鮮度，要求檢查你的冰箱。`, a: `婉拒讓陌生人檢查冰箱`, b: `半信半疑讓他看看`, c: `自信地開放冰箱，用實際狀況說服他` },
+            { cat: 'A', name: `吸血鬼`, story: `吸血鬼客人說大蒜對他「過敏」，要求全店食材不能碰到蒜頭。`, a: `婉拒調整整間店的作業流程`, b: `特別為他準備無蒜版本`, c: `設計獨立料理區滿足他又不影響其他客人` },
+            { cat: 'A', name: `狼人`, story: `狼人客人堅持肉一定要「半生不熟」才夠味。`, a: `婉拒為了衛生安全的堅持`, b: `破例照他要求處理`, c: `用專業火候技巧做出他滿意又安全的熟度` },
+            { cat: 'A', name: `機器人`, story: `機器人客人的「電池」突然沒電，倒在店裡動不了。`, a: `扶他到旁邊休息，倒杯熱水`, b: `隨他去，反正也沒造成麻煩`, c: `端上熱騰騰的湯麵幫他「充電」` },
+            { cat: 'A', name: `AI`, story: `AI客人堅持要用「演算法」幫你優化菜單排序。`, a: `婉拒調整既有菜單`, b: `讓他試著調整看看`, c: `跟他討論後採用部分建議微調` },
+            { cat: 'A', name: `警察`, story: `警察客人懷疑你店裡的食材來源，要求臨檢。`, a: `配合臨檢，坦然應對`, b: `婉轉打太極拖延一下`, c: `自信展示進貨憑證，光明正大應對` },
+            { cat: 'A', name: `消防員`, story: `消防員客人指出你店裡的瓦斯管線有安全疑慮。`, a: `立刻請人來檢查`, b: `先擱著，晚點再處理`, c: `當場請他協助檢查，順勢學習正確知識` },
+            { cat: 'A', name: `和尚`, story: `和尚客人吃完飯後，只留下一句「隨喜」就要離開，沒付錢。`, a: `笑笑接受這頓當作功德`, b: `追上去婉轉提醒該付款`, c: `跟他結個善緣，順便請教幾句佛理` },
+            { cat: 'A', name: `海盜`, story: `海盜客人堅持要「以物易物」，用一把生鏽的劍換三碗麵。`, a: `婉拒這種不對等交易`, b: `答應這筆交易`, c: `鑑定劍的價值，談出公道的份量` },
+            { cat: 'A', name: `總裁`, story: `總裁客人問能不能投資你的店，開遍全台灣。`, a: `婉拒這種擴張計畫`, b: `答應聽聽看提案`, c: `認真討論，談出保留小店精神的合作模式` },
+            { cat: 'A', name: `黑道大哥`, story: `黑道大哥吃完後說沒帶錢，要求記帳，還說「你知道我是誰吧」。`, a: `笑笑說沒關係，這頓算招待`, b: `答應記帳，賭他會不會真的回來還`, c: `半開玩笑地展現刀工技藝，換取他當場付現` },
+            { cat: 'A', name: `工程師`, story: `工程師客人半夜還在店裡用筆電加班，佔位不走。`, a: `客氣提醒打烊時間`, b: `隨他去，反正店裡也沒什麼客人`, c: `端上一碗宵夜換他自己識相收拾東西` },
+            { cat: 'A', name: `外星人`, story: `外星人客人說地球的湯匙設計太原始，要教你「更先進」的喝湯方式。`, a: `笑笑帶過，繼續用自己的方式`, b: `配合他試試看新喝法`, c: `跟他討論，順便展示職人手藝說服他湯匙沒問題` },
+            { cat: 'A', name: `忍者`, story: `忍者客人堅持要坐在店裡最陰暗的角落，還要求關掉那盞燈。`, a: `配合但保留基本照明`, b: `直接把燈關掉`, c: `用氣氛營造技巧，讓陰暗角落反而變成特色座位` },
+            { cat: 'A', name: `武林高手`, story: `武林高手客人要求比拚酒量，說喝贏了才吃得下麵。`, a: `婉拒拚酒`, b: `硬著頭皮陪他喝幾杯`, c: `用巧妙話術轉移話題，順勢請他直接開動` },
+            { cat: 'A', name: `偶像`, story: `偶像客人的粉絲團突然包圍店面，想堵人拍照。`, a: `婉拒讓粉絲進來，先請偶像從後門離開`, b: `讓粉絲進來排隊拍照，順便做生意`, c: `巧妙安撫粉絲情緒，維持店內秩序` },
+            { cat: 'A', name: `網紅`, story: `網紅客人想拍你「三分鐘吃完一碗拉麵」的挑戰影片。`, a: `婉拒這種噱頭企劃`, b: `配合拍攝這支影片`, c: `設計更有趣又安全的挑戰版本` },
+            { cat: 'A', name: `美食家`, story: `美食家客人說想寫一篇專欄介紹你的店，但要先「試菜三天」。`, a: `婉拒這種長期試菜安排`, b: `答應提供三天試菜`, c: `談出更合理的試菜方式，兼顧成本` },
+            { cat: 'A', name: `阿嬤`, story: `阿嬤客人堅持要幫你介紹「隔壁村的好對象」。`, a: `婉拒但心懷感謝`, b: `順著阿嬤聊下去`, c: `巧妙轉移話題，改聊拉麵配方` },
+            { cat: 'A', name: `小學生`, story: `小學生客人打翻了一整碗湯，嚇得快哭出來。`, a: `安慰他沒關係，重新煮一碗`, b: `讓他自己想辦法`, c: `邊安慰邊教他下次怎麼端才不會灑` },
+            { cat: 'A', name: `魔法師`, story: `魔法師客人想用「魔法藥水」抵帳，說喝了會走運。`, a: `婉拒收下不明液體`, b: `半信半疑收下抵帳`, c: `鑑定藥水成分，順勢談出合理交易` },
+            { cat: 'A', name: `吸血鬼`, story: `吸血鬼客人堅持要「血紅色」的湯頭，說這樣才有食慾。`, a: `婉拒這種誇張要求`, b: `用番茄紅醬硬著頭皮調出來`, c: `巧妙運用甜菜根等食材做出視覺效果又美味的版本` },
+            { cat: 'A', name: `狼人`, story: `狼人客人突然情緒失控，把桌子拍得砰砰響。`, a: `冷靜安撫，先讓他喘口氣`, b: `順著他的情緒陪他發洩`, c: `用溫暖的一碗湯麵穩定他的情緒` },
+            { cat: 'A', name: `機器人`, story: `機器人客人堅持用「條碼掃描」的方式結帳，要求你配合演出。`, a: `婉拒配合這種扮演`, b: `順著他的設定演一場`, c: `融入情境，用有趣的互動增加店裡話題` },
+            { cat: 'A', name: `AI`, story: `AI客人問能不能「複製」你的手藝，訓練成一個模型。`, a: `婉拒這種要求`, b: `半信半疑讓他觀察`, c: `自信展現真功夫，說明手藝無法被輕易複製` },
+            { cat: 'A', name: `警察`, story: `警察客人說隔壁店家檢舉你的攤位「佔用騎樓」。`, a: `配合退回合法範圍`, b: `堅持原本的擺攤方式`, c: `跟他解釋清楚，協調出雙方都能接受的空間` },
+            { cat: 'A', name: `消防員`, story: `消防員客人說想在店裡辦一場防火宣導講座。`, a: `婉拒占用營業時間`, b: `答應撥出一小時配合`, c: `主動幫忙宣傳，互惠合作` },
+            { cat: 'A', name: `和尚`, story: `和尚客人說想在店裡誦經迴向，希望能包場一小時。`, a: `婉拒占用營業時間`, b: `答應撥出時間配合`, c: `談出不影響生意的折衷時段` },
+            { cat: 'A', name: `海盜`, story: `海盜客人大聲嚷嚷要「全店最烈的酒」配麵。`, a: `婉拒沒有賣酒`, b: `隨口推薦附近店家`, c: `巧妙用濃郁湯頭滿足他對「烈」的期待` },
+            { cat: 'A', name: `總裁`, story: `總裁客人堅持要你「簽署保密協議」才能透露想合作的內容。`, a: `婉拒簽署不了解的文件`, b: `半信半疑簽了再說`, c: `仔細看過內容，理性評估後再決定` },
+            { cat: 'A', name: `黑道大哥`, story: `黑道大哥的小弟在店裡起鬨鬧事，砸了一個碗。`, a: `低調收拾，不追究賠償`, b: `順勢跟他們搏感情，希望他們常來捧場`, c: `用一手好菜技驚全場，讓場面瞬間冷靜下來` },
+            { cat: 'A', name: `工程師`, story: `工程師客人堅持拉麵的擺盤角度不符合「黃金比例」，要求重新擺過。`, a: `微笑帶過，不特別理會`, b: `配合他重新擺一次`, c: `用擺盤美學跟他辯論一番，順便展現真功夫` },
+            { cat: 'A', name: `外星人`, story: `外星人客人堅稱吃你的拉麵能「補充能量核心」，想要外帶一百碗。`, a: `婉拒這麼大量的訂單`, b: `硬著頭皮接下訂單`, c: `跟他討論份量，展現手藝爭取合理訂單` },
+            { cat: 'A', name: `忍者`, story: `忍者客人要求你比賽切菜速度，輸了要免費招待。`, a: `婉拒這種比賽`, b: `接受挑戰硬拚`, c: `展現刀工絕活痛快贏下比賽` },
+            { cat: 'A', name: `武林高手`, story: `武林高手客人徒手劈開你店裡的木頭菜單當「見面禮」。`, a: `苦笑收下毀損的菜單`, b: `順勢誇他厲害拉近關係`, c: `以廚藝回敬，端出需要真功夫才做得出的菜色` },
+            { cat: 'A', name: `偶像`, story: `偶像客人想免費代言你的店，交換條件是要天天供餐。`, a: `婉拒這種不對等的合作`, b: `答應天天供餐換取曝光`, c: `談出更合理的合作條件` },
+            { cat: 'A', name: `網紅`, story: `網紅客人堅持要跟你合拍「老闆的一天」Vlog。`, a: `婉拒被拍攝一整天`, b: `答應簡單入鏡幾個片段`, c: `主動設計幾個有趣橋段增加曝光效果` },
+            { cat: 'A', name: `美食家`, story: `美食家客人堅持你的拉麵應該進軍米其林evaluations。`, a: `謙虛表示還不夠格`, b: `半信半疑，讓他繼續說下去`, c: `認真請教評鑑細節，虛心求教` },
+            { cat: 'A', name: `阿嬤`, story: `阿嬤客人說想用自己種的菜跟你換一碗拉麵。`, a: `婉拒不收，直接招待她`, b: `答應用菜換一碗`, c: `鑑定食材品質，談出公道的交換方式` },
+            { cat: 'A', name: `小學生`, story: `小學生客人問可不可以用勞作作品換一碗麵。`, a: `婉拒但誇獎作品很棒`, b: `答應用作品換一碗`, c: `認真鑑賞作品，用鼓勵的方式收下` },
+            { cat: 'A', name: `魔法師`, story: `魔法師客人堅持要在店裡畫魔法陣「招財」。`, a: `婉拒在店內動工`, b: `答應讓他畫小小一個`, c: `跟他討論用不影響營業的方式合作` },
+            { cat: 'A', name: `吸血鬼`, story: `吸血鬼客人說晚上十一點後才是他的「用餐黃金時間」。`, a: `婉拒，維持正常打烊時間`, b: `特地為他留到十一點後`, c: `談出固定的深夜預約制` },
+            { cat: 'A', name: `狼人`, story: `狼人客人說滿月夜特別想念「野味」，問有沒有特殊菜色。`, a: `婉拒沒有這種菜色`, b: `硬著頭皮推薦重口味菜色`, c: `用香料調配出滿足野性又合法的美味` },
+            { cat: 'A', name: `機器人`, story: `機器人客人說他的「資料庫」顯示你的拉麵評分不夠高，要求解釋。`, a: `婉拒這種評分制度`, b: `認真解釋自己的堅持`, c: `現場展現手藝，用實力刷新他的評分` },
+            { cat: 'A', name: `AI`, story: `AI客人說根據數據分析，你的湯頭「甜度」有優化空間。`, a: `婉拒調整配方`, b: `照建議微調試試看`, c: `用實際試喝結果跟他理性討論` },
+            { cat: 'A', name: `警察`, story: `警察客人下班後常來報到，說吃你的麵能紓解壓力。`, a: `微笑招待，不多說什麼`, b: `多聊幾句關心他的工作`, c: `特別調製一碗「紓壓限定版」給他` },
+            { cat: 'A', name: `消防員`, story: `消防員客人吃完飯堅持要「以工代餐」，幫你整理廚房。`, a: `婉拒讓他幫忙`, b: `順勢讓他幫個小忙`, c: `陪他一起整理，順便聊聊天` },
+            { cat: 'A', name: `和尚`, story: `和尚客人堅持要幫你的店「加持」，說能招來更多客人。`, a: `婉拒這種特殊儀式`, b: `半信半疑讓他加持`, c: `順勢感謝好意，維持自己踏實經營的態度` },
+            { cat: 'A', name: `海盜`, story: `海盜客人堅持要「船長優先」插隊，惹惱其他排隊客人。`, a: `婉拒插隊，請他排隊`, b: `破例讓他優先`, c: `巧妙安撫雙方，維持排隊秩序` },
+            { cat: 'A', name: `總裁`, story: `總裁客人的司機在店外違規停車，被開了罰單，要你幫忙處理。`, a: `婉拒介入這種私事`, b: `幫忙跑一趟協調`, c: `巧妙居中協調，順勢跟總裁拉近關係` },
+            { cat: 'A', name: `黑道大哥`, story: `黑道大哥私下問你，能不能幫忙「處理」一批來路不明的高級食材。`, a: `婉拒，堅持只用正常進貨的食材`, b: `收下食材，先用著再說`, c: `用專業眼光鑑定食材來源，試著談出更好的條件` },
+            { cat: 'A', name: `工程師`, story: `工程師客人說想投資你的店，開一套「智慧拉麵攤」加盟計畫。`, a: `婉拒，想保持小店步調`, b: `答應聽聽看他的提案`, c: `端出招牌拉麵，用實力證明不需要靠噱頭` },
+            { cat: 'A', name: `外星人`, story: `外星人客人問能不能用「星際貨幣」換一碗，附贈一顆神秘石頭。`, a: `婉拒，只收正常貨幣`, b: `半信半疑收下石頭抵帳`, c: `鑑定石頭真偽，順勢展現識貨眼光談出好價錢` },
+            { cat: 'A', name: `忍者`, story: `忍者客人神出鬼沒地留下一筆鉅額小費，卻沒說原因。`, a: `收下但心裡毛毛的`, b: `開心收下不多想`, c: `追問原因，順便攀談交個朋友` },
+            { cat: 'A', name: `武林高手`, story: `武林高手客人想收你當徒弟，傳授「拉麵心法」。`, a: `婉拒拜師的邀約`, b: `半信半疑答應聽聽看`, c: `跟他交流廚藝心得，互相切磋成為朋友` },
+            { cat: 'A', name: `偶像`, story: `偶像客人吃到一半突然哭了，說想起了家鄉的味道。`, a: `遞上面紙，安靜陪伴`, b: `藉機聊聊家鄉的故事`, c: `特別加碼一道家常小菜安慰他` },
+            { cat: 'A', name: `網紅`, story: `網紅客人說想跟你的店辦「聯名限定拉麵」。`, a: `婉拒聯名合作`, b: `答應但條件隨他開`, c: `談出對雙方都公平的聯名方案` },
+            { cat: 'A', name: `美食家`, story: `美食家客人吃完後沉默不語，讓你緊張了整晚。`, a: `耐心等他開口，不多問`, b: `主動詢問他的感想`, c: `端出隱藏版菜色扭轉氣氛` },
+            { cat: 'A', name: `阿嬤`, story: `阿嬤客人擔心你太累，硬要留下來幫忙洗碗。`, a: `婉拒讓她幫忙，怕她累著`, b: `順勢讓阿嬤幫個小忙`, c: `陪阿嬤聊天，順便請她指點幾招` },
+            { cat: 'A', name: `小學生`, story: `小學生客人說長大以後要開一間比你更厲害的拉麵店。`, a: `笑笑鼓勵他有志氣`, b: `半開玩笑地跟他打賭`, c: `認真傳授一個小撇步給他` },
+            { cat: 'A', name: `魔法師`, story: `魔法師客人說你上輩子欠他一碗拉麵，這輩子要討回來。`, a: `笑笑當作有趣的說法招待他`, b: `半信半疑地招待`, c: `順著他的故事互動，成為店裡的話題` },
+            { cat: 'A', name: `吸血鬼`, story: `吸血鬼客人想用一枚「古董金幣」付帳。`, a: `婉拒收下來路不明的錢幣`, b: `半信半疑收下`, c: `鑑定金幣真偽，談出合理的折算方式` },
+            { cat: 'A', name: `狼人`, story: `狼人客人結帳時堅持要用「狼牙項鍊」抵帳。`, a: `婉拒收下這種抵押品`, b: `半信半疑收下當紀念品`, c: `鑑定價值，談出合理的折抵方案` },
+            { cat: 'A', name: `機器人`, story: `機器人客人堅持要跟你「交換情報」才願意付錢。`, a: `婉拒這種交易方式`, b: `半信半疑陪他聊聊`, c: `巧妙套出有用的市場情報` },
+            { cat: 'A', name: `AI`, story: `AI客人堅持要為你的店寫一份「最佳化營運報告」。`, a: `婉拒收下這份報告`, b: `收下報告參考看看`, c: `認真跟他討論報告內容，截取有用的部分` },
+            { cat: 'A', name: `警察`, story: `警察客人問你有沒有看到附近可疑的人物，正在辦案。`, a: `如實告知沒看到什麼`, b: `隨口編個線索應付`, c: `認真回想細節，提供真正有用的資訊` },
+            { cat: 'A', name: `消防員`, story: `消防員客人說附近發生小火警，你的店也在警戒範圍內。`, a: `配合疏散準備`, b: `半信半疑繼續營業`, c: `冷靜應對，同時安撫其他客人情緒` },
+            { cat: 'A', name: `和尚`, story: `和尚客人說看你面帶愁容，想開示幾句人生道理。`, a: `婉拒但道謝他的關心`, b: `耐心聽他說幾句`, c: `藉機聊聊經營的煩惱，獲得一些啟發` },
+            { cat: 'A', name: `海盜`, story: `海盜客人吃完後留下一句「這味道值得為它航行三大洋」就消失了。`, a: `笑笑當作一句稱讚收下`, b: `追出去確認有沒有付錢`, c: `把這句話寫成招牌標語，順勢宣傳` },
+            { cat: 'A', name: `總裁`, story: `總裁客人吃完後說這是他吃過最好吃的一餐，當場開出天價要買下配方。`, a: `婉拒販售獨家配方`, b: `心動考慮這筆交易`, c: `談出授權合作而非直接賣斷的方案` },
+            { cat: 'B', name: `停電`, story: `晚餐尖峰時段突然全店停電，客人在黑暗中等待。`, a: `點蠟燭安撫客人，暫停出餐`, b: `摸黑硬撐著繼續出餐`, c: `靠職人手感在黑暗中精準完成料理，順勢成為話題` },
+            { cat: 'B', name: `停水`, story: `水公司無預警停水，店裡沒水可以洗碗。`, a: `暫停營業去買桶裝水`, b: `硬撐著用有限存水繼續營業`, c: `跟隔壁店家借水應急，順便交好鄰居` },
+            { cat: 'B', name: `瓦斯`, story: `瓦斯行送錯瓦斯桶型號，爐火無法點燃。`, a: `暫停營業等正確的瓦斯桶送到`, b: `硬著頭皮想辦法克難加熱`, c: `緊急調度隔壁店家的瓦斯應急` },
+            { cat: 'B', name: `衛生局`, story: `衛生局人員無預警到店稽查。`, a: `配合稽查，坦然應對`, b: `找藉口拖延稽查時間`, c: `自信展現整潔的廚房環境，順利過關` },
+            { cat: 'B', name: `食材短缺`, story: `主要食材供應商臨時斷貨，明天的貨進不來。`, a: `縮減菜單應急`, b: `硬撐著找替代食材頂著`, c: `緊急聯繫多家供應商，找到品質相近的貨源` },
+            { cat: 'B', name: `颱風`, story: `颱風來襲，外面風雨交加，客人卻還是想吃碗熱麵。`, a: `提前打烊，注意安全第一`, b: `冒著風雨繼續營業`, c: `評估風雨狀況，安全前提下彈性應對` },
+            { cat: 'B', name: `地震`, story: `用餐尖峰時段突然地震，碗盤掉落摔碎。`, a: `先確保客人安全，暫停營業`, b: `假裝沒事繼續出餐`, c: `冷靜疏散客人，展現危機處理能力` },
+            { cat: 'B', name: `老鼠`, story: `店裡發現老鼠出沒的痕跡，客人看到後臉色一變。`, a: `誠實道歉，立刻處理`, b: `假裝沒看到，蒙混過去`, c: `當場展現處理能力，徹底解決問題` },
+            { cat: 'B', name: `火災`, story: `廚房爐火不慎引燃小火警，濃煙瀰漫。`, a: `立刻疏散客人，滅火器滅火`, b: `驚慌失措，手忙腳亂`, c: `冷靜迅速用滅火器控制火勢，展現臨危不亂` },
+            { cat: 'B', name: `漏水`, story: `樓上住戶漏水，滴到你店裡的座位區。`, a: `暫時封鎖受影響的座位`, b: `放任不管，客人自己閃`, c: `協調樓上住戶盡快處理，同時貼心安排客人` },
+            { cat: 'B', name: `停電`, story: `停電導致冰箱食材有退冰疑慮。`, a: `忍痛丟棄有疑慮的食材`, b: `賭一把繼續使用`, c: `逐一檢查食材狀況，留下真正安全的部分` },
+            { cat: 'B', name: `停水`, story: `停水讓你沒辦法煮麵，只能用僅存的水量。`, a: `縮減菜單，只供應能做的品項`, b: `硬撐著正常供應全菜單`, c: `精算用水量，巧妙調配出撐到恢復供水的方案` },
+            { cat: 'B', name: `瓦斯`, story: `瓦斯桶用到一半突然沒氣，客人正在等麵。`, a: `誠實告知客人稍等一下`, b: `拖延時間硬撐`, c: `快速更換備用瓦斯桶，展現熟練應變力` },
+            { cat: 'B', name: `衛生局`, story: `衛生局指出你的食材標示不夠清楚。`, a: `立刻補齊所有標示`, b: `隨便補一下應付了事`, c: `重新設計清楚美觀的標示系統` },
+            { cat: 'B', name: `食材短缺`, story: `食材價格突然飆漲，成本壓力暴增。`, a: `默默吸收成本壓力`, b: `直接調漲售價`, c: `調整菜單結構，維持品質又控制成本` },
+            { cat: 'B', name: `颱風`, story: `颱風過後，店面招牌被吹倒需要修復。`, a: `自己動手簡單修復`, b: `先擱著，晚點再處理`, c: `找專業人手快速修好，順便升級招牌` },
+            { cat: 'B', name: `地震`, story: `地震後發現廚房設備有些鬆動。`, a: `立刻停用檢查安全`, b: `先湊合著用`, c: `仔細檢查修復，確保長期使用安全` },
+            { cat: 'B', name: `老鼠`, story: `老鼠咬壞了一批儲存的食材。`, a: `忍痛丟棄受損食材`, b: `挑還能用的部分繼續用`, c: `重新規劃儲藏方式，杜絕後患` },
+            { cat: 'B', name: `火災`, story: `隔壁店家傳出火警，波及到你的店面。`, a: `配合消防隊疏散撤離`, b: `堅持留守顧店，捨不得離開`, c: `冷靜協助疏散其他客人，展現領導力` },
+            { cat: 'B', name: `漏水`, story: `漏水導致電線受潮，有觸電疑慮。`, a: `立即斷電檢查安全`, b: `先湊合著用，晚點再說`, c: `找專業電工徹底檢查排除隱患` },
+            { cat: 'B', name: `停電`, story: `停電讓收銀機故障，沒辦法找零。`, a: `先用紙筆手寫記帳`, b: `請客人自行投錢，不找零`, c: `臨機應變用手機轉帳解決問題` },
+            { cat: 'B', name: `停水`, story: `停水期間衛生局剛好來稽查用水衛生。`, a: `誠實說明停水狀況`, b: `含糊帶過，希望蒙混過關`, c: `出示水公司停水通知，理性溝通爭取體諒` },
+            { cat: 'B', name: `瓦斯`, story: `瓦斯公司通知你的管線需要緊急檢修。`, a: `立刻配合停業檢修`, b: `拖到營業結束才處理`, c: `協調出不影響尖峰時段的檢修時間` },
+            { cat: 'B', name: `衛生局`, story: `衛生局要求你參加食品安全講習。`, a: `配合安排時間參加`, b: `拖延不去，希望沒事`, c: `主動報名，順便學到實用知識精進手藝` },
+            { cat: 'B', name: `食材短缺`, story: `進貨的食材品質不如預期，看起來不太新鮮。`, a: `忍痛退貨換一批`, b: `將就著用`, c: `仔細挑選還能用的部分，物盡其用` },
+            { cat: 'B', name: `颱風`, story: `颱風天食材配送延遲，庫存告急。`, a: `暫時縮減菜單因應`, b: `硬撐著用有限食材供應`, c: `提前備貨規劃，撐過颱風天的空窗期` },
+            { cat: 'B', name: `地震`, story: `地震讓你想起以前歷經過的大地震回憶，心情低落。`, a: `找時間好好調適心情`, b: `假裝沒事，硬撐著工作`, c: `跟熟客聊聊，抒發心情後重新振作` },
+            { cat: 'B', name: `老鼠`, story: `你需要緊急找除鼠公司來處理鼠患問題。`, a: `立刻花錢請專業處理`, b: `先自己想辦法應付`, c: `貨比三家找到划算又有效的方案` },
+            { cat: 'B', name: `火災`, story: `小火警過後，你需要重新整理受損的廚房設備。`, a: `簡單修復堪用即可`, b: `先湊合著用受損設備`, c: `藉機全面升級廚房設備，塞翁失馬` },
+            { cat: 'B', name: `漏水`, story: `漏水弄濕了一批乾貨食材。`, a: `忍痛丟棄受潮食材`, b: `曬乾後繼續使用`, c: `仔細判斷，安全的留用、有疑慮的果斷丟棄` },
+            { cat: 'B', name: `停電`, story: `停電時間拖得比預期久，排隊人潮漸漸不耐煩。`, a: `誠懇道歉並提前打烊`, b: `硬撐著繼續營業到最後`, c: `現場加碼小菜安撫排隊的客人` },
+            { cat: 'B', name: `停水`, story: `停水讓廁所無法沖水，客人開始抱怨。`, a: `貼出告示暫停使用廁所`, b: `放任不管，先顧生意`, c: `緊急聯絡水車來支援，維持基本衛生` },
+            { cat: 'B', name: `瓦斯`, story: `瓦斯異味讓客人緊張詢問是否安全。`, a: `誠實說明正在檢查中`, b: `含糊帶過安撫客人`, c: `當場檢查清楚，用專業態度化解疑慮` },
+            { cat: 'B', name: `衛生局`, story: `衛生局收到匿名檢舉，說你的店有衛生疑慮。`, a: `配合說明，展現清白`, b: `心虛想辦法迴避稽查`, c: `冷靜應對，用實際環境證明清白` },
+            { cat: 'B', name: `食材短缺`, story: `你發現常用的食材突然缺貨到全區都買不到。`, a: `暫時下架相關菜色`, b: `硬著頭皮找次級替代品`, c: `發揮創意研發出用其他食材的替代版本` },
+            { cat: 'B', name: `颱風`, story: `颱風夜有客人受困在你店裡，沒辦法回家。`, a: `讓他留下來避風雨`, b: `婉拒收留，請他自行想辦法`, c: `熱情招待，順便聊聊天度過颱風夜` },
+            { cat: 'B', name: `地震`, story: `餘震不斷，客人紛紛猶豫要不要進店用餐。`, a: `貼出告示說明安全評估結果`, b: `什麼都不說，照常營業`, c: `主動說明安全狀況，安撫客人的不安` },
+            { cat: 'B', name: `老鼠`, story: `有客人在網路上爆料你的店有老鼠出沒。`, a: `誠懇道歉並公開改善過程`, b: `否認並試圖淡化這件事`, c: `邀請該客人回來實地確認改善成果` },
+            { cat: 'B', name: `火災`, story: `火警後保險公司來理賠評估。`, a: `誠實提供受損狀況`, b: `誇大損失想多拿理賠`, c: `誠實且詳細地說明，順利拿到合理理賠` },
+            { cat: 'B', name: `漏水`, story: `漏水問題拖了好幾天都沒改善，客人開始抱怨環境。`, a: `誠懇道歉並加快處理進度`, b: `置之不理，希望自然變乾`, c: `主動出錢請人徹底處理漏水源頭` },
+            { cat: 'B', name: `停電`, story: `停電剛好在你熬湯熬到一半時發生。`, a: `忍痛倒掉這鍋湯重新開始`, b: `硬著頭皮繼續用瓦斯爐完成`, c: `靠經驗判斷湯頭狀態，搶救回大半鍋湯` },
+            { cat: 'B', name: `停水`, story: `停水結束後，水質混濁不敢直接使用。`, a: `先靜置沉澱後再使用`, b: `省事直接拿來用`, c: `用濾水設備處理後才安心使用` },
+            { cat: 'B', name: `瓦斯`, story: `瓦斯漲價通知寄來，成本壓力大增。`, a: `默默吸收成本，不調整售價`, b: `直接調漲售價因應`, c: `微調份量與成本結構，維持合理售價` },
+            { cat: 'B', name: `衛生局`, story: `衛生局評鑑你的店為「優良攤商」，要頒獎表揚。`, a: `低調領獎，不張揚`, b: `大肆宣傳這個榮譽`, c: `藉這個機會好好整理店面形象` },
+            { cat: 'B', name: `食材短缺`, story: `有客人想大量訂購，但你的食材庫存根本不夠。`, a: `婉拒這筆訂單`, b: `硬著頭皮接下訂單再想辦法`, c: `緊急調貨，同時談出合理的交期` },
+            { cat: 'B', name: `颱風`, story: `颱風警報解除，客人重新湧入店裡，忙不過來。`, a: `從容應對，慢慢來`, b: `手忙腳亂硬撐著`, c: `冷靜調度，展現老練的應變能力` },
+            { cat: 'B', name: `地震`, story: `地震後你決定為店裡添購防災用品。`, a: `簡單準備基本用品`, b: `覺得沒必要，先擱著`, c: `認真規劃一套完整的防災應變方案` },
+            { cat: 'B', name: `老鼠`, story: `鼠患處理完後，店裡的口碑受到一些影響。`, a: `耐心經營，慢慢恢復信任`, b: `急著砸錢打廣告挽回形象`, c: `用實際的用心服務慢慢重建口碑` },
+            { cat: 'B', name: `火災`, story: `火警的消息傳開，客人擔心食安問題不敢上門。`, a: `耐心用時間證明店面安全`, b: `急著大打廣告挽回信任`, c: `主動公開整修過程，展現透明度贏回信任` },
+            { cat: 'B', name: `漏水`, story: `漏水修復後，你決定順便整修一下店面環境。`, a: `簡單清理恢復原狀就好`, b: `覺得沒必要多花錢整修`, c: `趁機做一次全面翻新，煥然一新` },
+            { cat: 'C', name: `拉麵之神`, story: `傳說中的拉麵之神下凡，想測試你是否有資格得到他的祝福。`, a: `謙虛地端出最樸實的家常口味`, b: `大膽端出你最狂野的實驗菜色`, c: `使出畢生絕學，賭上一切做出巔峰之作` },
+            { cat: 'C', name: `時空裂縫`, story: `店裡角落突然出現一道詭異的時空裂縫，隱約能看到未來的景象。`, a: `小心翼翼地遠離裂縫，不去理會`, b: `好奇地伸手探進裂縫`, c: `運用膽識探究裂縫，試圖帶回有用的訊息` },
+            { cat: 'C', name: `神秘商人`, story: `一位神秘商人推著奇怪的貨車出現，說有「稀世食材」要賣。`, a: `婉拒，堅持只用熟悉的食材`, b: `好奇買下一份試試看`, c: `仔細鑑定食材真偽，談出公道的價格` },
+            { cat: 'C', name: `妖怪`, story: `一隻化身成人形的妖怪來店裡用餐，堅持要吃「有靈氣」的食物。`, a: `婉拒這種特殊要求`, b: `端出用心熬煮的湯頭應付看看`, c: `運用食材知識，做出真正能打動妖怪的料理` },
+            { cat: 'C', name: `精靈`, story: `一位自稱是精靈的客人，說想用花瓣跟露水交換一碗麵。`, a: `婉拒，只收正常的貨幣`, b: `浪漫地答應這筆交易`, c: `欣賞這份心意，談出雙方都開心的方案` },
+            { cat: 'C', name: `鬼魂`, story: `打烊後，一位若隱若現的客人在店裡徘徊，說想再嚐一次老味道。`, a: `婉拒深夜不明訪客`, b: `壯著膽子招待這位客人`, c: `溫柔詢問他的故事，用心做出懷念的味道` },
+            { cat: 'C', name: `未來人`, story: `一位自稱來自未來的客人，說想在「歷史關鍵點」吃到你的拉麵。`, a: `婉拒相信這種說法`, b: `半信半疑款待這位客人`, c: `順著他的故事聊，套出一些有趣的未來情報` },
+            { cat: 'C', name: `平行宇宙`, story: `一位客人說自己來自「平行宇宙」，那裡的你開了一間截然不同的店。`, a: `禮貌聽聽就好，不當真`, b: `好奇詢問另一個自己過得如何`, c: `認真思考另一種可能性，獲得經營靈感` },
+            { cat: 'C', name: `許願井`, story: `店門口一夜之間冒出一口古老的許願井，客人紛紛好奇圍觀。`, a: `低調處理，避免造成混亂`, b: `順勢利用話題招攬生意`, c: `妥善規劃動線，把話題轉化成正面口碑` },
+            { cat: 'C', name: `神龍`, story: `傳說中鎮守此地的神龍化身老者現身，說想嚐嚐凡間美食。`, a: `恭敬地端出最基本的家常麵`, b: `大膽端出你最厲害的招牌菜`, c: `使出渾身解數，做出足以敬獻神明的一碗麵` },
+            { cat: 'C', name: `拉麵之神`, story: `拉麵之神化身成一位普通老翁，默默觀察你整晚的手藝。`, a: `維持平常心，正常做生意`, b: `刻意表現，想讓他印象深刻`, c: `端出隱藏許久的壓箱絕活菜色` },
+            { cat: 'C', name: `時空裂縫`, story: `時空裂縫中走出一位客人，說是「未來的你」派來的。`, a: `禮貌招待但保持懷疑`, b: `熱情相信並詳細詢問未來`, c: `冷靜求證，判斷這個人是否真的可信` },
+            { cat: 'C', name: `神秘商人`, story: `神秘商人想用你的招牌配方，換一件「傳說中的廚具」。`, a: `婉拒這筆交換`, b: `心動答應交換`, c: `仔細評估廚具價值，談出更好的交換條件` },
+            { cat: 'C', name: `妖怪`, story: `妖怪客人說能聞出你心裡的煩惱，主動提議幫忙解決。`, a: `婉拒讓妖怪介入私事`, b: `半信半疑接受幫助`, c: `跟妖怪聊聊，換一個新的角度看待煩惱` },
+            { cat: 'C', name: `精靈`, story: `精靈客人堅持你的店周圍該種滿香草才「有靈氣」。`, a: `婉拒大幅調整店面環境`, b: `答應種幾盆香草試試看`, c: `巧妙運用香草提升料理風味，一舉兩得` },
+            { cat: 'C', name: `鬼魂`, story: `鬼魂客人說很多年前這裡曾經是他熟悉的老店。`, a: `禮貌傾聽但不多做回應`, b: `好奇詢問更多過去的故事`, c: `認真聽完故事，決定重現一道當年的菜色` },
+            { cat: 'C', name: `未來人`, story: `未來人客人堅持你的店在未來會變得非常有名。`, a: `謙虛地表示還差得遠`, b: `半信半疑地開心一下`, c: `認真詢問細節，思考該怎麼提前布局` },
+            { cat: 'C', name: `平行宇宙`, story: `平行宇宙的客人說想比較兩邊拉麵的差異。`, a: `禮貌端出招牌口味`, b: `特地調整風味迎合對方口味`, c: `自信端出最有特色的版本，展現獨特性` },
+            { cat: 'C', name: `許願井`, story: `有傳言說對著許願井許願會實現，客人開始排隊許願。`, a: `婉拒配合這種傳言`, b: `順勢讓客人排隊順便消費`, c: `設計一個有趣又不誇張的許願小活動` },
+            { cat: 'C', name: `神龍`, story: `神龍客人說吃了你的拉麵，心情變得格外舒暢。`, a: `謙虛地道謝`, b: `開心地大肆宣傳這件事`, c: `把握機會，虛心請教如何精進手藝` },
+            { cat: 'C', name: `拉麵之神`, story: `拉麵之神說要收你的湯頭配方當「傳世之作」的候選。`, a: `婉拒，配方是自己的心血結晶`, b: `答應交出配方換取祝福`, c: `跟他切磋交流，展現對拉麵的熱愛與堅持` },
+            { cat: 'C', name: `時空裂縫`, story: `時空裂縫讓店裡的時間似乎變得不太一樣，客人來來去去很奇怪。`, a: `假裝沒發現，正常營業`, b: `順勢利用這個異象招攬生意`, c: `冷靜觀察規律，找出應對這個異象的方法` },
+            { cat: 'C', name: `神秘商人`, story: `神秘商人神秘兮兮地說，你的店有機會成為「傳說名店」，但需要付出代價。`, a: `婉拒這種模糊不清的交易`, b: `答應付出代價換取機會`, c: `追問清楚代價內容，理性評估後再決定` },
+            { cat: 'C', name: `妖怪`, story: `妖怪客人吃完後留下一撮奇異的毛髮當小費。`, a: `婉拒收下這種特殊小費`, b: `好奇收下留作紀念`, c: `鑑定這撮毛髮，發現意外的價值` },
+            { cat: 'C', name: `精靈`, story: `精靈客人說能聽懂食材的心聲，指出你有一批食材「不太開心」。`, a: `婉拒這種奇怪的說法`, b: `半信半疑檢查那批食材`, c: `認真檢查食材狀態，果然發現保存問題` },
+            { cat: 'C', name: `鬼魂`, story: `鬼魂客人吃完後，店裡的溫度突然變得溫暖起來。`, a: `當作巧合，不多想`, b: `覺得這是好兆頭，開心收下`, c: `感謝這份緣分，將這份溫暖延續下去` },
+            { cat: 'C', name: `未來人`, story: `未來人客人想用「未來科技」的小物件交換一碗麵。`, a: `婉拒收下不明物件`, b: `好奇收下這個交易`, c: `仔細研究這個物件，發現意外的實用價值` },
+            { cat: 'C', name: `平行宇宙`, story: `平行宇宙客人臨走前說了一句「這邊的選擇比較好」。`, a: `禮貌道謝，不多想`, b: `開心地把這句話當成肯定`, c: `深思這句話背後的意義，重新檢視經營方向` },
+            { cat: 'C', name: `許願井`, story: `許願井旁的硬幣被人偷走，客人議論紛紛。`, a: `不予理會，順其自然`, b: `報警處理這件小事`, c: `妥善設置監督機制，避免類似事件再發生` },
+            { cat: 'C', name: `神龍`, story: `神龍客人臨走前留下一片閃亮的鱗片，說是「保佑」。`, a: `恭敬收下當作紀念`, b: `好奇收下猜測它的價值`, c: `妥善收藏，同時感謝這份特別的緣分` },
+            { cat: 'D', name: `拉麵大賽`, story: `鎮上舉辦年度拉麵大賽，你被臨時抓去代表本區參賽。`, a: `低調棄權，專心顧好自己的店`, b: `硬著頭皮上場應戰`, c: `全力以赴，拿出畢生功力一決勝負` },
+            { cat: 'D', name: `黑道火拼`, story: `兩派黑道人馬在你店門口對峙，火藥味濃厚。`, a: `拉下鐵門暫避風頭`, b: `硬著頭皮繼續正常營業`, c: `沉穩應對，居中緩頰化解一觸即發的緊張` },
+            { cat: 'D', name: `食神`, story: `傳說級的食神親自登門踢館，要跟你來一場廚藝對決。`, a: `謙虛婉拒這場對決`, b: `硬著頭皮應戰`, c: `毫無畏懼，正面迎戰展現真本事` },
+            { cat: 'D', name: `AI主廚`, story: `一台號稱能複製任何料理的AI主廚機器人來踢館。`, a: `婉拒這場人機大戰`, b: `硬著頭皮應戰比拚`, c: `自信迎戰，展現機器無法取代的職人溫度` },
+            { cat: 'D', name: `百年老店`, story: `隔壁新開張的百年老店分店，擺明是要跟你較勁。`, a: `低調做好自己的本份`, b: `正面迎戰打價格戰`, c: `用真材實料的品質正面較勁，不打價格戰` },
+            { cat: 'D', name: `拉麵大賽`, story: `拉麵大賽的評審私下暗示，只要「意思意思」就能得高分。`, a: `婉拒賄賂評審的暗示`, b: `順勢意思意思打點一下`, c: `憑真本事正面對決，拒絕旁門左道` },
+            { cat: 'D', name: `黑道火拼`, story: `黑道火拼波及店面，招牌被砸壞。`, a: `默默承受這筆損失`, b: `找對方理論要求賠償`, c: `冷靜交涉，爭取到合理的賠償與道歉` },
+            { cat: 'D', name: `食神`, story: `食神品嚐後沉默良久，遲遲不給評語，讓你心跳加速。`, a: `耐心等待，不多問`, b: `忍不住主動詢問感想`, c: `自信詢問具體建議，虛心求教` },
+            { cat: 'D', name: `AI主廚`, story: `AI主廚精準複製出跟你一模一樣的拉麵，讓你錯愕。`, a: `承認技不如人，虛心學習`, b: `不服輸，堅持人情味才是關鍵`, c: `找出AI無法複製的細節，扳回一城` },
+            { cat: 'D', name: `百年老店`, story: `百年老店的老闆親自登門，想「切磋」湯頭功夫。`, a: `客氣婉拒這場切磋`, b: `硬著頭皮接受切磋`, c: `誠懇交流，互相學習彼此的獨門秘訣` },
+            { cat: 'D', name: `拉麵大賽`, story: `拉麵大賽現場你的對手是一位手藝驚人的神秘高手。`, a: `謹慎應戰，求穩不求快`, b: `冒險使出全新嘗試的菜色`, c: `使出壓箱絕活，正面迎戰不留餘地` },
+            { cat: 'D', name: `黑道火拼`, story: `其中一派人馬要你「選邊站」，否則以後別想做生意。`, a: `婉拒選邊，堅持中立`, b: `被迫選邊表態`, c: `憑著多年人脈與手腕，巧妙維持中立又不得罪人` },
+            { cat: 'D', name: `食神`, story: `食神說想收你的店當「傳人分店」，但條件嚴苛。`, a: `婉拒這個機會，維持獨立經營`, b: `答應接受嚴苛條件`, c: `談出對雙方都合理的合作方式` },
+            { cat: 'D', name: `AI主廚`, story: `AI主廚的公司想收購你的店，改造成「無人拉麵攤」。`, a: `婉拒這個收購提案`, b: `心動考慮這筆交易`, c: `談出保留人情味的合作模式` },
+            { cat: 'D', name: `百年老店`, story: `百年老店開出高薪想挖走你的手藝。`, a: `婉拒這份高薪邀約`, b: `心動考慮跳槽`, c: `堅持自己開店的初衷，婉轉拒絕` },
+            { cat: 'D', name: `拉麵大賽`, story: `拉麵大賽結果出爐前，謠言滿天飛，有人說黑幕重重。`, a: `不理會謠言，靜待結果`, b: `跟著大家議論紛紛`, c: `冷靜查證，維護比賽的公平與尊嚴` },
+            { cat: 'D', name: `黑道火拼`, story: `火拼過後，雙方老大都跑來你店裡「和解」，氣氛尷尬。`, a: `低調上菜，不多說話`, b: `順勢活絡氣氛拉近關係`, c: `巧妙運用一桌好菜化解雙方的心結` },
+            { cat: 'D', name: `食神`, story: `食神臨走前，留下一句意味深長的評語。`, a: `反覆咀嚼這句話的含意`, b: `不以為意，繼續做自己的事`, c: `把這句話當成精進手藝的指引，認真實踐` },
+            { cat: 'D', name: `AI主廚`, story: `這場人機對決引來大批媒體關注，壓力空前。`, a: `低調應對，不多發言`, b: `積極接受採訪曝光`, c: `從容應對媒體，順勢建立個人品牌形象` },
+            { cat: 'D', name: `百年老店`, story: `百年老店的名聲蓋過你的店，客人漸漸流失。`, a: `耐心堅持自己的風格`, b: `急著模仿對方的招牌菜色`, c: `找出自己的獨特定位，做出差異化` },
+            { cat: 'E', name: `過年`, story: `除夕夜還在營業，客人問能不能加點「年年有餘」的吉祥菜色。`, a: `婉拒臨時調整菜單`, b: `現場加菜迎合節慶氣氛`, c: `巧手用現有食材做出應景的吉祥菜色` },
+            { cat: 'E', name: `元宵`, story: `元宵節客人指定要吃「湯圓拉麵」這種奇怪組合。`, a: `婉拒這種奇怪組合`, b: `好奇試做這個組合`, c: `運用創意巧妙融合湯圓與拉麵，意外好吃` },
+            { cat: 'E', name: `端午`, story: `端午節客人問能不能用粽子的概念做一碗特別的拉麵。`, a: `婉拒跳脫既有菜單`, b: `嘗試做做看粽香拉麵`, c: `巧妙融合粽葉香氣，做出限定季節限定版` },
+            { cat: 'E', name: `中秋`, story: `中秋夜客人希望能在店外賞月吃麵，要求加開戶外座位。`, a: `婉拒臨時加開座位`, b: `臨時加開幾張戶外座位`, c: `妥善規劃出舒適的賞月用餐區，客人讚不絕口` },
+            { cat: 'E', name: `聖誕`, story: `聖誕夜情侶客人指定要「聖誕限定」的浪漫擺盤。`, a: `婉拒特殊擺盤要求`, b: `隨手擺個應景造型`, c: `用心設計出真正浪漫又不失美味的擺盤` },
+            { cat: 'E', name: `萬聖`, story: `萬聖節客人裝扮成各種鬼怪，要求菜色也要「應景嚇人」。`, a: `婉拒配合這種噱頭`, b: `隨口做個造型嚇人一下`, c: `發揮創意做出既嚇人又美味的萬聖限定拉麵` },
+            { cat: 'E', name: `過年`, story: `大年初一，你猶豫要不要開店，怕犯了「初一忌動刀」的禁忌。`, a: `配合習俗，初一公休`, b: `不理會禁忌，照常營業`, c: `尊重傳統但彈性調整，改用燉煮取代動刀` },
+            { cat: 'E', name: `元宵`, story: `元宵節猜燈謎活動吸引不少客人湊熱鬧，順便來吃麵。`, a: `低調照常營業，不特別參與`, b: `順勢跟著擺攤參與燈謎活動`, c: `自己設計幾則跟拉麵有關的燈謎增加話題` },
+            { cat: 'E', name: `端午`, story: `端午節龍舟賽的選手們，賽後餓壞了湧進你的店。`, a: `耐心一一慢慢出餐`, b: `手忙腳亂硬撐著出餐`, c: `冷靜調度，快速又不失品質地招待選手們` },
+            { cat: 'E', name: `中秋`, story: `中秋節烤肉的煙味飄進店裡，客人開玩笑問你要不要也來烤。`, a: `笑笑婉拒，維持本業`, b: `隨口答應烤幾串應景`, c: `巧妙推出烤物風味的限定拉麵，順勢跟上氣氛` },
+        ];
+
+        // ---------- 深夜食堂（文字 Roguelike 生存遊戲）----------
+        let dinerGameState = null;
+        const DINER_TOTAL_DAYS = 20;
+        // 每局固定安排 4 天是節日事件（第 5/10/15/20 天），其餘天數用機率抽：
+        // A/B 一般事件最常見、C 神秘事件較稀有、D Boss 事件最稀有
+        const DINER_HOLIDAY_DAYS = [5, 10, 15, 20];
+
+        function dinerGameCleanup() {
+            dinerGameState = null;
+        }
+
+        function startDinerGame() {
+            if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            currentGameScreen = 'game';
+            qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup();
+            ensureAudioContext(); // 在按下「開始」這個真正的點擊當下解鎖音效
+            const usedIndices = new Set();
+            dinerGameState = {
+                day: 0, life: 100, reputation: 50, money: 500,
+                usedIndices, ended: false,
+            };
+            playSfx('click');
+            dinerNextDay();
+        }
+
+        // 依照今天是不是節日、抽出今天要遇到的事件
+        function dinerPickEvent(day) {
+            const state = dinerGameState;
+            const isHoliday = DINER_HOLIDAY_DAYS.includes(day);
+            let pool;
+            if (isHoliday) {
+                pool = DINER_EVENTS.filter(e => e.cat === 'E');
+            } else {
+                const roll = Math.random();
+                let cat;
+                if (roll < 0.55) cat = 'A';
+                else if (roll < 0.85) cat = 'B';
+                else if (roll < 0.95) cat = 'C';
+                else cat = 'D';
+                pool = DINER_EVENTS.filter(e => e.cat === cat);
+            }
+            // 盡量避免同一局裡抽到重複事件（210 則事件、單局最多 20 天，理論上不用重複）
+            const indices = pool.map(e => DINER_EVENTS.indexOf(e)).filter(i => !state.usedIndices.has(i));
+            const finalPool = indices.length > 0 ? indices : pool.map(e => DINER_EVENTS.indexOf(e));
+            const chosenIndex = finalPool[Math.floor(Math.random() * finalPool.length)];
+            state.usedIndices.add(chosenIndex);
+            return DINER_EVENTS[chosenIndex];
+        }
+
+        function dinerNextDay() {
+            const state = dinerGameState;
+            if (!state || state.ended) return;
+            state.day++;
+            if (state.day > DINER_TOTAL_DAYS) { dinerEndGame(true); return; }
+            const event = dinerPickEvent(state.day);
+            state.currentEvent = event;
+            renderDinerDay(event);
+        }
+
+        const DINER_CAT_LABELS = { A: '奇葩顧客', B: '突發狀況', C: '✨神秘事件', D: '🔥重大挑戰', E: '🎉節日限定' };
+        const DINER_CAT_COLORS = { A: 'var(--jam)', B: '#8B7355', C: '#7B5FA6', D: 'var(--danger)', E: 'var(--honey)' };
+
+        function renderDinerDay(event) {
+            const state = dinerGameState;
+            document.getElementById('game-modal-title').textContent = '🌙 深夜食堂';
+            const dayPct = Math.round((state.day / DINER_TOTAL_DAYS) * 100);
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="mb-4">
+                    <div class="flex justify-between items-center mb-1 text-xs" style="color:var(--muted)">
+                        <span>第 ${state.day} / ${DINER_TOTAL_DAYS} 天</span>
+                        <span style="color:${DINER_CAT_COLORS[event.cat]}; font-weight:600">${DINER_CAT_LABELS[event.cat]}</span>
+                    </div>
+                    <div style="height:6px; border-radius:999px; overflow:hidden; background:var(--line);">
+                        <div style="height:100%; width:${dayPct}%; background:linear-gradient(90deg, var(--honey), var(--jam)); transition:width .4s;"></div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-2 mb-4">
+                    ${dinerStatCard('❤️', '生命', state.life, 'var(--danger)')}
+                    ${dinerStatCard('⭐', '名聲', state.reputation, 'var(--honey)')}
+                    ${dinerStatCard('💰', '資金', state.money, 'var(--sage)')}
+                </div>
+                <div class="rounded-3xl px-5 py-5 mb-4" style="background:linear-gradient(180deg, var(--cream), var(--paper)); border:1px solid var(--line); min-height:90px;">
+                    <p class="font-display font-bold text-base mb-1" style="color:${DINER_CAT_COLORS[event.cat]}">「${event.name}」</p>
+                    <p class="text-sm leading-relaxed">${event.story}</p>
+                </div>
+                <div class="space-y-2.5">
+                    <button onclick="dinerChoose('a')" class="w-full text-left px-4 py-3 rounded-2xl transition" style="background:var(--cream); border:1px solid var(--line);">
+                        <span class="font-bold" style="color:var(--jam)">A</span> 　<span class="text-sm">${event.a}</span>
+                    </button>
+                    <button onclick="dinerChoose('b')" class="w-full text-left px-4 py-3 rounded-2xl transition" style="background:var(--cream); border:1px solid var(--line);">
+                        <span class="font-bold" style="color:var(--honey)">B</span> 　<span class="text-sm">${event.b}</span>
+                    </button>
+                    <button onclick="dinerChoose('c')" class="w-full text-left px-4 py-3 rounded-2xl transition" style="background:var(--cream); border:1px solid var(--line);">
+                        <span class="font-bold" style="color:#7B5FA6">C</span> 　<span class="text-sm">${event.c}</span>
+                    </button>
+                </div>
+                <p id="diner-result" class="text-center text-sm font-semibold mt-4" style="min-height:1.5rem;"></p>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">放棄遊戲</button>
+            `;
+        }
+
+        function dinerStatCard(icon, label, value, color) {
+            const pct = Math.max(0, Math.min(100, label === '資金' ? (value / 500 * 100) : value));
+            return `<div class="text-center px-2 py-2.5 rounded-2xl" style="background:var(--cream); border:1px solid var(--line);">
+                <div class="text-lg">${icon}</div>
+                <div class="font-bold text-sm" style="color:${color}">${Math.round(value)}</div>
+                <div style="height:4px; border-radius:999px; overflow:hidden; background:var(--line); margin-top:4px;">
+                    <div style="height:100%; width:${Math.max(0, Math.min(100, pct))}%; background:${color}; transition:width .4s;"></div>
+                </div>
+            </div>`;
+        }
+
+        function dinerChoose(option) {
+            const state = dinerGameState;
+            if (!state || state.ended) return;
+            const event = state.currentEvent;
+            const isBoss = event.cat === 'D';
+            const mult = isBoss ? 1.5 : 1;
+            const isHoliday = event.cat === 'E';
+            let resultText = '';
+            let lifeDelta = 0, repDelta = 0, moneyDelta = 0;
+
+            if (option === 'a') {
+                moneyDelta = -Math.round((10 + Math.random() * 10) * mult);
+                repDelta = Math.round((3 + Math.random() * 5) * mult);
+                resultText = `你選擇了 A：${event.a}`;
+                playSfx('click');
+            } else if (option === 'b') {
+                moneyDelta = Math.round((30 + Math.random() * 70) * mult);
+                repDelta = isHoliday
+                    ? Math.round(Math.random() * 15 * mult)
+                    : Math.round((Math.random() * 20 - 10) * mult);
+                resultText = `你選擇了 B：${event.b}`;
+                playSfx(moneyDelta > 0 ? 'buy' : 'sell');
+            } else {
+                const success = Math.random() < 0.5;
+                if (success) {
+                    moneyDelta = Math.round((80 + Math.random() * 70) * mult);
+                    repDelta = Math.round((10 + Math.random() * 10) * mult);
+                    resultText = `你選擇了 C：${event.c} → 🎉 成功了！`;
+                    playSfx('perfect');
+                } else {
+                    if (Math.random() < 0.5) {
+                        lifeDelta = -Math.round((20 + Math.random() * 20) * mult);
+                    } else {
+                        moneyDelta = -Math.round((30 + Math.random() * 30) * mult);
+                    }
+                    resultText = `你選擇了 C：${event.c} → 😱 失敗了…`;
+                    playSfx('burnt');
+                }
+            }
+
+            state.life = Math.max(0, state.life + lifeDelta);
+            state.reputation = Math.max(0, state.reputation + repDelta);
+            state.money = Math.max(0, state.money + moneyDelta);
+
+            const deltaParts = [];
+            if (lifeDelta) deltaParts.push(`生命${lifeDelta > 0 ? '+' : ''}${lifeDelta}`);
+            if (repDelta) deltaParts.push(`名聲${repDelta > 0 ? '+' : ''}${repDelta}`);
+            if (moneyDelta) deltaParts.push(`資金${moneyDelta > 0 ? '+' : ''}${moneyDelta}`);
+
+            const resultEl = document.getElementById('diner-result');
+            if (resultEl) {
+                resultEl.textContent = `${resultText}（${deltaParts.join('、') || '沒有變化'}）`;
+                resultEl.style.color = (lifeDelta < 0 || moneyDelta < 0) && !(lifeDelta === 0 && moneyDelta >= 0) ? 'var(--danger)' : 'var(--sage)';
+            }
+            if (navigator.vibrate) navigator.vibrate(lifeDelta < 0 ? [120, 60, 120] : [40]);
+
+            // 停用選項按鈕，避免連續點擊
+            document.querySelectorAll('#game-modal-body button[onclick^="dinerChoose"]').forEach(b => b.disabled = true);
+
+            setTimeout(() => {
+                if (state.life <= 0 || state.reputation <= 0 || state.money <= 0) {
+                    dinerEndGame(false);
+                } else {
+                    dinerNextDay();
+                }
+            }, 1400);
+        }
+
+        function dinerEndGame(survived) {
+            const state = dinerGameState;
+            if (!state) return;
+            state.ended = true;
+            const daysSurvived = Math.min(state.day, DINER_TOTAL_DAYS);
+            let score = daysSurvived * 15;
+            let title, emoji, desc;
+            if (survived) {
+                score += Math.round((state.life + state.reputation) / 4) + Math.round(state.money / 50);
+                title = '順利撐過 20 天！';
+                emoji = '🎊';
+                desc = `你的深夜食堂成功經營下來了。最終生命 ${Math.round(state.life)}、名聲 ${Math.round(state.reputation)}、資金 ${Math.round(state.money)}`;
+                playSfx('perfect');
+            } else {
+                const cause = state.life <= 0 ? '體力耗盡，撐不下去了' : state.reputation <= 0 ? '名聲掃地，再也沒有客人上門' : '資金見底，週轉不靈只能收攤';
+                title = `第 ${daysSurvived} 天，${cause}`;
+                emoji = '🌙💤';
+                desc = '深夜食堂的故事，就在這裡告一段落了。';
+                playSfx('burnt');
+            }
+            dinerGameState = null;
+            document.getElementById('game-modal-title').textContent = '🌙 深夜食堂';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-6 rounded-3xl mb-4" style="background:linear-gradient(180deg, var(--cream), var(--paper))">
+                    <div class="text-6xl mb-3 ${survived ? 'celebrate-pop' : 'dash-shake'}">${emoji}</div>
+                    <p class="font-display text-xl font-bold mb-1" style="color:${survived ? 'var(--jam)' : 'var(--danger)'}">${title}</p>
+                    <p class="text-sm mb-4" style="color:var(--muted)">${desc}</p>
+                    <p class="text-sm mb-4">存活 ${daysSurvived} 天 ・ 分數：<span class="font-bold" style="color:var(--honey)">${score}</span></p>
+                    <div class="flex gap-3 justify-center flex-wrap">
+                        <button onclick="submitGameScore('diner', ${score})" class="btn-primary">上傳分數到排行榜</button>
+                        <button onclick="renderGameMenu()" class="btn-secondary">返回選單</button>
+                    </div>
+                </div>
+            `;
+        }
+
+
+        // ---------- 小餐廳經營模擬（Tiny Diner）----------
+        // 為了不觸發 AI 查詢（避免耗用 Gemini 免費額度），這裡另外寫一套只查
+        // 「Firestore 快取／本地食材資料庫」的版本，查不到就直接回傳 null，
+        // 不會像食譜詳細頁那樣繼續往下問 AI —— 遊戲只會挑選熱量資料「完整」的食譜
+        async function resolveIngredientNutritionNoAI(name) {
+            if (Object.prototype.hasOwnProperty.call(aiNutritionCache, name)) return aiNutritionCache[name];
+            const trimmedName = name.trim();
+            const docId = trimmedName.replace(/\//g, '_').slice(0, 200);
+            try {
+                const cacheDoc = await db.collection('ingredientNutrition').doc(docId).get();
+                if (cacheDoc.exists) return cacheDoc.data();
+            } catch (e) {}
+            try {
+                const aliasSnap = await db.collection('ingredientNutrition').where('keywords', 'array-contains', trimmedName).limit(1).get();
+                if (!aliasSnap.empty) return aliasSnap.docs[0].data();
+            } catch (e) {}
+            await Promise.all([tfndLoadPromise, tfndFullLoadPromise]);
+            const local = guessIngredientNutrition(name);
+            if (local) return local;
+            return null; // 沒有 AI 備援，查不到就是查不到
+        }
+        async function resolveIngredientDensityNoAI(name) {
+            if (Object.prototype.hasOwnProperty.call(densityCache, name)) return densityCache[name];
+            const trimmedName = name.trim();
+            const docId = trimmedName.replace(/\//g, '_').slice(0, 200);
+            try {
+                const cacheDoc = await db.collection('ingredientNutrition').doc(docId).get();
+                if (cacheDoc.exists && typeof cacheDoc.data().density === 'number') return cacheDoc.data().density;
+            } catch (e) {}
+            try {
+                const aliasSnap = await db.collection('ingredientNutrition').where('keywords', 'array-contains', trimmedName).limit(1).get();
+                if (!aliasSnap.empty && typeof aliasSnap.docs[0].data().density === 'number') return aliasSnap.docs[0].data().density;
+            } catch (e) {}
+            return guessIngredientDensity(name);
+        }
+        async function resolveGramsNoAI(amount, unit, name) {
+            const u = (unit || '').trim();
+            switch (u.toLowerCase()) {
+                case 'g': return amount;
+                case 'kg': return amount * 1000;
+                case 'oz': return amount * 28.3495;
+                case 'lb': return amount * 453.592;
+            }
+            const ml = convertToMilliliters(amount, unit);
+            if (ml !== null) {
+                const density = await resolveIngredientDensityNoAI(name);
+                if (density === null) return null;
+                return ml * density;
+            }
+            if (COUNT_UNIT_WORDS.includes(u)) {
+                const pieceWeight = guessPieceWeight(name);
+                if (pieceWeight !== null) return amount * pieceWeight;
+            }
+            return null;
+        }
+        // 算出一篇食譜的總熱量；只要有任何一項食材的資料不完整（熱量或重量換算查不到），
+        // 整篇食譜直接判定為「資料不完整」回傳 null，不會用進遊戲的候選菜單池
+        async function computeRecipeCaloriesNoAI(recipe) {
+            if (!recipe.ingredients || !recipe.ingredients.length) return null;
+            let totalKcal = 0;
+            for (const ing of recipe.ingredients) {
+                const nutrition = await resolveIngredientNutritionNoAI(ing.name);
+                if (!nutrition || typeof nutrition.kcal !== 'number') return null;
+                const grams = await resolveGramsNoAI(ing.amount, ing.unit, ing.name);
+                if (grams === null) return null;
+                totalKcal += (nutrition.kcal / 100) * grams;
+            }
+            const servings = recipe.servings > 0 ? recipe.servings : 1;
+            return Math.max(50, Math.round(totalKcal / servings)); // 換算成「每份」熱量，作為一份餐點的熱量基準
+        }
+
+        const TINY_DINER_KCAL_TO_PRICE = 0.18; // 每大卡換算的售價（新台幣）
+        const TINY_DINER_COST_RATIO = 0.4; // 食材成本估算為售價的 4 成（餐飲業常見的抓法）
+        const TINY_DINER_TOTAL_DAYS = 10;
+        let tinyDinerState = null;
+
+        function tinyDinerCleanup() { tinyDinerState = null; }
+
+        async function startTinyDinerGame() {
+            if (!currentUser) { alert('請先登入才能玩遊戲'); return; }
+            currentGameScreen = 'game';
+            qteCleanup(); stockGameCleanup(); dashGameCleanup(); dinerGameCleanup(); tinyDinerCleanup();
+            ensureAudioContext();
+            document.getElementById('game-modal-title').textContent = '🏮 小餐廳經營模擬';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-10">
+                    <div class="text-4xl mb-3">🍳</div>
+                    <p class="text-sm" style="color:var(--muted)">正在從真實食譜資料庫挑選有完整熱量資料的菜色…</p>
+                </div>
+            `;
+            try {
+                const snap = await db.collection('recipes').limit(200).get();
+                const allRecipes = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                    .filter(r => (!r.visibility || r.visibility === 'public') && r.ingredients && r.ingredients.length);
+                // 依照首頁排序邏輯排序（最新編輯在前），優先檢查首頁前 12 篇夠不夠用，
+                // 不夠的話才繼續往後面（隨機順序）找，減少不必要的檢查次數
+                allRecipes.sort((a, b) => {
+                    // 依「建立日期」排序，不是「最後編輯日期」——編輯過的舊食譜不應該因為改過內容
+                    // 就跳到最前面，建立日期沒有的舊資料才退回用編輯日期頂替
+                    const toMillis = t => (t && typeof t.toMillis === 'function') ? t.toMillis() : 0;
+                    const aTime = toMillis(a.createdAt) || toMillis(a.updatedAt);
+                    const bTime = toMillis(b.createdAt) || toMillis(b.updatedAt);
+                    return bTime - aTime;
+                });
+                const top12 = allRecipes.slice(0, 12);
+                const rest = allRecipes.slice(12).sort(() => Math.random() - 0.5);
+                const candidates = [...top12, ...rest];
+                const pool = [];
+                for (const recipe of candidates) {
+                    if (pool.length >= 15) break;
+                    const kcalPerServing = await computeRecipeCaloriesNoAI(recipe);
+                    if (kcalPerServing === null) continue; // 資料不完整，跳過，不觸發 AI
+                    pool.push({
+                        id: recipe.id,
+                        name: recipe.name,
+                        category: recipe.category,
+                        kcal: kcalPerServing,
+                        price: Math.max(20, Math.round(kcalPerServing * TINY_DINER_KCAL_TO_PRICE)),
+                        popularity: 0.6 + Math.random() * 0.8, // 每局隨機給一個受歡迎度權重
+                    });
+                }
+                if (pool.length < 4) {
+                    document.getElementById('game-modal-body').innerHTML = `
+                        <div class="text-center py-10">
+                            <div class="text-4xl mb-3">😥</div>
+                            <p class="text-sm mb-4" style="color:var(--muted)">目前平台上熱量資料完整的食譜還不夠多（至少需要 4 篇），沒辦法開始這個遊戲。
+                            多去幾篇食譜的詳細頁看一下熱量估算，讓系統把資料存起來，之後就會有更多菜色可以選了！</p>
+                            <button onclick="renderGameMenu()" class="btn-secondary">返回選單</button>
+                        </div>
+                    `;
+                    return;
+                }
+                tinyDinerState = { day: 0, money: 5000, startMoney: 5000, pool, log: [] };
+                playSfx('click');
+                tinyDinerNextDay();
+            } catch (err) {
+                document.getElementById('game-modal-body').innerHTML = `<p class="text-center text-sm py-10" style="color:var(--danger)">菜單池載入失敗：${err.message}</p><button onclick="renderGameMenu()" class="btn-secondary w-full">返回選單</button>`;
+            }
+        }
+
+        // 每日客群：對應到某個食譜分類，當天菜單如果有該分類的菜，會賣得更好、價格也稍微好一點；
+        // 沒有對應分類也沒關係，生意就是一般般，不會扣分
+        const TINY_DINER_CUSTOMER_GROUPS = [
+            { name: '上班族OL', icon: '👩‍💼', category: '蛋糕/糕餅', dislike: '寶寶食品' },
+            { name: '學生族群', icon: '🎒', category: '麵包/包子', dislike: '健康餐' },
+            { name: '銀髮長輩', icon: '👴', category: '中式烹飪', dislike: '慕斯/布丁' },
+            { name: '健身狂熱者', icon: '💪', category: '健康餐', dislike: '蛋糕/糕餅' },
+            { name: '甜點控', icon: '🍪', category: '餅乾/塔派', dislike: '中式烹飪' },
+            { name: '浪漫情侶', icon: '💑', category: '西式烹飪', dislike: '麵包/包子' },
+            { name: '動漫迷', icon: '🎌', category: '日式烹飪', dislike: '寶寶食品' },
+            { name: '新手爸媽', icon: '👶', category: '寶寶食品', dislike: '其他' },
+            { name: '美食探險家', icon: '🧭', category: '慕斯/布丁', dislike: '麵包/包子' },
+            { name: '在地熟客', icon: '🏘️', category: '其他', dislike: '西式烹飪' },
+        ];
+        const TINY_DINER_GROUP_POP_BOOST = 1.8; // 對應分類的受歡迎度加成
+        const TINY_DINER_GROUP_PRICE_BOOST = 1.15; // 對應分類的價格加成
+
+        function tinyDinerNextDay() {
+            const state = tinyDinerState;
+            if (!state) return;
+            state.day++;
+            if (state.day > TINY_DINER_TOTAL_DAYS) { endTinyDinerGame(); return; }
+            state.todayMenu = [];
+            state.todayGroup = TINY_DINER_CUSTOMER_GROUPS[Math.floor(Math.random() * TINY_DINER_CUSTOMER_GROUPS.length)];
+            renderTinyDinerMenuSelect();
+        }
+
+        function renderTinyDinerMenuSelect() {
+            const state = tinyDinerState;
+            document.getElementById('game-modal-title').textContent = '🏮 小餐廳經營模擬';
+            const dayPct = Math.round((state.day / TINY_DINER_TOTAL_DAYS) * 100);
+            const group = state.todayGroup;
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="mb-3">
+                    <div class="flex justify-between items-center mb-1 text-xs" style="color:var(--muted)">
+                        <span>第 ${state.day} / ${TINY_DINER_TOTAL_DAYS} 天</span>
+                        <span>資金：<span class="font-bold" style="color:var(--jam)">$${Math.round(state.money).toLocaleString()}</span></span>
+                    </div>
+                    <div style="height:6px; border-radius:999px; overflow:hidden; background:var(--line);">
+                        <div style="height:100%; width:${dayPct}%; background:linear-gradient(90deg, var(--honey), var(--jam));"></div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 px-4 py-3 rounded-2xl mb-3" style="background:rgba(244,228,234,0.5); border:1px solid var(--line);">
+                    <div class="text-3xl">${group.icon}</div>
+                    <div>
+                        <p class="text-xs" style="color:var(--muted)">今日主要客群</p>
+                        <p class="text-sm font-semibold">${group.name}</p>
+                    </div>
+                </div>
+                <p class="text-sm font-semibold mb-2">今天要賣什麼？挑 4~6 道菜（已選 <span id="tdn-count">0</span>/6）</p>
+                <div class="space-y-2 mb-4" style="max-height:40vh; overflow-y:auto;">
+                    ${state.pool.map((dish, i) => {
+                        return `<label class="flex items-center justify-between px-4 py-2.5 rounded-2xl cursor-pointer" style="background:var(--cream); border:1px solid var(--line);">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <input type="checkbox" onchange="tinyDinerToggleDish(${i}, this.checked)" class="shrink-0">
+                                <div class="min-w-0">
+                                    <p class="text-sm font-medium truncate">${dish.name}</p>
+                                    <p class="text-xs" style="color:var(--muted)">${dish.category} ・ ${dish.kcal} kcal/份</p>
+                                </div>
+                            </div>
+                            <p class="font-bold text-sm shrink-0" style="color:var(--jam)">$${dish.price}</p>
+                        </label>`;
+                    }).join('')}
+                </div>
+                <button id="tdn-confirm-btn" onclick="tinyDinerConfirmMenu()" disabled class="btn-primary w-full opacity-40">確認菜單，進入備料階段</button>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">放棄遊戲</button>
+            `;
+        }
+
+        function tinyDinerToggleDish(i, checked) {
+            const state = tinyDinerState;
+            if (!state) return;
+            const dish = state.pool[i];
+            if (checked) {
+                if (state.todayMenu.length >= 6) { alert('最多只能選 6 道菜'); event.target.checked = false; return; }
+                state.todayMenu.push(dish);
+            } else {
+                state.todayMenu = state.todayMenu.filter(d => d.id !== dish.id);
+            }
+            document.getElementById('tdn-count').textContent = state.todayMenu.length;
+            const btn = document.getElementById('tdn-confirm-btn');
+            const ok = state.todayMenu.length >= 4 && state.todayMenu.length <= 6;
+            btn.disabled = !ok;
+            btn.style.opacity = ok ? '1' : '0.4';
+        }
+
+        function tinyDinerConfirmMenu() {
+            playSfx('click');
+            renderTinyDinerPrepPhase();
+        }
+
+        function tinyDinerEffectivePrice(dish) {
+            const state = tinyDinerState;
+            const isMatch = state && state.todayGroup && dish.category === state.todayGroup.category;
+            return isMatch ? Math.round(dish.price * TINY_DINER_GROUP_PRICE_BOOST) : dish.price;
+        }
+        function tinyDinerEffectivePopularity(dish) {
+            const state = tinyDinerState;
+            if (!state || !state.todayGroup) return dish.popularity;
+            if (dish.category === state.todayGroup.dislike) return 0; // 討厭的分類完全賣不出去
+            const isMatch = dish.category === state.todayGroup.category;
+            return isMatch ? dish.popularity * TINY_DINER_GROUP_POP_BOOST : dish.popularity;
+        }
+
+        function renderTinyDinerPrepPhase() {
+            const state = tinyDinerState;
+            document.getElementById('game-modal-title').textContent = '📦 今日備料';
+            document.getElementById('game-modal-body').innerHTML = `
+                <p class="text-sm mb-1" style="color:var(--muted)">今天預估會有 <b>10~20 位</b>客人上門，直接輸入每道菜要準備幾份（備太少客人吃不到，備太多賣不完會浪費食材成本）</p>
+                <p class="text-sm mb-4">目前資金：<span class="font-bold" style="color:var(--jam)">$${Math.round(state.money).toLocaleString()}</span></p>
+                <div class="space-y-2.5 mb-4">
+                    ${state.todayMenu.map((dish, i) => {
+                        const unitCost = Math.round(dish.price * TINY_DINER_COST_RATIO);
+                        return `<div class="px-4 py-3 rounded-2xl" style="background:var(--cream); border:1px solid var(--line);">
+                            <div class="flex justify-between items-center mb-1.5">
+                                <p class="text-sm font-medium">${dish.name}</p>
+                                <p class="text-xs" style="color:var(--muted)">售價 $${dish.price} ・ 成本約 $${unitCost}/份</p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs shrink-0" style="color:var(--muted)">準備份數</label>
+                                <input type="number" min="0" value="5" id="tdn-prep-${i}" oninput="tinyDinerUpdatePrepCost()" class="form-input !py-1.5 text-sm" style="width:80px;">
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+                <p class="text-sm mb-4">預估食材總成本：<span id="tdn-prep-cost" class="font-bold" style="color:var(--danger)">$0</span></p>
+                <button onclick="tinyDinerConfirmPrep()" class="btn-primary w-full">開始今日營業</button>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-3">放棄遊戲</button>
+            `;
+            tinyDinerUpdatePrepCost();
+        }
+
+        function tinyDinerUpdatePrepCost() {
+            const state = tinyDinerState;
+            let totalCost = 0;
+            state.todayMenu.forEach((dish, i) => {
+                const el = document.getElementById(`tdn-prep-${i}`);
+                const qty = el ? Math.max(0, parseInt(el.value) || 0) : 0;
+                totalCost += qty * Math.round(dish.price * TINY_DINER_COST_RATIO);
+            });
+            const costEl = document.getElementById('tdn-prep-cost');
+            if (costEl) costEl.textContent = `$${totalCost.toLocaleString()}`;
+        }
+
+        const TINY_DINER_NAMES = ['王小明', '陳小華', '林美玲', '張先生', '李小姐', '黃太太', '吳大哥', '蔡同學', '許阿姨', '楊經理', '周小姐', '劉先生', '鄭小妹', '謝老闆', '賴同學', '洪太太', '游先生', '蕭小姐', '范大哥', '簡阿伯'];
+        const TINY_DINER_REASONS = ['慶祝生日', '犒賞辛苦的自己', '跟好久不見的朋友聚餐', '深夜嘴饞睡不著', '終於等到最愛的口味上市', '路過被香味吸引', '特地從外地來嚐鮮', '慶祝升遷加薪', '紀念日想吃點好的', '純粹肚子餓', '加班後犒賞自己', '慶祝考試通過', '想念家鄉的味道', '跟著網路評價找上門', '單純想放鬆一下'];
+
+        function tinyDinerConfirmPrep() {
+            const state = tinyDinerState;
+            const prepped = state.todayMenu.map((dish, i) => {
+                const el = document.getElementById(`tdn-prep-${i}`);
+                const qty = el ? Math.max(0, parseInt(el.value) || 0) : 0;
+                return { dish, qty, remaining: qty, effPrice: tinyDinerEffectivePrice(dish), effPop: tinyDinerEffectivePopularity(dish) };
+            });
+            const totalCost = prepped.reduce((sum, p) => sum + p.qty * Math.round(p.dish.price * TINY_DINER_COST_RATIO), 0);
+
+            // 先把今天所有客人依受歡迎度加權隨機決定好（事件序列），再逐一播放動畫呈現
+            const customerCount = 10 + Math.floor(Math.random() * 11);
+            const totalWeight = prepped.reduce((sum, p) => sum + p.effPop, 0);
+            const events = [];
+            for (let c = 0; c < customerCount; c++) {
+                let picked;
+                if (totalWeight <= 0) {
+                    // 極端情況：整份菜單剛好都是今天客群討厭的分類，沒有人想買任何東西
+                    picked = prepped[Math.floor(Math.random() * prepped.length)];
+                } else {
+                    let roll = Math.random() * totalWeight;
+                    picked = null;
+                    for (const p of prepped) {
+                        roll -= p.effPop;
+                        if (roll <= 0 && p.effPop > 0) { picked = p; break; }
+                    }
+                    if (!picked) picked = prepped[prepped.length - 1];
+                }
+                const success = totalWeight > 0 && picked.remaining > 0;
+                if (success) picked.remaining--;
+                events.push({
+                    name: TINY_DINER_NAMES[Math.floor(Math.random() * TINY_DINER_NAMES.length)],
+                    reason: TINY_DINER_REASONS[Math.floor(Math.random() * TINY_DINER_REASONS.length)],
+                    dish: picked.dish,
+                    price: picked.effPrice,
+                    success,
+                });
+            }
+            const wasted = prepped.reduce((sum, p) => sum + p.remaining, 0);
+            playSfx('click');
+            renderTinyDinerEventFeed(events, totalCost, wasted, customerCount);
+        }
+
+        function renderTinyDinerEventFeed(events, totalCost, wasted, customerCount) {
+            document.getElementById('game-modal-title').textContent = '🏮 今日營業中…';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="flex justify-between items-center mb-3 text-sm">
+                    <p>來客 <span id="tdn-feed-count">0</span> / ${customerCount}</p>
+                    <p>營業額：<span id="tdn-feed-revenue" class="font-bold" style="color:var(--sage)">$0</span></p>
+                </div>
+                <!-- 固定大小的事件卡片，每位客人依序替換內容，不會讓版面一直長高 -->
+                <div id="tdn-event-card" class="rounded-3xl px-5 flex flex-col items-center justify-center text-center" style="height:150px; background:var(--cream); border:1px solid var(--line); transition:background .2s;">
+                    <p class="text-sm" style="color:var(--muted)">準備開店…</p>
+                </div>
+                <div class="flex justify-center gap-1.5 mt-4">
+                    ${events.map((_, idx) => `<span id="tdn-dot-${idx}" style="width:6px; height:6px; border-radius:999px; background:var(--line); display:inline-block; transition:background .2s;"></span>`).join('')}
+                </div>
+            `;
+            const cardEl = document.getElementById('tdn-event-card');
+            let revenue = 0, served = 0, turnedAway = 0;
+            let i = 0;
+            const step = () => {
+                if (i >= events.length) {
+                    const profit = revenue - totalCost;
+                    tinyDinerState.money += profit;
+                    playSfx(profit >= 0 ? 'success' : 'burnt');
+                    setTimeout(() => renderTinyDinerDayResult({ customerCount, served, turnedAway, revenue, totalCost, profit, wasted }), 600);
+                    return;
+                }
+                const ev = events[i];
+                const dot = document.getElementById(`tdn-dot-${i}`);
+                if (dot) dot.style.background = ev.success ? 'var(--sage)' : 'var(--danger)';
+                cardEl.style.opacity = '0';
+                setTimeout(() => {
+                    if (ev.success) {
+                        revenue += ev.price;
+                        served++;
+                        cardEl.style.background = 'rgba(155,196,155,0.25)';
+                        cardEl.innerHTML = `<div class="text-3xl mb-2">😊</div>
+                            <p class="text-sm font-medium mb-1">${ev.name} 買了「${ev.dish.name}」</p>
+                            <p class="text-xs mb-1" style="color:var(--muted)">為了${ev.reason}</p>
+                            <p class="font-bold text-lg" style="color:var(--sage)">+$${ev.price}</p>`;
+                        playSfx('tick');
+                    } else {
+                        turnedAway++;
+                        cardEl.style.background = 'rgba(196,69,63,0.12)';
+                        cardEl.innerHTML = `<div class="text-3xl mb-2">😥</div>
+                            <p class="text-sm font-medium mb-1">${ev.name} 想吃「${ev.dish.name}」</p>
+                            <p class="text-xs" style="color:var(--muted)">為了${ev.reason}，可惜已經賣完了，失望離開</p>`;
+                    }
+                    cardEl.style.opacity = '1';
+                    document.getElementById('tdn-feed-count').textContent = i + 1;
+                    document.getElementById('tdn-feed-revenue').textContent = `$${revenue.toLocaleString()}`;
+                    i++;
+                    setTimeout(step, 850);
+                }, 150);
+            };
+            step();
+        }
+
+        function renderTinyDinerDayResult(result) {
+            const state = tinyDinerState;
+            document.getElementById('game-modal-title').textContent = `📊 第 ${state.day} 天結算`;
+            const isProfit = result.profit >= 0;
+            const group = state.todayGroup;
+            const hadMatch = state.todayMenu.some(d => d.category === group.category);
+            const hadDislike = state.todayMenu.some(d => d.category === group.dislike);
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-4 rounded-3xl mb-4" style="background:linear-gradient(180deg, var(--cream), var(--paper))">
+                    <div class="text-5xl mb-2">${isProfit ? '📈' : '📉'}</div>
+                    <p class="font-display text-xl font-bold" style="color:${isProfit ? 'var(--sage)' : 'var(--danger)'}">今日${isProfit ? '獲利' : '虧損'} $${Math.abs(Math.round(result.profit)).toLocaleString()}</p>
+                </div>
+                <p class="text-xs mb-1 text-center" style="color:var(--muted)">${group.icon} 今天客群是「${group.name}」，${hadMatch ? `菜單裡剛好有「${group.category}」，賣得特別好！` : `菜單裡沒有「${group.category}」，生意就一般般`}</p>
+                ${hadDislike ? `<p class="text-xs mb-3 text-center" style="color:var(--danger)">⚠️ 菜單裡有「${group.dislike}」，這道菜今天完全賣不出去</p>` : '<div class="mb-3"></div>'}
+                <div class="grid grid-cols-2 gap-2 mb-4 text-sm">
+                    <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:var(--muted)">來客數</p><p class="font-bold">${result.customerCount} 位</p></div>
+                    <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:var(--muted)">成交 / 撲空</p><p class="font-bold">${result.served} / ${result.turnedAway}</p></div>
+                    <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:var(--muted)">營業額</p><p class="font-bold" style="color:var(--sage)">$${Math.round(result.revenue).toLocaleString()}</p></div>
+                    <div class="px-4 py-3 rounded-2xl" style="background:var(--cream)"><p style="color:var(--muted)">食材成本</p><p class="font-bold" style="color:var(--danger)">$${Math.round(result.totalCost).toLocaleString()}</p></div>
+                </div>
+                ${result.wasted > 0 ? `<p class="text-xs mb-4" style="color:var(--muted)">⚠️ 有 ${result.wasted} 份備料沒賣完，成本已經算進去了，下次可以少備一點</p>` : ''}
+                ${result.turnedAway > 0 ? `<p class="text-xs mb-4" style="color:var(--muted)">😥 有 ${result.turnedAway} 位客人撲空離開，下次可以多備一點熱門菜色</p>` : ''}
+                <p class="text-sm mb-4">目前總資金：<span class="font-bold" style="color:var(--jam)">$${Math.round(state.money).toLocaleString()}</span></p>
+                <button onclick="tinyDinerNextDay()" class="btn-primary w-full">${state.day >= TINY_DINER_TOTAL_DAYS ? '查看最終結算' : '進入下一天'}</button>
+            `;
+        }
+
+        function endTinyDinerGame() {
+            const state = tinyDinerState;
+            if (!state) return;
+            const netProfit = state.money - state.startMoney;
+            const score = Math.max(0, Math.round(netProfit / 20));
+            tinyDinerState = null;
+            playSfx(netProfit >= 0 ? 'perfect' : 'fail');
+            document.getElementById('game-modal-title').textContent = '🏮 小餐廳經營模擬';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-8">
+                    <div class="text-6xl mb-3 ${netProfit >= 0 ? 'celebrate-pop' : ''}">${netProfit >= 0 ? '🎉' : '😥'}</div>
+                    <p class="font-display text-2xl font-bold mb-2" style="color:${netProfit >= 0 ? 'var(--jam)' : 'var(--danger)'}">10 天經營結束！</p>
+                    <p class="text-sm mb-4" style="color:var(--muted)">最終資金 $${Math.round(state.money).toLocaleString()}（${netProfit >= 0 ? '淨賺' : '淨賠'} $${Math.abs(Math.round(netProfit)).toLocaleString()}）</p>
+                    <p class="text-sm mb-6">分數：<span class="font-bold" style="color:var(--honey)">${score}</span></p>
+                    <div class="flex gap-3 justify-center flex-wrap">
+                        <button onclick="submitGameScore('tinydiner', ${score})" class="btn-primary">上傳分數到排行榜</button>
+                        <button onclick="renderGameMenu()" class="btn-secondary">返回選單</button>
+                    </div>
+                </div>
+            `;
+        }
+        // ---------- 遊戲結束/排行榜/上傳分數 ----------
+        function dashOpenRecipe(idx) {
+            const recipe = (window.__dashRecommendPicks || [])[idx];
+            if (!recipe || !recipe.id) return;
+            // game.html是獨立頁面，不能像原本index.html裡那樣直接呼叫showDetail()彈出食譜詳細頁
+            // (那個函式牽動整個食譜檢視/編輯系統，沒辦法簡單複製一份過來)，改成導回首頁、
+            // 帶上openRecipe網址參數，讓index.html載入時偵測到這個參數、自動幫忙開啟那篇食譜
+            window.location.href = `index.html?openRecipe=${encodeURIComponent(recipe.id)}`;
+        }
+        const GAME_NAMES = { qte: '神廚火候控制', stock: '食材期貨大亨', dash: '虛擬廚房挑戰賽', diner: '深夜食堂', tinydiner: '小餐廳經營模擬' };
+        function showGameOverScreen(gameId, score, detailText) {
+            const gameName = GAME_NAMES[gameId] || gameId;
+            document.getElementById('game-modal-title').textContent = '🎮 遊戲場';
+            document.getElementById('game-modal-title').style.cssText = '';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-8">
+                    <div class="text-5xl mb-3">🎉</div>
+                    <p class="font-display text-2xl font-bold mb-2" style="color:var(--jam)">遊戲結束！</p>
+                    <p class="text-lg mb-1">${gameName} 分數：<span class="font-bold" style="color:var(--honey)">${score}</span></p>
+                    <p class="text-xs mb-6" style="color:var(--muted)">${detailText || ''}</p>
+                    <div class="flex gap-3 justify-center flex-wrap">
+                        <button onclick="submitGameScore('${gameId}', ${score})" class="btn-primary">上傳分數到排行榜</button>
+                        <button onclick="renderGameMenu()" class="btn-secondary">返回選單</button>
+                    </div>
+                </div>
+            `;
+        }
+        async function submitGameScore(gameId, score) {
+            if (!currentUser) { alert('請先登入才能上傳分數'); return; }
+            try {
+                await db.collection('gameScores').add({
+                    gameId, userId: currentUser.uid, userName: (userProgress && userProgress.nickname) || currentUser.displayName || '匿名',
+                    score, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+                alert('分數已上傳！');
+                showLeaderboard(gameId);
+            } catch (err) {
+                alert('上傳失敗：' + err.message);
+            }
+        }
+        async function showLeaderboard(gameId) {
+            currentGameScreen = 'leaderboard';
+            document.getElementById('game-modal-title').textContent = '🏆 排行榜';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="modal-photo-header rounded-2xl px-4 py-4 mb-4" style="background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785486362/Achievement_gqdqic.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785486362/Achievement_gqdqic.png') 2x);">
+                    <p class="font-display font-bold text-lg mb-1">🏆 排行榜</p>
+                    <div class="flex gap-2 flex-wrap">
+                        <button onclick="showLeaderboard('qte')" class="chip ${gameId === 'qte' ? 'active' : ''}">神廚火候控制</button>
+                        <button onclick="showLeaderboard('stock')" class="chip ${gameId === 'stock' ? 'active' : ''}">食材期貨大亨</button>
+                        <button onclick="showLeaderboard('dash')" class="chip ${gameId === 'dash' ? 'active' : ''}">廚房挑戰賽</button>
+                        <button onclick="showLeaderboard('diner')" class="chip ${gameId === 'diner' ? 'active' : ''}">深夜食堂</button>
+                        <button onclick="showLeaderboard('tinydiner')" class="chip ${gameId === 'tinydiner' ? 'active' : ''}">餐廳經營</button>
+                    </div>
+                </div>
+                <div id="leaderboard-list"><p class="text-sm" style="color:var(--muted)">載入中…</p></div>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full mt-4">返回選單</button>
+            `;
+            try {
+                const snap = await db.collection('gameScores').where('gameId', '==', gameId).orderBy('score', 'desc').limit(10).get();
+                const list = document.getElementById('leaderboard-list');
+                if (!list) return;
+                if (snap.empty) { list.innerHTML = `<p class="text-sm" style="color:var(--muted)">還沒有任何紀錄，來當第一名吧！</p>`; return; }
+                const docs = snap.docs.map(doc => doc.data());
+                const uniqueUids = [...new Set(docs.map(d => d.userId).filter(Boolean))];
+                const nicknameByUid = {};
+                await Promise.all(uniqueUids.map(uid =>
+                    db.collection('userProfiles').doc(uid).get()
+                        .then(doc => { if (doc.exists && doc.data().nickname) nicknameByUid[uid] = doc.data().nickname; })
+                        .catch(() => {})
+                ));
+                list.innerHTML = docs.map((d, i) => {
+                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                    const liveName = (d.userId && nicknameByUid[d.userId]) || d.userName || '匿名';
+                    return `<div class="flex justify-between items-center px-4 py-2.5 rounded-2xl mb-2" style="background:var(--cream)">
+                        <span>${medal} ${liveName}</span>
+                        <span class="font-bold" style="color:var(--jam)">${d.score}</span>
+                    </div>`;
+                }).join('');
+            } catch (err) {
+                const list = document.getElementById('leaderboard-list');
+                if (list) list.innerHTML = `<p class="text-sm" style="color:var(--danger)">載入失敗：${err.message}</p>`;
+            }
+        }
+</script>
+</body>
+</html>
