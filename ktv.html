@@ -1986,11 +1986,13 @@
         wrap.style.marginBottom = '';
         const naturalHeight = wrap.offsetHeight;
         if (!naturalHeight) return;
-        const availableHeight = modalInner.clientHeight - (modalInner.scrollHeight - naturalHeight) - 4;
+        const availableHeight = modalInner.clientHeight - (modalInner.scrollHeight - naturalHeight) - 20; // 多留一點緩衝空間，避免太擠
         if (availableHeight > 0 && availableHeight < naturalHeight) {
             const scale = Math.max(0.55, availableHeight / naturalHeight); // 最小縮到55%，避免縮太誇張反而看不清楚
+            const shrunkAmount = naturalHeight * (1 - scale);
             wrap.style.transform = `scale(${scale})`;
-            wrap.style.marginBottom = `${-(naturalHeight * (1 - scale))}px`;
+            // 補償空白時故意少頂一點(留8px呼吸空間)，不要完全頂滿貼著下面的按鈕，視覺上比較不擠
+            wrap.style.marginBottom = `${-(Math.max(0, shrunkAmount - 8))}px`;
         }
     }
     function buildWheelSkeleton(wheelEvent) {
@@ -2129,6 +2131,8 @@
         pointer.style.transform = 'rotate(0deg) scale(1)';
         void pointer.offsetWidth; // 強制瀏覽器套用上面的重置，下面重新設定transition才不會被跳過
         if (dialWrap) { dialWrap.style.transition = ''; dialWrap.style.transform = ''; }
+        fitWheelToAvailableSpace(); // 上面這行會把靜止畫面算好的縮放比例一起清掉，這裡要重新算一次，
+                                     // 不然轉動開始的瞬間輪盤會跳回原始大小，被視窗邊界切掉
 
         const participants = wheelEvent.participants || [];
         const n = participants.length;
