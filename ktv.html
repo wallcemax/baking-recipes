@@ -147,13 +147,14 @@
         font-size: 0.66rem; opacity: 0.65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .ktv-card-actions { display: flex; gap: 0.3rem; flex-shrink: 0; }
-    .ktv-add-btn, .ktv-insert-btn, .ktv-fav-btn {
+    .ktv-add-btn, .ktv-insert-btn, .ktv-fav-btn, .ktv-block-btn {
         flex-shrink: 0; border-radius: 999px; border: none; color: #fff; cursor: pointer; font-size: 0.64rem;
         padding: 0.28rem 0.5rem; white-space: nowrap;
     }
     .ktv-add-btn { background: var(--sage); }
     .ktv-insert-btn { background: var(--honey); }
     .ktv-fav-btn { background: var(--jam); }
+    .ktv-block-btn { background: #6b5847; }
     .ktv-rank-badge { font-size: 0.7rem; opacity: 0.6; width: 1.3rem; flex-shrink: 0; text-align: center; }
     /* 收藏按鈕按下去的跳動回饋，避免點了完全沒視覺反應 */
     @keyframes fav-pop { 0% { transform: scale(1); } 45% { transform: scale(1.6); } 100% { transform: scale(1); } }
@@ -538,6 +539,7 @@
                             <button class="overlay-tab" data-tab="ranking" onclick="switchOverlayTab('ranking')">🔥熱門排行</button>
                             <button class="overlay-tab" data-tab="myhistory" onclick="switchOverlayTab('myhistory')">📗歷史歌單</button>
                             <button class="overlay-tab" data-tab="favorites" onclick="switchOverlayTab('favorites')">❤️最愛歌曲</button>
+                            <button class="overlay-tab" data-tab="blacklist" onclick="switchOverlayTab('blacklist')">🚫黑名單</button>
                         </div>
                         <div id="overlay-tab-search" class="overlay-tab-content">
                             <div style="display:flex; gap:0.4rem; margin-bottom:0.6rem;">
@@ -552,6 +554,11 @@
                         <div id="overlay-tab-favorites" class="overlay-tab-content hidden">
                             <input id="host-favorites-search" type="text" placeholder="搜尋我的最愛歌曲..." oninput="filterFavoritesList('host')" style="margin-bottom:0.6rem;">
                             <div id="host-favorites-list"></div>
+                        </div>
+                        <div id="overlay-tab-blacklist" class="overlay-tab-content hidden">
+                            <p style="font-size:0.75rem; color:var(--muted); margin-bottom:0.6rem;">被你封鎖的歌不會再出現在你自己的搜尋結果裡（只有你看不到，其他人還是搜得到），點下面的✅可以解除封鎖</p>
+                            <input id="host-blacklist-search" type="text" placeholder="搜尋我的黑名單..." oninput="filterBlacklistList('host')" style="margin-bottom:0.6rem;">
+                            <div id="host-blacklist-list"></div>
                         </div>
                     </div>
                     <div class="overlay-panel overlay-right">
@@ -591,6 +598,7 @@
                     <button class="member-tab" data-tab="ranking" onclick="switchMemberTab('ranking')">🔥熱門排行</button>
                     <button class="member-tab" data-tab="myhistory" onclick="switchMemberTab('myhistory')">📗歷史歌單</button>
                     <button class="member-tab" data-tab="favorites" onclick="switchMemberTab('favorites')">❤️最愛歌曲</button>
+                    <button class="member-tab" data-tab="blacklist" onclick="switchMemberTab('blacklist')">🚫黑名單</button>
                 </div>
                 <div id="member-tab-queue" class="member-tab-content"><div id="member-queue-list"></div></div>
                 <div id="member-tab-search" class="member-tab-content hidden">
@@ -606,6 +614,11 @@
                 <div id="member-tab-favorites" class="member-tab-content hidden">
                     <input id="member-favorites-search" type="text" placeholder="搜尋我的最愛歌曲..." oninput="filterFavoritesList('member')" style="margin-bottom:0.6rem;">
                     <div id="member-favorites-list"></div>
+                </div>
+                <div id="member-tab-blacklist" class="member-tab-content hidden">
+                    <p style="font-size:0.75rem; color:var(--muted); margin-bottom:0.6rem;">被你封鎖的歌不會再出現在你自己的搜尋結果裡（只有你看不到，其他人還是搜得到），點下面的✅可以解除封鎖</p>
+                    <input id="member-blacklist-search" type="text" placeholder="搜尋我的黑名單..." oninput="filterBlacklistList('member')" style="margin-bottom:0.6rem;">
+                    <div id="member-blacklist-list"></div>
                 </div>
             </div>
         </div>
@@ -646,6 +659,7 @@
     let nextUpPollTimer = null;
     let pendingJoinRoomId = null; // 等待輸入密碼的房間ID
     let userFavoriteVideoIds = new Set(); // 目前登入者收藏的歌曲videoId集合，方便快速判斷某首歌有沒有收藏過
+    let userBlockedVideoIds = new Set(); // 目前登入者個人封鎖(黑名單)的歌曲videoId集合，只影響自己的搜尋結果
     let blockedVideoIds = new Set(); // 已知播放會失敗(不允許嵌入/影片不存在)的videoId集合，搜尋結果會自動濾掉這些
 
     auth.onAuthStateChanged(user => {
@@ -656,6 +670,7 @@
             loadRoomList();
             loadUserFavoriteIds();
             loadBlockedVideoIds();
+            loadUserBlockedIds();
         }
     });
 
@@ -1191,7 +1206,7 @@
         document.getElementById('host-overlay-ui').classList.toggle('expanded');
     }
     function switchOverlayTab(tab) {
-        ['search', 'history', 'ranking', 'myhistory', 'favorites'].forEach(t => {
+        ['search', 'history', 'ranking', 'myhistory', 'favorites', 'blacklist'].forEach(t => {
             document.getElementById(`overlay-tab-${t}`).classList.toggle('hidden', t !== tab);
         });
         document.querySelectorAll('.overlay-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -1199,9 +1214,10 @@
         if (tab === 'ranking') loadRankingList();
         if (tab === 'myhistory') loadMyHistoryList();
         if (tab === 'favorites') loadFavoritesList();
+        if (tab === 'blacklist') loadBlacklistList();
     }
     function switchMemberTab(tab) {
-        ['queue', 'search', 'history', 'ranking', 'myhistory', 'favorites'].forEach(t => {
+        ['queue', 'search', 'history', 'ranking', 'myhistory', 'favorites', 'blacklist'].forEach(t => {
             document.getElementById(`member-tab-${t}`).classList.toggle('hidden', t !== tab);
         });
         document.querySelectorAll('.member-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -1209,6 +1225,7 @@
         if (tab === 'ranking') loadRankingList();
         if (tab === 'myhistory') loadMyHistoryList();
         if (tab === 'favorites') loadFavoritesList();
+        if (tab === 'blacklist') loadBlacklistList();
     }
     function toggleFullscreen() {
         const el = document.getElementById('fullscreen-wrapper');
@@ -1486,8 +1503,9 @@
         }
     }
     function renderSearchResultsWithDeepSearch(results, resultsEl, isEmpty) {
-        // 先濾掉已知播放會失敗的影片，不管是快取搜尋還是深度搜尋的結果都經過這裡，統一處理
-        const filtered = (results || []).filter(r => !blockedVideoIds.has(r.videoId));
+        // 先濾掉已知播放會失敗的影片(全站共用)跟自己個人封鎖的影片(只影響自己)，
+        // 不管是快取搜尋還是深度搜尋的結果都經過這裡，統一處理
+        const filtered = (results || []).filter(r => !blockedVideoIds.has(r.videoId) && !userBlockedVideoIds.has(r.videoId));
         const cardsHtml = filtered.length
             ? filtered.map(r => buildSongCard(r, 'result')).join('')
             : `<div class="empty-hint">${isEmpty ? '目前沒有快取結果' : '找不到符合的影片，換個關鍵字試試'}</div>`;
@@ -1502,11 +1520,17 @@
         const songData = JSON.stringify({ videoId: song.videoId, title: song.title, thumbnail: song.thumbnail }).replace(/'/g, '&#39;');
         const isFav = userFavoriteVideoIds.has(song.videoId);
         const favBtn = `<button class="ktv-fav-btn" data-video-id="${song.videoId}" onclick='toggleFavoriteSong(${songData})' title="${isFav ? '取消收藏' : '加入最愛歌曲'}">${isFav ? '❤️' : '🤍'}</button>`;
+        // 黑名單清單本身顯示的卡片，按鈕要改成「解除封鎖」；其他地方(搜尋結果/歷史/排行/收藏)
+        // 都顯示「加入黑名單」的封鎖按鈕，讓使用者可以直接把不想再看到的歌(例如別人自己錄的翻唱)擋掉
+        const blockBtn = kind === 'blacklist'
+            ? `<button class="ktv-block-btn" data-video-id="${song.videoId}" onclick='toggleBlockSong(${songData})' title="解除封鎖">✅</button>`
+            : `<button class="ktv-block-btn" data-video-id="${song.videoId}" onclick='toggleBlockSong(${songData})' title="加入黑名單（之後你的搜尋結果不會再出現這首）">🚫</button>`;
         let subText = '';
         if (kind === 'result') subText = escapeHtmlKtv(song.channelTitle || '');
         else if (kind === 'history' || kind === 'myhistory') subText = escapeHtmlKtv(song.requestedBy || '');
         else if (kind === 'ranking') subText = `被點過 ${song.count || 0} 次`;
         else if (kind === 'favorite') subText = '我收藏的歌';
+        else if (kind === 'blacklist') subText = '已封鎖';
         const rankBadge = extra && extra.rank ? `<span class="ktv-rank-badge">${extra.rank}</span>` : '';
         return `<div class="ktv-result-card">
             ${rankBadge}
@@ -1516,9 +1540,12 @@
                 <div class="sub">${subText}</div>
             </div>
             <div class="ktv-card-actions">
+                ${kind === 'blacklist' ? '' : `
                 <button class="ktv-add-btn" onclick='addSongToQueue(${songData})'>＋</button>
                 <button class="ktv-insert-btn" onclick='addSongToQueue(${songData}, true)'>⚡</button>
                 ${favBtn}
+                `}
+                ${blockBtn}
             </div>
         </div>`;
     }
@@ -1693,6 +1720,15 @@
             userFavoriteVideoIds = new Set(snap.docs.map(d => d.data().videoId));
         } catch (err) { console.warn('讀取收藏清單失敗', err); }
     }
+    // 個人黑名單：不像ktvBlockedVideos(全站共用、播不出來才會加入)，這份是使用者自己主動封鎖的
+    // (例如搜到別人自己錄的翻唱、覺得不喜歡)，只影響自己的搜尋結果，其他人還是搜得到、看得到
+    async function loadUserBlockedIds() {
+        if (!currentUser) return;
+        try {
+            const snap = await db.collection('ktvUserBlockedSongs').where('uid', '==', currentUser.uid).get();
+            userBlockedVideoIds = new Set(snap.docs.map(d => d.data().videoId));
+        } catch (err) { console.warn('讀取個人黑名單失敗', err); }
+    }
     // 封鎖清單不分使用者，是全站共用的(某部影片一旦被偵測到播不出來，對誰來說都播不出來)，
     // 頁面載入時先抓一次，之後每次搜尋結果渲染前都會拿這份清單濾掉
     async function loadBlockedVideoIds() {
@@ -1761,6 +1797,69 @@
     }
 
     // ---------------------------------------------------------------
+    // 個人黑名單：跟收藏功能是同一套模式的相反版本——把不想再看到的歌(例如別人自己錄的翻唱)
+    // 加入封鎖，之後這首歌不會再出現在「自己的」搜尋結果裡，但不影響其他人，跟全站共用、
+    // 只有播不出來才會加入的ktvBlockedVideos是完全不同的兩份清單
+    // ---------------------------------------------------------------
+    async function toggleBlockSong(song) {
+        if (!currentUser) { alert('請先登入才能使用黑名單功能'); return; }
+        const docId = `${currentUser.uid}_${song.videoId}`;
+        const ref = db.collection('ktvUserBlockedSongs').doc(docId);
+        const willBlock = !userBlockedVideoIds.has(song.videoId);
+        try {
+            if (willBlock) {
+                await ref.set({ uid: currentUser.uid, videoId: song.videoId, title: song.title, thumbnail: song.thumbnail || '', blockedAt: firebase.firestore.FieldValue.serverTimestamp() });
+                userBlockedVideoIds.add(song.videoId);
+                showKtvToast(`🚫 已將《${song.title}》加入黑名單，之後你的搜尋結果不會再出現這首`);
+            } else {
+                await ref.delete();
+                userBlockedVideoIds.delete(song.videoId);
+                showKtvToast(`✅ 已將《${song.title}》從黑名單移除`);
+            }
+            // 加入黑名單後，直接把畫面上目前顯示的這張卡片整個移除(不只是換圖示)，
+            // 因為封鎖之後這首歌照理說不該再出現在搜尋結果/歷史/排行這些清單裡了
+            if (willBlock) {
+                document.querySelectorAll(`.ktv-block-btn[data-video-id="${song.videoId}"]`).forEach(btn => {
+                    const card = btn.closest('.ktv-result-card');
+                    if (card) card.remove();
+                });
+            }
+            loadBlacklistList();
+        } catch (err) {
+            alert('黑名單操作失敗：' + err.message);
+        }
+    }
+    let cachedBlacklistEntries = []; // 快取完整的黑名單清單，搜尋列輸入時直接在前端過濾，不用每次都重新查一次資料庫
+    async function loadBlacklistList() {
+        const targets = [document.getElementById('host-blacklist-list'), document.getElementById('member-blacklist-list')].filter(Boolean);
+        if (!targets.length || !currentUser) return;
+        targets.forEach(el => el.innerHTML = '<div class="empty-hint">載入中...</div>');
+        try {
+            const snap = await db.collection('ktvUserBlockedSongs').where('uid', '==', currentUser.uid).get();
+            const docs = snap.docs.map(d => d.data());
+            docs.sort((a, b) => {
+                const toMillis = t => (t && typeof t.toMillis === 'function') ? t.toMillis() : 0;
+                return toMillis(b.blockedAt) - toMillis(a.blockedAt);
+            });
+            cachedBlacklistEntries = docs;
+            renderBlacklistList(docs, targets);
+        } catch (err) {
+            targets.forEach(el => el.innerHTML = `<div class="empty-hint">⚠️ 載入失敗：${escapeHtmlKtv(err.message)}</div>`);
+        }
+    }
+    function renderBlacklistList(docs, targets) {
+        const html = docs.length ? docs.map(d => buildSongCard(d, 'blacklist')).join('') : '<div class="empty-hint">還沒有封鎖任何歌曲</div>';
+        (targets || [document.getElementById('host-blacklist-list'), document.getElementById('member-blacklist-list')].filter(Boolean)).forEach(el => el.innerHTML = html);
+    }
+    // 黑名單的搜尋列：純前端過濾快取好的清單，不用另外查資料庫
+    function filterBlacklistList(who) {
+        const term = document.getElementById(`${who}-blacklist-search`).value.trim().toLowerCase();
+        const filtered = term ? cachedBlacklistEntries.filter(e => (e.title || '').toLowerCase().includes(term)) : cachedBlacklistEntries;
+        const target = document.getElementById(`${who}-blacklist-list`);
+        if (target) renderBlacklistList(filtered, [target]);
+    }
+
+    // ---------------------------------------------------------------
     // 房主播放器：跟做菜音樂功能同一招，只用單一影片ID載入播放，這個網站上唯一確認穩定的
     // YouTube嵌入方式，完全不使用YouTube播放清單的嵌入/串接機制
     // ---------------------------------------------------------------
@@ -1782,6 +1881,7 @@
         });
         return ytApiReadyPromise;
     }
+    let ytPlaybackWatchdogTimer = null;
     async function playHostVideo(videoId) {
         await loadYoutubeIframeApi();
         nextUpAnnouncedForVideo = null; // 換新影片了，「快結束提醒」的旗標要重置，不然新歌會被誤判成已經提醒過
@@ -1801,6 +1901,38 @@
         } else if (ytPlayerReady) {
             ytPlayer.loadVideoById(videoId);
         }
+        startYtPlaybackWatchdog();
+    }
+    // 播放監控備援：不完全依賴onError事件——某些「版權方在特定情況下封鎖」的狀況，
+    // YouTube IFrame API不一定會確實觸發onError(這是已知會出現的不一致行為，尤其是
+    // 版權方主張、而不是單純的「不允許嵌入」時)，畫面上會直接顯示YouTube自己的錯誤疊層，
+    // 但JS事件端有可能完全沒收到通知。
+    //
+    // 這裡不能只看「某個時間點的狀態快照」就判定卡住——播放前常常會先跑YouTube廣告，
+    // 廣告播放中currentTime一樣會持續往前推進(只是還沒進到正片內容)，如果單純用固定時間點
+    // 一次性檢查，遇到比較長的廣告很容易被誤判成播放失敗。改成分兩次取樣比較currentTime
+    // 有沒有實際在推進：不管是廣告還是正片，只要真的有在播放，時間就一定會往前走；
+    // 真正因為封鎖播不出來的話，不管等多久currentTime都會停在0動也不動，這樣才能真正
+    // 分辨「卡住」跟「廣告播放中」的差異
+    function startYtPlaybackWatchdog() {
+        if (ytPlaybackWatchdogTimer) clearTimeout(ytPlaybackWatchdogTimer);
+        const firstCheckMs = 15000, secondCheckMs = 15000; // 第一次15秒後取樣、再等15秒後第二次取樣比較(給廣告足夠的緩衝時間)
+        ytPlaybackWatchdogTimer = setTimeout(() => {
+            if (!isHost || !ytPlayer || !ytPlayerReady) return;
+            let firstTime = 0;
+            try { firstTime = ytPlayer.getCurrentTime() || 0; } catch (err) {}
+            ytPlaybackWatchdogTimer = setTimeout(() => {
+                if (!isHost || !ytPlayer || !ytPlayerReady) return;
+                try {
+                    const secondTime = ytPlayer.getCurrentTime() || 0;
+                    // 兩次取樣時間幾乎沒有推進(容許0.5秒誤差)，代表真的卡住了，不管是不是廣告
+                    // 都應該早就往前跑了才對
+                    if (secondTime - firstTime < 0.5) {
+                        handleYtPlaybackError({ data: 150 }); // 沒有明確錯誤碼，借用150(不允許嵌入播放)這個既有分類處理
+                    }
+                } catch (err) {}
+            }, secondCheckMs);
+        }, firstCheckMs);
     }
     // YouTube播放器錯誤處理：100=影片不存在(被刪除/設為不公開)、101跟150=影片擁有者不允許
     // 嵌入播放(這是「點歌會搜到但播不出來」最常見的原因)。偵測到這幾種狀況，就把這部影片
@@ -1809,6 +1941,7 @@
     const YT_UNPLAYABLE_ERROR_CODES = new Set([100, 101, 150]);
     async function handleYtPlaybackError(e) {
         if (!YT_UNPLAYABLE_ERROR_CODES.has(e.data)) return; // 2/5這種暫時性錯誤不處理，避免誤判
+        if (ytPlaybackWatchdogTimer) { clearTimeout(ytPlaybackWatchdogTimer); ytPlaybackWatchdogTimer = null; }
         let videoId = null, title = '';
         try {
             const vd = ytPlayer && ytPlayer.getVideoData && ytPlayer.getVideoData();
@@ -1816,7 +1949,8 @@
             title = (vd && vd.title) || (currentRoomData && currentRoomData.queue && currentRoomData.queue[0] && currentRoomData.queue[0].title) || '';
         } catch (err) {}
         if (!videoId) return;
-        showKtvToast(`⚠️ 《${title || '這首歌'}》無法播放（已被設為不允許嵌入），已自動跳過`);
+        if (blockedVideoIds.has(videoId)) { if (isHost) advanceQueue(); return; } // 已經處理過這首了，避免watchdog跟onError都觸發時重複跳兩次
+        showKtvToast(`⚠️ 《${title || '這首歌'}》無法播放（可能是版權方封鎖或不允許嵌入），已自動跳過`);
         try {
             await db.collection('ktvBlockedVideos').doc(videoId).set({
                 videoId, title, blockedAt: firebase.firestore.FieldValue.serverTimestamp(), reason: e.data,
