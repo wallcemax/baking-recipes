@@ -11360,6 +11360,7 @@
         }
 
         let hasRestoredLastRecipe = false;
+        let hasOpenedRecipeFromUrl = false; // 避免同一次頁面載入重複處理?openRecipe=ID這個網址參數
         function loadRecipes() {
             // 不倚賴 Firestore 端的 orderBy（避免舊資料缺少 updatedAt 欄位而被排除），
             // 改為抓回全部後在前端依「最新編輯時間」排序：updatedAt 沒有就退回 createdAt
@@ -11393,6 +11394,27 @@
                             }
                         }
                     } catch (e) { console.warn('還原上次瀏覽的食譜失敗', e); }
+                }
+
+                // 從game.html（虛擬廚房挑戰賽過關後推薦食譜）跳轉過來的話，網址會帶上
+                // ?openRecipe=ID這個參數，這裡偵測到就自動幫忙開啟那篇食譜的詳細頁——
+                // 因為game.html是獨立頁面，沒辦法直接呼叫這裡的showDetail()，只能透過
+                // 這種「跳轉+網址參數」的方式間接完成同樣的效果
+                if (!hasOpenedRecipeFromUrl) {
+                    hasOpenedRecipeFromUrl = true;
+                    try {
+                        const params = new URLSearchParams(location.search);
+                        const openRecipeId = params.get('openRecipe');
+                        if (openRecipeId) {
+                            const recipe = allRecipes.find(r => r.id === openRecipeId);
+                            const modal = document.getElementById('detail-modal');
+                            if (recipe && modal && modal.classList.contains('hidden')) {
+                                showDetail(recipe);
+                            }
+                            // 把網址參數清掉，避免使用者之後重新整理頁面又意外再跳出同一篇食譜
+                            history.replaceState(null, '', location.pathname);
+                        }
+                    } catch (e) { console.warn('從網址參數開啟食譜失敗', e); }
                 }
             });
         }

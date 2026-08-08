@@ -502,7 +502,7 @@
 </head>
 <body style="background:var(--cream); color:var(--espresso);">
     <div class="max-w-2xl mx-auto min-h-screen" style="background:var(--paper);">
-        <header class="px-4 sm:px-6 py-4 flex items-center justify-between border-b" style="border-color:var(--line)">
+        <header class="px-4 sm:px-6 py-5 flex items-center justify-between border-b relative modal-photo-header" style="border-color:var(--line); background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785486286/Playground_lhojce.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785486286/Playground_lhojce.png') 2x);">
             <div class="flex items-center gap-2 min-w-0">
                 <div class="w-9 h-9 rounded-xl flex items-center justify-center text-xl shrink-0" style="background:var(--jam)">🎮</div>
                 <h1 class="font-display text-xl font-bold truncate">遊戲場</h1>
@@ -652,15 +652,279 @@
             }
         }
         const COUNT_UNIT_WORDS = ['顆', '粒', '個', '顆粒', '根', '條', '片', '球', '把', '串', '瓣', '塊', '朵', '支', '尾', '隻'];
-        // 這三個函式在index.html的完整版本，是查一份非常龐大的台灣食品營養資料庫本地備援表(上千行)，
-        // 這裡簡化成直接回傳null——不影響正確性，因為呼叫端(resolveIngredientNutritionNoAI等)
-        // 本來就是「Firestore共用快取查不到 → 才會退回這幾個本地查詢函式 → 查不到就是查不到，
-        // 那筆食材/食譜直接跳過」的設計，本來就有「查不到」的容錯路徑，只是這裡讓它必定落在
-        // 「查不到」這條路徑，不會影響遊戲正常運作，只是极少數Firestore還沒建立過快取的冷門食材
-        // 可能不會被選進遊戲的候選菜單池
-        function guessIngredientDensity(name) { return null; }
-        function guessIngredientNutrition(name) { return null; }
-        function guessPieceWeight(name) { return null; }
+        // 這三個函式跟底下的資料表，是從index.html原封不動搬過來的真正實作(不是簡化版)——
+        // 上一版直接讓它們回傳null，結果導致「小餐廳經營模擬」抓不到任何一篇食譜的熱量資料，
+        // 整個遊戲的菜單池是空的，玩不了。實際上這三個本地備用表加起來也才兩百多行，
+        // 官方主要資料庫(2181種食材)是外部JSON檔案用fetch()讀取，不是內嵌陣列，搬過來的成本
+        // 遠比想像中小，這次改成真的把完整邏輯搬過來
+        // 官方食材熱量資料庫（衛福部食品營養成分資料庫節錄，每 100g）。
+        // 分成兩層，各自獨立成 JSON 檔案，用 fetch() 非同步讀取（瀏覽器/PWA 會自動快取，重複造訪幾乎瞬間載入）：
+        //   ① tfnd-nutrition.json：手動整理的常見口語別名精簡表（例如「地瓜」「番薯」「甘藷」都對得到同一筆），優先查這層
+        //   ② tfnd-nutrition-full.json：完整官方資料庫節錄（2181 種食材，使用官方學術名稱），①查不到才查這層
+        // 兩層都查不到，才會進入下面手動整理的常見食材備用表，再查不到最後才問 AI
+        let TFND_NUTRITION_MAP = [];
+        const tfndLoadPromise = fetch('tfnd-nutrition.json')
+            .then(res => res.json())
+            .then(data => { TFND_NUTRITION_MAP = data; })
+            .catch(err => console.warn('載入官方食材營養資料庫（精簡表）失敗（不影響其他功能，會直接改用完整表／備用表／AI）', err));
+
+        let TFND_FULL_NUTRITION_MAP = [];
+        const tfndFullLoadPromise = fetch('tfnd-nutrition-full.json')
+            .then(res => res.json())
+            .then(data => { TFND_FULL_NUTRITION_MAP = data; })
+            .catch(err => console.warn('載入官方食材營養資料庫（完整表）失敗（不影響其他功能，會直接改用備用表／AI）', err));
+
+        const INGREDIENT_DENSITY_MAP = [
+            // ↓↓↓ 使用者提供的完整烘焙食材密度對照表（70種），比原本詳細很多，之後這些幾乎都不用問AI了
+            { keywords: ['低筋麵粉', '中筋麵粉', '高筋麵粉', '麵粉', 'flour'], density: 0.50 },
+            { keywords: ['全麥麵粉', 'whole wheat flour'], density: 0.54 },
+            { keywords: ['糖粉', 'icing sugar', 'powdered sugar'], density: 0.50 },
+            { keywords: ['糯米粉', '在來米粉'], density: 0.53 },
+            { keywords: ['玉米澱粉', '太白粉', 'corn starch', 'cornstarch'], density: 0.62 },
+            { keywords: ['奶粉', 'milk powder'], density: 0.46 },
+            { keywords: ['可可粉', 'cocoa'], density: 0.42 },
+            { keywords: ['細砂糖', '白砂糖', '砂糖', 'sugar'], density: 0.83 },
+            { keywords: ['二號砂糖', '黃砂糖', '二砂'], density: 0.88 },
+            { keywords: ['黑糖', 'brown sugar'], density: 0.92 },
+            { keywords: ['奶油乳酪', 'cream cheese'], density: 1.01 },
+            // 打發鮮奶油因為打入大量空氣，密度會比液態鮮奶油低非常多，這個特別容易被忽略；
+            // 一定要放在「奶油」「鮮奶油」這種寬鬆關鍵字前面比對，不然會被那兩個先攔截
+            { keywords: ['打發鮮奶油', '打發動物性鮮奶油'], density: 0.50 },
+            { keywords: ['無鹽奶油', '有鹽奶油', '奶油', 'butter'], density: 0.95 },
+            { keywords: ['水', 'water'], density: 1.00 },
+            { keywords: ['牛奶', '鮮奶', '鮮乳', '牛乳', 'milk'], density: 1.03 },
+            { keywords: ['動物性鮮奶油', '鮮奶油', 'whipping cream', 'heavy cream', 'cream'], density: 0.98 },
+            { keywords: ['全蛋液', '蛋液'], density: 1.02 },
+            { keywords: ['橄欖油', '沙拉油', '植物油', '葵花油', '椰子油', '油', 'oil'], density: 0.92 },
+            { keywords: ['蜂蜜', 'honey', '楓糖', '楓糖漿', 'maple syrup'], density: 1.42 },
+            { keywords: ['轉化糖漿', '水麥芽'], density: 1.40 },
+            { keywords: ['鹽', 'salt'], density: 1.20 },
+            { keywords: ['泡打粉', 'baking powder'], density: 0.90 },
+            { keywords: ['小蘇打粉', 'baking soda'], density: 0.96 },
+            { keywords: ['速發乾酵母', '速發酵母', '乾酵母', '酵母'], density: 0.60 },
+            { keywords: ['塔塔粉', 'cream of tartar'], density: 0.60 },
+            { keywords: ['杏仁粉', 'almond flour'], density: 0.40 },
+            { keywords: ['椰子粉', 'coconut flour'], density: 0.53 },
+            { keywords: ['燕麥片', 'rolled oats'], density: 0.33 },
+            { keywords: ['黑麥粉', '裸麥粉', 'rye flour'], density: 0.43 },
+            { keywords: ['糕仔粉', '熟糯米粉'], density: 0.48 },
+            { keywords: ['花生醬', '堅果醬', 'peanut butter'], density: 1.06 },
+            { keywords: ['糖蜜', 'molasses'], density: 1.42 },
+            { keywords: ['煉乳', 'condensed milk'], density: 1.29 },
+            { keywords: ['酸奶油', 'sour cream', '希臘優格', '優格', '優酪乳', 'yogurt'], density: 0.96 },
+            { keywords: ['酪乳', 'buttermilk'], density: 1.03 },
+            { keywords: ['豬油', '酥油', 'lard', 'shortening'], density: 0.86 },
+            { keywords: ['巧克力豆', 'chocolate chips'], density: 0.71 },
+            { keywords: ['葡萄乾', 'raisin'], density: 0.71 },
+            { keywords: ['核桃碎', '榛果碎'], density: 0.48 },
+            { keywords: ['杏仁片'], density: 0.36 },
+            { keywords: ['椰絲', '椰子風味絲'], density: 0.31 },
+            { keywords: ['吉利丁粉', 'gelatin'], density: 0.60 },
+            { keywords: ['寒天粉', '洋菜粉', 'agar'], density: 0.40 },
+            { keywords: ['香草精', 'vanilla extract', 'vanilla'], density: 0.84 },
+            { keywords: ['速溶咖啡粉', 'instant coffee'], density: 0.40 },
+            { keywords: ['抹茶粉', 'matcha'], density: 0.50 },
+            { keywords: ['杜蘭小麥粉', 'semolina'], density: 0.69 },
+            { keywords: ['燕麥粉', 'oat flour'], density: 0.38 },
+            { keywords: ['蕎麥粉', 'buckwheat flour'], density: 0.50 },
+            { keywords: ['大麥粉', 'barley flour'], density: 0.41 },
+            { keywords: ['米糠', '小麥胚芽'], density: 0.28 },
+            { keywords: ['豆漿', 'soy milk'], density: 1.03 },
+            { keywords: ['杏仁奶', '燕麥奶'], density: 1.01 },
+            { keywords: ['椰奶', 'coconut milk'], density: 1.02 },
+            { keywords: ['馬斯卡彭', 'mascarpone'], density: 0.96 },
+            { keywords: ['純蛋白液', '蛋白'], density: 1.01 },
+            { keywords: ['純蛋黃液', '蛋黃'], density: 1.03 },
+            { keywords: ['龍舌蘭糖漿', 'agave nectar'], density: 1.40 },
+            { keywords: ['糙米糖漿', 'brown rice syrup'], density: 1.41 },
+            { keywords: ['焦糖醬', 'caramel sauce'], density: 1.34 },
+            { keywords: ['草莓醬', '藍莓醬', '果醬', 'jam'], density: 1.33 },
+            { keywords: ['酪梨油', 'avocado oil'], density: 0.91 },
+            { keywords: ['南瓜子', '葵花子仁'], density: 0.54 },
+            { keywords: ['奇亞籽', 'chia seeds'], density: 0.67 },
+            // 芝麻醬(醬料)要排在芝麻(籽)前面，不然「芝麻醬」這個詞裡面有「芝麻」兩個字，會被下面那筆籽的密度攔截走
+            { keywords: ['芝麻醬', 'tahini', 'sesame paste'], density: 1.02 },
+            { keywords: ['黑芝麻', '白芝麻', '芝麻'], density: 0.63 },
+            { keywords: ['蔓越莓乾'], density: 0.54 },
+            { keywords: ['香蕉泥', 'mashed banana'], density: 0.95 },
+            { keywords: ['新鮮藍莓', '藍莓'], density: 0.58 },
+            { keywords: ['肉桂粉', 'cinnamon'], density: 0.52 },
+            { keywords: ['果膠粉', 'pectin'], density: 0.60 },
+            { keywords: ['乾酪素鈉', '乳清蛋白粉', 'whey protein'], density: 0.36 },
+            { keywords: ['洋蔥粉', '大蒜粉', 'garlic powder', 'onion powder'], density: 0.64 },
+            { keywords: ['細鹽'], density: 1.26 },
+            // ↑↑↑ 以上是使用者提供的完整資料表，以下是額外補充的幾樣（不在上面清單裡的）
+            { keywords: ['醬油', 'soy sauce'], density: 1.15 },
+            { keywords: ['白醋', '烏醋', '醋', 'vinegar'], density: 1.01 },
+            { keywords: ['白米', '在來米', '糯米', '糙米', '香米', '米', 'rice'], density: 0.85 },
+            { keywords: ['檸檬汁', 'lemon juice'], density: 1.03 },
+            { keywords: ['萊姆酒', '蘭姆酒', 'rum'], density: 0.94 },
+            { keywords: ['威士忌', 'whisky', 'whiskey'], density: 0.94 },
+            { keywords: ['白蘭地', 'brandy'], density: 0.94 },
+            { keywords: ['卡魯哇', '咖啡酒', 'kahlua'], density: 1.10 },
+            { keywords: ['濃縮咖啡', 'espresso', '咖啡'], density: 1.00 },
+            // ↓↓↓ 這次自己整理補上的一批（Claude自行依食物科學/常識估算，不是查證過的實驗室數據，
+            // 準確度應該足夠日常烘焙使用，但如果之後發現數字跟實際差很多，歡迎回報調整）
+            { keywords: ['起司粉', '帕瑪森', 'parmesan'], density: 0.45 },
+            { keywords: ['茅屋起司', 'cottage cheese'], density: 1.02 },
+            { keywords: ['瑞可塔', 'ricotta'], density: 1.01 },
+            { keywords: ['起司絲', '披薩起司', 'shredded cheese', 'mozzarella'], density: 0.45 },
+            { keywords: ['融化巧克力', '巧克力醬', 'melted chocolate'], density: 1.30 },
+            { keywords: ['苦甜巧克力', '黑巧克力', '牛奶巧克力', '白巧克力', 'chocolate'], density: 1.30 },
+            { keywords: ['蘋果泥'], density: 1.00 },
+            { keywords: ['芒果泥'], density: 1.00 },
+            { keywords: ['草莓泥', '新鮮草莓', 'strawberry'], density: 1.00 },
+            { keywords: ['覆盆子', 'raspberry'], density: 1.00 },
+            { keywords: ['火龍果泥'], density: 1.00 },
+            { keywords: ['百香果', 'passion fruit'], density: 1.03 },
+            { keywords: ['南瓜泥', 'pumpkin puree'], density: 1.00 },
+            { keywords: ['地瓜泥', '番薯泥'], density: 1.00 },
+            { keywords: ['芋頭泥'], density: 1.00 },
+            { keywords: ['紫薯泥'], density: 1.00 },
+            { keywords: ['味醂', 'mirin'], density: 1.15 },
+            { keywords: ['米酒', '料理酒', 'cooking wine'], density: 0.97 },
+            { keywords: ['清酒', 'sake'], density: 0.99 },
+            { keywords: ['波特酒', 'port wine'], density: 1.03 },
+            { keywords: ['君度橙酒', '橙酒', 'cointreau'], density: 0.94 },
+            { keywords: ['番茄糊', '番茄膏', 'tomato paste'], density: 1.06 },
+            { keywords: ['番茄醬', 'ketchup'], density: 1.10 },
+            { keywords: ['芥末醬', 'mustard'], density: 1.05 },
+            { keywords: ['沙茶醬'], density: 0.95 },
+            { keywords: ['味噌', 'miso'], density: 1.15 },
+            { keywords: ['腰果碎', '腰果'], density: 0.50 },
+            { keywords: ['開心果碎', '開心果'], density: 0.50 },
+            { keywords: ['夏威夷豆'], density: 0.50 },
+            { keywords: ['花生粉'], density: 0.45 },
+            { keywords: ['亞麻籽', '亞麻仁籽', 'flaxseed'], density: 0.40 },
+            { keywords: ['竹炭粉'], density: 0.40 },
+            { keywords: ['紅麴粉'], density: 0.50 },
+            { keywords: ['薑黃粉', 'turmeric'], density: 0.50 },
+            { keywords: ['米麩'], density: 0.35 },
+            // ↓↓↓ 第二批補充（一樣是Claude依食物科學常識估算，不是查證過的實驗室數據）
+            { keywords: ['瑪琪琳', '植物性奶油', 'margarine'], density: 0.95 },
+            { keywords: ['木薯粉', '樹薯粉', 'tapioca starch'], density: 0.60 },
+            { keywords: ['藜麥', 'quinoa'], density: 0.70 },
+            { keywords: ['洋車前子粉', 'psyllium husk'], density: 0.40 },
+            { keywords: ['布丁粉', 'pudding powder'], density: 0.50 },
+            { keywords: ['椰漿', 'coconut cream'], density: 1.00 },
+            { keywords: ['柳橙汁', '柳丁汁', 'orange juice'], density: 1.04 },
+            { keywords: ['蘋果汁', 'apple juice'], density: 1.04 },
+            { keywords: ['葡萄汁', 'grape juice'], density: 1.06 },
+            { keywords: ['蔓越莓汁', 'cranberry juice'], density: 1.04 },
+            { keywords: ['巧克力榛果醬', 'nutella'], density: 1.15 },
+            { keywords: ['板豆腐', '嫩豆腐', '豆腐', 'tofu'], density: 1.05 },
+            { keywords: ['紅豆沙', '紅豆餡'], density: 1.15 },
+            { keywords: ['芋泥', '芋頭餡'], density: 1.05 },
+            { keywords: ['地瓜粉', '甘藷粉'], density: 0.60 },
+            { keywords: ['蓮藕粉'], density: 0.55 },
+            { keywords: ['小麥筋', '活性麵筋粉', 'vital wheat gluten'], density: 0.42 },
+            { keywords: ['杏仁角'], density: 0.45 },
+            { keywords: ['南瓜籽', '松子'], density: 0.55 },
+            { keywords: ['紅茶粉', '伯爵茶粉', '茶粉'], density: 0.45 },
+            { keywords: ['起酥片', '千層酥皮碎'], density: 0.50 },
+        ];
+
+        // 依食材名稱關鍵字比對密度；雙向比對（名稱包含關鍵字，或關鍵字包含名稱），
+        // 這樣像「糖」這種比關鍵字「砂糖」更短的通用名稱也能對到；找不到時回傳 null
+        function guessIngredientDensity(name) {
+            if (!name) return null;
+            const lower = name.toLowerCase();
+            for (const entry of INGREDIENT_DENSITY_MAP) {
+                if (entry.keywords.some(k => { const kl = k.toLowerCase(); return lower.includes(kl) || kl.includes(lower); })) return entry.density;
+            }
+            return null;
+        }
+
+        // 常見食材熱量與三大營養素（每 100g），用來估算每份熱量／蛋白質／脂肪／碳水。
+        // 數值為食品成分資料庫常見概略值，僅供參考，非精確營養標示。
+        // 之後若要涵蓋更多食材，可以在這裡手動擴充，或改成從 Firestore 讀取
+        // （查不到的新食材可以先用 AI 估算一次、存進 Firestore 快取，之後就不用再問 AI）。
+        const INGREDIENT_NUTRITION_MAP = [
+            { keywords: ['高筋麵粉', '低筋麵粉', '中筋麵粉', '麵粉', 'flour'], kcal: 364, protein: 10.3, fat: 1.0, carb: 76.3, sodium: 2 },
+            { keywords: ['細砂糖', '砂糖', '白糖', '二砂', 'sugar'], kcal: 387, protein: 0, fat: 0, carb: 99.9, sodium: 1 },
+            { keywords: ['糖粉', 'icing sugar', 'powdered sugar'], kcal: 389, protein: 0, fat: 0, carb: 99.8, sodium: 1 },
+            { keywords: ['無鹽奶油', 'unsalted butter'], kcal: 717, protein: 0.9, fat: 81.1, carb: 0.1, sodium: 11 },
+            { keywords: ['有鹽奶油', 'salted butter'], kcal: 717, protein: 0.9, fat: 81.0, carb: 0.1, sodium: 760 },
+            { keywords: ['奶油', 'butter'], kcal: 717, protein: 0.9, fat: 81.1, carb: 0.1, sodium: 11 },
+            { keywords: ['全蛋', '雞蛋', '蛋黃', '蛋白', 'egg'], kcal: 143, protein: 12.6, fat: 9.9, carb: 0.7, sodium: 124 },
+            { keywords: ['鮮奶油', '動物性', 'whipping cream', 'heavy cream', 'cream'], kcal: 340, protein: 2.1, fat: 36.1, carb: 2.8, sodium: 38 },
+            { keywords: ['牛奶', '鮮奶', '鮮乳', '牛乳', 'milk'], kcal: 61, protein: 3.2, fat: 3.3, carb: 4.8, sodium: 44 },
+            { keywords: ['煉乳', 'condensed milk'], kcal: 321, protein: 7.9, fat: 8.7, carb: 54.9, sodium: 127 },
+            { keywords: ['優格', '優酪乳', 'yogurt'], kcal: 61, protein: 3.5, fat: 3.3, carb: 4.7, sodium: 46 },
+            { keywords: ['巧克力', '苦甜巧克力', '黑巧克力', 'chocolate'], kcal: 546, protein: 4.9, fat: 31.3, carb: 61.2, sodium: 24 },
+            { keywords: ['可可粉', 'cocoa'], kcal: 228, protein: 19.6, fat: 13.7, carb: 57.9, sodium: 21 },
+            { keywords: ['蜂蜜', 'honey'], kcal: 304, protein: 0.3, fat: 0, carb: 82.4, sodium: 4 },
+            { keywords: ['楓糖', 'maple syrup'], kcal: 260, protein: 0, fat: 0.2, carb: 67.0, sodium: 12 },
+            { keywords: ['酵母', 'yeast'], kcal: 325, protein: 40.4, fat: 7.6, carb: 41.2, sodium: 51 },
+            { keywords: ['橄欖油', '沙拉油', '植物油', '葵花油', '油', 'oil'], kcal: 884, protein: 0, fat: 100, carb: 0, sodium: 0 },
+            { keywords: ['白飯', '米飯', 'rice'], kcal: 130, protein: 2.7, fat: 0.3, carb: 28.2, sodium: 1 },
+            { keywords: ['雞胸肉', '雞腿肉', '雞肉', 'chicken'], kcal: 167, protein: 20.0, fat: 9.0, carb: 0, sodium: 70 },
+            { keywords: ['豬肉', '梅花肉', '里肌肉', 'pork'], kcal: 242, protein: 19.3, fat: 18.0, carb: 0, sodium: 62 },
+            { keywords: ['牛肉', 'beef'], kcal: 250, protein: 20.0, fat: 18.0, carb: 0, sodium: 72 },
+            { keywords: ['鮭魚', 'salmon'], kcal: 208, protein: 20.4, fat: 13.4, carb: 0, sodium: 59 },
+            { keywords: ['馬鈴薯', '洋芋', 'potato'], kcal: 77, protein: 2.0, fat: 0.1, carb: 17.5, sodium: 6 },
+            { keywords: ['地瓜', '番薯', 'sweet potato'], kcal: 86, protein: 1.6, fat: 0.1, carb: 20.1, sodium: 55 },
+            { keywords: ['洋蔥', 'onion'], kcal: 40, protein: 1.1, fat: 0.1, carb: 9.3, sodium: 4 },
+            { keywords: ['紅蘿蔔', '胡蘿蔔', 'carrot'], kcal: 41, protein: 0.9, fat: 0.2, carb: 9.6, sodium: 69 },
+            { keywords: ['花椰菜', '青花菜', 'broccoli'], kcal: 34, protein: 2.8, fat: 0.4, carb: 6.6, sodium: 33 },
+            { keywords: ['菠菜', 'spinach'], kcal: 23, protein: 2.9, fat: 0.4, carb: 3.6, sodium: 79 },
+            { keywords: ['豆腐', 'tofu'], kcal: 76, protein: 8.1, fat: 4.8, carb: 1.9, sodium: 7 },
+            { keywords: ['鹽', 'salt'], kcal: 0, protein: 0, fat: 0, carb: 0, sodium: 38758 },
+            { keywords: ['水', 'water'], kcal: 0, protein: 0, fat: 0, carb: 0, sodium: 0 },
+        ];
+
+        // 依食材名稱關鍵字比對熱量資料；雙向比對（名稱包含關鍵字，或關鍵字包含名稱），
+        // 這樣像「糖」這種比關鍵字「砂糖」更短的通用名稱也能對到；找不到時回傳 null。
+        // 查詢順序：①口語別名精簡表 → ②完整官方資料庫（2181種） → ③手動整理的常見食材備用表
+        function guessIngredientNutrition(name) {
+            if (!name) return null;
+            const lower = name.toLowerCase();
+            const matchIn = (list, sourceTag) => {
+                for (const entry of list) {
+                    if (entry.keywords.some(k => { const kl = k.toLowerCase(); return lower.includes(kl) || kl.includes(lower); })) {
+                        if (!entry.source) entry.source = sourceTag; // 靜態資料，標記一次即可
+                        return entry;
+                    }
+                }
+                return null;
+            };
+            return matchIn(TFND_NUTRITION_MAP, 'tfnd_official')
+                || matchIn(TFND_FULL_NUTRITION_MAP, 'tfnd_official')
+                || matchIn(INGREDIENT_NUTRITION_MAP, 'local_fallback');
+        }
+
+        const PIECE_WEIGHT_MAP = [
+            { keywords: ['蛋黃'], gramsPerUnit: 20 },
+            { keywords: ['蛋白'], gramsPerUnit: 30 },
+            // 加了通用的「蛋」關鍵字，這樣不管是什麼品牌名稱（例如「囍願蛋」「非籠飼蛋」），
+            // 只要名稱裡有「蛋」這個字就能正確換算，不用一定要打「雞蛋」兩個字才認得。
+            // 因為蛋黃/蛋白這兩筆比較特定的排在前面，比對時會優先命中，不會被這裡更寬鬆的「蛋」誤蓋過去
+            { keywords: ['全蛋', '雞蛋', '蛋'], gramsPerUnit: 50 },
+            { keywords: ['檸檬'], gramsPerUnit: 100 },
+            { keywords: ['香蕉'], gramsPerUnit: 120 },
+            { keywords: ['蘋果'], gramsPerUnit: 180 },
+            { keywords: ['大蒜', '蒜頭', '蒜瓣'], gramsPerUnit: 5 },
+            { keywords: ['洋蔥'], gramsPerUnit: 200 },
+            { keywords: ['青蔥', '蔥'], gramsPerUnit: 15 },
+            { keywords: ['小黃瓜'], gramsPerUnit: 100 },
+            { keywords: ['紅蘿蔔', '胡蘿蔔'], gramsPerUnit: 150 },
+            { keywords: ['番茄', '蕃茄'], gramsPerUnit: 150 },
+            { keywords: ['馬鈴薯', '洋芋'], gramsPerUnit: 150 },
+            { keywords: ['地瓜', '番薯'], gramsPerUnit: 200 },
+            { keywords: ['辣椒'], gramsPerUnit: 10 },
+        ];
+        // 會被視為「計量單位」而嘗試比對食材個別重量的單位（顆/根/條/片...等常見中文量詞）
+        // (COUNT_UNIT_WORDS已經在前面定義過了，這裡不用重複宣告)
+
+        function guessPieceWeight(name) {
+            if (!name) return null;
+            const lower = name.toLowerCase();
+            for (const entry of PIECE_WEIGHT_MAP) {
+                if (entry.keywords.some(k => { const kl = k.toLowerCase(); return lower.includes(kl) || kl.includes(lower); })) return entry.gramsPerUnit;
+            }
+            return null;
+        }
+
         // 追蹤目前在遊戲場的哪個畫面('hub'=遊戲選單、'game'=正在玩、'leaderboard'=排行榜)，
         // 從index.html移植過來的變數，五個小遊戲的程式碼內部都還會設定這個值
         let currentGameScreen = 'hub';
