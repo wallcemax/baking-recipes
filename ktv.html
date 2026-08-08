@@ -259,10 +259,10 @@
        下拉面板展開後的底部差不多對齊(toggle bar高度 + 展開面板42vh)，不會往下延伸到
        畫面中間擋住歌詞——這是這次修正的重點，輪盤盡量只佔畫面上半部，不妨礙唱歌的人 */
     #wheel-modal-inner, #member-wheel-modal-inner {
-        max-width: 31rem !important;
-        width: min(92vw, 31rem) !important;
+        width: 100% !important;
+        max-width: 64rem !important;
         max-height: calc(3.6rem + 48vh) !important;
-        overflow-x: hidden !important; overflow-y: auto !important;
+        overflow: hidden !important;
         padding: 1.1rem 1.25rem 0.9rem !important;
         color: #FFF9F2 !important;
         text-align: center;
@@ -271,6 +271,7 @@
         border: 1px solid rgba(255,255,255,.16);
         box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(201,138,44,.10), inset 0 1px rgba(255,255,255,.10);
         position: relative;
+        display: flex; flex-direction: column; align-items: center;
     }
 
     /* 上方金色裝飾線 */
@@ -301,11 +302,15 @@
         color: #FFE3A0; background: rgba(201,138,44,.16); border: 1px solid rgba(201,138,44,.25);
     }
 
-    /* 🎡 輪盤容器：改用min()做響應式，手機上會自動縮小，不會超出螢幕 */
+    /* 🎡 輪盤容器：改用min()做響應式，手機上會自動縮小，不會超出螢幕。
+       transform-origin設成頂部置中，是為了配合JS動態縮放(fitWheelToAvailableSpace)——
+       從頂部往下縮，才能用margin-bottom負值精準補償縮小後多出來的空白，不會產生
+       transform只是視覺變小、但版面還是占用原本空間的問題 */
     .wheel-dial-wrap {
         position: relative !important;
         width: min(20.25rem, 84vw) !important; height: min(25.5rem, 106vw) !important;
         margin: .25rem auto .45rem !important;
+        transform-origin: top center;
     }
     .wheel-dial-wrap canvas {
         position: absolute !important; top: 2.85rem !important; left: 0 !important;
@@ -407,9 +412,8 @@
     @media (max-width: 600px) {
         #wheel-modal, #member-wheel-modal { padding: .7rem !important; }
         #wheel-modal-inner, #member-wheel-modal-inner {
-            width: 94vw !important; padding: 1rem .75rem .85rem !important; border-radius: 1.4rem;
+            padding: .85rem .75rem .7rem !important; border-radius: 1.4rem;
         }
-        .wheel-dial-wrap { transform: scale(.94); margin: -.15rem auto -.35rem !important; }
         .wheel-input-row { border-radius: 1rem; flex-direction: column; padding: .45rem; }
         .wheel-input-row .btn { width: 100%; }
     }
@@ -676,6 +680,12 @@
     }
     window.addEventListener('offline', () => showConnectionBanner(true));
     window.addEventListener('online', () => showConnectionBanner(false));
+    // 視窗尺寸變化時(例如手機轉向、瀏覽器縮放)重新計算一次輪盤縮放比例，
+    // 只有輪盤視窗目前有開著才需要重算，避免沒必要的計算
+    window.addEventListener('resize', () => {
+        const modal = document.getElementById(isHost ? 'wheel-modal' : 'member-wheel-modal');
+        if (modal && !modal.classList.contains('hidden')) fitWheelToAvailableSpace();
+    });
 
     function escapeHtmlKtv(str) {
         return String(str || '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -1962,6 +1972,27 @@
     // 只負責畫出骨架(輸入框或靜止轉盤)，不負責決定「什麼時候該開始轉動」——
     // 那個時機統一交給handleWheelEventUpdate()的計時器控制，確保全部裝置都是同一個
     // 時間點看到靜止轉盤、又是同一個時間點開始轉動，不會有的人開了視窗就搶先看到轉動
+    // 動態縮放輪盤，讓它剛好塞進modal-inner可用的高度裡，不會超出、也不會出現捲動條。
+    // transform:scale縮小的是「視覺呈現」，元素在版面裡實際佔用的空間不會跟著變小，
+    // 所以額外用margin-bottom負值把多出來的空白「頂」回去，這樣底下的結果文字/關閉按鈕
+    // 才會確實往上貼齊，不會憑空多一大塊空白。因為是整個wheel-dial-wrap容器一起等比例縮放
+    // (不是分別去改canvas或指針各自的尺寸)，兩者之間的相對位置完全不受影響，之前花好幾輪
+    // 校正好的指針指向準確度不會被這個縮放邏輯影響到
+    function fitWheelToAvailableSpace() {
+        const modalInner = document.getElementById(isHost ? 'wheel-modal-inner' : 'member-wheel-modal-inner');
+        const wrap = document.getElementById('wheel-dial-wrap');
+        if (!modalInner || !wrap) return;
+        wrap.style.transform = 'none';
+        wrap.style.marginBottom = '';
+        const naturalHeight = wrap.offsetHeight;
+        if (!naturalHeight) return;
+        const availableHeight = modalInner.clientHeight - (modalInner.scrollHeight - naturalHeight) - 4;
+        if (availableHeight > 0 && availableHeight < naturalHeight) {
+            const scale = Math.max(0.55, availableHeight / naturalHeight); // 最小縮到55%，避免縮太誇張反而看不清楚
+            wrap.style.transform = `scale(${scale})`;
+            wrap.style.marginBottom = `${-(naturalHeight * (1 - scale))}px`;
+        }
+    }
     function buildWheelSkeleton(wheelEvent) {
         const container = document.getElementById(isHost ? 'wheel-modal-inner' : 'member-wheel-modal-inner');
         if (!container) return;
@@ -1987,6 +2018,7 @@
                 <button onclick="closeWheelModal()" style="margin-top:0.7rem; background:none; border:none; color:rgba(255,255,255,0.7); font-size:0.76rem; cursor:pointer;">關閉</button>
             `;
             drawWheelCanvas(canvasId, wheelEvent.participants, 0);
+            fitWheelToAvailableSpace();
         }
     }
     // 讓輪盤在所有裝置上自動打開、顯示靜止轉盤，不用手動點按鈕才看得到——
