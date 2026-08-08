@@ -170,7 +170,7 @@
 
     /* ---------- 浮動通知（點歌/加入房間） ---------- */
     #toast-stack {
-        position: absolute; top: 1rem; right: 1rem; z-index: 10; display: flex; flex-direction: column;
+        position: absolute; top: 1rem; right: 1rem; z-index: 60; display: flex; flex-direction: column;
         gap: 0.5rem; max-width: 14rem; pointer-events: none;
     }
     .ktv-toast {
@@ -178,6 +178,11 @@
         font-size: 1rem; font-weight: 600; box-shadow: 0 10px 24px -6px rgba(0,0,0,0.35); animation: ktv-toast-in .25s ease;
     }
     @keyframes ktv-toast-in { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes ktv-star-burst {
+        0% { opacity: 0; transform: translate(0, 0) scale(0.4) rotate(0deg); }
+        20% { opacity: 1; transform: translate(calc(var(--dx) * 0.3), calc(var(--dy) * 0.3)) scale(1.1) rotate(60deg); }
+        100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.5) rotate(200deg); }
+    }
 
     /* ---------- 掌聲鼓勵：疊在影片上的慶祝動畫，好幾種效果隨機挑一種 ---------- */
     #reaction-layer { position: absolute; inset: 0; z-index: 8; pointer-events: none; overflow: hidden; }
@@ -384,7 +389,7 @@
         <div id="member-view" class="hidden">
             <div id="member-reaction-layer" style="position:fixed; inset:0; z-index:40; pointer-events:none; overflow:hidden;"></div>
             <div id="member-reaction-banner" style="position:fixed; top:35%; left:50%; transform:translate(-50%,-50%) scale(0.7); z-index:41; font-size:1.9rem; font-weight:800; color:var(--jam); text-shadow:0 2px 10px rgba(0,0,0,0.15); opacity:0; pointer-events:none; text-align:center;"></div>
-            <div id="member-toast-stack" style="position:fixed; top:1rem; right:1rem; left:1rem; z-index:42; display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; pointer-events:none;"></div>
+            <div id="member-toast-stack" style="position:fixed; top:1rem; right:1rem; left:1rem; z-index:60; display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; pointer-events:none;"></div>
             <div id="member-wheel-modal" class="hidden" style="position:fixed; inset:0; z-index:50; background:rgba(20,14,10,0.6); backdrop-filter:blur(3px); display:flex; align-items:flex-start; justify-content:center; padding:1.2rem 1.5rem; overflow-y:auto;">
                 <div id="member-wheel-modal-inner" style="max-width:26rem; width:100%; color:#F5EBDF; text-align:center;"></div>
             </div>
@@ -1452,11 +1457,6 @@
     // 因為同一時間只會有一場輪盤在進行），任何人的動作變化都會透過房間監聽同步給所有人
     // ---------------------------------------------------------------
     let wheelUnsubscribe = null;
-    const WHEEL_OUTCOME_LABELS = {
-        1: '轉盤正常停下', 2: '轉盤衝過頭又彈回來', 3: '發生了空間轉移！',
-        4: '指針突然彎曲指向隔壁', 5: '指針突然變長指向對面', 6: '一陣風吹來，重新轉動了一次',
-        7: '轉盤越轉越快，整個滾走了',
-    };
     function openWheelModal() {
         const modal = document.getElementById(isHost ? 'wheel-modal' : 'member-wheel-modal');
         if (modal) modal.classList.remove('hidden');
@@ -1487,15 +1487,14 @@
         const offset = offsetWithinSeg === undefined ? 0.5 : offsetWithinSeg;
         return (((-(idx * segAngle + segAngle * offset)) % 360) + 360) % 360;
     }
-    // 每一種特效結果的「總時長」(毫秒)，全部裝置都是照這個時間各自倒數顯示結果通知，
-    // 不再依賴「動畫播完之後由某一台裝置負責廣播」這種容易漏掉的做法
-    const WHEEL_OUTCOME_DURATION = { 1: 4700, 2: 5700, 3: 5000, 4: 5700, 5: 5600, 6: 7700, 7: 6200, 8: 5700 };
+    // 每一種模式額外需要的演出時間(毫秒)，用來抓「結果公布」的正確時機
+    const WHEEL_MODE_EXTRA_MS = { normal: 700, teleport: 2600, brokenPointer: 2100, windRespin: 3100, rollAway: 2200 };
     const WHEEL_COLORS = ['#FF4D6D','#FFA630','#3DDC97','#4CC9F0','#B983FF','#FFD23F','#06D6A0','#F72585','#4361EE','#FF9F1C','#7209B7','#00B4D8'];
-    // 發起並立刻轉動：不再分成「先送出事件→等人來按轉動」兩個步驟——之前這樣設計，沒開視窗
-    // 的人完全不會知道發生了什麼事，而且「轉動」這個按鈕誰都能按，常常變成還沒想清楚就被
-    // 別人搶按走。現在合併成一個動作：填好事件文字、按下去的當下，就立刻決定好整場輪盤的
-    // 結果並廣播出去，同時在所有人的畫面正中央跳出「OOO發起了命運輪盤」的通知——
-    // 跟掌聲鼓勵一樣，不用特別打開視窗就看得到
+    // 發起並立刻轉動：這裡改成「物理優先」的做法——不再先選好人、反推角度，而是先決定真正
+    // 隨機的轉動參數(圈數、煞車時長、最終要停在的角度都是隨機的)，最終落點本身就是真正的
+    // 隨機結果，事後才用getPhysicalWinnerInfo()去讀「指針底下實際壓著誰」。除了空間傳送術
+    // 需要「先判斷指到誰、再隨機指定交換對象」這種天生就要分兩步的邏輯，其餘特效都是套用在
+    // 這個物理結果之上的「演出」，不會為了特效去反過來喬轉動角度
     async function initiateAndSpinWheel() {
         if (!currentUser || !currentRoomId) return;
         const input = document.getElementById(isHost ? 'wheel-event-input' : 'member-wheel-event-input');
@@ -1507,39 +1506,65 @@
             if (participants.length < 2) { showKtvToast('⚠️ 房間裡至少要有2個人才能轉輪盤'); return; }
             const myName = await resolveMyDisplayName();
             const n = participants.length;
-            const outcomeType = Math.floor(Math.random() * 8) + 1;
-            const baseIndex = Math.floor(Math.random() * n);
-            let finalIndex = baseIndex;
-            let noWinner = false;
-            let teleportFromIdx = null, teleportToIdx = null;
-            if (outcomeType === 2) finalIndex = (baseIndex - 1 + n) % n; // 往回彈：變成左邊鄰居
-            else if (outcomeType === 3) { // 空間傳送：baseIndex的人跟另一個隨機的人互換，真正中獎的是被換進來的那個人
-                const others = [...Array(n).keys()].filter(i => i !== baseIndex);
-                teleportFromIdx = baseIndex;
-                teleportToIdx = others[Math.floor(Math.random() * others.length)];
-                finalIndex = teleportToIdx;
-            }
-            else if (outcomeType === 4) finalIndex = (baseIndex + 1) % n; // 指針彎向右邊鄰居
-            else if (outcomeType === 5) finalIndex = Math.floor(Math.random() * n); // 指針消失後任意再骰一次
-            else if (outcomeType === 6) finalIndex = (baseIndex + 1 + Math.floor(Math.random() * (n - 1))) % n; // 一陣風重轉
-            else if (outcomeType === 7) noWinner = true; // 轉盤滾走，沒人中獎
-            else if (outcomeType === 8) finalIndex = (baseIndex - 1 + n) % n; // 過線前停下，彎向左邊鄰居
+            const segAngle = 360 / n;
 
-            // 隨機一個「格子內偏移量」，讓最終停的位置不會每次都精準卡在正中央，
-            // 也用這個offset回推出最終角度(finalRotationMod)——這個值才是唯一真相來源，
-            // 所有裝置的動畫，不管過程怎麼演，最後都要收斂到這個角度
-            const landingOffset = noWinner ? 0.5 : (0.28 + Math.random() * 0.44);
-            const finalRotationMod = noWinner ? 0 : angleModForIndex(finalIndex, landingOffset, n);
-            const finalName = noWinner ? null : participants[finalIndex].name;
-            const finalUid = noWinner ? null : participants[finalIndex].uid;
+            // 真正隨機的物理參數：圈數4~8圈、煞車總時長3.2~4.8秒、最終停的角度完全隨機
+            const spins = 4 + Math.floor(Math.random() * 5);
+            const spinMs = 3200 + Math.floor(Math.random() * 1600);
+            const finalRotationMod = Math.random() * 360;
+
+            // 抽一次特效模式：大部分時候是普通停止，少部分機率套用特殊演出
+            const roll = Math.random();
+            let mode = 'normal';
+            if (roll < 0.13) mode = 'teleport';
+            else if (roll < 0.26) mode = 'brokenPointer';
+            else if (roll < 0.39) mode = 'windRespin';
+            else if (roll < 0.50) mode = 'rollAway';
+
+            // 只有普通停止才會檢查「靠近邊界線」這件事：停的位置如果剛好在格子邊緣附近，
+            // 30%機率觸發指針搖擺歪向另一邊，讓中獎結果變成跨過邊界的那一位鄰居
+            let boundaryTilt = 0; // -1往左歪、0不歪、1往右歪
+            if (mode === 'normal') {
+                const posInSeg = ((finalRotationMod % segAngle) + segAngle) % segAngle;
+                if (posInSeg < segAngle * 0.18 && Math.random() < 0.3) boundaryTilt = -1;
+                else if (posInSeg > segAngle * 0.82 && Math.random() < 0.3) boundaryTilt = 1;
+            }
+
+            // 空間傳送：先判斷這次物理上真的指到誰，再隨機指定另一位交換對象，
+            // 傳送特效套用之後，真正中獎的是被交換進來的那個人
+            let teleportFromIdx = null, teleportToIdx = null;
+            if (mode === 'teleport') {
+                teleportFromIdx = getPhysicalWinnerInfo(finalRotationMod, participants).index;
+                const others = [...Array(n).keys()].filter(i => i !== teleportFromIdx);
+                teleportToIdx = others[Math.floor(Math.random() * others.length)];
+            }
+            // 一陣風重轉：風吹過之後，再決定一次全新、獨立的隨機落點
+            const windRespinMod = mode === 'windRespin' ? Math.random() * 360 : null;
+            // 指針斷掉飛起砸落：飛去的落點也是全新隨機決定，不用刻意對面或其他規則
+            const brokenTargetMod = mode === 'brokenPointer' ? Math.random() * 360 : null;
+            const noWinner = mode === 'rollAway';
+
+            // 統一算出最終真正公布的贏家索引，跟動畫最後會用getPhysicalWinnerInfo反推出來的
+            // 結果用同一套公式，保證兩邊一定一致
+            let finalIndex = null;
+            if (mode === 'teleport') finalIndex = teleportToIdx;
+            else if (mode === 'brokenPointer') finalIndex = getPhysicalWinnerInfo(brokenTargetMod, participants).index;
+            else if (mode === 'windRespin') finalIndex = getPhysicalWinnerInfo(windRespinMod, participants).index;
+            else if (mode === 'normal') {
+                let idx = getPhysicalWinnerInfo(finalRotationMod, participants).index;
+                if (boundaryTilt) idx = ((idx + boundaryTilt) % n + n) % n;
+                finalIndex = idx;
+            }
+            const finalName = finalIndex === null ? null : participants[finalIndex].name;
+            const finalUid = finalIndex === null ? null : participants[finalIndex].uid;
 
             await db.collection('ktvRooms').doc(currentRoomId).update({
                 wheelEvent: {
                     active: true, phase: 'spinning',
                     initiatedBy: myName, initiatedByUid: currentUser.uid,
                     eventText, participants,
-                    outcomeType, baseResultIndex: baseIndex, finalRotationMod,
-                    teleportFromIdx, teleportToIdx,
+                    mode, spins, spinMs, finalRotationMod, boundaryTilt,
+                    teleportFromIdx, teleportToIdx, windRespinMod, brokenTargetMod,
                     resultUid: finalUid, resultName: finalName, noWinner,
                     spinToken: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 },
@@ -1564,24 +1589,14 @@
     // 依照wheelEvent目前的狀態(phase)決定畫面要顯示輸入表單、還是轉盤。骨架只在第一次
     // 建立canvas的時候畫出來，之後同一場輪盤期間資料更新都不會重新蓋掉整個容器，
     // 避免把正在跑的canvas動畫打斷
-    function renderWheelUI(wheelEvent) {
+    // 只負責畫出骨架(輸入框或靜止轉盤)，不負責決定「什麼時候該開始轉動」——
+    // 那個時機統一交給handleWheelEventUpdate()的計時器控制，確保全部裝置都是同一個
+    // 時間點看到靜止轉盤、又是同一個時間點開始轉動，不會有的人開了視窗就搶先看到轉動
+    function buildWheelSkeleton(wheelEvent) {
         const container = document.getElementById(isHost ? 'wheel-modal-inner' : 'member-wheel-modal-inner');
         if (!container) return;
         const canvasId = isHost ? 'wheel-canvas' : 'member-wheel-canvas';
         const pointerId = isHost ? 'wheel-pointer' : 'member-wheel-pointer';
-
-        if (!wheelEvent || !wheelEvent.active) {
-            container.innerHTML = `
-                <h3 style="font-size:1.15rem; font-weight:800; margin-bottom:0.4rem;">🎡 命運輪盤</h3>
-                <p style="font-size:0.78rem; opacity:0.8; margin-bottom:0.5rem;">輸入這次輪盤要決定的事件，按下發起後會立刻轉動，轉盤上會是目前房間裡所有人的暱稱，全部裝置都會立刻看到通知</p>
-                <div class="wheel-input-row">
-                    <input id="${isHost ? 'wheel-event-input' : 'member-wheel-event-input'}" type="text" placeholder="例如：下一句接著唱">
-                    <button class="btn" onclick="initiateAndSpinWheel()">🎯 發起命運轉動</button>
-                </div>
-                <button onclick="closeWheelModal()" style="margin-top:1rem; background:none; border:none; color:rgba(255,255,255,0.7); font-size:0.76rem; cursor:pointer;">關閉</button>
-            `;
-            return;
-        }
         if (!document.getElementById(canvasId)) {
             container.innerHTML = `
                 <h3 style="font-size:1.05rem; font-weight:800; margin-bottom:0.2rem;">🎡 ${escapeHtmlKtv(wheelEvent.initiatedBy)} 發起了命運輪盤</h3>
@@ -1595,11 +1610,33 @@
             `;
             drawWheelCanvas(canvasId, wheelEvent.participants, 0);
         }
-
-        if (wheelEvent.phase === 'spinning' && wheelEvent.spinToken && wheelEvent.spinToken !== lastPlayedWheelSpinToken) {
-            lastPlayedWheelSpinToken = wheelEvent.spinToken;
-            playWheelSpinAnimation(wheelEvent);
+    }
+    // 讓輪盤在所有裝置上自動打開、顯示靜止轉盤，不用手動點按鈕才看得到——
+    // 這是這次要求的重點：跟掌聲鼓勵一樣，發起之後全部裝置都要自動有反應
+    function autoRevealStaticWheel(wheelEvent) {
+        const modal = document.getElementById(isHost ? 'wheel-modal' : 'member-wheel-modal');
+        if (modal) modal.classList.remove('hidden');
+        buildWheelSkeleton(wheelEvent);
+    }
+    // 依照wheelEvent目前的狀態決定畫面要顯示輸入表單、還是轉盤——只用在使用者手動點開
+    // 視窗的情況，單純呈現「目前看起來應該長怎樣」，不會自己搶著觸發轉動動畫。真正該
+    // 什麼時候開始轉，一律由handleWheelEventUpdate()的計時器統一控制
+    function renderWheelUI(wheelEvent) {
+        const container = document.getElementById(isHost ? 'wheel-modal-inner' : 'member-wheel-modal-inner');
+        if (!container) return;
+        if (!wheelEvent || !wheelEvent.active) {
+            container.innerHTML = `
+                <h3 style="font-size:1.15rem; font-weight:800; margin-bottom:0.4rem;">🎡 命運輪盤</h3>
+                <p style="font-size:0.78rem; opacity:0.8; margin-bottom:0.5rem;">輸入這次輪盤要決定的事件，按下發起後全部裝置都會立刻看到通知，接著自動顯示轉盤並開始轉動</p>
+                <div class="wheel-input-row">
+                    <input id="${isHost ? 'wheel-event-input' : 'member-wheel-event-input'}" type="text" placeholder="例如：下一句接著唱">
+                    <button class="btn" onclick="initiateAndSpinWheel()">🎯 發起命運轉動</button>
+                </div>
+                <button onclick="closeWheelModal()" style="margin-top:1rem; background:none; border:none; color:rgba(255,255,255,0.7); font-size:0.76rem; cursor:pointer;">關閉</button>
+            `;
+            return;
         }
+        buildWheelSkeleton(wheelEvent);
     }
     let lastPlayedWheelSpinToken = null;
     // 用canvas畫轉盤：每個人固定分到大小相等的扇形，各自不同顏色，文字用canvas畫、
@@ -1647,40 +1684,54 @@
         const canvas = document.getElementById(canvasId);
         if (!canvas || !pointer) return;
         pointer.style.opacity = '1';
-        pointer.style.transform = 'translateX(-50%) rotate(0deg)';
+        pointer.style.transform = 'translateX(-50%) translateY(0) rotate(0deg) scale(1)';
         if (dialWrap) { dialWrap.style.transition = ''; dialWrap.style.transform = ''; }
 
         const participants = wheelEvent.participants || [];
         const n = participants.length;
-        const segAngle = 360 / n;
-        const baseIndex = wheelEvent.baseResultIndex || 0;
-        const outcomeType = wheelEvent.outcomeType || 1;
-        // 圈數跟總轉動時間都加一點隨機浮動，每次轉起來速度感覺不會完全一樣，比較不死板
-        const spins = 5 + Math.floor(Math.random() * 4);
-        const spinMs = 3600 + Math.floor(Math.random() * 900);
-        // finalRotationMod是spinWheelNow()那邊決定好的「絕對真相」角度(mod 360)，這場輪盤
-        // 最終不管動畫怎麼演，一定要收斂到這個角度——這樣結尾用getPhysicalWinnerInfo反推出來
-        // 的贏家，保證跟廣播的resultName一致，不會再有算式算錯導致兩者對不起來的狀況
+        const mode = wheelEvent.mode || 'normal';
+        const spins = wheelEvent.spins || 5;
+        const spinMs = wheelEvent.spinMs || 4000;
+        // finalMod是initiateAndSpinWheel()那邊已經決定好的「真正隨機」落點(mod 360)，
+        // 這是唯一真相來源，動畫只是把「轉到這裡」這件事演出來，不是反過來為了套特效
+        // 去喬轉動角度
         const finalMod = wheelEvent.finalRotationMod || 0;
         function angleTo(targetMod, minAfterDeg, extraSpins) {
             const baseCount = Math.ceil(((minAfterDeg || 0) - targetMod) / 360);
             return (baseCount + (extraSpins || 0)) * 360 + targetMod;
         }
-        // 一開始「假裝」要停在baseIndex附近的隨機位置，製造懸疑感；真正的最終落點永遠是
-        // finalMod，只是不同特效在抵達之前會多演一些過程（衝過頭、彎曲、重轉...等等）
-        const baseOffset = 0.25 + Math.random() * 0.5;
-        const baseTargetDeg = angleTo(angleModForIndex(baseIndex, baseOffset, n), 0, spins);
-        // 「過線前停下」(第8種)不能真的轉到baseIndex，要提早一點停在baseIndex還沒到交界的地方
-        const preLineTargetDeg = angleTo(angleModForIndex(baseIndex, 0.12, n), 0, spins);
-        const landingDeg = outcomeType === 8 ? preLineTargetDeg
-            : (outcomeType === 3 ? angleTo(angleModForIndex(wheelEvent.teleportFromIdx != null ? wheelEvent.teleportFromIdx : baseIndex, 0.5, n), 0, spins)
-            : baseTargetDeg);
+        const landingDeg = angleTo(finalMod, 0, spins);
+
+        // 「轉盤滾走」整段都不減速，用等速甚至微加速的方式轉，不套用一般的煞車曲線
+        if (mode === 'rollAway') {
+            let currentRot = 0;
+            const startTime = Date.now();
+            let flying = false;
+            (function rollLoop() {
+                const elapsed = Date.now() - startTime;
+                currentRot = elapsed * 0.62;
+                drawWheelCanvas(canvasId, participants, currentRot);
+                if (elapsed > spinMs && !flying) {
+                    flying = true;
+                    if (statusText) statusText.textContent = '💨 轉盤速度完全沒有慢下來...';
+                    if (dialWrap) {
+                        dialWrap.style.transition = 'transform 1.3s cubic-bezier(.5,-0.3,.9,.4)';
+                        dialWrap.style.transform = 'translate(130vw, -15vh) rotate(80deg)';
+                    }
+                    setTimeout(() => { if (statusText) statusText.textContent = '😱 轉盤直接滾走了！'; }, 400);
+                    setTimeout(finishAfterDelay, 1500);
+                    return;
+                }
+                requestAnimationFrame(rollLoop);
+            })();
+            return;
+        }
 
         let currentRot = 0;
         const startTime = Date.now();
         function animateMainSpin() {
             const t = Math.min((Date.now() - startTime) / spinMs, 1);
-            const eased = 1 - Math.pow(1 - t, 3); // ease-out
+            const eased = 1 - Math.pow(1 - t, 3); // ease-out，真正的煞車速度就是這條隨機時長決定的曲線
             currentRot = landingDeg * eased;
             drawWheelCanvas(canvasId, participants, currentRot);
             if (t < 1) requestAnimationFrame(animateMainSpin);
@@ -1688,111 +1739,100 @@
         }
         requestAnimationFrame(animateMainSpin);
 
-        function settleAtFinal(delayBeforeMs, transitionMs) {
-            setTimeout(() => {
-                const target = angleTo(finalMod, currentRot, 0);
-                animateTween(canvasId, participants, currentRot, target, transitionMs || 500, () => {
-                    currentRot = target;
-                    finishAfterDelay();
-                });
-            }, delayBeforeMs || 0);
-        }
-
         function onMainSpinDone() {
-            if (outcomeType === 2) {
-                // 先明顯衝過交界線一點(繼續往同方向多轉一小段，看起來像要越過baseIndex)，
-                // 再彈回最終落點(finalMod，也就是左邊鄰居)定案
-                const overshoot = currentRot + segAngle * 0.55;
-                animateTween(canvasId, participants, currentRot, overshoot, 380, () => {
-                    currentRot = overshoot;
-                    settleAtFinal(0, 480);
-                });
-            } else if (outcomeType === 3) {
-                // 空間傳送：baseIndex(teleportFromIdx)的人使用了傳送術，跟teleportToIdx那個人
-                // 交換位置——畫面上把兩個人的名字互換，最終真正中獎的是被交換進來的那個人
-                const fromIdx = wheelEvent.teleportFromIdx != null ? wheelEvent.teleportFromIdx : baseIndex;
-                const toIdx = wheelEvent.teleportToIdx != null ? wheelEvent.teleportToIdx : baseIndex;
-                const overrideNames = participants.map(p => p.name);
-                const tmp = overrideNames[fromIdx]; overrideNames[fromIdx] = overrideNames[toIdx]; overrideNames[toIdx] = tmp;
-                drawWheelCanvas(canvasId, participants, currentRot, overrideNames);
-                if (statusText) statusText.textContent = `✨ ${participants[fromIdx].name} 使用了空間傳送術，跟 ${participants[toIdx].name} 交換了！！`;
-                setTimeout(() => finishAfterDelay(), 1200);
-            } else if (outcomeType === 4) {
-                // 指針先小幅度搖擺猶豫一下（增加緊張感），最後彎向右邊鄰居定案。
-                // 往右邊指要用「負值」旋轉——CSS的rotate()正值是順時針，但指針是從頂端當支點
-                // 往下垂掛的形狀，順時針轉反而會讓下面的尖端往左邊擺，這是上一版方向算反的原因
-                pointer.style.transition = 'transform 0.18s ease-in-out';
-                pointer.style.transform = 'translateX(-50%) rotate(10deg)';
-                setTimeout(() => { pointer.style.transform = 'translateX(-50%) rotate(-14deg)'; }, 180);
+            if (mode === 'teleport') {
+                // 先噴一點星星特效，再過0.5秒才顯示交換字幕(放慢，不要一瞬間就跳過去)，
+                // 字幕維持夠久的時間才收掉
+                spawnStarBurst();
+                const fromIdx = wheelEvent.teleportFromIdx;
+                const toIdx = wheelEvent.teleportToIdx;
                 setTimeout(() => {
-                    pointer.style.transition = 'transform 0.5s cubic-bezier(.34,1.56,.64,1)';
-                    pointer.style.transform = 'translateX(-50%) rotate(-32deg)';
-                }, 380);
-                settleAtFinal(500, 1);
-            } else if (outcomeType === 5) {
-                // 指針縮小消失，短暫消失期間「悄悄」把轉盤轉到重新骰出來的新位置，
-                // 指針再放大出現，感覺像重新骰了一次、指向新的人，不是固定往對面指
-                pointer.style.transition = 'transform 0.4s ease, opacity 0.4s ease';
-                pointer.style.transform = 'translateX(-50%) scale(0)';
-                pointer.style.opacity = '0';
+                    const overrideNames = participants.map(p => p.name);
+                    const tmp = overrideNames[fromIdx]; overrideNames[fromIdx] = overrideNames[toIdx]; overrideNames[toIdx] = tmp;
+                    drawWheelCanvas(canvasId, participants, currentRot, overrideNames);
+                    if (statusText) statusText.textContent = `✨ ${participants[fromIdx].name} 使用了空間傳送術，跟 ${participants[toIdx].name} 交換了！！`;
+                }, 500);
+                finishAfterDelay(2400);
+            } else if (mode === 'brokenPointer') {
+                // 指針斷掉飛起旋轉，砸到全新的隨機目標
+                if (statusText) statusText.textContent = '💥 指針斷掉了！';
+                pointer.style.transition = 'transform 0.5s cubic-bezier(.5,-0.4,.8,.3), opacity 0.5s ease';
+                pointer.style.transform = 'translateX(-50%) translateY(-3.5rem) rotate(560deg) scale(0.6)';
+                pointer.style.opacity = '0.15';
                 setTimeout(() => {
-                    const target = angleTo(finalMod, currentRot, 1);
-                    animateTween(canvasId, participants, currentRot, target, 10, () => { currentRot = target; });
-                    pointer.style.transition = 'transform 0.4s cubic-bezier(.34,1.56,.64,1), opacity 0.4s ease';
-                    pointer.style.transform = 'translateX(-50%) scale(1)';
+                    const target = angleTo(wheelEvent.brokenTargetMod, currentRot, 1);
+                    animateTween(canvasId, participants, currentRot, target, 850, () => { currentRot = target; });
+                    pointer.style.transition = 'none';
+                    pointer.style.transform = 'translateX(-50%) translateY(-1.6rem) rotate(0deg) scale(1.5)';
                     pointer.style.opacity = '1';
-                    finishAfterDelay(500);
-                }, 450);
-            } else if (outcomeType === 6) {
+                    setTimeout(() => {
+                        pointer.style.transition = 'transform 0.32s cubic-bezier(.34,1.9,.5,1)';
+                        pointer.style.transform = 'translateX(-50%) translateY(0) rotate(0deg) scale(1)';
+                        if (statusText) statusText.textContent = '💢 指針砸中了目標！';
+                    }, 60);
+                }, 550);
+                finishAfterDelay(1900);
+            } else if (mode === 'windRespin') {
                 if (statusText) statusText.textContent = '🌬️ 一陣風吹來了...';
-                settleAtFinal(900, 2000);
-            } else if (outcomeType === 7) {
-                if (statusText) statusText.textContent = '💨 轉盤越轉越快...';
-                let flyRot = currentRot;
-                const flyStart = Date.now();
-                if (dialWrap) {
-                    dialWrap.style.transition = 'transform 1.4s cubic-bezier(.5,-0.3,.9,.4)';
-                    dialWrap.style.transform = 'translate(130vw, -15vh) rotate(60deg)';
-                }
-                (function flySpin() {
-                    const elapsed = Date.now() - flyStart;
-                    if (elapsed > 1400) { finishAfterDelay(); return; }
-                    flyRot += 25; // 飛走的同時持續加速旋轉，不是凍結畫面
-                    drawWheelCanvas(canvasId, participants, flyRot);
-                    requestAnimationFrame(flySpin);
-                })();
-                if (statusText) setTimeout(() => { statusText.textContent = '😱 轉盤直接滾走了！'; }, 500);
-            } else if (outcomeType === 8) {
-                // 過線前就先停下(還在baseIndex領域內、沒有跨過交界)，指針才彎向左邊鄰居定案。
-                // 左邊要用「正值」旋轉，跟第4種特效方向相反
+                setTimeout(() => {
+                    const target = angleTo(wheelEvent.windRespinMod, currentRot, 2);
+                    animateTween(canvasId, participants, currentRot, target, 2000, () => { currentRot = target; finishAfterDelay(); });
+                }, 900);
+            } else if (wheelEvent.boundaryTilt) {
+                // 普通模式但落點靠近邊界線、觸發了30%的搖擺機率：指針先猶豫擺動，
+                // 最後彎向跨過邊界那一側定案。往右要用負值旋轉、往左要用正值旋轉——
+                // CSS的rotate()正值是順時針，但指針是從頂端支點往下垂掛的形狀，
+                // 順時針轉反而讓下面的尖端往左邊擺，方向要對調才會符合直覺
+                const dir = wheelEvent.boundaryTilt; // -1左、1右
+                const cssSign = dir > 0 ? -1 : 1;
                 pointer.style.transition = 'transform 0.18s ease-in-out';
-                pointer.style.transform = 'translateX(-50%) rotate(-10deg)';
-                setTimeout(() => { pointer.style.transform = 'translateX(-50%) rotate(14deg)'; }, 180);
+                pointer.style.transform = `translateX(-50%) rotate(${-cssSign * 10}deg)`;
+                setTimeout(() => { pointer.style.transform = `translateX(-50%) rotate(${cssSign * 14}deg)`; }, 180);
                 setTimeout(() => {
                     pointer.style.transition = 'transform 0.5s cubic-bezier(.34,1.56,.64,1)';
-                    pointer.style.transform = 'translateX(-50%) rotate(32deg)';
+                    pointer.style.transform = `translateX(-50%) rotate(${cssSign * 32}deg)`;
                 }, 380);
-                settleAtFinal(500, 1);
+                finishAfterDelay(900);
             } else {
                 finishAfterDelay();
             }
         }
-        // 動畫的最後一步，用getPhysicalWinnerInfo直接從「畫面實際停在的角度」反推贏家，
-        // 不是直接信任wheelEvent.resultName——這樣就算動畫過程有任何一步算錯，最後顯示的
-        // 名字一定跟畫面上指針實際指到的人一致，不會再出現「動畫一套、公布另一套」的狀況。
-        // 跳出右上角通知的時機統一交給handleWheelEventUpdate()按照固定時長處理，不是這裡
-        // 自己決定，確保全部裝置的通知時機一致
+        // 動畫的最後一步，用getPhysicalWinnerInfo直接從「畫面實際停在的角度」反推贏家
+        // （邊界搖擺的話再套用位移），不是直接信任wheelEvent.resultName——這樣就算動畫過程
+        // 有任何一步算錯，最後顯示的名字一定跟畫面上指針實際指到的人一致
         function finishAfterDelay(extraDelayMs) {
             setTimeout(() => {
                 if (statusText) {
                     if (wheelEvent.noWinner) {
                         statusText.textContent = '😱 沒有人被選中！';
+                    } else if (mode === 'teleport') {
+                        statusText.textContent = `🎯 命運之神決定了：${participants[wheelEvent.teleportToIdx].name}`;
+                    } else if (mode === 'brokenPointer') {
+                        statusText.textContent = `🎯 命運之神決定了：${getPhysicalWinnerInfo(wheelEvent.brokenTargetMod, participants).name}`;
+                    } else if (mode === 'windRespin') {
+                        statusText.textContent = `🎯 命運之神決定了：${getPhysicalWinnerInfo(wheelEvent.windRespinMod, participants).name}`;
                     } else {
-                        const physical = getPhysicalWinnerInfo(currentRot, participants);
-                        statusText.textContent = `🎯 命運之神決定了：${physical.name}`;
+                        let idx = getPhysicalWinnerInfo(currentRot, participants).index;
+                        if (wheelEvent.boundaryTilt) idx = ((idx + wheelEvent.boundaryTilt) % n + n) % n;
+                        statusText.textContent = `🎯 命運之神決定了：${participants[idx].name}`;
                     }
                 }
             }, extraDelayMs || 0);
+        }
+        // 空間傳送用的小星星噴發特效，疊在影片/畫面上短暫飄一下
+        function spawnStarBurst() {
+            const layer = document.getElementById(isHost ? 'reaction-layer' : 'member-reaction-layer');
+            if (!layer) return;
+            const stars = ['✨', '⭐', '🌟', '💫'];
+            for (let i = 0; i < 12; i++) {
+                const el = document.createElement('span');
+                el.textContent = stars[Math.floor(Math.random() * stars.length)];
+                const dx = (Math.random() - 0.5) * 12;
+                const dy = -6 - Math.random() * 10;
+                el.style.cssText = `position:absolute; left:${44 + Math.random() * 12}%; top:${38 + Math.random() * 16}%; font-size:${1 + Math.random() * 0.8}rem; --dx:${dx}rem; --dy:${dy}rem; animation: ktv-star-burst 1.1s ease-out forwards; animation-delay:${Math.random() * 0.25}s;`;
+                layer.appendChild(el);
+                setTimeout(() => el.remove(), 1600);
+            }
         }
     }
     // 小工具：讓canvas從一個角度平滑轉到另一個角度，給彈回/重轉這種需要中途轉一小段的效果用
@@ -1816,12 +1856,26 @@
         if (!wheelEvent || !wheelEvent.active) return;
         if (wheelEvent.phase === 'spinning' && wheelEvent.spinToken && wheelEvent.spinToken !== lastScheduledWheelToken) {
             lastScheduledWheelToken = wheelEvent.spinToken;
-            // 立刻在畫面正中央跳出「OOO發起了命運輪盤」，不用打開視窗才看得到，
-            // 這是這次要求的重點：跟掌聲鼓勵一樣，按下去全部裝置都要馬上有反應
+            // 立刻在畫面正中央跳出「OOO發起了命運輪盤」，全部裝置都要馬上看到，
+            // 跟掌聲鼓勵一樣不用打開視窗才有反應
             showWheelAnnounceBanner(`🎡 ${wheelEvent.initiatedBy} 發起了命運輪盤：${wheelEvent.eventText}`);
-            const duration = WHEEL_OUTCOME_DURATION[wheelEvent.outcomeType] || 4700;
-            // 動畫播完之後等1秒，先把輪盤視窗關掉，再跳出右上角通知——不是通知先跳、視窗
-            // 隔幾秒才慢慢關掉，這樣結果公布跟畫面收起來的節奏比較乾脆
+            const spinDuration = (wheelEvent.spinMs || 4000) + (WHEEL_MODE_EXTRA_MS[wheelEvent.mode] || 700);
+
+            // 字幕先單獨顯示3秒，消失之後，全部裝置自動打開輪盤視窗顯示靜止的轉盤，
+            // 再過1秒才真正開始轉動——不管使用者有沒有自己手動點開視窗，這個時序都一樣，
+            // 這樣大家看到的節奏才會一致，不是誰開了視窗誰就搶先看到動畫
+            setTimeout(() => {
+                autoRevealStaticWheel(wheelEvent);
+                setTimeout(() => {
+                    if (wheelEvent.spinToken !== lastPlayedWheelSpinToken) {
+                        lastPlayedWheelSpinToken = wheelEvent.spinToken;
+                        playWheelSpinAnimation(wheelEvent);
+                    }
+                }, 1000);
+            }, 3000);
+
+            const totalDelay = 3000 + 1000 + spinDuration;
+            // 動畫播完之後等1秒，先把輪盤視窗關掉，再跳出右上角通知
             setTimeout(() => {
                 setTimeout(() => {
                     closeWheelModal();
@@ -1830,13 +1884,13 @@
                         : `🎯 命運之神決定了：${wheelEvent.resultName} ${wheelEvent.eventText}`;
                     showKtvToast(msg);
                 }, 1000);
-            }, duration);
+            }, totalDelay);
             // 只有發起人的裝置負責在結果公布之後把輪盤狀態收掉，恢復成可以重新發起，
             // 避免每台裝置都各自嘗試寫入造成衝突
             if (currentUser && currentUser.uid === wheelEvent.initiatedByUid) {
                 setTimeout(() => {
                     db.collection('ktvRooms').doc(currentRoomId).update({ wheelEvent: { active: false } }).catch(() => {});
-                }, duration + 1500);
+                }, totalDelay + 1500);
             }
         }
         const modal = document.getElementById(isHost ? 'wheel-modal' : 'member-wheel-modal');
