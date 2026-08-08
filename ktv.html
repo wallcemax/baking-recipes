@@ -250,9 +250,9 @@
        整體外框尺寸(1.5rem寬、2.85rem高)、支點位置都跟原本三角形版本一致，只是換了畫法，
        旋轉的幾何關係完全不變 */
     #wheel-pointer, #member-wheel-pointer {
-        position: absolute; top: 10.125rem; left: 50%; width: 1.5rem; height: 2.85rem;
+        position: absolute; top: 10.45rem; left: 50%; width: 1.5rem; height: 2.85rem;
         margin-left: -0.75rem;
-        transform: rotate(0deg); transform-origin: 50% 100%;
+        transform: rotate(0deg); transform-origin: 50% 96.5%;
         z-index: 2; filter: drop-shadow(0 -3px 4px rgba(0,0,0,0.55));
         transition: transform 0.7s cubic-bezier(.34,1.56,.64,1), opacity 0.35s ease, transform 0.35s ease;
     }
@@ -1505,20 +1505,24 @@
         if (idx < 0) idx = 0;
         return idx;
     }
-    // 檢查骰到的分鐘數離交界線有多近，夠近的話有30%機率觸發指針歪曲，並且直接靠「往前2分鐘
-    // 還是往後2分鐘會換人」來判斷歪的方向該指定誰——這是最直覺的判定方式，不用另外推公式
+    // 檢查骰到的分鐘數離交界線有多近，夠近的話有機率觸發指針歪曲，並且直接靠「往前/往後
+    // 一小段會不會換人」來判斷歪的方向該指定誰——這是最直覺的判定方式，不用另外推公式。
+    // 判定範圍依格子寬度比例調整(至少6分鐘)，不是固定死的±2分鐘——固定±2分鐘搭配30%機率，
+    // 整體出現機率會低於1%，實際測試幾乎看不到，等於做了等於沒做
     function checkBoundaryTilt(minute, n) {
+        const segMin = CLOCK_TOTAL_MINUTES / n;
+        const window = Math.max(6, Math.round(segMin * 0.1));
         const baseIdx = getSegmentIndexForMinute(minute, n);
-        const idxMinus2 = getSegmentIndexForMinute(minute - 2, n);
-        const idxPlus2 = getSegmentIndexForMinute(minute + 2, n);
-        const nearLeft = idxMinus2 !== baseIdx;
-        const nearRight = idxPlus2 !== baseIdx;
-        if (nearLeft && Math.random() < 0.3) return { dir: -1, idx: idxMinus2 };
-        if (nearRight && Math.random() < 0.3) return { dir: 1, idx: idxPlus2 };
+        const idxLeft = getSegmentIndexForMinute(minute - window, n);
+        const idxRight = getSegmentIndexForMinute(minute + window, n);
+        const nearLeft = idxLeft !== baseIdx;
+        const nearRight = idxRight !== baseIdx;
+        if (nearLeft && Math.random() < 0.45) return { dir: -1, idx: idxLeft };
+        if (nearRight && Math.random() < 0.45) return { dir: 1, idx: idxRight };
         return null;
     }
     // 每一種模式額外需要的演出時間(毫秒)，用來抓「結果公布」的正確時機
-    const WHEEL_MODE_EXTRA_MS = { normal: 700, teleport: 2600, brokenPointer: 2100, windRespin: 3100, rollAway: 2200 };
+    const WHEEL_MODE_EXTRA_MS = { normal: 700, teleport: 2600, brokenPointer: 2100, windRespin: 3100, rollAway: 2200, cheaterRemoved: 1700 };
     const WHEEL_COLORS = ['#FF4D6D','#FFA630','#3DDC97','#4CC9F0','#B983FF','#FFD23F','#06D6A0','#F72585','#4361EE','#FF9F1C','#7209B7','#00B4D8'];
     // 發起並立刻轉動：這裡改成「物理優先」的做法——不再先選好人、反推角度，而是先決定真正
     // 隨機的轉動參數(圈數、煞車時長、最終要停在的角度都是隨機的)，最終落點本身就是真正的
@@ -1544,20 +1548,30 @@
             const rolledMinute = Math.floor(Math.random() * CLOCK_TOTAL_MINUTES);
             const finalRotationMod = minuteToAngleDeg(rolledMinute);
 
-            // 抽一次特效模式：大部分時候是普通停止，少部分機率套用特殊演出
+            // 抽一次特效模式：大部分時候是普通停止，少部分機率套用特殊演出。
+            // 「發起人偷偷把名字拿掉」這個特效需要扣掉發起人之後還有至少2人才能轉，
+            // 人數不夠的話就不會抽到，直接維持一般模式的機率分布
+            const myUid = currentUser.uid;
+            const canCheat = participants.filter(p => p.uid !== myUid).length >= 2;
             const roll = Math.random();
             let mode = 'normal';
-            if (roll < 0.13) mode = 'teleport';
-            else if (roll < 0.26) mode = 'brokenPointer';
-            else if (roll < 0.39) mode = 'windRespin';
-            else if (roll < 0.50) mode = 'rollAway';
+            if (roll < 0.12) mode = 'teleport';
+            else if (roll < 0.24) mode = 'brokenPointer';
+            else if (roll < 0.36) mode = 'windRespin';
+            else if (roll < 0.46) mode = 'rollAway';
+            else if (canCheat && roll < 0.56) mode = 'cheaterRemoved';
 
-            // 只有普通停止才會檢查「靠近邊界線」這件事：往前2分鐘、往後2分鐘各自會不會換人，
-            // 換人的那一側才有30%機率真的觸發指針歪曲，直接用這個判斷該歪向誰，不用另外推公式
+            // 發起人偷偷把自己的名字從轉盤上拿掉：這場輪盤實際用的名單改成排除發起人，
+            // 轉盤上完全看不到發起人的名字，當然也絕對轉不到發起人
+            const wheelParticipants = mode === 'cheaterRemoved' ? participants.filter(p => p.uid !== myUid) : participants;
+            const wn = wheelParticipants.length;
+
+            // 只有普通停止才會檢查「靠近邊界線」這件事：往前/往後一小段會不會換人，
+            // 換人的那一側才有機率真的觸發指針歪曲，直接用這個判斷該歪向誰，不用另外推公式
             let boundaryTilt = 0; // -1往左歪、0不歪、1往右歪
             let tiltTargetIdx = null;
             if (mode === 'normal') {
-                const tilt = checkBoundaryTilt(rolledMinute, n);
+                const tilt = checkBoundaryTilt(rolledMinute, wn);
                 if (tilt) { boundaryTilt = tilt.dir; tiltTargetIdx = tilt.idx; }
             }
 
@@ -1565,8 +1579,8 @@
             // 傳送特效套用之後，真正中獎的是被交換進來的那個人
             let teleportFromIdx = null, teleportToIdx = null;
             if (mode === 'teleport') {
-                teleportFromIdx = getSegmentIndexForMinute(rolledMinute, n);
-                const others = [...Array(n).keys()].filter(i => i !== teleportFromIdx);
+                teleportFromIdx = getSegmentIndexForMinute(rolledMinute, wn);
+                const others = [...Array(wn).keys()].filter(i => i !== teleportFromIdx);
                 teleportToIdx = others[Math.floor(Math.random() * others.length)];
             }
             // 一陣風重轉：風吹過之後，再骰一次全新、獨立的分鐘數
@@ -1575,7 +1589,7 @@
             // 指針斷掉飛起砸落：目標也是全新隨機骰的分鐘數決定，轉盤本身不會再轉動，
             // 只有指針自己飛過去指到那一格
             const brokenTargetMinute = mode === 'brokenPointer' ? Math.floor(Math.random() * CLOCK_TOTAL_MINUTES) : null;
-            const brokenTargetIdx = brokenTargetMinute === null ? null : getSegmentIndexForMinute(brokenTargetMinute, n);
+            const brokenTargetIdx = brokenTargetMinute === null ? null : getSegmentIndexForMinute(brokenTargetMinute, wn);
             const noWinner = mode === 'rollAway';
 
             // 統一算出最終真正公布的贏家索引，跟動畫最後會用getPhysicalWinnerInfo反推出來的
@@ -1583,16 +1597,16 @@
             let finalIndex = null;
             if (mode === 'teleport') finalIndex = teleportToIdx;
             else if (mode === 'brokenPointer') finalIndex = brokenTargetIdx;
-            else if (mode === 'windRespin') finalIndex = getSegmentIndexForMinute(windRespinMinute, n);
-            else if (mode === 'normal') finalIndex = boundaryTilt ? tiltTargetIdx : getSegmentIndexForMinute(rolledMinute, n);
-            const finalName = finalIndex === null ? null : participants[finalIndex].name;
-            const finalUid = finalIndex === null ? null : participants[finalIndex].uid;
+            else if (mode === 'windRespin') finalIndex = getSegmentIndexForMinute(windRespinMinute, wn);
+            else if (mode === 'normal' || mode === 'cheaterRemoved') finalIndex = boundaryTilt ? tiltTargetIdx : getSegmentIndexForMinute(rolledMinute, wn);
+            const finalName = finalIndex === null ? null : wheelParticipants[finalIndex].name;
+            const finalUid = finalIndex === null ? null : wheelParticipants[finalIndex].uid;
 
             await db.collection('ktvRooms').doc(currentRoomId).update({
                 wheelEvent: {
                     active: true, phase: 'spinning',
                     initiatedBy: myName, initiatedByUid: currentUser.uid,
-                    eventText, participants,
+                    eventText, participants: wheelParticipants,
                     mode, spins, spinMs, finalRotationMod, boundaryTilt,
                     teleportFromIdx, teleportToIdx, windRespinMod, brokenTargetIdx,
                     resultUid: finalUid, resultName: finalName, noWinner,
@@ -1807,7 +1821,9 @@
                 setTimeout(() => {
                     // 算出指針要轉到幾度，才會精準指向目標那一格——轉盤這時候已經完全靜止在
                     // currentRot，不會再變動，所以直接以這個角度為基準反推
-                    const targetDeg = currentRot + wheelEvent.brokenTargetIdx * segAngle + segAngle / 2 - 180;
+                    // 指針現在預設朝上(不是舊版的朝下)，公式不能再減180度，
+                    // 不然會整整差了半圈、指到正對面——這是上一版「指到對面」bug的原因
+                    const targetDeg = currentRot + wheelEvent.brokenTargetIdx * segAngle + segAngle / 2;
                     const flyDeg = targetDeg + 720; // 多轉兩圈製造飛旋的感覺
                     pointer.style.transition = 'transform 0.75s cubic-bezier(.22,1.4,.36,1), opacity 0.3s ease';
                     pointer.style.transform = `rotate(${flyDeg}deg) scale(1.35)`;
@@ -1841,6 +1857,13 @@
                     pointer.style.transform = `rotate(${targetDeg}deg)`;
                 }, 460);
                 finishAfterDelay(980);
+            } else if (mode === 'cheaterRemoved') {
+                // 轉盤上本來就沒有發起人的名字了(建立轉盤的時候就先排除掉)，正常轉停之後
+                // 才揭曉發起人耍了這個小手段，製造一點反差笑點
+                setTimeout(() => {
+                    if (statusText) statusText.textContent = `😏 ${wheelEvent.initiatedBy} 偷偷把自己的名字從轉盤上拿掉了！`;
+                }, 500);
+                finishAfterDelay(1700);
             } else {
                 finishAfterDelay();
             }
