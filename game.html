@@ -549,6 +549,17 @@
                     userProgress = {};
                 }
                 renderGameMenu();
+                // 從index.html跳轉過來的話(首次新增食譜、解鎖RPG的那個瞬間)，網址會帶上
+                // ?autoStartRpg=1這個參數，這裡偵測到就自動幫忙啟動異世界料理者——
+                // 因為index.html在跳轉之前就已經把userProgress.rpgUnlocked寫進Firestore了，
+                // 這裡剛讀出來的userProgress應該已經是解鎖狀態，startRpgGame()內部的判斷會通過
+                try {
+                    const params = new URLSearchParams(location.search);
+                    if (params.get('autoStartRpg') === '1') {
+                        history.replaceState(null, '', location.pathname); // 先把參數清掉，避免之後重新整理又自動觸發一次
+                        startRpgGame();
+                    }
+                } catch (e) { console.warn('自動啟動RPG失敗', e); }
             }
         });
         // ---------- 音效系統(從index.html移植過來的簡化版，只保留這五個小遊戲會用到的音效) ----------
