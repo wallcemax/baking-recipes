@@ -646,6 +646,7 @@
     let nextUpPollTimer = null;
     let pendingJoinRoomId = null; // 等待輸入密碼的房間ID
     let userFavoriteVideoIds = new Set(); // 目前登入者收藏的歌曲videoId集合，方便快速判斷某首歌有沒有收藏過
+    let blockedVideoIds = new Set(); // 已知播放會失敗(不允許嵌入/影片不存在)的videoId集合，搜尋結果會自動濾掉這些
 
     auth.onAuthStateChanged(user => {
         currentUser = user;
@@ -654,6 +655,7 @@
             watchOwnRoom();
             loadRoomList();
             loadUserFavoriteIds();
+            loadBlockedVideoIds();
         }
     });
 
@@ -977,9 +979,15 @@
             });
             prevQueueQids = newQueue.map(q => q.qid);
 
-            // 快結束前20秒的「下一位請準備」廣播：全部裝置都會收到，不是只有房主
+            // 快結束前20秒的「下一位請準備」廣播：全部裝置都會收到，不是只有房主。
+            // 這裡多一層二次確認：一定要佇列裡現在真的還有「下一首」、而且歌名對得上，才顯示——
+            // 不然使用者切走頁籤再切回來(重新進房間，lastNextUpAnnouncedAt這個本地變數會重設成0)時，
+            // Firestore裡如果還留著上一首歌快結束時廣播的舊資料，會被誤判成新通知重新跳出來，
+            // 即使佇列現在其實已經空了、根本沒有下一首
             const notice = data.nextUpAnnouncement;
-            if (notice && notice.announcedAt && notice.announcedAt > lastNextUpAnnouncedAt) {
+            const actualNextSong = newQueue[1];
+            if (notice && notice.announcedAt && notice.announcedAt > lastNextUpAnnouncedAt
+                && actualNextSong && actualNextSong.title === notice.title) {
                 lastNextUpAnnouncedAt = notice.announcedAt;
                 showKtvToast(`🎵 接下來為您播放下一首：《${notice.title}》（${notice.requestedBy || '有人'}點的，請準備）`, 8000);
             }
@@ -1478,8 +1486,10 @@
         }
     }
     function renderSearchResultsWithDeepSearch(results, resultsEl, isEmpty) {
-        const cardsHtml = results.length
-            ? results.map(r => buildSongCard(r, 'result')).join('')
+        // 先濾掉已知播放會失敗的影片，不管是快取搜尋還是深度搜尋的結果都經過這裡，統一處理
+        const filtered = (results || []).filter(r => !blockedVideoIds.has(r.videoId));
+        const cardsHtml = filtered.length
+            ? filtered.map(r => buildSongCard(r, 'result')).join('')
             : `<div class="empty-hint">${isEmpty ? '目前沒有快取結果' : '找不到符合的影片，換個關鍵字試試'}</div>`;
         resultsEl.innerHTML = cardsHtml + `<button class="btn btn-outline" style="width:100%; margin-top:0.6rem;" onclick="deepSearchKtvSongs()">🔍 深度搜尋（呼叫YouTube即時查詢）</button>`;
     }
@@ -1683,6 +1693,14 @@
             userFavoriteVideoIds = new Set(snap.docs.map(d => d.data().videoId));
         } catch (err) { console.warn('讀取收藏清單失敗', err); }
     }
+    // 封鎖清單不分使用者，是全站共用的(某部影片一旦被偵測到播不出來，對誰來說都播不出來)，
+    // 頁面載入時先抓一次，之後每次搜尋結果渲染前都會拿這份清單濾掉
+    async function loadBlockedVideoIds() {
+        try {
+            const snap = await db.collection('ktvBlockedVideos').get();
+            blockedVideoIds = new Set(snap.docs.map(d => d.id));
+        } catch (err) { console.warn('讀取封鎖清單失敗', err); }
+    }
     async function toggleFavoriteSong(song) {
         if (!currentUser) { alert('請先登入才能收藏歌曲'); return; }
         const docId = `${currentUser.uid}_${song.videoId}`;
@@ -1774,11 +1792,41 @@
                 events: {
                     onReady: () => { ytPlayerReady = true; startNextUpPolling(); },
                     onStateChange: (e) => { if (e.data === YT.PlayerState.ENDED) advanceQueue(); },
+                    // 這個player是重複使用的(換歌用loadVideoById，不是每次重建)，onError只在
+                    // player第一次建立時註冊一次，不能靠閉包捕捉videoId(換到第二首以後這個值
+                    // 就過期了)，改成錯誤發生當下即時查player.getVideoData()拿到目前實際載入的影片ID
+                    onError: (e) => handleYtPlaybackError(e),
                 },
             });
         } else if (ytPlayerReady) {
             ytPlayer.loadVideoById(videoId);
         }
+    }
+    // YouTube播放器錯誤處理：100=影片不存在(被刪除/設為不公開)、101跟150=影片擁有者不允許
+    // 嵌入播放(這是「點歌會搜到但播不出來」最常見的原因)。偵測到這幾種狀況，就把這部影片
+    // 標記進封鎖清單(之後搜尋結果/歌曲索引都會自動濾掉它，不會再被搜到)，並自動跳下一首，
+    // 不會讓房間卡在一部放不出來的影片上乾等
+    const YT_UNPLAYABLE_ERROR_CODES = new Set([100, 101, 150]);
+    async function handleYtPlaybackError(e) {
+        if (!YT_UNPLAYABLE_ERROR_CODES.has(e.data)) return; // 2/5這種暫時性錯誤不處理，避免誤判
+        let videoId = null, title = '';
+        try {
+            const vd = ytPlayer && ytPlayer.getVideoData && ytPlayer.getVideoData();
+            videoId = vd && vd.video_id;
+            title = (vd && vd.title) || (currentRoomData && currentRoomData.queue && currentRoomData.queue[0] && currentRoomData.queue[0].title) || '';
+        } catch (err) {}
+        if (!videoId) return;
+        showKtvToast(`⚠️ 《${title || '這首歌'}》無法播放（已被設為不允許嵌入），已自動跳過`);
+        try {
+            await db.collection('ktvBlockedVideos').doc(videoId).set({
+                videoId, title, blockedAt: firebase.firestore.FieldValue.serverTimestamp(), reason: e.data,
+            });
+        } catch (err) { console.warn('標記封鎖影片失敗', err); }
+        try {
+            await db.collection('ktvSongIndex').doc(videoId).delete();
+        } catch (err) { console.warn('從歌曲索引移除失敗', err); }
+        blockedVideoIds.add(videoId); // 本地端也順手加進去，這個裝置接下來的畫面就不用等下次重新載入
+        if (isHost) advanceQueue(); // 只有房主端需要主動跳下一首，其他成員會透過佇列同步自動跟上
     }
     // 把佇列最前面那首拿掉，接下一首——不管是歌自然播完(ENDED事件)還是房主手動按「切歌」，
     // 都是呼叫這個函式（其他裝置會透過onSnapshot同步收到變化）
@@ -1786,7 +1834,11 @@
         if (!currentRoomData || !currentRoomId) return;
         const newQueue = (currentRoomData.queue || []).slice(1);
         try {
-            await db.collection('ktvRooms').doc(currentRoomId).update({ queue: newQueue });
+            // 順手清掉上一首的「快結束提醒」廣播，不要留著舊資料在Firestore裡，
+            // 避免之後有人重新整理/重新進房間時被誤判成新通知
+            await db.collection('ktvRooms').doc(currentRoomId).update({
+                queue: newQueue, nextUpAnnouncement: firebase.firestore.FieldValue.delete(),
+            });
         } catch (err) { console.warn('推進佇列失敗', err); }
     }
     // 每秒檢查一次播放進度，剩不到20秒且佇列裡有下一首的話，廣播提醒下一位點歌的人準備。
