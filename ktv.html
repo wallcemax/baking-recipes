@@ -339,7 +339,7 @@
                 </div>
                 <div id="host-overlay-ui">
                     <div id="overlay-toggle-bar">
-                        <span onclick="toggleOverlayExpanded()" style="flex:1; cursor:pointer;">🎤 <span id="overlay-room-name"></span> · 房號 <span class="room-code-badge" id="overlay-room-id"></span> · 👥 <span id="overlay-member-count">1</span>人 · <span id="overlay-toggle-icon">▼ 點歌／佇列</span></span>
+                        <span onclick="toggleOverlayExpanded()" style="flex:1; cursor:pointer;">🎤 <span id="overlay-room-name"></span> · 房號 <span class="room-code-badge" id="overlay-room-id"></span> <span onclick="event.stopPropagation(); openChangePasscodeModal()" style="cursor:pointer;" title="修改房間密碼">🔒</span> · 👥 <span id="overlay-member-count">1</span>人 · <span id="overlay-toggle-icon">▼ 點歌／佇列</span></span>
                         <!-- 掌聲鼓勵/命運輪盤跟房間圖案/解散房間放在同一列，不再獨立置中浮動——
                              獨立浮動的那個做法用固定top值跟橫條的實際高度沒有綁在一起，橫條加厚
                              之後兩者對不齊、還被蓋住看不到，現在都在同一個flex列裡，靠
@@ -347,10 +347,26 @@
                         <button id="fullscreen-applause-btn" onclick="sendApplause()" class="disband-inline-btn" style="background:rgba(255,255,255,0.15); margin-right:0.4rem;">👏 掌聲鼓勵</button>
                         <button onclick="openWheelModal()" class="disband-inline-btn" style="background:rgba(168,50,74,0.85); margin-right:0.4rem;">🎡 命運輪盤</button>
                         <div style="position:relative; display:inline-block;">
+                            <button class="disband-inline-btn" style="background:rgba(90,122,156,0.85); margin-right:0.4rem;" onclick="toggleMemberListPicker()">👥 成員列表</button>
+                            <div id="member-list-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.5rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.35); z-index:999; width:13rem; max-height:16rem; overflow-y:auto;"></div>
+                        </div>
+                        <div style="position:relative; display:inline-block;">
                             <button class="disband-inline-btn" style="background:rgba(201,138,44,0.85); margin-right:0.4rem;" onclick="toggleRoomIconPicker()">🖼 房間圖案</button>
                             <div id="room-icon-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.6rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.35); display:grid; grid-template-columns:repeat(4,1fr); gap:0.4rem; z-index:999; width:11rem;"></div>
                         </div>
                         <button class="disband-inline-btn" onclick="leaveRoomAsHost()">解散房間</button>
+                    </div>
+                    <!-- 修改密碼小視窗 -->
+                    <div id="change-passcode-modal" class="hidden" style="position:absolute; inset:0; z-index:60; background:rgba(20,14,10,0.5); display:flex; align-items:center; justify-content:center; padding:1.5rem;">
+                        <div style="background:var(--paper); border-radius:1rem; padding:1.2rem; width:100%; max-width:20rem; text-align:center;">
+                            <h3 style="font-weight:800; margin-bottom:0.6rem;">🔒 修改房間密碼</h3>
+                            <p style="font-size:0.8rem; color:var(--espresso-soft); margin-bottom:0.6rem;">直接輸入新密碼即可，不用輸入原本的密碼；留空代表拿掉密碼</p>
+                            <input id="change-passcode-input" type="text" placeholder="輸入新密碼（留空＝不設密碼）" style="width:100%; margin-bottom:0.8rem;">
+                            <div style="display:flex; gap:0.5rem;">
+                                <button class="btn btn-outline" style="flex:1;" onclick="closeChangePasscodeModal()">取消</button>
+                                <button class="btn" style="flex:1;" onclick="confirmChangePasscode()">確認修改</button>
+                            </div>
+                        </div>
                     </div>
                     <div id="host-overlay-body">
                     <div class="overlay-panel overlay-left">
@@ -461,6 +477,7 @@
     let ownRoomUnsubscribe = null;
     let prevQueueQids = [];
     let prevMemberUids = [];
+    let currentMemberList = []; // 目前房間裡的成員名單快取，成員列表下拉選單顯示用
     let hostLastPlayedVideoId = null;
     let nextUpAnnouncedForVideo = null; // 目前這首歌是不是已經廣播過「快結束了，下一位請準備」，避免每秒輪詢重複廣播
     let nextUpPollTimer = null;
@@ -761,6 +778,7 @@
 
         if (roomUnsubscribe) roomUnsubscribe();
         let lastNextUpAnnouncedAt = 0;
+        let lastKnownWheelEnabled = null; // 記錄上一次已知的開關狀態，第一次載入不用跳通知，之後有變化才要跳
         roomUnsubscribe = db.collection('ktvRooms').doc(roomId).onSnapshot(doc => {
             if (!doc.exists) {
                 alert('🎤 房間已解散');
@@ -780,6 +798,18 @@
                 lastNextUpAnnouncedAt = notice.announcedAt;
                 showKtvToast(`🎵 接下來為您播放下一首：《${notice.title}》（${notice.requestedBy || '有人'}點的，請準備）`, 8000);
             }
+
+            // 命運輪盤開關：即時控制成員端要不要顯示「命運輪盤」按鈕，房主自己不用看這顆按鈕
+            // (房主永遠是透過overlay-toggle-bar那顆按鈕發起，不受這個開關限制)
+            const wheelEnabled = data.wheelEnabled !== false; // 沒設定過就預設開啟
+            if (!isHost) {
+                const btn = document.getElementById('wheel-open-btn');
+                if (btn) btn.style.display = wheelEnabled ? '' : 'none';
+                if (lastKnownWheelEnabled !== null && lastKnownWheelEnabled !== wheelEnabled) {
+                    showKtvToast(wheelEnabled ? '🎡 房主開啟了命運輪盤功能' : '🎡 房主關閉了命運輪盤功能');
+                }
+            }
+            lastKnownWheelEnabled = wheelEnabled;
 
             // 命運輪盤：發起/轉動/結果，全部透過這個房間監聽同步給所有裝置
             handleWheelEventUpdate(data.wheelEvent);
@@ -809,7 +839,16 @@
             const uids = snap.docs.map(d => d.id);
             snap.docChanges().forEach(change => {
                 const memberUid = change.doc.id;
-                if (memberUid === currentUser.uid) return; // 自己加入/離開不用通知自己
+                if (memberUid === currentUser.uid) {
+                    // 自己的成員名單文件被刪除了，但自己並沒有主動離開房間——代表是被房主踢出去的，
+                    // 跳出通知並自動離開房間，不會卡在一個「其實已經不在房間裡、畫面卻還顯示在房間」
+                    // 的尷尬狀態
+                    if (change.type === 'removed' && currentRoomId === roomId) {
+                        alert('😢 你已經被房主移出這個房間');
+                        exitToLobby();
+                    }
+                    return; // 自己加入/離開不用通知自己
+                }
                 if (change.type === 'added') {
                     const joinedAtMs = change.doc.data().joinedAt && change.doc.data().joinedAt.toMillis ? change.doc.data().joinedAt.toMillis() : Date.now();
                     if (joinedAtMs >= membersListenerAttachedAt) {
@@ -820,6 +859,9 @@
                 }
             });
             prevMemberUids = uids;
+            currentMemberList = snap.docs.map(d => ({ uid: d.id, name: d.data().name || '匿名' }));
+            const memberPicker = document.getElementById('member-list-picker');
+            if (memberPicker && !memberPicker.classList.contains('hidden')) renderMemberListPicker();
             const countText = String(snap.size);
             ['host-member-count', 'overlay-member-count'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = countText; });
         }, err => console.warn('成員名單監聽失敗', err));
@@ -1001,6 +1043,66 @@
             showKtvToast('🖼 房間圖案已更新');
         } catch (err) {
             alert('設定房間圖案失敗：' + err.message);
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 成員列表：房主專用，顯示目前房間裡的所有人，每個人後面有一顆X可以直接踢除
+    // ---------------------------------------------------------------
+    function toggleMemberListPicker() {
+        const picker = document.getElementById('member-list-picker');
+        if (picker.classList.contains('hidden')) {
+            renderMemberListPicker();
+            picker.classList.remove('hidden');
+        } else {
+            picker.classList.add('hidden');
+        }
+    }
+    function renderMemberListPicker() {
+        const picker = document.getElementById('member-list-picker');
+        if (!picker) return;
+        if (!currentMemberList.length) {
+            picker.innerHTML = '<p style="font-size:0.75rem; color:var(--muted); text-align:center; padding:0.5rem;">目前沒有人</p>';
+            return;
+        }
+        picker.innerHTML = currentMemberList.map(m => {
+            const isMe = m.uid === currentUser.uid;
+            return `<div style="display:flex; align-items:center; justify-content:space-between; padding:0.4rem 0.3rem; gap:0.5rem;">
+                <span style="font-size:0.82rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtmlKtv(m.name)}${isMe ? '（我）' : ''}</span>
+                ${isMe ? '' : `<button onclick="kickMember('${m.uid}', '${escapeHtmlKtv(m.name).replace(/'/g, "\\'")}')" style="background:var(--danger); color:#fff; border:none; border-radius:999px; width:1.4rem; height:1.4rem; font-size:0.75rem; cursor:pointer; flex-shrink:0;">✕</button>`}
+            </div>`;
+        }).join('');
+    }
+    async function kickMember(uid, name) {
+        if (!isHost || !currentRoomId) return;
+        if (!confirm(`確定要把「${name}」移出房間嗎？`)) return;
+        try {
+            await db.collection('ktvRooms').doc(currentRoomId).collection('members').doc(uid).delete();
+            showKtvToast(`👢 已將 ${name} 移出房間`);
+        } catch (err) {
+            alert('踢除成員失敗：' + err.message);
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 修改房間密碼：房主專用，直接輸入新密碼即可，不用先輸入原密碼
+    // ---------------------------------------------------------------
+    function openChangePasscodeModal() {
+        document.getElementById('change-passcode-input').value = '';
+        document.getElementById('change-passcode-modal').classList.remove('hidden');
+    }
+    function closeChangePasscodeModal() {
+        document.getElementById('change-passcode-modal').classList.add('hidden');
+    }
+    async function confirmChangePasscode() {
+        if (!isHost || !currentRoomId) return;
+        const newPasscode = document.getElementById('change-passcode-input').value.trim();
+        try {
+            await db.collection('ktvRooms').doc(currentRoomId).update({ passcode: newPasscode || null });
+            closeChangePasscodeModal();
+            showKtvToast(newPasscode ? '🔒 密碼已更新' : '🔓 已取消密碼保護');
+        } catch (err) {
+            alert('修改密碼失敗：' + err.message);
         }
     }
 
@@ -1652,8 +1754,20 @@
         const container = document.getElementById(isHost ? 'wheel-modal-inner' : 'member-wheel-modal-inner');
         if (!container) return;
         if (!wheelEvent || !wheelEvent.active) {
+            const wheelEnabled = !currentRoomData || currentRoomData.wheelEnabled !== false;
+            const toggleHtml = isHost ? `
+                <div style="display:flex; align-items:center; justify-content:center; gap:0.6rem; margin-bottom:0.8rem; font-size:0.82rem;">
+                    <span>開放成員使用命運輪盤</span>
+                    <label style="position:relative; display:inline-block; width:2.6rem; height:1.5rem;">
+                        <input type="checkbox" id="wheel-enabled-toggle" ${wheelEnabled ? 'checked' : ''} onchange="toggleWheelEnabled(this.checked)" style="opacity:0; width:0; height:0;">
+                        <span style="position:absolute; inset:0; background:${wheelEnabled ? 'var(--jam)' : 'rgba(255,255,255,0.25)'}; border-radius:999px; transition:background .2s;"></span>
+                        <span style="position:absolute; left:${wheelEnabled ? '1.25rem' : '0.15rem'}; top:0.15rem; width:1.2rem; height:1.2rem; background:#fff; border-radius:50%; transition:left .2s;"></span>
+                    </label>
+                </div>
+            ` : '';
             container.innerHTML = `
                 <h3 style="font-size:1.15rem; font-weight:800; margin-bottom:0.4rem;">🎡 命運輪盤</h3>
+                ${toggleHtml}
                 <p style="font-size:0.78rem; opacity:0.8; margin-bottom:0.5rem;">輸入這次輪盤要決定的事件，按下發起後全部裝置都會立刻看到通知，接著自動顯示轉盤並開始轉動</p>
                 <div class="wheel-input-row">
                     <input id="${isHost ? 'wheel-event-input' : 'member-wheel-event-input'}" type="text" placeholder="例如：下一句接著唱">
@@ -1664,6 +1778,16 @@
             return;
         }
         buildWheelSkeleton(wheelEvent);
+    }
+    // 房主開關命運輪盤功能：關閉的話成員畫面上的「命運輪盤」按鈕會即時消失，
+    // 開啟則即時出現，兩種情況都要跳通知讓大家知道
+    async function toggleWheelEnabled(enabled) {
+        if (!isHost || !currentRoomId) return;
+        try {
+            await db.collection('ktvRooms').doc(currentRoomId).update({ wheelEnabled: enabled });
+        } catch (err) {
+            alert('切換命運輪盤開關失敗：' + err.message);
+        }
     }
     let lastPlayedWheelSpinToken = null;
     // 用canvas畫轉盤：每個人固定分到大小相等的扇形，各自不同顏色，文字用canvas畫、
