@@ -648,7 +648,7 @@
             <div class="recipe-card p-6"><div class="skeleton" style="aspect-ratio:4/3; margin-bottom:.75rem;"></div><div class="skeleton h-4 w-2/3 mb-2"></div><div class="skeleton h-3 w-1/2"></div></div>
             <div class="recipe-card p-6"><div class="skeleton" style="aspect-ratio:4/3; margin-bottom:.75rem;"></div><div class="skeleton h-4 w-2/3 mb-2"></div><div class="skeleton h-3 w-1/2"></div></div>
         </div>
-        <div id="pagination" class="flex justify-center items-center gap-2 mt-8"></div>
+        <div id="pagination" class="flex flex-wrap justify-center items-center gap-2 mt-8"></div>
     </div>
 
     <!-- 手機版漢堡選單：獨立浮動在畫面最上層，不受任何父層overflow裁切影響，
@@ -3475,6 +3475,7 @@
             const pagination = document.getElementById('pagination');
             grid.innerHTML = '';
             pagination.innerHTML = '';
+            window.currentFilteredRecipesCount = recipes.length; // 給resize監聽器重算分頁列用，不用重新篩選一次
             if (recipes.length === 0) {
                 grid.innerHTML = `<div class="col-span-full empty-state">
                     <img src="https://res.cloudinary.com/bumzwp9g/image/upload/w_240,q_auto,f_auto/v1785481294/recipe_empty_xmhjpf.png" alt="找不到食譜" style="width:180px; max-width:60%; margin:0 auto 0.75rem; opacity:.85;">
@@ -3534,14 +3535,75 @@
             });
 
             if (totalPages > 1) {
-                let html = `<button onclick="goToPage(${currentPage - 1})" class="chip" ${currentPage === 1 ? 'disabled style="opacity:.4"' : ''}>‹ 上一頁</button>`;
-                for (let p = 1; p <= totalPages; p++) {
-                    html += `<button onclick="goToPage(${p})" class="chip ${p === currentPage ? 'active' : ''}" style="font-family:'LXGW WenKai Mono TC', monospace;">${p}</button>`;
-                }
-                html += `<button onclick="goToPage(${currentPage + 1})" class="chip" ${currentPage === totalPages ? 'disabled style="opacity:.4"' : ''}>下一頁 ›</button>`;
-                pagination.innerHTML = html;
+                pagination.innerHTML = buildPaginationHtml(currentPage, totalPages);
             }
         }
+
+        // 根據目前視窗寬度決定分頁列最多要顯示幾個頁碼按鈕(不含上一頁/下一頁/省略號)——
+        // 窄螢幕(手機直向)顯示少一點，寬螢幕(桌機)可以顯示到最多10個，避免頁數一多
+        // (例如50頁)在窄螢幕上把上一頁/下一頁按鈕擠出螢幕外
+        function getPaginationMaxVisible() {
+            const w = window.innerWidth;
+            if (w < 400) return 3;
+            if (w < 640) return 5;
+            if (w < 900) return 7;
+            return 10;
+        }
+        // 算出這次要顯示哪些頁碼：頁數不多就全部列出來；頁數太多的話，永遠顯示第一頁跟
+        // 最後一頁、加上目前頁碼左右鄰近的範圍，中間用'...'省略號代表跳過的部分
+        function buildPaginationPages(current, total, maxVisible) {
+            if (total <= maxVisible) return Array.from({ length: total }, (_, i) => i + 1);
+            const sideCount = Math.max(1, Math.floor((maxVisible - 3) / 2)); // 扣掉第一頁/最後一頁/省略號後，左右各能分配到的頁碼數
+            let left = Math.max(2, current - sideCount);
+            let right = Math.min(total - 1, current + sideCount);
+            // 目前頁碼靠近頭尾的時候，左右不對稱，把多出來的名額往另一側補，讓總顯示數盡量塞滿maxVisible
+            while (right - left + 3 < maxVisible && (left > 2 || right < total - 1)) {
+                if (left > 2) left--;
+                else if (right < total - 1) right++;
+                else break;
+            }
+            const pages = [1];
+            if (left > 2) pages.push('…');
+            for (let p = left; p <= right; p++) pages.push(p);
+            if (right < total - 1) pages.push('…');
+            pages.push(total);
+            return pages;
+        }
+        function buildPaginationHtml(current, total) {
+            const maxVisible = getPaginationMaxVisible();
+            const pages = buildPaginationPages(current, total, maxVisible);
+            let html = `<button onclick="goToPage(${current - 1})" class="chip" ${current === 1 ? 'disabled style="opacity:.4"' : ''}>‹ 上一頁</button>`;
+            pages.forEach(p => {
+                if (p === '…') { html += `<span class="px-1" style="color:var(--muted)">…</span>`; return; }
+                html += `<button onclick="goToPage(${p})" class="chip ${p === current ? 'active' : ''}" style="font-family:'LXGW WenKai Mono TC', monospace;">${p}</button>`;
+            });
+            html += `<button onclick="goToPage(${current + 1})" class="chip" ${current === total ? 'disabled style="opacity:.4"' : ''}>下一頁 ›</button>`;
+            // 跳轉頁面：輸入頁碼按Enter或按鈕直接跳過去，頁數多的時候(尤其窄螢幕頁碼按鈕顯示不全)
+            // 這個比一頁一頁點快很多
+            html += `<span class="flex items-center gap-1 ml-1">
+                <input type="number" min="1" max="${total}" id="pagination-jump-input" placeholder="頁碼"
+                    onkeydown="if(event.key==='Enter') jumpToPaginationInput(${total})"
+                    style="width:3.6rem; padding:0.4rem 0.5rem; font-size:0.8rem; text-align:center;">
+                <button onclick="jumpToPaginationInput(${total})" class="chip" style="padding:0.4rem 0.7rem; font-size:0.8rem;">跳至</button>
+            </span>`;
+            return html;
+        }
+        function jumpToPaginationInput(total) {
+            const input = document.getElementById('pagination-jump-input');
+            if (!input) return;
+            const page = parseInt(input.value, 10);
+            if (!page || page < 1 || page > total) { input.focus(); return; }
+            goToPage(page);
+        }
+        // 視窗尺寸變化時(例如手機轉向、瀏覽器縮放)重新算一次分頁列要顯示幾個頁碼按鈕，
+        // 只有分頁列目前真的有顯示內容才需要重算，避免沒必要的重繪
+        window.addEventListener('resize', () => {
+            const pagination = document.getElementById('pagination');
+            if (pagination && pagination.innerHTML.trim()) {
+                const totalPages = Math.max(1, Math.ceil((window.currentFilteredRecipesCount || 0) / RECIPES_PER_PAGE));
+                if (totalPages > 1) pagination.innerHTML = buildPaginationHtml(currentPage, totalPages);
+            }
+        });
 
         function goToPage(page) {
             currentPage = page;
