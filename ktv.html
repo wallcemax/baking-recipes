@@ -672,6 +672,7 @@
             loadBlockedVideoIds();
             loadUserBlockedIds();
             loadSongIndexCache();
+            loadPopularityCache();
         }
     });
 
@@ -1464,9 +1465,23 @@
             cachedSongIndexEntries = snap.docs.map(d => d.data());
         } catch (err) { console.warn('讀取歌曲索引快取失敗', err); }
     }
+    let popularityLoaded = false;
+    // 熱門度(被點過幾次)的一次性載入：跟歌曲索引同一套安全模式，整個登入階段只讀一次，
+    // 存成videoId對應次數的物件，之後評分排序都是查這份本地快取，不會額外打Firestore
+    async function loadPopularityCache() {
+        if (popularityLoaded) return;
+        popularityLoaded = true;
+        try {
+            const snap = await db.collection('ktvGlobalSongStats').orderBy('count', 'desc').limit(300).get();
+            const map = {};
+            snap.docs.forEach(d => { map[d.id] = d.data().count || 0; });
+            cachedPopularityByVideoId = map;
+        } catch (err) { console.warn('讀取熱門度快取失敗', err); }
+    }
     // 深度搜尋找到的每一首歌，同時攤平寫進歌曲索引(用videoId當文件ID，同一首歌重複搜到
     // 只會更新同一筆，不會愈存愈多份重複資料)
     let cachedSongIndexEntries = []; // 歌曲索引的前端快取，整個登入階段只從Firestore讀一次，之後搜尋都在前端比對，不會每次搜尋都重新打Firestore
+    let cachedPopularityByVideoId = {}; // 熱門度(被點過幾次)的前端快取，同樣整個登入階段只讀一次，給搜尋結果評分排序用
     let songIndexLoaded = false;
     function upsertKtvSongIndex(results) {
         if (!results || !results.length) return;
@@ -1526,12 +1541,60 @@
             resultsEl.innerHTML = `<div class="empty-hint">⚠️ ${escapeHtmlKtv(err.message)}</div>`;
         }
     }
+    // ---------------------------------------------------------------
+    // 搜尋結果評分排序：不管是快取搜尋還是深度搜尋的結果，都要套用同一套規則，讓體驗一致。
+    // 評分依據三個因素：
+    //   1. 標題關鍵字——KTV/karaoke/伴唱這類加分，官方MV/Live這類扣分(跟worker.js深度搜尋
+    //      那邊用的是同一套規則，維持一致)
+    //   2. 熱門度——這首歌被加進佇列點播過越多次，分數越高，但有上限，不會因為某首歌
+    //      特別紅就完全蓋過其他考量
+    //   3. 個人黑名單次數——越多不同的人把這首歌加入黑名單，權重稍微調低一點(不是直接排除，
+    //      直接排除是「自己」封鎖過的歌才會做，這裡只是「其他人也不太喜歡」的參考訊號)
+    // 全部評分依據都是查詢已經快取好的本地資料(cachedPopularityByVideoId、cachedSongIndexEntries)，
+    // 不會產生任何額外的Firestore讀取，這點特別重要，之前就是因為忽略讀取成本才捅出簍子
+    // ---------------------------------------------------------------
+    const KTV_POSITIVE_KEYWORDS = [
+        { words: ['ktv', 'karaoke', '卡拉ok', '伴唱'], score: 100 },
+        { words: ['伴奏', '演唱會伴奏', '官方伴奏'], score: 80 },
+        { words: ['instrumental', '純音樂', '無人聲', 'no vocal'], score: 70 },
+    ];
+    const KTV_NEGATIVE_KEYWORDS = [
+        { words: ['官方mv', 'official mv', '官方 mv'], score: -60 },
+        { words: ['mv'], score: -40 },
+        { words: ['live', '演唱會', '現場'], score: -20 },
+        { words: ['cover', '翻唱'], score: -15 },
+        { words: ['lyrics', '歌詞版', '歌词版'], score: -10 },
+    ];
+    function scoreKtvTitle(title) {
+        const lower = (title || '').toLowerCase();
+        let score = 0;
+        KTV_POSITIVE_KEYWORDS.forEach(({ words, score: s }) => { if (words.some(w => lower.includes(w))) score += s; });
+        KTV_NEGATIVE_KEYWORDS.forEach(({ words, score: s }) => { if (words.some(w => lower.includes(w))) score += s; });
+        return score;
+    }
+    function getCachedBlacklistCount(videoId) {
+        const entry = cachedSongIndexEntries.find(e => e.videoId === videoId);
+        return (entry && entry.blacklistCount) || 0;
+    }
+    function rankKtvSearchResults(results) {
+        const scored = results.map((r, idx) => {
+            const titleScore = scoreKtvTitle(r.title);
+            const popularity = Math.min((cachedPopularityByVideoId[r.videoId] || 0) * 4, 60); // 熱門度加分，封頂60分
+            const blacklistPenalty = Math.min(getCachedBlacklistCount(r.videoId) * 15, 90); // 黑名單次數扣分，封頂90分
+            return { r, score: titleScore + popularity - blacklistPenalty, idx };
+        });
+        // 用stable排序，分數相同的話維持原本的相對順序(不管是快取結果本身的順序、
+        // 還是深度搜尋在worker.js那邊已經排過一次的相關性順序，都會被保留下來當作平手時的依據)
+        scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
+        return scored.map(s => s.r);
+    }
     function renderSearchResultsWithDeepSearch(results, resultsEl, isEmpty) {
         // 先濾掉已知播放會失敗的影片(全站共用)跟自己個人封鎖的影片(只影響自己)，
-        // 不管是快取搜尋還是深度搜尋的結果都經過這裡，統一處理
+        // 不管是快取搜尋還是深度搜尋的結果都經過這裡，統一處理，再套用評分排序
         const filtered = (results || []).filter(r => !blockedVideoIds.has(r.videoId) && !userBlockedVideoIds.has(r.videoId));
-        const cardsHtml = filtered.length
-            ? filtered.map(r => buildSongCard(r, 'result')).join('')
+        const ranked = rankKtvSearchResults(filtered);
+        const cardsHtml = ranked.length
+            ? ranked.map(r => buildSongCard(r, 'result')).join('')
             : `<div class="empty-hint">${isEmpty ? '目前沒有快取結果' : '找不到符合的影片，換個關鍵字試試'}</div>`;
         resultsEl.innerHTML = cardsHtml + `<button class="btn btn-outline" style="width:100%; margin-top:0.6rem;" onclick="deepSearchKtvSongs()">🔍 深度搜尋（呼叫YouTube即時查詢）</button>`;
     }
@@ -1601,6 +1664,7 @@
                 videoId: entry.videoId, title: entry.title, thumbnail: entry.thumbnail,
                 count: firebase.firestore.FieldValue.increment(1),
             }, { merge: true }).catch(err => console.warn('更新熱門排行失敗', err));
+            cachedPopularityByVideoId[entry.videoId] = (cachedPopularityByVideoId[entry.videoId] || 0) + 1; // 同步更新本地快取，評分排序立刻反映最新點播次數
             recordUserHistory(entry); // 跨房間的個人歷史歌單，不是只記在這個房間裡
             // 累加點歌次數統計，給首頁「K歌之王」稱號判定用。ktv.html跟index.html是不同頁面，
             // 沒辦法直接呼叫index.html裡判定稱號解鎖的邏輯，這裡只負責把統計數字寫進
@@ -1840,6 +1904,20 @@
                 userBlockedVideoIds.delete(song.videoId);
                 showKtvToast(`✅ 已將《${song.title}》從黑名單移除`);
             }
+            // 這裡用「寫入時累加」而不是「搜尋時去讀取所有人的黑名單來算總數」，避免又造成
+            // 大量讀取——每次封鎖/解除封鎖，直接用原子increment更新ktvSongIndex文件上的
+            // blacklistCount統計欄位，之後排序評分只要讀已經快取好的歌曲索引就有這個數字可以用，
+            // 不需要額外查詢。這個統計只是拿來給評分排序做參考微調，不影響「加入黑名單就濾掉」
+            // 這個既有的核心邏輯(那個查的是自己的userBlockedVideoIds，不受這裡影響)
+            db.collection('ktvSongIndex').doc(song.videoId).set({
+                videoId: song.videoId, title: song.title, thumbnail: song.thumbnail || '',
+                titleLower: (song.title || '').toLowerCase(),
+                blacklistCount: firebase.firestore.FieldValue.increment(willBlock ? 1 : -1),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true }).catch(err => console.warn('更新黑名單統計失敗', err));
+            // 同步更新本地已經快取好的歌曲索引資料，讓評分排序立刻反映最新狀態，不用等下次重新整理頁面
+            const cachedEntry = cachedSongIndexEntries.find(e => e.videoId === song.videoId);
+            if (cachedEntry) cachedEntry.blacklistCount = (cachedEntry.blacklistCount || 0) + (willBlock ? 1 : -1);
             // 加入黑名單後，直接把畫面上目前顯示的這張卡片整個移除(不只是換圖示)，
             // 因為封鎖之後這首歌照理說不該再出現在搜尋結果/歷史/排行這些清單裡了
             if (willBlock) {
