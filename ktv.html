@@ -1881,7 +1881,6 @@
         });
         return ytApiReadyPromise;
     }
-    let ytPlaybackWatchdogTimer = null;
     async function playHostVideo(videoId) {
         await loadYoutubeIframeApi();
         nextUpAnnouncedForVideo = null; // 換新影片了，「快結束提醒」的旗標要重置，不然新歌會被誤判成已經提醒過
@@ -1901,47 +1900,20 @@
         } else if (ytPlayerReady) {
             ytPlayer.loadVideoById(videoId);
         }
-        startYtPlaybackWatchdog();
-    }
-    // 播放監控備援：不完全依賴onError事件——某些「版權方在特定情況下封鎖」的狀況，
-    // YouTube IFrame API不一定會確實觸發onError(這是已知會出現的不一致行為，尤其是
-    // 版權方主張、而不是單純的「不允許嵌入」時)，畫面上會直接顯示YouTube自己的錯誤疊層，
-    // 但JS事件端有可能完全沒收到通知。
-    //
-    // 這裡不能只看「某個時間點的狀態快照」就判定卡住——播放前常常會先跑YouTube廣告，
-    // 廣告播放中currentTime一樣會持續往前推進(只是還沒進到正片內容)，如果單純用固定時間點
-    // 一次性檢查，遇到比較長的廣告很容易被誤判成播放失敗。改成分兩次取樣比較currentTime
-    // 有沒有實際在推進：不管是廣告還是正片，只要真的有在播放，時間就一定會往前走；
-    // 真正因為封鎖播不出來的話，不管等多久currentTime都會停在0動也不動，這樣才能真正
-    // 分辨「卡住」跟「廣告播放中」的差異
-    function startYtPlaybackWatchdog() {
-        if (ytPlaybackWatchdogTimer) clearTimeout(ytPlaybackWatchdogTimer);
-        const firstCheckMs = 15000, secondCheckMs = 15000; // 第一次15秒後取樣、再等15秒後第二次取樣比較(給廣告足夠的緩衝時間)
-        ytPlaybackWatchdogTimer = setTimeout(() => {
-            if (!isHost || !ytPlayer || !ytPlayerReady) return;
-            let firstTime = 0;
-            try { firstTime = ytPlayer.getCurrentTime() || 0; } catch (err) {}
-            ytPlaybackWatchdogTimer = setTimeout(() => {
-                if (!isHost || !ytPlayer || !ytPlayerReady) return;
-                try {
-                    const secondTime = ytPlayer.getCurrentTime() || 0;
-                    // 兩次取樣時間幾乎沒有推進(容許0.5秒誤差)，代表真的卡住了，不管是不是廣告
-                    // 都應該早就往前跑了才對
-                    if (secondTime - firstTime < 0.5) {
-                        handleYtPlaybackError({ data: 150 }); // 沒有明確錯誤碼，借用150(不允許嵌入播放)這個既有分類處理
-                    }
-                } catch (err) {}
-            }, secondCheckMs);
-        }, firstCheckMs);
     }
     // YouTube播放器錯誤處理：100=影片不存在(被刪除/設為不公開)、101跟150=影片擁有者不允許
     // 嵌入播放(這是「點歌會搜到但播不出來」最常見的原因)。偵測到這幾種狀況，就把這部影片
     // 標記進封鎖清單(之後搜尋結果/歌曲索引都會自動濾掉它，不會再被搜到)，並自動跳下一首，
-    // 不會讓房間卡在一部放不出來的影片上乾等
+    // 不會讓房間卡在一部放不出來的影片上乾等。
+    //
+    // 之前另外加過一層「播放監控備援」(watchdog)，用currentTime有沒有推進來判斷是不是卡住，
+    // 但這個機制沒辦法分辨「使用者自己按暫停」跟「真的播放失敗」——只要暫停超過偵測時間，
+    // currentTime當然不會動，就會被誤判成播放失敗而自動跳過，這是設計上的根本缺陷，
+    // 不是調參數能解決的問題，所以整個拿掉了，只保留onError事件偵測——這個不會有這個風險，
+    // 使用者暫停不會觸發播放器的錯誤事件，只有真正播放失敗才會觸發
     const YT_UNPLAYABLE_ERROR_CODES = new Set([100, 101, 150]);
     async function handleYtPlaybackError(e) {
         if (!YT_UNPLAYABLE_ERROR_CODES.has(e.data)) return; // 2/5這種暫時性錯誤不處理，避免誤判
-        if (ytPlaybackWatchdogTimer) { clearTimeout(ytPlaybackWatchdogTimer); ytPlaybackWatchdogTimer = null; }
         let videoId = null, title = '';
         try {
             const vd = ytPlayer && ytPlayer.getVideoData && ytPlayer.getVideoData();
@@ -1949,7 +1921,7 @@
             title = (vd && vd.title) || (currentRoomData && currentRoomData.queue && currentRoomData.queue[0] && currentRoomData.queue[0].title) || '';
         } catch (err) {}
         if (!videoId) return;
-        if (blockedVideoIds.has(videoId)) { if (isHost) advanceQueue(); return; } // 已經處理過這首了，避免watchdog跟onError都觸發時重複跳兩次
+        if (blockedVideoIds.has(videoId)) { if (isHost) advanceQueue(); return; } // 已經處理過這首了，避免重複跳兩次
         showKtvToast(`⚠️ 《${title || '這首歌'}》無法播放（可能是版權方封鎖或不允許嵌入），已自動跳過`);
         try {
             await db.collection('ktvBlockedVideos').doc(videoId).set({
