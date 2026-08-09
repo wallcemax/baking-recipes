@@ -671,6 +671,7 @@
             loadUserFavoriteIds();
             loadBlockedVideoIds();
             loadUserBlockedIds();
+            loadSongIndexCache();
         }
     });
 
@@ -1445,23 +1446,28 @@
         }
     }
     // 從歌曲索引裡比對「歌名有沒有包含這個關鍵字」，不限於當初搜尋這首歌用的關鍵字。
-    // Firestore沒有內建的「文字包含」查詢，這裡用「抓一批最近有更新過的索引、前端自己比對」
-    // 的簡單做法，對這種個人／小型多人使用的KTV系統規模來說，讀取量完全在合理範圍內
-    async function searchKtvSongIndexByTitle(query) {
+    // 這裡改成純前端比對已經快取好的cachedSongIndexEntries，不會每次搜尋都重新打Firestore——
+    // 之前的版本每次搜尋都真的去讀最多500筆文件，使用者多搜幾次讀取量就會爆炸性成長，
+    // 這是造成Firestore用量突然暴增的主因
+    function searchKtvSongIndexByTitle(query) {
+        const lower = query.trim().toLowerCase();
+        if (!lower) return [];
+        return cachedSongIndexEntries.filter(r => r.titleLower && r.titleLower.includes(lower));
+    }
+    // 歌曲索引的一次性載入：整個登入階段只在這裡讀一次Firestore(最多500筆，取最近更新的)，
+    // 之後所有搜尋都是純前端比對，不會再有額外的讀取成本
+    async function loadSongIndexCache() {
+        if (songIndexLoaded) return;
+        songIndexLoaded = true;
         try {
-            const lower = query.trim().toLowerCase();
-            if (!lower) return [];
             const snap = await db.collection('ktvSongIndex').orderBy('updatedAt', 'desc').limit(500).get();
-            return snap.docs
-                .map(d => d.data())
-                .filter(r => r.titleLower && r.titleLower.includes(lower));
-        } catch (err) {
-            console.warn('查詢歌曲索引失敗', err);
-            return [];
-        }
+            cachedSongIndexEntries = snap.docs.map(d => d.data());
+        } catch (err) { console.warn('讀取歌曲索引快取失敗', err); }
     }
     // 深度搜尋找到的每一首歌，同時攤平寫進歌曲索引(用videoId當文件ID，同一首歌重複搜到
     // 只會更新同一筆，不會愈存愈多份重複資料)
+    let cachedSongIndexEntries = []; // 歌曲索引的前端快取，整個登入階段只從Firestore讀一次，之後搜尋都在前端比對，不會每次搜尋都重新打Firestore
+    let songIndexLoaded = false;
     function upsertKtvSongIndex(results) {
         if (!results || !results.length) return;
         const batch = db.batch();
@@ -1473,6 +1479,12 @@
                 titleLower: (r.title || '').toLowerCase(),
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
+            // 順手同步更新本地快取，這樣剛深度搜尋到的新歌立刻就能被「歌曲索引跨關鍵字搜尋」
+            // 搜到，不用等下次重新整理頁面、重新拉一次Firestore資料
+            const existingIdx = cachedSongIndexEntries.findIndex(e => e.videoId === r.videoId);
+            const entry = { videoId: r.videoId, title: r.title || '', thumbnail: r.thumbnail || '', titleLower: (r.title || '').toLowerCase() };
+            if (existingIdx >= 0) cachedSongIndexEntries[existingIdx] = entry;
+            else cachedSongIndexEntries.unshift(entry);
         });
         batch.commit().catch(err => console.warn('寫入歌曲索引失敗', err));
     }
