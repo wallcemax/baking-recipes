@@ -1478,6 +1478,17 @@
     }
     // 深度搜尋：真的呼叫YouTube Data API即時搜尋，會消耗每日配額。搜到的結果會存回Firestore
     // 快取，之後任何人（不只自己）搜同樣的關鍵字都能直接沿用，不用再消耗配額
+    // 算出YouTube配額下次重置的時間訊息：配額是台灣時間每天下午3點重置，直接用UTC時間
+    // +8小時的方式算台灣時間(不依賴瀏覽器本身的時區設定，不管使用者裝置在哪個時區，
+    // 算出來的都是台灣時間)，現在如果還沒到下午3點就是今天，過了就是明天
+    function getYoutubeQuotaResetMessage() {
+        const twMs = Date.now() + 8 * 60 * 60 * 1000;
+        const tw = new Date(twMs);
+        let resetMs = twMs;
+        if (tw.getUTCHours() >= 15) resetMs += 24 * 60 * 60 * 1000; // 已經過了今天下午3點，重置時間算到明天
+        const reset = new Date(resetMs);
+        return `已經用完YouTube深度搜尋配額，將於${reset.getUTCMonth() + 1}月${reset.getUTCDate()}日下午3時恢復`;
+    }
     async function deepSearchKtvSongs() {
         const input = document.getElementById(isHost ? 'host-search-input' : 'member-search-input');
         const resultsEl = document.getElementById(isHost ? 'host-search-results' : 'member-search-results');
@@ -1490,6 +1501,7 @@
                 body: JSON.stringify({ action: 'youtube_search', query: `KTV ${query}` }),
             });
             const data = await res.json();
+            if (data.quotaExceeded) { resultsEl.innerHTML = `<div class="empty-hint">⚠️ ${getYoutubeQuotaResetMessage()}</div>`; return; }
             if (!res.ok || data.error) throw new Error(data.error || `搜尋失敗(${res.status})`);
             const results = data.results || [];
             const cacheKey = sanitizeSearchCacheKey(query);
