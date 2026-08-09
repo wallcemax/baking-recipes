@@ -3547,13 +3547,16 @@
         }
 
         // 算出這次要顯示哪些頁碼：頁數不多就全部列出來；頁數太多的話，永遠顯示第一頁跟
-        // 最後一頁、加上目前頁碼左右鄰近的範圍，中間用'…'省略號代表跳過的部分
-        function buildPaginationPages(current, total, maxVisible) {
+        // 最後一頁、加上目前頁碼左右鄰近sideCount個頁碼，中間用'…'省略號代表跳過的部分。
+        // sideCount可以是0(這時候只顯示[1,…,目前頁,…,總頁數]這種最精簡的3個數字)，
+        // 這是為了應付真的很窄的螢幕——如果堅持「左右至少各留1個」，中間位置的頁碼
+        // 不管怎麼縮都有縮不下去的下限，遇到夠窄的容器就會一直超寬
+        function buildPaginationPages(current, total, sideCount) {
+            const maxVisible = sideCount * 2 + 3; // 只是用來判斷「乾脆全部列出來比較簡單」的門檻，不是真正的顯示上限
             if (total <= maxVisible) return Array.from({ length: total }, (_, i) => i + 1);
-            const sideCount = Math.max(1, Math.floor((maxVisible - 3) / 2)); // 扣掉第一頁/最後一頁/省略號後，左右各能分配到的頁碼數
             let left = Math.max(2, current - sideCount);
             let right = Math.min(total - 1, current + sideCount);
-            // 目前頁碼靠近頭尾的時候，左右不對稱，把多出來的名額往另一側補，讓總顯示數盡量塞滿maxVisible
+            // 目前頁碼靠近頭尾的時候，左右不對稱，把多出來的名額往另一側補
             while (right - left + 3 < maxVisible && (left > 2 || right < total - 1)) {
                 if (left > 2) left--;
                 else if (right < total - 1) right++;
@@ -3566,8 +3569,8 @@
             pages.push(total);
             return pages;
         }
-        function paginationPagesHtml(current, total, maxVisible) {
-            const pages = buildPaginationPages(current, total, maxVisible);
+        function paginationPagesHtml(current, total, sideCount) {
+            const pages = buildPaginationPages(current, total, sideCount);
             let html = `<button onclick="goToPage(${current - 1})" class="chip" ${current === 1 ? 'disabled style="opacity:.4"' : ''}>‹ 上一頁</button>`;
             pages.forEach(p => {
                 if (p === '…') { html += `<span class="px-1" style="color:var(--muted)">…</span>`; return; }
@@ -3577,17 +3580,18 @@
             return html;
         }
         // 渲染分頁按鈕列（上一頁/頁碼/下一頁），並且實際量測渲染後的寬度有沒有超出容器——
-        // 超過的話就自動減少頁碼數量重新渲染，直到剛好塞得下同一行為止。這樣比單純依賴
+        // 超過的話就自動減少sideCount(左右各留幾個鄰近頁碼)重新渲染，一路可以收斂到0
+        // (只顯示第一頁/目前頁/最後一頁)，直到剛好塞得下同一行為止。這樣比單純依賴
         // window.innerWidth猜測要準確很多，不受字體大小、使用者瀏覽器縮放比例影響，
         // 也不需要靠flex-wrap換行(換行會讓「上一頁」「下一頁」跑到不同行，很不好看)
         function renderPaginationBar(current, total) {
             const el = document.getElementById('pagination');
             if (!el) return;
-            let maxVisible = 10; // 從最大值開始試，量測超寬就逐步減少
-            el.innerHTML = paginationPagesHtml(current, total, maxVisible);
-            while (el.scrollWidth > el.clientWidth + 1 && maxVisible > 1) {
-                maxVisible--;
-                el.innerHTML = paginationPagesHtml(current, total, maxVisible);
+            let sideCount = 4; // 從比較寬鬆的值開始試，量測超寬就逐步收斂
+            el.innerHTML = paginationPagesHtml(current, total, sideCount);
+            while (el.scrollWidth > el.clientWidth + 1 && sideCount > 0) {
+                sideCount--;
+                el.innerHTML = paginationPagesHtml(current, total, sideCount);
             }
         }
         // 跳轉頁面獨立渲染在自己的容器裡(pagination-jump)，永遠是分頁列底下單獨、置中的
