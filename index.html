@@ -1116,7 +1116,7 @@
                     </div>
                 </div>
             </div>
-            <div class="sticky bottom-0 px-6 sm:px-8 py-4 border-t bg-white shrink-0" style="border-color:var(--line)">
+            <div id="fridge-bottom-actions" class="sticky bottom-0 px-6 sm:px-8 py-4 border-t bg-white shrink-0" style="border-color:var(--line)">
                 <div class="grid grid-cols-2 gap-2">
                     <label for="fridge-item-photo-file" class="btn-sage flex items-center justify-center cursor-pointer">📸 拍照新增</label>
                     <button onclick="openBarcodeScanner()" class="btn-sage">🏷️ 條碼新增</button>
@@ -7035,6 +7035,12 @@
                 await db.collection('householdInvites').doc(currentUser.uid).delete();
                 activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null; userIngredientCostCache = null;
                 myFridgeRoleCache = null; myFridgeRoleCacheKey = null;
+                // 診斷用：如果角色沒有正確變成viewer，這裡會在主控台留下線索，方便追查是寫入沒成功、
+                // 還是後面顯示邏輯的問題
+                try {
+                    const verifyDoc = await db.collection('fridges').doc(fridgeId).get();
+                    console.log('[家庭冰箱] 加入後角色驗證：', verifyDoc.data() && verifyDoc.data().memberRoles);
+                } catch (e) { console.warn('[家庭冰箱] 角色驗證讀取失敗', e); }
                 document.getElementById('fridge-invite-banner').innerHTML = '';
                 await renderFridgeItemsList();
                 await renderFridgeStaplesList();
@@ -7188,8 +7194,10 @@
             const canEdit = (await getMyFridgeRole()) !== 'viewer'; // viewer角色只能看，不顯示任何編輯/刪除操作
             const formSection = document.getElementById('fridge-add-form-section');
             const viewerHint = document.getElementById('fridge-viewer-hint');
+            const bottomActions = document.getElementById('fridge-bottom-actions');
             if (formSection) formSection.classList.toggle('hidden', !canEdit);
             if (viewerHint) viewerHint.classList.toggle('hidden', canEdit);
+            if (bottomActions) bottomActions.classList.toggle('hidden', !canEdit); // 拍照新增/條碼新增這兩顆按鈕viewer角色也要隱藏
             if (!items.length) {
                 listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🧊</div><p>冰箱還是空的，把家裡現有的食材加進來吧</p></div>`;
                 return;
