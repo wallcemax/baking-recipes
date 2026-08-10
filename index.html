@@ -899,6 +899,7 @@
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <p id="my-cost-back-to-shopping" class="hidden text-sm mb-3"><a href="javascript:void(0)" onclick="closeMyIngredientCostsModal()" style="color:var(--chambray); text-decoration:underline">← 返回採購清單</a></p>
                 <p class="text-xs mb-4" style="color:var(--muted)">自己記錄的價格，計算食譜成本時會優先使用，尚未設定的食材不列入試算</p>
+                <div id="my-cost-add-section">
                 <div class="grid grid-cols-3 gap-2 mb-1">
                     <div class="col-span-3">
                         <label class="text-xs block mb-1" style="color:var(--muted)">條碼（選填，可先在賣場掃碼記價比價，不影響庫存）</label>
@@ -932,6 +933,8 @@
                 <p class="text-xs mb-2" style="color:var(--muted); font-family:\'Chocolate Classical Sans\', sans-serif;">💡 規格是固定參考單位（例如麵粉都用600g），買多份只需改「份數」，系統自動算出每份單價</p>
                 <button onclick="addMyIngredientCost()" class="btn-amber w-full mb-2">🧮 換算並新增</button>
                 <div id="my-cost-new-result" class="text-xs mb-5" style="color:var(--muted)"></div>
+                </div>
+                <p id="my-cost-viewer-hint" class="hidden text-xs text-center mb-4 px-4 py-2 rounded-xl" style="background:var(--cream); color:var(--muted)">👁️ 你目前是「僅檢視」權限，只能看食材成本，沒辦法新增或編輯</p>
                 <input id="my-cost-search" oninput="renderMyIngredientCostsList()" placeholder="🔍 搜尋食材名稱..." class="form-input mb-3">
                 <div id="my-cost-list" class="space-y-2"></div>
             </div>
@@ -1039,6 +1042,7 @@
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <div id="fridge-invite-banner"></div>
                 <p class="text-xs mb-4" style="color:var(--muted)">記錄家裡現有的食材，看食譜時自動比對「有」「沒有/不夠」，快到期會用顏色提醒</p>
+                <div id="fridge-add-form-section">
                 <div class="grid grid-cols-2 gap-2 mb-1">
                     <div class="col-span-2">
                         <label class="text-xs block mb-1" style="color:var(--muted)">條碼（選填）</label>
@@ -1083,6 +1087,8 @@
                 <p id="fridge-new-hint-text" class="text-xs mb-2" style="color:var(--muted); font-family:\'Chocolate Classical Sans\', sans-serif;">💡 規格是固定參考單位（例如麵粉都用600g），買多份只需改「份數」；花費選填，填了會同步更新食材成本</p>
                 <button id="fridge-submit-btn" onclick="addFridgeItem()" class="btn-amber w-full mb-1">➕ 加入冰箱</button>
                 <p id="fridge-editing-hint" class="hidden text-xs text-center mb-4"><a href="javascript:void(0)" onclick="cancelEditFridgeItem()" style="color:var(--muted); text-decoration:underline">取消編輯，改成新增新的一筆</a></p>
+                </div>
+                <p id="fridge-viewer-hint" class="hidden text-xs text-center mb-4 px-4 py-2 rounded-xl" style="background:var(--cream); color:var(--muted)">👁️ 你目前是「僅檢視」權限，只能看冰箱內容，沒辦法新增或編輯</p>
                 <input id="fridge-items-search" oninput="renderFridgeItemsList()" placeholder="🔍 搜尋冰箱食材..." class="form-input mb-3">
                 <div id="fridge-items-list" class="space-y-2 mb-6"></div>
                 <div class="pt-4 pb-4 border-t" style="border-color:var(--line)">
@@ -4308,10 +4314,15 @@
             if (changed) await saveFridgeItems(fridgeItems);
         }
 
-        function finishRecipe() {
+        async function finishRecipe() {
             if (!currentDetailStepsTotal || checkedSteps.size < currentDetailStepsTotal) return;
             if (currentDetailRecipe) recordFinish(currentDetailRecipe.id, currentDetailRecipe.category);
-            if (currentDetailRecipe && currentUser) deductFridgeForRecipe(currentDetailRecipe, window.__lastScaleFactor || 1);
+            // viewer角色的大功告成成就照常記錄，但不會觸發扣除共用冰箱庫存的動作——
+            // 這是專門為了避免小孩子不小心按到大功告成，就把家庭冰箱庫存扣亂的保護
+            if (currentDetailRecipe && currentUser) {
+                const role = await getMyFridgeRole();
+                if (role !== 'viewer') deductFridgeForRecipe(currentDetailRecipe, window.__lastScaleFactor || 1);
+            }
             const variant = CELEBRATION_VARIANTS[Math.floor(Math.random() * CELEBRATION_VARIANTS.length)];
             launchConfetti();
             playCelebrationEffect(variant.effect);
@@ -4967,6 +4978,8 @@
         // 所以這裡改用update()整份取代items欄位，才能確保「改名」「刪除」這類需要真的拿掉某個key的操作有效
         async function mutateIngredientCostsAtomic(mutateFn) {
             if (!currentUser) return false;
+            const role = await getMyFridgeRole();
+            if (role === 'viewer') { alert('你目前是「僅檢視」權限，沒辦法修改食材成本'); return false; }
             const ownerId = await getActiveFridgeId();
             const ref = db.collection('userIngredientPrices').doc(ownerId);
             try {
@@ -6169,6 +6182,11 @@
             const listEl = document.getElementById('my-cost-list');
             if (!listEl) return;
             const costs = await loadUserIngredientCosts(true); // 強制重新讀一次，確保跟Firestore同步
+            const canEdit = (await getMyFridgeRole()) !== 'viewer';
+            const addSection = document.getElementById('my-cost-add-section');
+            if (addSection) addSection.classList.toggle('hidden', !canEdit);
+            const viewerHint = document.getElementById('my-cost-viewer-hint');
+            if (viewerHint) viewerHint.classList.toggle('hidden', canEdit);
             const searchInput = document.getElementById('my-cost-search');
             const keyword = (searchInput && searchInput.value || '').trim();
             let names = Object.keys(costs).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
@@ -6218,8 +6236,10 @@
                             ${barcodeText}
                             ${keywordsText}
                         </div>
+                        ${canEdit ? `
                         <button onclick="openIngredientCostEditor('${escapeHtmlAttr(name)}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:white">編輯</button>
                         <button onclick="removeMyIngredientCost('${escapeHtmlAttr(name)}')" class="text-xs shrink-0" style="color:var(--danger)">刪除</button>
+                        ` : ''}
                     </div>`;
             }).join('');
         }
@@ -6736,6 +6756,43 @@
         let fridgeItemsCacheKey = null; // 用fridgeId當快取的key，不是uid，這樣共用冰箱的人快取才會一致
         let activeFridgeIdCache = null;
 
+        // 冰箱成員角色：'editor'(可以編輯，預設值，維持原本行為不變) / 'viewer'(僅檢視，
+        // 不能新增/編輯食材、不能改食材成本、按大功告成不會扣庫存)。角色資料存在fridges文件的
+        // memberRoles欄位裡(格式:{uid: 'viewer'})，冰箱建立者(owner)不受這個欄位限制，永遠是完整權限。
+        // 這是「防止家人不小心手滑誤觸」的保護，不是防駭客的資安機制——用意是保護小孩子不小心
+        // 亂點把家庭冰箱庫存搞亂，不是要防範蓄意繞過的情況
+        let myFridgeRoleCache = null;
+        let myFridgeRoleCacheKey = null;
+        async function getMyFridgeRole(forceRefresh) {
+            if (!currentUser) return 'viewer';
+            const fridgeId = await getActiveFridgeId(forceRefresh);
+            if (fridgeId === currentUser.uid) return 'owner'; // 自己的冰箱，永遠完整權限
+            if (!forceRefresh && myFridgeRoleCache && myFridgeRoleCacheKey === fridgeId) return myFridgeRoleCache;
+            try {
+                const doc = await db.collection('fridges').doc(fridgeId).get();
+                const roles = (doc.exists && doc.data().memberRoles) || {};
+                myFridgeRoleCache = roles[currentUser.uid] || 'editor'; // 沒特別設定過的話，預設是editor(維持原本行為)
+                myFridgeRoleCacheKey = fridgeId;
+            } catch (err) {
+                console.warn('讀取冰箱權限失敗', err && err.message);
+                myFridgeRoleCache = 'editor'; // 讀取失敗就先當作editor，不要因為讀取失敗反而把人鎖死
+            }
+            return myFridgeRoleCache;
+        }
+        // 冰箱擁有者變更某個成員的角色
+        async function setFridgeMemberRole(uid, role) {
+            if (!currentUser) return;
+            const fridgeId = await getActiveFridgeId();
+            if (fridgeId !== currentUser.uid) { alert('只有冰箱建立者能修改成員權限'); return; }
+            try {
+                await db.collection('fridges').doc(fridgeId).update({ [`memberRoles.${uid}`]: role });
+                showToast(role === 'viewer' ? '已設為僅檢視' : '已設為可編輯');
+                await renderFridgeMembersList();
+            } catch (err) {
+                alert('修改權限失敗：' + err.message);
+            }
+        }
+
         async function getActiveFridgeId(forceRefresh) {
             if (!currentUser) return null;
             if (!forceRefresh && activeFridgeIdCache) return activeFridgeIdCache;
@@ -6785,6 +6842,8 @@
         // 中間如果偵測到文件已經被別人改過，Firestore會自動重新讀最新版本再試一次，不會再互相覆蓋
         async function mutateFridgeItemsAtomic(mutateFn) {
             if (!currentUser) return false;
+            const role = await getMyFridgeRole();
+            if (role === 'viewer') { alert('你目前是「僅檢視」權限，沒辦法編輯冰箱內容'); return false; }
             const fridgeId = await getActiveFridgeId();
             const ref = db.collection('fridges').doc(fridgeId);
             try {
@@ -6969,6 +7028,7 @@
                 }, { merge: true });
                 await db.collection('householdInvites').doc(currentUser.uid).delete();
                 activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null; userIngredientCostCache = null;
+                myFridgeRoleCache = null; myFridgeRoleCacheKey = null;
                 document.getElementById('fridge-invite-banner').innerHTML = '';
                 await renderFridgeItemsList();
                 await renderFridgeStaplesList();
@@ -6997,6 +7057,7 @@
                     members: firebase.firestore.FieldValue.arrayRemove(currentUser.uid),
                 }, { merge: true });
                 activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null; userIngredientCostCache = null;
+                myFridgeRoleCache = null; myFridgeRoleCacheKey = null;
                 await renderFridgeItemsList();
                 await renderFridgeStaplesList();
                 await renderFridgeMembersList();
@@ -7052,19 +7113,37 @@
             try {
                 const doc = await db.collection('fridges').doc(fridgeId).get();
                 const members = (doc.exists && doc.data().members) ? doc.data().members : [currentUser.uid];
+                const memberRoles = (doc.exists && doc.data().memberRoles) || {};
                 // 是不是共用冰箱，要看「成員有沒有超過1個人」，不能只看「我的冰箱ID是不是等於我自己的帳號ID」——
                 // 因為邀請人（冰箱建立者）自己的冰箱ID本來就一直等於自己的帳號ID，不會因為別人加入而改變，
                 // 用ID判斷的話，邀請人永遠會被誤判成「還沒加入任何家庭」，即使成員清單其實已經有好幾個人了
                 const isShared = members.length > 1;
                 updateFridgeLabels(isShared);
-                const names = await Promise.all(members.map(async uid => {
-                    if (uid === currentUser.uid) return '你';
-                    try {
-                        const p = await db.collection('userProfiles').doc(uid).get();
-                        return (p.exists && p.data().displayName) ? p.data().displayName : '一位成員';
-                    } catch { return '一位成員'; }
+                const memberRows = await Promise.all(members.map(async uid => {
+                    const isMe = uid === currentUser.uid;
+                    let name = isMe ? '你' : '一位成員';
+                    if (!isMe) {
+                        try {
+                            const p = await db.collection('userProfiles').doc(uid).get();
+                            name = (p.exists && p.data().displayName) ? p.data().displayName : '一位成員';
+                        } catch {}
+                    }
+                    const isThisOwner = uid === fridgeId;
+                    const role = isThisOwner ? 'owner' : (memberRoles[uid] || 'editor');
+                    const roleLabel = role === 'owner' ? '建立者' : (role === 'viewer' ? '僅檢視' : '可編輯');
+                    // 只有冰箱擁有者、而且對方不是擁有者本人，才會顯示切換權限的按鈕——
+                    // 這是「防止家人不小心誤觸」的保護功能，不是防駭客的資安機制，管理範圍就只限擁有者
+                    const canManage = isOwner && !isThisOwner;
+                    const toggleBtn = canManage
+                        ? `<button onclick="setFridgeMemberRole('${uid}', '${role === 'viewer' ? 'editor' : 'viewer'}')" class="text-xs" style="color:var(--sage); font-family:'Chiron Hei HK', sans-serif;">切換為${role === 'viewer' ? '可編輯' : '僅檢視'}</button>`
+                        : '';
+                    return `<div class="flex items-center justify-between text-xs py-0.5">
+                        <span>${escapeHtmlAttr(name)}${isShared ? `（${roleLabel}）` : ''}</span>
+                        ${toggleBtn}
+                    </div>`;
                 }));
-                el.innerHTML = `<p class="text-xs" style="color:var(--muted)">${isShared ? '目前共用成員：' : '目前是個人冰箱，還沒有加入任何家庭'}${names.length ? names.join('、') : ''}</p>
+                el.innerHTML = `<p class="text-xs mb-1" style="color:var(--muted)">${isShared ? '目前共用成員：' : '目前是個人冰箱，還沒有加入任何家庭'}</p>
+                    ${isShared ? memberRows.join('') : ''}
                     ${isShared ? `<button onclick="leaveHousehold()" class="text-xs mt-1 mr-3" style="color:var(--danger); font-family:'Chiron Hei HK', sans-serif;">離開這個家庭冰箱</button>${!isOwner ? `<button onclick="mergePersonalCostsIntoHousehold()" class="text-xs mt-1" style="color:var(--sage); font-family:'Chiron Hei HK', sans-serif;">合併我個人的食材成本進來</button>` : ''}` : ''}`;
             } catch (err) {
                 updateFridgeLabels(false); // 讀取失敗就先退回個人冰箱的預設標籤，比顯示錯的標籤安全
@@ -7077,6 +7156,7 @@
             document.getElementById('fridge-modal').classList.remove('hidden');
             cancelEditFridgeItem();
             pushModalHistoryState();
+            await getMyFridgeRole(true); // 強制重新讀取角色，確保如果擁有者剛改過權限，這裡能看到最新狀態
             await checkPendingHouseholdInvite();
             await renderFridgeItemsList();
             await renderFridgeStaplesList();
@@ -7092,6 +7172,11 @@
             const listEl = document.getElementById('fridge-items-list');
             if (!listEl) return;
             const items = await loadFridgeItems(true);
+            const canEdit = (await getMyFridgeRole()) !== 'viewer'; // viewer角色只能看，不顯示任何編輯/刪除操作
+            const formSection = document.getElementById('fridge-add-form-section');
+            const viewerHint = document.getElementById('fridge-viewer-hint');
+            if (formSection) formSection.classList.toggle('hidden', !canEdit);
+            if (viewerHint) viewerHint.classList.toggle('hidden', canEdit);
             if (!items.length) {
                 listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🧊</div><p>冰箱還是空的，把家裡現有的食材加進來吧</p></div>`;
                 return;
@@ -7133,9 +7218,11 @@
                             </div>
                             <p class="text-xs mt-0.5 num-tabular" style="color:var(--muted)">${specLine}</p>
                         </div>
+                        ${canEdit ? `
                         <button onclick="importFridgeItemToForm(${realIdx})" class="text-xs shrink-0" style="color:var(--chambray); font-family:'Chiron Hei HK', sans-serif;" title="把這個食材的資料帶進上面表單，改一改存成新的一筆（不會覆蓋這筆）">帶入</button>
                         <button onclick="editFridgeItem(${realIdx})" class="text-xs shrink-0" style="color:var(--sage)">編輯</button>
                         <button onclick="removeFridgeItem(${realIdx})" class="text-xs shrink-0" style="color:var(--danger)">刪除</button>
+                        ` : ''}
                     </div>`;
             }).join('');
         }
