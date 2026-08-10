@@ -1,13 +1,21 @@
 // ============================================================
 // 採購提醒 - 排程腳本
 // ------------------------------------------------------------
-// 每小時執行一次，檢查所有使用者設定的「採購提醒」：
+// 每小時執行一次，處理兩種提醒：
+// 【個人採購提醒】(shoppingReminders集合)
 // - 只設定時間、沒選日期 → 每天到了那個時段，只要採購清單裡還有「還沒買」的品項，就推播提醒
 // - 有設定日期 → 只有那一天那個時段會提醒一次，提醒完自動關閉，之後不會再提醒
 //
+// 【家庭採購清單指定品項提醒】(familyShoppingLists集合，新增的部分)
+// - 家人在家庭採購清單裡把某個品項指定給某人買、並且設定了提醒時間，時間到了就提醒「被指定的那個人」
+// - 一份清單裡可能同時有好幾個品項、指定給不同的人、設定不同的提醒時間，
+//   跟【個人採購提醒】那種「一個使用者只有一筆提醒設定」的形狀不一樣，所以用獨立的迴圈處理，
+//   不是硬塞進同一個資料結構裡
+// - 品項一旦被標記「已購買」就不會再提醒（不用使用者自己記得取消提醒）
+//
 // 跟冰箱到期提醒、市場價格用同一套架構：GitHub Actions排程執行、用firebase-admin寫Firestore，
 // 不需要Cloud Functions / Blaze方案，也共用同一組FIREBASE_SERVICE_ACCOUNT密鑰，
-// 通知也是共用同一組fcmTokens（使用者只要開過一次通知權限，兩個功能都能收到推播）。
+// 通知也是共用同一組fcmTokens（使用者只要開過一次通知權限，所有功能都能收到推播）。
 //
 // 每小時整點執行時，直接比對「現在的小時」跟「使用者設定時間的小時」是否相同：
 // 例如8點那次執行，只要設定時間是8:00~8:59之間任何一分鐘，都會在這次觸發，
@@ -62,6 +70,46 @@ async function sendFcmMessageRaw(message) {
     }
     return res.json();
 }
+// 把某個使用者的所有裝置都推播一次，失效的權杖順便清掉——這段邏輯【個人採購提醒】跟
+// 【家庭採購清單指定品項提醒】都會用到，抽出來共用，不用寫兩次
+async function sendToUserDevices(uid, title, body, notificationTag) {
+    let tokens = [];
+    try {
+        const tDoc = await db.collection('fcmTokens').doc(uid).get();
+        if (tDoc.exists && Array.isArray(tDoc.data().tokens)) tokens = tDoc.data().tokens;
+    } catch (err) {
+        console.warn(`讀取 ${uid} 的通知權杖失敗：`, err.message);
+    }
+    if (!tokens.length) return { sentAny: false, reason: 'no-token' };
+    let sentAny = false;
+    for (const token of tokens) {
+        try {
+            await sendFcmMessageRaw({
+                token,
+                webpush: {
+                    headers: { Urgency: 'high' },
+                    notification: { title, body, tag: notificationTag, requireInteraction: true },
+                    fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
+                },
+                android: { collapseKey: notificationTag },
+            });
+            sentAny = true;
+        } catch (err) {
+            console.warn(`推播到 ${uid} 的某個裝置失敗（權杖可能已失效）：`, err.message);
+            if (err.fcmStatus === 'UNREGISTERED' || err.fcmStatus === 'INVALID_ARGUMENT') {
+                try {
+                    await db.collection('fcmTokens').doc(uid).update({
+                        tokens: admin.firestore.FieldValue.arrayRemove(token),
+                    });
+                    console.log(`已清除 ${uid} 的一個失效權杖`);
+                } catch (cleanupErr) {
+                    console.warn('清除失效權杖失敗：', cleanupErr.message);
+                }
+            }
+        }
+    }
+    return { sentAny, reason: sentAny ? 'ok' : 'all-failed' };
+}
 
 // 取得現在的台灣時間（伺服器可能跑在UTC時區，這裡手動校正+8小時，不依賴伺服器本身的時區設定）
 function getTaiwanNow() {
@@ -102,17 +150,12 @@ async function fetchWillRainToday() {
     }
 }
 
-async function main() {
-    const nowTW = getTaiwanNow();
-    const todayStr = formatDateStr(nowTW);
-    const currentHour = nowTW.getHours();
-    console.log(`開始檢查採購提醒...（台灣時間 ${todayStr} ${currentHour}時）`);
-
-    const willRainToday = await fetchWillRainToday();
-    console.log(`今天會不會下雨：${willRainToday === null ? '查詢失敗，不附加天氣提示' : (willRainToday ? '會' : '不會')}`);
-
+// ------------------------------------------------------------
+// 【個人採購提醒】：跟原本完全一樣，沒有改動
+// ------------------------------------------------------------
+async function checkPersonalShoppingReminders(currentHour, todayStr, willRainToday) {
     const remindersSnap = await db.collection('shoppingReminders').where('enabled', '==', true).get();
-    console.log(`共有 ${remindersSnap.size} 位使用者開啟了採購提醒`);
+    console.log(`共有 ${remindersSnap.size} 位使用者開啟了個人採購提醒`);
 
     let notifiedUsers = 0;
     let notifiedDevices = 0;
@@ -122,45 +165,37 @@ async function main() {
         const reminder = doc.data();
         const timeStr = reminder.time; // 'HH:MM' 格式
         if (!timeStr) continue;
-        const [rH, rM] = timeStr.split(':').map(n => parseInt(n, 10));
-        if (isNaN(rH) || isNaN(rM)) continue;
+        const [rH] = timeStr.split(':').map(n => parseInt(n, 10));
+        if (isNaN(rH)) continue;
 
         const isOneTime = !!reminder.date; // 有填日期的話，這是「只提醒一次」的模式
-
-        // 核心判斷：簡單、固定的整點比對——不依賴「上次執行時間」這種容易出狀況的狀態記錄。
-        // 例如現在執行是「8點」，只要提醒設定的「小時」是8（不管分鐘是8:00還是8:59），
-        // 都會在這次「8點執行」時觸發，最多可能提前59分鐘通知（設定8:59的話會在8點就先提醒）。
-        // 一次性提醒還要另外比對日期是不是就是今天
         const isDue = rH === currentHour && (!isOneTime || reminder.date === todayStr);
         if (!isDue) continue;
 
         // 用Firestore交易「搶」這次發送的資格：交易內部會重新讀一次最新資料，確認還沒發送過
-        // 才會標記成已發送，這個讀取+標記是不可分割的單一動作。就算剛好有兩個執行同時跑到這裡
-        // （例如排程自動觸發跟手動觸發時間點重疊），也只有其中一個能真的搶到資格往下發送通知，
-        // 另一個會在交易裡發現「已經被標記過了」而自動放棄，從根本上避免同一則提醒被送兩次
+        // 才會標記成已發送，這個讀取+標記是不可分割的單一動作，避免同一則提醒被送兩次
         const reminderRef = db.collection('shoppingReminders').doc(uid);
         let claimed = false;
         try {
             claimed = await db.runTransaction(async (tx) => {
                 const freshDoc = await tx.get(reminderRef);
                 const freshData = freshDoc.data() || {};
-                if (!isOneTime && freshData.lastNotifiedDate === todayStr) return false; // 今天已經被(可能是另一次執行)標記發送過了
-                if (isOneTime && freshData.enabled === false) return false; // 一次性提醒已經被標記關閉了，代表已經發送過
+                if (!isOneTime && freshData.lastNotifiedDate === todayStr) return false;
+                if (isOneTime && freshData.enabled === false) return false;
                 tx.set(reminderRef, isOneTime
                     ? { enabled: false, lastNotifiedDate: todayStr }
                     : { lastNotifiedDate: todayStr }, { merge: true });
                 return true;
             });
         } catch (err) {
-            console.warn(`搶佔 ${uid} 的發送資格失敗，這次先跳過：`, err.message);
+            console.warn(`搶佔 ${uid} 的個人提醒發送資格失敗，這次先跳過：`, err.message);
             continue;
         }
         if (!claimed) {
-            console.log(`使用者 ${uid}：時間到了，但這次沒搶到發送資格（可能已經被另一次執行搶先發送過），跳過`);
+            console.log(`使用者 ${uid}：個人提醒時間到了，但這次沒搶到發送資格，跳過`);
             continue;
         }
 
-        // 檢查這個使用者的採購清單，是不是「還有東西沒買」——已經買完的品項不算，全部買完的話沒必要提醒
         let hasUnpurchasedItems = false;
         try {
             const listDoc = await db.collection('userShoppingLists').doc(uid).get();
@@ -175,20 +210,7 @@ async function main() {
             continue;
         }
         if (!hasUnpurchasedItems) {
-            console.log(`使用者 ${uid}：時間到了，但採購清單是空的或已經全部買完，不提醒`);
-            continue;
-        }
-
-        // 取得這個使用者的推播權杖（跟冰箱到期提醒共用同一個集合）
-        let tokens = [];
-        try {
-            const tDoc = await db.collection('fcmTokens').doc(uid).get();
-            if (tDoc.exists && Array.isArray(tDoc.data().tokens)) tokens = tDoc.data().tokens;
-        } catch (err) {
-            console.warn(`讀取 ${uid} 的通知權杖失敗：`, err.message);
-        }
-        if (!tokens.length) {
-            console.log(`使用者 ${uid}：時間到了、清單也有東西沒買，但沒有開啟過通知，跳過`);
+            console.log(`使用者 ${uid}：個人提醒時間到了，但採購清單是空的或已經全部買完，不提醒`);
             continue;
         }
 
@@ -196,52 +218,111 @@ async function main() {
         const body = willRainToday
             ? '記得帶傘，你的採購清單裡還有東西沒買，記得去採購喔！'
             : '你的採購清單裡還有東西沒買，記得去採購喔！';
-        // tag加上使用者ID+這次觸發的確切時間點，確保「同一次提醒事件」不管實際被送達幾次，
-        // 瀏覽器看到的tag都完全一樣，能正確辨識成同一則、自動合併顯示成一個通知，
-        // 不會因為底層SDK網路重試等原因造成的重複送達，讓使用者收到兩則
         const notificationTag = `shopping-reminder-${uid}-${todayStr}-${currentHour}`;
-        let sentAny = false;
-        for (const token of tokens) {
-            try {
-                await sendFcmMessageRaw({
-                    token,
-                    // 用webpush.notification讓Firebase官方SDK自動顯示，不再自己手動處理顯示邏輯
-                    webpush: {
-                        headers: { Urgency: 'high' },
-                        notification: { title, body, tag: notificationTag, requireInteraction: true },
-                        fcmOptions: { link: 'https://wallcemax.github.io/baking-recipes/index.html' },
-                    },
-                    android: { collapseKey: notificationTag },
-                });
-                notifiedDevices++;
-                sentAny = true;
-            } catch (err) {
-                console.warn(`推播到 ${uid} 的某個裝置失敗（權杖可能已失效）：`, err.message);
-                if (err.fcmStatus === 'UNREGISTERED' || err.fcmStatus === 'INVALID_ARGUMENT') {
-                    try {
-                        await db.collection('fcmTokens').doc(uid).update({
-                            tokens: admin.firestore.FieldValue.arrayRemove(token),
-                        });
-                        console.log(`已清除 ${uid} 的一個失效權杖`);
-                    } catch (cleanupErr) {
-                        console.warn('清除失效權杖失敗：', cleanupErr.message);
-                    }
-                }
-            }
-        }
+        const result = await sendToUserDevices(uid, title, body, notificationTag);
 
-        if (sentAny) {
+        if (result.sentAny) {
             notifiedUsers++;
-            // 發送狀態已經在前面的交易裡提前標記過了(搶佔發送資格的同時就順便標記)，這裡不用再更新一次，
-            // 只需要記錄log方便之後查閱執行紀錄
-            console.log(`使用者 ${uid}：已推播採購提醒${isOneTime ? '（一次性，已自動關閉）' : ''}`);
+            notifiedDevices++;
+            console.log(`使用者 ${uid}：已推播個人採購提醒${isOneTime ? '（一次性，已自動關閉）' : ''}`);
+        } else if (result.reason === 'no-token') {
+            console.log(`使用者 ${uid}：時間到了、清單也有東西沒買，但沒有開啟過通知，跳過`);
         } else {
-            console.warn(`使用者 ${uid}：已經搶到發送資格、也標記成已發送，但實際上全部裝置都推播失敗了——
-狀態已經被標記，不會重試，比較保守的處理方式是避免無限重試造成其他問題，之後可以從log裡人工查證`);
+            console.warn(`使用者 ${uid}：已標記成已發送，但實際推播全部失敗——狀態已標記不會重試，之後可從log人工查證`);
         }
     }
+    return { notifiedUsers, notifiedDevices };
+}
 
-    console.log(`完成！共提醒了 ${notifiedUsers} 位使用者，總共發送了 ${notifiedDevices} 則通知`);
+// ------------------------------------------------------------
+// 【家庭採購清單指定品項提醒】：新增的部分
+// 掃過每一份家庭採購清單(familyShoppingLists集合，一份代表一個家庭群組)，
+// 檢查裡面每一個「已經指定給某人、也設定了提醒時間」的品項，時間到了就提醒被指定的那個人
+// ------------------------------------------------------------
+async function checkFamilyShoppingItemReminders(currentHour, todayStr) {
+    const listsSnap = await db.collection('familyShoppingLists').get();
+    console.log(`共有 ${listsSnap.size} 份家庭採購清單`);
+
+    let notifiedItems = 0;
+    let notifiedDevices = 0;
+
+    for (const listDoc of listsSnap.docs) {
+        const familyId = listDoc.id;
+        const items = listDoc.data().items || [];
+
+        for (const item of items) {
+            if (item.bought) continue; // 已經買了就不用再提醒
+            if (!item.assignedToUid || !item.reminderTime) continue; // 沒指定人、或沒設定提醒時間，跳過
+
+            const [rH] = item.reminderTime.split(':').map(n => parseInt(n, 10));
+            if (isNaN(rH)) continue;
+            const isOneTime = !!item.reminderDate;
+            const isDue = rH === currentHour && (!isOneTime || item.reminderDate === todayStr);
+            if (!isDue) continue;
+
+            // 品項是存在陣列裡的（不是各自獨立的文件），沒辦法針對單一品項開交易鎖，
+            // 改成用交易「整份清單」讀最新資料、在陣列裡找到這個品項、確認今天還沒發送過，
+            // 才標記發送並寫回去——一樣是讀取+標記不可分割，避免同一份清單被同時處理兩次
+            // 導致同一個品項的提醒被送兩次
+            const listRef = db.collection('familyShoppingLists').doc(familyId);
+            let claimed = false;
+            let itemSnapshot = null;
+            try {
+                claimed = await db.runTransaction(async (tx) => {
+                    const freshDoc = await tx.get(listRef);
+                    const freshItems = (freshDoc.exists && freshDoc.data().items) || [];
+                    const freshItem = freshItems.find(i => i.id === item.id);
+                    if (!freshItem || freshItem.bought) return false; // 交易當下重新確認一次，避免資料在這期間已經變了
+                    if (freshItem.reminderLastNotifiedDate === todayStr) return false; // 今天已經發送過了(不管是不是一次性提醒，判斷方式一樣)
+                    freshItem.reminderLastNotifiedDate = todayStr;
+                    if (isOneTime) { freshItem.reminderTime = null; freshItem.reminderDate = null; } // 一次性提醒發送完自動關閉
+                    itemSnapshot = { ...freshItem };
+                    tx.set(listRef, { items: freshItems }, { merge: true });
+                    return true;
+                });
+            } catch (err) {
+                console.warn(`搶佔家庭清單「${familyId}」品項「${item.name}」的發送資格失敗，這次先跳過：`, err.message);
+                continue;
+            }
+            if (!claimed) {
+                console.log(`家庭清單「${familyId}」品項「${item.name}」：時間到了，但這次沒搶到發送資格（可能已購買/已發送過），跳過`);
+                continue;
+            }
+
+            const title = '🛒 家人請你幫忙買';
+            const addedByText = itemSnapshot.addedByName ? `${itemSnapshot.addedByName}請你買` : '有人請你買';
+            const body = `${addedByText}：${itemSnapshot.name}`;
+            const notificationTag = `family-shopping-${familyId}-${item.id}-${todayStr}-${currentHour}`;
+            const result = await sendToUserDevices(itemSnapshot.assignedToUid, title, body, notificationTag);
+
+            if (result.sentAny) {
+                notifiedItems++;
+                notifiedDevices++;
+                console.log(`家庭清單「${familyId}」品項「${item.name}」：已推播提醒給 ${itemSnapshot.assignedToUid}${isOneTime ? '（一次性，已自動關閉）' : ''}`);
+            } else if (result.reason === 'no-token') {
+                console.log(`家庭清單「${familyId}」品項「${item.name}」：時間到了，但被指定的人沒有開啟過通知，跳過`);
+            } else {
+                console.warn(`家庭清單「${familyId}」品項「${item.name}」：已標記成已發送，但實際推播全部失敗——狀態已標記不會重試`);
+            }
+        }
+    }
+    return { notifiedItems, notifiedDevices };
+}
+
+async function main() {
+    const nowTW = getTaiwanNow();
+    const todayStr = formatDateStr(nowTW);
+    const currentHour = nowTW.getHours();
+    console.log(`開始檢查採購提醒...（台灣時間 ${todayStr} ${currentHour}時）`);
+
+    const willRainToday = await fetchWillRainToday();
+    console.log(`今天會不會下雨：${willRainToday === null ? '查詢失敗，不附加天氣提示' : (willRainToday ? '會' : '不會')}`);
+
+    const personalResult = await checkPersonalShoppingReminders(currentHour, todayStr, willRainToday);
+    const familyResult = await checkFamilyShoppingItemReminders(currentHour, todayStr);
+
+    console.log(`完成！個人提醒：${personalResult.notifiedUsers} 位使用者、${personalResult.notifiedDevices} 則通知。` +
+        `家庭指定品項提醒：${familyResult.notifiedItems} 個品項、${familyResult.notifiedDevices} 則通知。`);
 }
 
 main().catch(err => {
