@@ -985,7 +985,7 @@
                     <h3 class="font-display font-semibold text-sm mb-2">其他採購品項<span class="text-xs font-normal" style="color:var(--muted)">（不是食材也可以，例如衛生紙、洗碗精這類日用品）</span></h3>
                     <div class="flex gap-2 mb-3">
                         <input id="shopping-manual-item-input" placeholder="輸入品項，例如：洗碗精" class="form-input !py-2 text-sm" onkeydown="if(event.key==='Enter'){event.preventDefault(); addManualShoppingItem();}">
-                        <button onclick="addManualShoppingItem()" class="btn-primary shrink-0 !px-4 !py-2 text-sm">+ 增加採購品項</button>
+                        <button onclick="addManualShoppingItem()" class="btn-primary shrink-0 !px-4 !py-2 text-sm">+ 新增品項</button>
                     </div>
                     <div id="shopping-list-manual-items" class="space-y-2"></div>
                 </div>
@@ -997,7 +997,7 @@
                     <p class="text-xs mb-3" style="color:var(--muted)">跟上面的個人清單是分開的——這裡是「請家人幫忙買」用的共用清單，可以指定要誰去買，避免大家重複採購同一樣東西</p>
                     <div class="flex gap-2 mb-3">
                         <input id="family-shopping-item-input" placeholder="輸入品項，例如：衛生紙" class="form-input !py-2 text-sm" onkeydown="if(event.key==='Enter'){event.preventDefault(); addFamilyShoppingItem();}">
-                        <button onclick="addFamilyShoppingItem()" class="btn-amber shrink-0 !px-4 !py-2 text-sm">+ 新增</button>
+                        <button onclick="addFamilyShoppingItem()" class="btn-primary shrink-0 !px-4 !py-2 text-sm">+ 新增品項</button>
                     </div>
                     <div id="family-shopping-list-items" class="space-y-2"></div>
                 </div>
@@ -6602,25 +6602,28 @@
                 notifyFamilyShoppingAssignmentInstant(uid, fridgeId, itemName || '一個品項');
             }
         }
-        // 呼叫Worker立即發送通知，失敗的話只在主控台留紀錄，不會用alert打斷使用者操作——
-        // 指定成員這個動作本身已經完成了，通知送不送得出去是次要的事，不該讓使用者以為指定失敗了
+        // 呼叫Worker立即發送通知，用toast把結果告訴使用者(成功/失敗/對方沒開通知)，不再是
+        // 完全靜默的失敗——之前只寫進主控台，使用者完全看不到，沒辦法判斷通知到底有沒有真的送出去
         async function notifyFamilyShoppingAssignmentInstant(targetUid, familyId, itemName) {
             if (!currentUser) return;
             try {
                 const idToken = await currentUser.getIdToken();
-                const myName = (userProgress && userProgress.nickname) || currentUser.displayName || '一位使用者';
+                // 不傳自己選的名字給Worker——通知裡要顯示的名字，改成由「接收方」自己對我設定的
+                // 稱謂決定(稱謂只影響接收方自己看到的內容)，Worker會用idToken解出我的uid，
+                // 自己去查接收方有沒有幫我取過稱謂
                 const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         action: 'notify_family_shopping_assignment', idToken,
-                        targetUid, familyId, itemName, fromName: myName,
+                        targetUid, familyId, itemName,
                     }),
                 });
                 const data = await res.json();
-                if (!res.ok) { console.warn('即時通知發送失敗', data.error); return; }
-                if (data.ok && !data.sent) console.log('即時通知：', data.reason || '對方目前沒有可通知的裝置');
+                if (!res.ok) { showToast(`⚠️ 即時通知發送失敗：${data.error || '未知錯誤'}`); return; }
+                if (data.ok && !data.sent) { showToast(`📵 ${data.reason || '對方目前沒有可通知的裝置（還沒開過通知權限）'}`); return; }
+                showToast('🔔 已即時通知對方');
             } catch (err) {
-                console.warn('即時通知請求失敗', err);
+                showToast(`⚠️ 即時通知請求失敗：${err.message}`);
             }
         }
         // 設定/取消這個品項的提醒時間——只有已經指定給某個人的品項才能設定，跟現有個人採購提醒
@@ -6654,15 +6657,16 @@
         async function renderFamilyShoppingList() {
             const el = document.getElementById('family-shopping-list-items');
             if (!el || !currentUser) return;
-            const [items, fridgeId] = await Promise.all([loadFamilyShoppingList(true), getActiveFridgeId()]);
+            const [items, fridgeId, myLabels] = await Promise.all([loadFamilyShoppingList(true), getActiveFridgeId(), loadMyFamilyMemberLabels()]);
             // 抓一次目前的家庭成員名單，給「指定誰去買」的下拉選單用——這裡直接沿用家庭冰箱的
-            // members清單，同一個家庭群組，不用另外再維護一份成員清單
+            // members清單，同一個家庭群組，不用另外再維護一份成員清單。名字優先用我自訂的稱謂
             let members = [{ uid: currentUser.uid, name: '你' }];
             try {
                 const doc = await db.collection('fridges').doc(fridgeId).get();
                 const memberUids = (doc.exists && doc.data().members) || [currentUser.uid];
                 members = await Promise.all(memberUids.map(async uid => {
                     if (uid === currentUser.uid) return { uid, name: '你' };
+                    if (myLabels[uid]) return { uid, name: myLabels[uid] };
                     try {
                         const p = await db.collection('userProfiles').doc(uid).get();
                         const name = (p.exists && (p.data().nickname || p.data().displayName)) || '一位成員';
@@ -6670,6 +6674,8 @@
                     } catch { return { uid, name: '一位成員' }; }
                 }));
             } catch (err) { console.warn('讀取家庭成員清單失敗', err); }
+            const memberNameByUid = {}; // 給下面「誰新增的」那行文字查詢用
+            members.forEach(m => { memberNameByUid[m.uid] = m.name; });
             if (!items.length) {
                 el.innerHTML = `<p class="text-xs text-center py-4" style="color:var(--muted)">目前沒有家庭採購品項</p>`;
                 return;
@@ -6678,6 +6684,8 @@
                 const assignOptions = members.map(m =>
                     `<option value="${m.uid}" ${item.assignedToUid === m.uid ? 'selected' : ''}>${escapeHtmlAttr(m.name)}</option>`
                 ).join('');
+                // 「誰新增的」這行文字，優先用我對他的自訂稱謂，沒設定過才用存進資料裡的名字
+                const addedByDisplay = (item.addedByUid && memberNameByUid[item.addedByUid]) || item.addedByName;
                 const reminderText = item.reminderTime
                     ? `🔔 ${item.reminderTime}${item.reminderDate ? `（${item.reminderDate}提醒一次）` : '（每天提醒到買完為止）'}`
                     : '';
@@ -6689,17 +6697,20 @@
                 ).join('');
                 // 只有已經指定給某個人的品項，才顯示「設定提醒」的欄位——沒指定人的話提醒也不知道要通知誰
                 const reminderRow = item.assignedToUid ? `
-                    <div class="w-full flex items-center gap-1.5 flex-wrap mt-1 pt-1.5" style="border-top:1px dashed var(--line)">
-                        <select id="family-reminder-hour-${escapeHtmlAttr(item.id)}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;">${hourOptionsForItem}</select>
-                        <input type="date" id="family-reminder-date-${escapeHtmlAttr(item.id)}" value="${item.reminderDate || ''}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;" title="選填，只提醒一次；留空則每天提醒到買完">
-                        <button onclick="setFamilyShoppingItemReminder('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--sage)">設定提醒</button>
-                        ${item.reminderTime ? `<button onclick="cancelFamilyShoppingItemReminder('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--danger)">取消提醒</button>` : ''}
-                        ${reminderText ? `<span class="text-xs w-full" style="color:var(--sage)">${reminderText}</span>` : ''}
+                    <div class="w-full mt-1 pt-1.5" style="border-top:1px dashed var(--line)">
+                        <p class="text-xs w-full mb-1" style="color:var(--muted)">💡 指定人的當下已經即時通知過對方了，這裡是「額外」設定一個時間，到時候如果還沒買會再提醒一次</p>
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <select id="family-reminder-hour-${escapeHtmlAttr(item.id)}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;">${hourOptionsForItem}</select>
+                            <input type="date" id="family-reminder-date-${escapeHtmlAttr(item.id)}" value="${item.reminderDate || ''}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;" title="選填，只提醒一次；留空則每天提醒到買完">
+                            <button onclick="setFamilyShoppingItemReminder('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--sage)">設定提醒</button>
+                            ${item.reminderTime ? `<button onclick="cancelFamilyShoppingItemReminder('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--danger)">取消提醒</button>` : ''}
+                        </div>
+                        ${reminderText ? `<span class="text-xs w-full block mt-1" style="color:var(--sage)">${reminderText}</span>` : ''}
                     </div>` : '';
                 return `<div class="flex items-center gap-2 px-4 py-2.5 rounded-2xl flex-wrap" style="background:var(--cream)">
                     <span onclick="toggleFamilyShoppingItemBought('${escapeHtmlAttr(item.id)}')" class="flex-1 text-sm cursor-pointer select-none min-w-0" style="${item.bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
                         ${item.bought ? '✅ ' : ''}${escapeHtmlAttr(item.name)}
-                        <span class="block text-xs mt-0.5" style="color:var(--muted)">${item.addedByName ? `${escapeHtmlAttr(item.addedByName)}新增的` : ''}</span>
+                        <span class="block text-xs mt-0.5" style="color:var(--muted)">${addedByDisplay ? `${escapeHtmlAttr(addedByDisplay)}新增的` : ''}</span>
                     </span>
                     <select onchange="assignFamilyShoppingItem('${escapeHtmlAttr(item.id)}', this.value, this.options[this.selectedIndex].text, '${escapeHtmlAttr(item.name).replace(/'/g, "\\'")}')" class="form-input !py-1 !px-2 text-xs shrink-0" style="width:auto;" title="指定要誰去買">
                         <option value="">未指定</option>
@@ -6954,9 +6965,12 @@
                             const g = groups[key];
                             const displayName = g.rawNames.join('、'); // 同一組裡如果有好幾個寫法不同的原始名稱，全部列出來
                             const bought = !!shoppingListPurchasedCache[key];
+                            // 「請家人買」按鈕：用event.stopPropagation()擋住事件冒泡，不然點這顆按鈕
+                            // 會連帶觸發整行的「標記已購買」點擊事件(因為按鈕是包在那個可點擊的行容器裡面)
+                            const askFamilyBtn = `<button onclick="event.stopPropagation(); addFamilyShoppingItem('${escapeHtmlAttr(displayName).replace(/'/g, "\\'")}')" class="text-xs shrink-0" style="color:var(--sage)" title="複製這個品項到家庭採購清單，請家人幫忙買">👨‍👩‍👧 請家人買</button>`;
                             if (g.isStaple) {
                                 return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
-                                    <div class="flex justify-between"><span data-ing-label>${bought ? '✅ ' : ''}${displayName} <span style="color:var(--muted)">常備品</span></span></div>
+                                    <div class="flex justify-between items-center"><span data-ing-label>${bought ? '✅ ' : ''}${displayName} <span style="color:var(--muted)">常備品</span></span></div>
                                 </div>`;
                             }
                             const stockLine = `<p class="text-xs mt-0.5 num-tabular" style="color:var(--muted)">需要${g.grams.toFixed(0)}g，庫存${(g.stockGrams || 0).toFixed(0)}g，<span style="color:var(--danger)">還缺${g.shortfallGrams.toFixed(0)}g</span></p>`;
@@ -6964,7 +6978,10 @@
                                 ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🕐 之前使用：${g.recommendedName}（${g.recommendedEntry.purchasePrice ? `${g.recommendedEntry.purchasePrice}元／${g.recommendedEntry.purchaseAmount}${g.recommendedEntry.purchaseUnit}` : `約NT$${g.recommendedEntry.pricePer100g.toFixed(1)}/100g`}）${g.unitsNeeded ? `・需${g.unitsNeeded}份` : ''}${g.fallbackEstimate ? '（沒有完整包裝資訊，用缺的克數概算）' : ''}</p>`
                                 : `<p class="text-xs mt-0.5" style="color:var(--muted)">尚未設定價格，成本沒有算進總計裡</p>`;
                             return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
-                                <span data-ing-label>${bought ? '✅ ' : ''}${displayName}</span>
+                                <div class="flex items-center justify-between gap-2">
+                                    <span data-ing-label class="min-w-0">${bought ? '✅ ' : ''}${displayName}</span>
+                                    ${askFamilyBtn}
+                                </div>
                                 ${stockLine}
                                 ${recLine}
                             </div>`;
@@ -6981,6 +6998,43 @@
         let fridgeItemsCache = null;
         let fridgeItemsCacheKey = null; // 用fridgeId當快取的key，不是uid，這樣共用冰箱的人快取才會一致
         let activeFridgeIdCache = null;
+
+        // 家庭成員自訂稱謂：{對方uid: 我對他的稱呼}，存在familyMemberLabels/{我的uid}這份文件裡，
+        // 完全私有(規則只允許本人讀寫自己的這份)。只影響「我自己」看到的畫面(成員名單、家庭採購
+        // 清單裡誰新增/誰要買的顯示文字)，不影響對方或其他人看到的內容——每個人都可以各自對同一個
+        // 家人取不同的稱呼，例如我把太太標成「媽咪」，不代表她自己或其他人也會看到「媽咪」這個字
+        let myFamilyMemberLabelsCache = null;
+        async function loadMyFamilyMemberLabels(forceRefresh) {
+            if (!currentUser) return {};
+            if (!forceRefresh && myFamilyMemberLabelsCache) return myFamilyMemberLabelsCache;
+            try {
+                const doc = await db.collection('familyMemberLabels').doc(currentUser.uid).get();
+                myFamilyMemberLabelsCache = (doc.exists && doc.data()) || {};
+            } catch (err) {
+                console.warn('讀取家庭成員稱謂失敗', err && err.message);
+                myFamilyMemberLabelsCache = myFamilyMemberLabelsCache || {};
+            }
+            return myFamilyMemberLabelsCache;
+        }
+        async function setMyFamilyMemberLabel(uid) {
+            if (!currentUser) return;
+            const input = document.getElementById(`family-label-input-${uid}`);
+            if (!input) return;
+            const label = input.value.trim();
+            try {
+                if (label) {
+                    await db.collection('familyMemberLabels').doc(currentUser.uid).set({ [uid]: label }, { merge: true });
+                } else {
+                    // 清空輸入框代表想取消這個自訂稱謂，改回顯示對方原本的暱稱/帳號名稱
+                    await db.collection('familyMemberLabels').doc(currentUser.uid).update({ [uid]: firebase.firestore.FieldValue.delete() }).catch(() => {});
+                }
+                myFamilyMemberLabelsCache = null; // 清快取，重新讀
+                showToast(label ? `已把這位成員標記為「${label}」` : '已取消自訂稱謂');
+                await renderFridgeMembersList();
+            } catch (err) {
+                alert('設定稱謂失敗：' + err.message);
+            }
+        }
 
         // 冰箱成員角色：'editor'(可以編輯，預設值，維持原本行為不變) / 'viewer'(僅檢視，
         // 不能新增/編輯食材、不能改食材成本、按大功告成不會扣庫存)。角色資料存在fridges文件的
@@ -7212,6 +7266,12 @@
                 if (snap.empty) { alert('找不到這個email的使用者，對方要先登入過一次這個網站才查得到'); return; }
                 const inviteeUid = snap.docs[0].id;
                 const fridgeId = await getActiveFridgeId();
+                // 先檢查對方是不是已經是這個冰箱的成員了，是的話直接擋下來不送出邀請——
+                // 重複邀請已經在的成員，接受的時候會意外把對方的角色重設回viewer(見acceptHouseholdInvite)，
+                // 從源頭擋掉比較乾淨，不用等到接受那一刻才處理
+                const fridgeDoc = await db.collection('fridges').doc(fridgeId).get();
+                const currentMembers = (fridgeDoc.exists && fridgeDoc.data().members) || [];
+                if (currentMembers.includes(inviteeUid)) { alert('這個人已經是你們家庭冰箱的成員了，不需要再邀請一次'); return; }
                 // 邀請通知顯示的發送者名稱，優先用暱稱，跟成員名單那邊用同一套邏輯
                 const myName = (userProgress && userProgress.nickname) || currentUser.displayName || '一位使用者';
                 await db.collection('householdInvites').doc(inviteeUid).set({
@@ -7250,6 +7310,18 @@
             if (!currentUser) return;
             if (!confirm('接受之後，你原本自己冰箱裡的食材會先看不到（不會被刪除，只是切換到共用的家庭冰箱），確定要接受嗎？')) return;
             try {
+                // 防護：如果對方已經是這個冰箱的成員了(理論上inviteToHousehold()那邊已經會擋掉重複邀請，
+                // 但這裡多一層防護，避免萬一還是有舊的、過期的邀請通知殘留)，只清掉這筆過期邀請、
+                // 不要重新跑一次「加入」的流程——不然memberRoles會被重設成viewer，把已經被擁有者
+                // 升級成editor的人意外降級回去，這是實際會發生的資料錯亂，要在這裡擋住
+                const fridgeDocCheck = await db.collection('fridges').doc(fridgeId).get();
+                const existingMembers = (fridgeDocCheck.exists && fridgeDocCheck.data().members) || [];
+                if (existingMembers.includes(currentUser.uid)) {
+                    await db.collection('householdInvites').doc(currentUser.uid).delete();
+                    document.getElementById('fridge-invite-banner').innerHTML = '';
+                    showToast('你已經是這個家庭冰箱的成員了，這筆邀請是重複的，已經幫你清掉');
+                    return;
+                }
                 await db.collection('fridgeMemberships').doc(currentUser.uid).set({ fridgeId });
                 await db.collection('fridges').doc(fridgeId).set({
                     members: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
@@ -7261,12 +7333,6 @@
                 await db.collection('householdInvites').doc(currentUser.uid).delete();
                 activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null; userIngredientCostCache = null;
                 myFridgeRoleCache = null; myFridgeRoleCacheKey = null;
-                // 診斷用：如果角色沒有正確變成viewer，這裡會在主控台留下線索，方便追查是寫入沒成功、
-                // 還是後面顯示邏輯的問題
-                try {
-                    const verifyDoc = await db.collection('fridges').doc(fridgeId).get();
-                    console.log('[家庭冰箱] 加入後角色驗證：', verifyDoc.data() && verifyDoc.data().memberRoles);
-                } catch (e) { console.warn('[家庭冰箱] 角色驗證讀取失敗', e); }
                 document.getElementById('fridge-invite-banner').innerHTML = '';
                 await renderFridgeItemsList();
                 await renderFridgeStaplesList();
@@ -7311,6 +7377,8 @@
             if (!currentUser) return;
             const fridgeId = await getActiveFridgeId();
             if (fridgeId === currentUser.uid) { alert('你目前沒有加入任何家庭冰箱，不需要合併'); return; }
+            const role = await getMyFridgeRole();
+            if (role === 'viewer') { alert('你目前是「僅檢視」權限，沒辦法修改共用食材成本'); return; }
             try {
                 const personalDoc = await db.collection('userIngredientPrices').doc(currentUser.uid).get();
                 const personalItems = personalDoc.exists ? (personalDoc.data().items || {}) : {};
@@ -7358,15 +7426,18 @@
                 // 用ID判斷的話，邀請人永遠會被誤判成「還沒加入任何家庭」，即使成員清單其實已經有好幾個人了
                 const isShared = members.length > 1;
                 updateFridgeLabels(isShared);
+                // 載入我自己設定的家庭成員稱謂表(格式:{對方uid: 我對他的稱呼})，這份資料完全私有，
+                // 只有我自己看得到、也只影響我自己畫面上顯示的名字，不影響別人怎麼稱呼這個人
+                const myLabels = await loadMyFamilyMemberLabels();
                 const memberRows = await Promise.all(members.map(async uid => {
                     const isMe = uid === currentUser.uid;
                     let name = isMe ? '你' : '一位成員';
                     if (!isMe) {
                         try {
                             const p = await db.collection('userProfiles').doc(uid).get();
-                            // 優先顯示暱稱，沒設定過暱稱才退回顯示Google帳號名稱——跟KTV系統、
-                            // 其他有顯示使用者名稱的地方用同一套邏輯，暱稱資料本來就是共用的同一份
-                            name = (p.exists && (p.data().nickname || p.data().displayName)) || '一位成員';
+                            // 顯示順序：我自訂的稱謂 > 對方自己設定的暱稱 > Google帳號名稱——
+                            // 自訂稱謂只影響我自己的畫面，跟KTV系統共用的暱稱資料是分開的兩件事
+                            name = myLabels[uid] || (p.exists && (p.data().nickname || p.data().displayName)) || '一位成員';
                         } catch {}
                     }
                     const isThisOwner = uid === fridgeId;
@@ -7378,14 +7449,21 @@
                     const toggleBtn = canManage
                         ? `<button onclick="setFridgeMemberRole('${uid}', '${role === 'viewer' ? 'editor' : 'viewer'}')" class="text-xs" style="color:var(--sage); font-family:'Chiron Hei HK', sans-serif;">切換為${role === 'viewer' ? '可編輯' : '僅檢視'}</button>`
                         : '';
-                    return `<div class="flex items-center justify-between text-xs py-0.5">
+                    // 自訂稱謂的編輯欄位：每個「別人」都能設定，只有自己那一列不用(不需要幫自己取稱謂)
+                    const labelEditor = !isMe ? `
+                        <span class="flex items-center gap-1">
+                            <input type="text" id="family-label-input-${uid}" placeholder="幫他取個稱呼" value="${escapeHtmlAttr(myLabels[uid] || '')}" class="form-input !py-0.5 !px-1.5 text-xs" style="width:5.5rem;" onkeydown="if(event.key==='Enter') setMyFamilyMemberLabel('${uid}')">
+                            <button onclick="setMyFamilyMemberLabel('${uid}')" class="text-xs shrink-0" style="color:var(--sage)">設定</button>
+                        </span>` : '';
+                    return `<div class="flex items-center justify-between text-xs py-1 flex-wrap gap-1">
                         <span>${escapeHtmlAttr(name)}${isShared ? `（${roleLabel}）` : ''}</span>
-                        ${toggleBtn}
+                        <span class="flex items-center gap-2">${toggleBtn}${labelEditor}</span>
                     </div>`;
                 }));
+                const myRole = isOwner ? 'owner' : (memberRoles[currentUser.uid] || 'editor');
                 el.innerHTML = `<p class="text-xs mb-1" style="color:var(--muted)">${isShared ? '目前共用成員：' : '目前是個人冰箱，還沒有加入任何家庭'}</p>
                     ${isShared ? memberRows.join('') : ''}
-                    ${isShared ? `<button onclick="leaveHousehold()" class="text-xs mt-1 mr-3" style="color:var(--danger); font-family:'Chiron Hei HK', sans-serif;">離開這個家庭冰箱</button>${!isOwner ? `<button onclick="mergePersonalCostsIntoHousehold()" class="text-xs mt-1" style="color:var(--sage); font-family:'Chiron Hei HK', sans-serif;">合併我個人的食材成本進來</button>` : ''}` : ''}`;
+                    ${isShared ? `<button onclick="leaveHousehold()" class="text-xs mt-1 mr-3" style="color:var(--danger); font-family:'Chiron Hei HK', sans-serif;">離開這個家庭冰箱</button>${(!isOwner && myRole !== 'viewer') ? `<button onclick="mergePersonalCostsIntoHousehold()" class="text-xs mt-1" style="color:var(--sage); font-family:'Chiron Hei HK', sans-serif;">合併我個人的食材成本進來</button>` : ''}` : ''}`;
             } catch (err) {
                 updateFridgeLabels(false); // 讀取失敗就先退回個人冰箱的預設標籤，比顯示錯的標籤安全
                 el.innerHTML = '';
