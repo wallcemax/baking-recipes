@@ -6986,9 +6986,11 @@
                 if (snap.empty) { alert('找不到這個email的使用者，對方要先登入過一次這個網站才查得到'); return; }
                 const inviteeUid = snap.docs[0].id;
                 const fridgeId = await getActiveFridgeId();
+                // 邀請通知顯示的發送者名稱，優先用暱稱，跟成員名單那邊用同一套邏輯
+                const myName = (userProgress && userProgress.nickname) || currentUser.displayName || '一位使用者';
                 await db.collection('householdInvites').doc(inviteeUid).set({
                     fromUid: currentUser.uid,
-                    fromName: currentUser.displayName || '一位使用者',
+                    fromName: myName,
                     fridgeId,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 });
@@ -7130,7 +7132,9 @@
                     if (!isMe) {
                         try {
                             const p = await db.collection('userProfiles').doc(uid).get();
-                            name = (p.exists && p.data().displayName) ? p.data().displayName : '一位成員';
+                            // 優先顯示暱稱，沒設定過暱稱才退回顯示Google帳號名稱——跟KTV系統、
+                            // 其他有顯示使用者名稱的地方用同一套邏輯，暱稱資料本來就是共用的同一份
+                            name = (p.exists && (p.data().nickname || p.data().displayName)) || '一位成員';
                         } catch {}
                     }
                     const isThisOwner = uid === fridgeId;
@@ -7161,12 +7165,16 @@
             document.getElementById('fridge-modal').classList.remove('hidden');
             cancelEditFridgeItem();
             pushModalHistoryState();
-            await getMyFridgeRole(true); // 強制重新讀取角色，確保如果擁有者剛改過權限，這裡能看到最新狀態
-            await checkPendingHouseholdInvite();
-            await renderFridgeItemsList();
-            await renderFridgeStaplesList();
-            await renderFridgeMembersList();
-            await checkFridgeNotificationStatus();
+            // 這幾個區塊各自獨立try/catch，避免任何一個環節出錯(例如讀取角色或食材成本失敗)
+            // 就連帶讓後面的「成員名單」「離開群組按鈕」整個沒機會渲染出來——之前就是因為
+            // 這幾步是無防護的連續await，其中一步拋出例外會直接中斷整條鏈，導致排在後面的
+            // renderFridgeMembersList()根本沒被執行到
+            try { await getMyFridgeRole(true); } catch (err) { console.warn('讀取冰箱權限失敗', err); } // 強制重新讀取角色，確保如果擁有者剛改過權限，這裡能看到最新狀態
+            try { await checkPendingHouseholdInvite(); } catch (err) { console.warn('讀取邀請失敗', err); }
+            try { await renderFridgeItemsList(); } catch (err) { console.warn('渲染冰箱食材清單失敗', err); }
+            try { await renderFridgeStaplesList(); } catch (err) { console.warn('渲染常備清單失敗', err); }
+            try { await renderFridgeMembersList(); } catch (err) { console.warn('渲染成員名單失敗', err); }
+            try { await checkFridgeNotificationStatus(); } catch (err) { console.warn('檢查通知狀態失敗', err); }
         }
         function closeFridgeModal(fromPopState) {
             closeBarcodeScanner();
