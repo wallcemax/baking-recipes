@@ -130,6 +130,14 @@ async function resolveDisplayNameForRecipient(recipientUid, senderUid) {
     } catch (err) { /* 同上，查不到就用最後的預設值 */ }
     return '有人';
 }
+// 組出口語化的通知訊息文字，依照有沒有填時間/地點會是不同的句子——這裡跟Cloudflare Worker
+// (即時通知)用的是同一套邏輯，兩邊沒辦法真的共用同一份程式碼，但邏輯要保持一致，
+// 排程提醒的時間一律用整點(reminderTime本來就只精確到小時)，跟即時通知能精確到分鐘不同
+function buildAssignmentMessageText(fromName, toName, time, location, itemName) {
+    const middle = time ? `於${time}的時候，記得幫忙` : (location ? '記得幫忙' : '幫忙');
+    const locationPart = location || '';
+    return `${fromName}請${toName}${middle}去${locationPart}買${itemName}，謝謝!!`;
+}
 
 // 取得現在的台灣時間（伺服器可能跑在UTC時區，這裡手動校正+8小時，不依賴伺服器本身的時區設定）
 function getTaiwanNow() {
@@ -313,10 +321,16 @@ async function checkFamilyShoppingItemReminders(currentHour, todayStr) {
             // 用接收方(itemSnapshot.assignedToUid)對新增者(itemSnapshot.addedByUid)設定的稱謂，
             // 不是用品項新增當下就固定寫死的addedByName字串——這樣接收方之後改了稱謂，
             // 舊品項的提醒也會跟著顯示最新設定，不會卡在建立當下的舊名字
-            const displayName = itemSnapshot.addedByUid
+            const fromDisplayName = itemSnapshot.addedByUid
                 ? await resolveDisplayNameForRecipient(itemSnapshot.assignedToUid, itemSnapshot.addedByUid)
                 : (itemSnapshot.addedByName || '有人');
-            const body = `${displayName}請你買：${itemSnapshot.name}`;
+            // 排程提醒用整點時間(itemSnapshot.reminderTime本來就只精確到小時，跟即時通知能精確到
+            // 分鐘不同)；接收者要顯示的名字用assignedToName(發送者自己選人時、套用發送者自己
+            // 稱謂設定後的名字，不是接收方的隱私設定)
+            const body = buildAssignmentMessageText(
+                fromDisplayName, itemSnapshot.assignedToName || '你',
+                itemSnapshot.reminderTime, itemSnapshot.location, itemSnapshot.name
+            );
             const notificationTag = `family-shopping-${familyId}-${item.id}-${todayStr}-${currentHour}`;
             const result = await sendToUserDevices(itemSnapshot.assignedToUid, title, body, notificationTag);
 
