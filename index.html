@@ -6346,16 +6346,20 @@
             const bought = !!shoppingListPurchasedCache[key];
             // 只直接更新這一列的畫面，不整個重新呼叫renderShoppingListModal()——
             // 那個函式要重新抓所有食譜、重新算一次成本，很慢，如果連續點好幾個食材，
-            // 舊的那次重算比較慢跑完的話會晚一步蓋掉畫面，看起來就像「點了沒反應」
+            // 舊的那次重算比較慢跑完的話會晚一步蓋掉畫面，看起來就像「點了沒反應」。
+            // 樣式只套用在文字元素(data-ing-label)上，不是整行——不然「請家人買」這顆按鈕
+            // 也會被連帶劃掉、變半透明，看起來像停用了一樣，其實只是視覺上被誤傷
             const row = document.getElementById(`shopping-ing-row-${idx}`);
             if (row) {
-                row.style.textDecoration = bought ? 'line-through' : 'none';
-                row.style.opacity = bought ? '.45' : '1';
                 const labelEl = row.querySelector('[data-ing-label]');
-                // 顯示文字要用原本的displayName（可能是好幾個原始食材名稱合併起來的），
-                // 不能用key（key只是內部用來記錄「有沒有買過」的識別碼，可能是推薦品牌名稱、
-                // 也可能是像"__nodata__可可粉"這種內部格式，不是給使用者看的）
-                if (labelEl) labelEl.textContent = (bought ? '✅ ' : '') + (displayName || key);
+                if (labelEl) {
+                    labelEl.style.textDecoration = bought ? 'line-through' : 'none';
+                    labelEl.style.opacity = bought ? '.45' : '1';
+                    // 顯示文字要用原本的displayName（可能是好幾個原始食材名稱合併起來的），
+                    // 不能用key（key只是內部用來記錄「有沒有買過」的識別碼，可能是推薦品牌名稱、
+                    // 也可能是像"__nodata__可可粉"這種內部格式，不是給使用者看的）
+                    labelEl.textContent = (bought ? '✅ ' : '') + (displayName || key);
+                }
             }
             // 只有在「打勾」（不是取消打勾）的時候才檢查，避免取消勾選時誤觸發；
             // 檢查目前這份「還需要買的食材」+「其他採購品項」，是不是每一個都已經標記成已購買
@@ -7025,8 +7029,8 @@
                             const bought = !!shoppingListPurchasedCache[key];
                             if (g.isStaple) {
                                 const askFamilyBtnStaple = `<button onclick="event.stopPropagation(); addFamilyShoppingItem('${escapeHtmlAttr(displayName).replace(/'/g, "\\'")}')" class="text-xs shrink-0" style="color:var(--sage)" title="複製這個品項到家庭採購清單，請家人幫忙買">👨‍👩‍👧 請家人買</button>`;
-                                return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
-                                    <div class="flex justify-between items-center"><span data-ing-label>${bought ? '✅ ' : ''}${displayName} <span style="color:var(--muted)">常備品</span></span>${askFamilyBtnStaple}</div>
+                                return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none">
+                                    <div class="flex justify-between items-center"><span data-ing-label style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">${bought ? '✅ ' : ''}${displayName} <span style="color:var(--muted)">常備品</span></span>${askFamilyBtnStaple}</div>
                                 </div>`;
                             }
                             const stockLine = `<p class="text-xs mt-0.5 num-tabular" style="color:var(--muted)">需要${g.grams.toFixed(0)}g，庫存${(g.stockGrams || 0).toFixed(0)}g，<span style="color:var(--danger)">還缺${g.shortfallGrams.toFixed(0)}g</span></p>`;
@@ -7042,9 +7046,9 @@
                             // 「請家人買」按鈕：用event.stopPropagation()擋住事件冒泡，不然點這顆按鈕
                             // 會連帶觸發整行的「標記已購買」點擊事件(因為按鈕是包在那個可點擊的行容器裡面)
                             const askFamilyBtn = `<button onclick="event.stopPropagation(); addFamilyShoppingItem('${escapeHtmlAttr(displayName).replace(/'/g, "\\'")}', '${escapeHtmlAttr(priceNoteText).replace(/'/g, "\\'")}')" class="text-xs shrink-0" style="color:var(--sage)" title="複製這個品項到家庭採購清單，請家人幫忙買">👨‍👩‍👧 請家人買</button>`;
-                            return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
+                            return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none">
                                 <div class="flex items-center justify-between gap-2">
-                                    <span data-ing-label class="min-w-0">${bought ? '✅ ' : ''}${displayName}</span>
+                                    <span data-ing-label class="min-w-0" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">${bought ? '✅ ' : ''}${displayName}</span>
                                     ${askFamilyBtn}
                                 </div>
                                 ${stockLine}
