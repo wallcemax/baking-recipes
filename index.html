@@ -4922,6 +4922,14 @@
         function escapeHtmlAttr(str) {
             return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
         }
+        // 給「純文字內容顯示」用的轉義函式，跟escapeHtmlAttr的用途分開：escapeHtmlAttr是給
+        // 「會被當成JS程式碼解讀的屬性值」用的(例如onclick="...('...')")，需要把撇號轉成JS的
+        // 跳脫序列\'；但一般的HTML標籤內文字內容、或不會被當JS執行的普通屬性值(例如input的
+        // value)，撇號本身完全安全，不需要跳脫——用escapeHtmlAttr處理這種情境反而會讓撇號
+        // 前面多出一個看得見的反斜線(例如"Hershey's"被誤顯示成"Hershey\'s")
+        function escapeHtmlText(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
         let aiNutritionCache = {}; // 同一次瀏覽期間的暫存，避免同個食材重複問 Firestore／AI
 
         // ========== 個人食材成本系統（第一階段：資料層） ==========
@@ -6764,14 +6772,14 @@
                 // 「誰新增的」這行文字，優先用我對他的自訂稱謂，沒設定過才用存進資料裡的名字
                 const addedByDisplay = (item.addedByUid && memberNameByUid[item.addedByUid]) || item.addedByName;
                 const reminderText = item.reminderTime
-                    ? `🔔 ${item.preciseTime || item.reminderTime}${item.location ? `・📍${item.location}` : ''}${item.reminderDate ? `（${item.reminderDate}提醒一次）` : '（每天到整點還沒買會再提醒一次）'}`
-                    : (item.location ? `📍 ${item.location}` : '');
+                    ? `🔔 ${item.preciseTime || item.reminderTime}${item.location ? `・📍${escapeHtmlText(item.location)}` : ''}${item.reminderDate ? `（${item.reminderDate}提醒一次）` : '（每天到整點還沒買會再提醒一次）'}`
+                    : (item.location ? `📍 ${escapeHtmlText(item.location)}` : '');
                 // 只有已經指定給某個人的品項，才顯示「設定提醒」的欄位——沒指定人的話提醒也不知道要通知誰
                 const reminderRow = item.assignedToUid ? `
                     <div class="w-full mt-1 pt-1.5" style="border-top:1px dashed var(--line)">
                         <p class="text-xs w-full mb-1" style="color:var(--muted)">💡 指定人不會馬上通知對方，要填好下面資訊、按「設定提醒」才會真的發送——地點跟時間都是選填</p>
                         <div class="flex items-center gap-1.5 flex-wrap">
-                            <input type="text" id="family-reminder-location-${escapeHtmlAttr(item.id)}" placeholder="去哪買(選填)" value="${escapeHtmlAttr(item.location || '')}" class="form-input !py-1 !px-1.5 text-xs" style="width:6rem;">
+                            <input type="text" id="family-reminder-location-${escapeHtmlAttr(item.id)}" placeholder="去哪買(選填)" value="${escapeHtmlText(item.location || '')}" class="form-input !py-1 !px-1.5 text-xs" style="width:6rem;">
                             <input type="time" id="family-reminder-time-${escapeHtmlAttr(item.id)}" value="${item.preciseTime || ''}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;" title="幾點幾分要買(選填)，即時通知的訊息內容會顯示這個精確時間；但排程用的整點提醒只能精確到小時">
                             <input type="date" id="family-reminder-date-${escapeHtmlAttr(item.id)}" value="${item.reminderDate || ''}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;" title="選填，只提醒一次；留空則每天提醒到買完">
                             <button onclick="setFamilyShoppingItemReminder('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--sage)">設定提醒</button>
@@ -6781,9 +6789,9 @@
                     </div>` : '';
                 return `<div class="flex items-center gap-2 px-4 py-2.5 rounded-2xl flex-wrap" style="background:var(--cream)">
                     <span onclick="toggleFamilyShoppingItemBought('${escapeHtmlAttr(item.id)}')" class="flex-1 text-sm cursor-pointer select-none min-w-0" style="${item.bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
-                        ${item.bought ? '✅ ' : ''}${escapeHtmlAttr(item.name)}
-                        <span class="block text-xs mt-0.5" style="color:var(--muted)">${addedByDisplay ? `${escapeHtmlAttr(addedByDisplay)}新增的` : ''}</span>
-                        ${item.priceNote ? `<span class="block text-xs mt-0.5" style="color:var(--sage)">🕐 ${escapeHtmlAttr(item.priceNote)}（參考行情，判斷有沒有買貴用）</span>` : ''}
+                        ${item.bought ? '✅ ' : ''}${escapeHtmlText(item.name)}
+                        <span class="block text-xs mt-0.5" style="color:var(--muted)">${addedByDisplay ? `${escapeHtmlText(addedByDisplay)}新增的` : ''}</span>
+                        ${item.priceNote ? `<span class="block text-xs mt-0.5" style="color:var(--sage)">🕐 ${escapeHtmlText(item.priceNote)}（參考行情，判斷有沒有買貴用）</span>` : ''}
                     </span>
                     <select onchange="assignFamilyShoppingItem('${escapeHtmlAttr(item.id)}', this.value, this.options[this.selectedIndex].text, '${escapeHtmlAttr(item.name)}')" class="form-input !py-1 !px-2 text-xs shrink-0" style="width:auto;" title="指定要誰去買">
                         <option value="">未指定</option>
