@@ -6582,43 +6582,40 @@
         }
         // 指定要哪個家庭成員去買，避免大家重複採購同一樣東西——選單裡的人選跟家庭冰箱共用同一份成員名單
         async function assignFamilyShoppingItem(id, uid, name, itemName) {
-            const fridgeId = await getActiveFridgeId();
-            let previousAssignedUid = null;
             await mutateFamilyShoppingListAtomic(items => {
                 const item = items.find(i => i.id === id);
                 if (!item) return;
-                previousAssignedUid = item.assignedToUid;
                 const changingPerson = item.assignedToUid !== (uid || null);
                 item.assignedToUid = uid || null;
                 item.assignedToName = uid ? name : null;
-                // 換了指定的人(或取消指定)，原本設定給「舊的那個人」的提醒就沒意義了，順便清掉；
-                // 如果只是重新選了同一個人(例如下拉選單觸發但值沒變)，提醒設定維持不動
+                // 換了指定的人(或取消指定)，原本設定給「舊的那個人」的提醒/地點就沒意義了，順便清掉；
+                // 如果只是重新選了同一個人(例如下拉選單觸發但值沒變)，這些設定維持不動
                 if (changingPerson) {
                     item.reminderTime = null; item.reminderDate = null; item.reminderLastNotifiedDate = null;
+                    item.location = null; item.preciseTime = null;
                 }
             });
+            // 這裡不再發送即時通知——指定人只是單純寫入資料，不會馬上通知對方。
+            // 要通知的話，必須另外填地點/時間(選填)、按下「設定提醒」才會真的發送，
+            // 這樣使用者才有機會先把訊息內容(去哪買、幾點買)填好，通知裡才能帶著完整資訊
             await renderFamilyShoppingList();
-            // 真的指定給一個新的人(不是取消指定、也不是重新選同一個人)，才發送即時通知——
-            // 這是跟排程提醒完全獨立的另一條路徑，指定的當下馬上讓對方手機跳出通知，
-            // 不用等對方另外設定提醒時間、也不用等整點排程
-            if (uid && uid !== previousAssignedUid) {
-                notifyFamilyShoppingAssignmentInstant(uid, fridgeId, itemName || '一個品項');
-            }
         }
         // 呼叫Worker立即發送通知，用toast把結果告訴使用者(成功/失敗/對方沒開通知)，不再是
         // 完全靜默的失敗——之前只寫進主控台，使用者完全看不到，沒辦法判斷通知到底有沒有真的送出去
-        async function notifyFamilyShoppingAssignmentInstant(targetUid, familyId, itemName) {
+        async function notifyFamilyShoppingAssignmentInstant(targetUid, familyId, itemName, location, preciseTime, toName) {
             if (!currentUser) return;
             try {
                 const idToken = await currentUser.getIdToken();
-                // 不傳自己選的名字給Worker——通知裡要顯示的名字，改成由「接收方」自己對我設定的
-                // 稱謂決定(稱謂只影響接收方自己看到的內容)，Worker會用idToken解出我的uid，
-                // 自己去查接收方有沒有幫我取過稱謂
+                // 不傳自己選的名字給Worker——通知裡「發送者」要顯示的名字，改成由「接收方」自己對我
+                // 設定的稱謂決定(稱謂只影響接收方自己看到的內容)，Worker會用idToken解出我的uid，
+                // 自己去查接收方有沒有幫我取過稱謂。toName(接收者要顯示的名字)則是直接傳過去——
+                // 那本來就是我(發送方)自己選人時、套用我自己稱謂設定後的名字，是我自己選擇要
+                // 怎麼稱呼對方，不是接收方的隱私設定，跟前面那個相反
                 const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         action: 'notify_family_shopping_assignment', idToken,
-                        targetUid, familyId, itemName,
+                        targetUid, familyId, itemName, location: location || '', preciseTime: preciseTime || '', toName: toName || '',
                     }),
                 });
                 const data = await res.json();
@@ -6629,31 +6626,50 @@
                 showToast(`⚠️ 即時通知請求失敗：${err.message}`);
             }
         }
-        // 設定/取消這個品項的提醒時間——只有已經指定給某個人的品項才能設定，跟現有個人採購提醒
-        // 一樣只能選整點：只填時間、不選日期 → 每天到了那個時段、只要還沒買就會一直提醒；
-        // 有選日期 → 只有那一天那個時段提醒一次，之後自動不再提醒
+        // 設定提醒：這裡才是真正觸發通知的地方(指定人本身不會發通知)。地點/精確時間都是選填，
+        // 精確時間(到分鐘)只用在「即時通知」的訊息內容裡；真正排程用的reminderTime還是取整點，
+        // 跟個人採購提醒同一套機制(每小時檢查一次)：只填時間、不選日期 → 每天到了那個時段、
+        // 只要還沒買就會一直提醒；有選日期 → 只有那一天那個時段提醒一次，之後自動不再提醒
         async function setFamilyShoppingItemReminder(id) {
-            const hourSel = document.getElementById(`family-reminder-hour-${id}`);
+            const timeInput = document.getElementById(`family-reminder-time-${id}`);
             const dateInput = document.getElementById(`family-reminder-date-${id}`);
-            if (!hourSel) return;
-            const hourVal = hourSel.value;
+            const locationInput = document.getElementById(`family-reminder-location-${id}`);
+            if (!timeInput) return;
+            const preciseTime = timeInput.value; // 'HH:MM'格式，精確到分鐘，只用在即時通知的訊息內容裡
             const dateVal = dateInput ? dateInput.value : '';
-            await mutateFamilyShoppingListAtomic(items => {
+            const location = locationInput ? locationInput.value.trim() : '';
+            let itemSnapshot = null;
+            let targetUid = null;
+            let fridgeId = await getActiveFridgeId();
+            const ok = await mutateFamilyShoppingListAtomic(items => {
                 const item = items.find(i => i.id === id);
                 if (!item) return;
-                item.reminderTime = `${String(hourVal).padStart(2, '0')}:00`;
+                item.location = location || null;
+                // 排程用的reminderTime取整點(跟個人採購提醒同一套機制，每小時檢查一次，
+                // 沒辦法精確到分鐘)；精確時間另外存在preciseTime，只用來組即時通知的訊息文字
+                if (preciseTime) {
+                    const hourPart = preciseTime.split(':')[0];
+                    item.reminderTime = `${hourPart}:00`;
+                    item.preciseTime = preciseTime;
+                } else {
+                    item.reminderTime = null;
+                    item.preciseTime = null;
+                }
                 item.reminderDate = dateVal || null;
                 item.reminderLastNotifiedDate = null; // 重新設定過，之前的發送紀錄不算數，讓新設定的時間有機會觸發
+                itemSnapshot = { ...item };
+                targetUid = item.assignedToUid;
             });
-            // 提醒要能真的送達，被指定的那個人自己要先開過通知權限(fcmTokens要有資料)，
-            // 這裡只負責存設定，跟個人採購提醒共用同一組推播權杖，不用另外請求一次
-            showToast('已設定提醒，對方需要先自己開過一次通知權限才收得到');
+            if (!ok) return;
+            if (!itemSnapshot || !targetUid) { showToast('⚠️ 這個品項還沒指定人，沒辦法設定提醒'); return; }
             await renderFamilyShoppingList();
+            // 按下設定提醒的當下，發送一次即時通知——這是唯一會觸發即時通知的地方
+            notifyFamilyShoppingAssignmentInstant(targetUid, fridgeId, itemSnapshot.name, location, preciseTime, itemSnapshot.assignedToName);
         }
         async function cancelFamilyShoppingItemReminder(id) {
             await mutateFamilyShoppingListAtomic(items => {
                 const item = items.find(i => i.id === id);
-                if (item) { item.reminderTime = null; item.reminderDate = null; item.reminderLastNotifiedDate = null; }
+                if (item) { item.reminderTime = null; item.reminderDate = null; item.reminderLastNotifiedDate = null; item.preciseTime = null; }
             });
             await renderFamilyShoppingList();
         }
@@ -6690,20 +6706,15 @@
                 // 「誰新增的」這行文字，優先用我對他的自訂稱謂，沒設定過才用存進資料裡的名字
                 const addedByDisplay = (item.addedByUid && memberNameByUid[item.addedByUid]) || item.addedByName;
                 const reminderText = item.reminderTime
-                    ? `🔔 ${item.reminderTime}${item.reminderDate ? `（${item.reminderDate}提醒一次）` : '（每天提醒到買完為止）'}`
-                    : '';
-                // 提醒小時下拉選單：如果已經設定過提醒，預先選到目前設定的那個小時；沒設定過的話
-                // 預設選到現在的小時，方便使用者直接按「設定提醒」就是差不多現在這個時段
-                const currentSelectedHour = item.reminderTime ? parseInt(item.reminderTime) : new Date().getHours();
-                const hourOptionsForItem = Array.from({ length: 24 }, (_, h) =>
-                    `<option value="${h}" ${h === currentSelectedHour ? 'selected' : ''}>${h}:00</option>`
-                ).join('');
+                    ? `🔔 ${item.preciseTime || item.reminderTime}${item.location ? `・📍${item.location}` : ''}${item.reminderDate ? `（${item.reminderDate}提醒一次）` : '（每天到整點還沒買會再提醒一次）'}`
+                    : (item.location ? `📍 ${item.location}` : '');
                 // 只有已經指定給某個人的品項，才顯示「設定提醒」的欄位——沒指定人的話提醒也不知道要通知誰
                 const reminderRow = item.assignedToUid ? `
                     <div class="w-full mt-1 pt-1.5" style="border-top:1px dashed var(--line)">
-                        <p class="text-xs w-full mb-1" style="color:var(--muted)">💡 指定人的當下已經即時通知過對方了，這裡是「額外」設定一個時間，到時候如果還沒買會再提醒一次</p>
+                        <p class="text-xs w-full mb-1" style="color:var(--muted)">💡 指定人不會馬上通知對方，要填好下面資訊、按「設定提醒」才會真的發送——地點跟時間都是選填</p>
                         <div class="flex items-center gap-1.5 flex-wrap">
-                            <select id="family-reminder-hour-${escapeHtmlAttr(item.id)}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;">${hourOptionsForItem}</select>
+                            <input type="text" id="family-reminder-location-${escapeHtmlAttr(item.id)}" placeholder="去哪買(選填)" value="${escapeHtmlAttr(item.location || '')}" class="form-input !py-1 !px-1.5 text-xs" style="width:6rem;">
+                            <input type="time" id="family-reminder-time-${escapeHtmlAttr(item.id)}" value="${item.preciseTime || ''}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;" title="幾點幾分要買(選填)，即時通知的訊息內容會顯示這個精確時間；但排程用的整點提醒只能精確到小時">
                             <input type="date" id="family-reminder-date-${escapeHtmlAttr(item.id)}" value="${item.reminderDate || ''}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;" title="選填，只提醒一次；留空則每天提醒到買完">
                             <button onclick="setFamilyShoppingItemReminder('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--sage)">設定提醒</button>
                             ${item.reminderTime ? `<button onclick="cancelFamilyShoppingItemReminder('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--danger)">取消提醒</button>` : ''}
