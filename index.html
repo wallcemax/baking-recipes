@@ -6571,26 +6571,62 @@
                 await renderFamilyShoppingList();
             }
         }
+        // 同步「家庭採購提醒索引」(familyShoppingReminders集合)：這是一份扁平、可以直接查詢的
+        // 索引，跟familyShoppingLists.items[]裡實際的品項資料是分開的兩份——Worker端每分鐘
+        // 排程檢查時，只需要查這份索引「preciseTime等於現在這分鐘」的文件，不用整份掃描
+        // 所有家庭的採購清單，讀取量才不會隨著家庭群組數量線性增加。
+        // 這份索引只存「什麼時候要檢查」用的最小資訊，實際品項名稱/地點/是否已購買等等，
+        // Worker查到符合時間的索引之後，會再另外去讀該家庭當下最新的完整清單資料
+        // (避免索引裡的資料跟實際清單不同步、顯示舊資料的風險)。
+        // hasReminder為true時建立/更新索引；false時直接刪除索引(取消提醒、標記已購買、
+        // 移除品項、換了指定的人，這幾種情況都要讓索引消失，不然Worker還是會查到、誤發提醒)
+        async function syncFamilyShoppingReminderIndex(itemId, familyId, hasReminder, indexData) {
+            const ref = db.collection('familyShoppingReminders').doc(itemId);
+            try {
+                if (hasReminder) {
+                    await ref.set({ familyId, itemId, ...indexData });
+                } else {
+                    await ref.delete();
+                }
+            } catch (err) {
+                console.warn('同步家庭採購提醒索引失敗', err && err.message);
+            }
+        }
         async function removeFamilyShoppingItem(id) {
+            const fridgeId = await getActiveFridgeId();
             await mutateFamilyShoppingListAtomic(items => {
                 const idx = items.findIndex(i => i.id === id);
                 if (idx !== -1) items.splice(idx, 1);
             });
+            await syncFamilyShoppingReminderIndex(id, fridgeId, false); // 品項都刪掉了，提醒索引當然也要跟著刪掉
             await renderFamilyShoppingList();
         }
         async function toggleFamilyShoppingItemBought(id) {
+            const fridgeId = await getActiveFridgeId();
+            let itemAfter = null;
             await mutateFamilyShoppingListAtomic(items => {
                 const item = items.find(i => i.id === id);
-                if (item) item.bought = !item.bought;
+                if (item) { item.bought = !item.bought; itemAfter = { ...item }; }
             });
+            if (itemAfter) {
+                // 標記成已購買的話，提醒索引要刪掉(買完了不用再提醒)；如果是從已購買切回未購買，
+                // 而且這個品項本來就有設定精確時間，要把索引補回來，不然買錯取消勾選之後提醒就
+                // 永遠消失了
+                const shouldHaveReminder = !itemAfter.bought && !!itemAfter.preciseTime && !!itemAfter.assignedToUid;
+                await syncFamilyShoppingReminderIndex(id, fridgeId, shouldHaveReminder, shouldHaveReminder ? {
+                    preciseTime: itemAfter.preciseTime, reminderDate: itemAfter.reminderDate || null,
+                } : null);
+            }
             await renderFamilyShoppingList();
         }
         // 指定要哪個家庭成員去買，避免大家重複採購同一樣東西——選單裡的人選跟家庭冰箱共用同一份成員名單
         async function assignFamilyShoppingItem(id, uid, name, itemName) {
+            const fridgeId = await getActiveFridgeId();
+            let changingPerson = false;
             await mutateFamilyShoppingListAtomic(items => {
                 const item = items.find(i => i.id === id);
                 if (!item) return;
-                const changingPerson = item.assignedToUid !== (uid || null);
+                changingPerson = item.assignedToUid !== (uid || null);
                 item.assignedToUid = uid || null;
                 item.assignedToName = uid ? name : null;
                 // 換了指定的人(或取消指定)，原本設定給「舊的那個人」的提醒/地點就沒意義了，順便清掉；
@@ -6600,6 +6636,8 @@
                     item.location = null; item.preciseTime = null;
                 }
             });
+            // 換人的話，原本的提醒索引也要跟著刪掉(不然Worker還是會查到、通知到舊的那個人)
+            if (changingPerson) await syncFamilyShoppingReminderIndex(id, fridgeId, false);
             // 這裡不再發送即時通知——指定人只是單純寫入資料，不會馬上通知對方。
             // 要通知的話，必須另外填地點/時間(選填)、按下「設定提醒」才會真的發送，
             // 這樣使用者才有機會先把訊息內容(去哪買、幾點買)填好，通知裡才能帶著完整資訊
@@ -6667,15 +6705,21 @@
             });
             if (!ok) return;
             if (!itemSnapshot || !targetUid) { showToast('⚠️ 這個品項還沒指定人，沒辦法設定提醒'); return; }
+            // 同步索引：有填精確時間才建立索引，讓Worker查得到；沒填(等於清空提醒)就把索引刪掉
+            await syncFamilyShoppingReminderIndex(id, fridgeId, !!preciseTime, preciseTime ? {
+                preciseTime, reminderDate: dateVal || null,
+            } : null);
             await renderFamilyShoppingList();
             // 按下設定提醒的當下，發送一次即時通知——這是唯一會觸發即時通知的地方
             notifyFamilyShoppingAssignmentInstant(targetUid, fridgeId, itemSnapshot.name, location, preciseTime, itemSnapshot.assignedToName);
         }
         async function cancelFamilyShoppingItemReminder(id) {
+            const fridgeId = await getActiveFridgeId();
             await mutateFamilyShoppingListAtomic(items => {
                 const item = items.find(i => i.id === id);
                 if (item) { item.reminderTime = null; item.reminderDate = null; item.reminderLastNotifiedDate = null; item.preciseTime = null; }
             });
+            await syncFamilyShoppingReminderIndex(id, fridgeId, false); // 取消提醒，索引跟著刪掉
             await renderFamilyShoppingList();
         }
         async function renderFamilyShoppingList() {
