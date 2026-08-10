@@ -989,6 +989,18 @@
                     </div>
                     <div id="shopping-list-manual-items" class="space-y-2"></div>
                 </div>
+                <!-- 家庭採購清單：跟上面的個人採購清單是完全分開的一套系統，存在不同的Firestore文件裡。
+                     可以把個人清單裡的品項加進來請家人幫忙買，也能直接在這裡新增、指定要誰去買，
+                     避免家人各自出門買菜卻不知道對方也買了同一樣東西 -->
+                <div class="mt-8 pt-6 border-t" style="border-color:var(--line)">
+                    <h3 class="font-display font-semibold text-sm mb-1">👨‍👩‍👧 家庭採購清單</h3>
+                    <p class="text-xs mb-3" style="color:var(--muted)">跟上面的個人清單是分開的——這裡是「請家人幫忙買」用的共用清單，可以指定要誰去買，避免大家重複採購同一樣東西</p>
+                    <div class="flex gap-2 mb-3">
+                        <input id="family-shopping-item-input" placeholder="輸入品項，例如：衛生紙" class="form-input !py-2 text-sm" onkeydown="if(event.key==='Enter'){event.preventDefault(); addFamilyShoppingItem();}">
+                        <button onclick="addFamilyShoppingItem()" class="btn-amber shrink-0 !px-4 !py-2 text-sm">+ 新增</button>
+                    </div>
+                    <div id="family-shopping-list-items" class="space-y-2"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -6444,6 +6456,7 @@
                 const bought = !!shoppingListPurchasedCache[`manual_${item.id}`];
                 return `<div class="flex items-center gap-3 px-4 py-2.5 rounded-2xl" style="background:var(--cream)">
                     <span onclick="toggleManualItemPurchased('${escapeHtmlAttr(item.id)}')" class="flex-1 text-sm cursor-pointer select-none min-w-0 truncate" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">${bought ? '✅ ' : ''}${item.name}</span>
+                    <button onclick="addFamilyShoppingItem('${escapeHtmlAttr(item.name).replace(/'/g, "\\'")}')" class="text-xs shrink-0" style="color:var(--sage)" title="複製這個品項到家庭採購清單，請家人幫忙買">👨‍👩‍👧 請家人買</button>
                     <button onclick="removeManualShoppingItem('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--danger)">移除</button>
                 </div>`;
             }).join('');
@@ -6476,13 +6489,141 @@
         async function openShoppingListModal() {
             if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
             document.getElementById('shopping-list-modal').classList.remove('hidden');
-            await renderShoppingListModal();
-            loadShoppingReminderSettings();
+            try { await renderShoppingListModal(); } catch (err) { console.warn('渲染採購清單失敗', err); }
+            try { loadShoppingReminderSettings(); } catch (err) { console.warn('載入採購提醒設定失敗', err); }
+            try { await renderFamilyShoppingList(); } catch (err) { console.warn('渲染家庭採購清單失敗', err); }
             pushModalHistoryState();
         }
         function closeShoppingListModal(fromPopState) {
             document.getElementById('shopping-list-modal').classList.add('hidden');
             consumeModalHistoryState(fromPopState);
+        }
+
+        // ========== 家庭採購清單：跟上面的個人採購清單(userShoppingLists)是完全分開的一套系統 ==========
+        // Firestore結構：familyShoppingLists/{fridgeId}，用跟家庭冰箱同一個fridgeId當識別(同一個
+        // 家庭群組，不用另外再做一套邀請機制)，欄位items是陣列：
+        // [{id, name, addedByUid, addedByName, assignedToUid, assignedToName, bought, createdAt}]
+        // 個人冰箱(沒加入任何家庭)的人也能用，這時候fridgeId就是自己的uid，等於是「給自己看的購物清單」，
+        // 之後哪天邀了家人進來，這份清單會自動變成共用的
+        let familyShoppingListCache = null;
+        let familyShoppingListCacheKey = null;
+        async function loadFamilyShoppingList(forceRefresh) {
+            if (!currentUser) return [];
+            const fridgeId = await getActiveFridgeId(forceRefresh);
+            if (!forceRefresh && familyShoppingListCache && familyShoppingListCacheKey === fridgeId) return familyShoppingListCache;
+            try {
+                const doc = await db.collection('familyShoppingLists').doc(fridgeId).get();
+                familyShoppingListCache = doc.exists ? (doc.data().items || []) : [];
+                familyShoppingListCacheKey = fridgeId;
+            } catch (err) {
+                console.warn('讀取家庭採購清單失敗', err && err.message);
+                familyShoppingListCache = familyShoppingListCache || [];
+            }
+            return familyShoppingListCache;
+        }
+        // 用交易安全地修改家庭採購清單，避免兩個人幾乎同時各自新增/勾選，其中一個人的動作被覆蓋掉——
+        // 跟冰箱食材那個bug是同一類問題，同一套解法
+        async function mutateFamilyShoppingListAtomic(mutateFn) {
+            if (!currentUser) return false;
+            const fridgeId = await getActiveFridgeId();
+            const ref = db.collection('familyShoppingLists').doc(fridgeId);
+            try {
+                await db.runTransaction(async (tx) => {
+                    const doc = await tx.get(ref);
+                    const items = doc.exists ? (doc.data().items || []) : [];
+                    mutateFn(items);
+                    tx.set(ref, { items, familyId: fridgeId }, { merge: true });
+                });
+                familyShoppingListCache = null;
+                return true;
+            } catch (err) {
+                console.warn('修改家庭採購清單失敗', err && err.message);
+                alert('儲存失敗：' + err.message);
+                return false;
+            }
+        }
+        // 新增品項到家庭採購清單：可以是直接在家庭清單這裡輸入新增的，也可以是從個人清單「請家人買」
+        // 複製過來的(這時候prefilledName會帶著品項名稱進來，不用使用者自己重打一次)
+        async function addFamilyShoppingItem(prefilledName) {
+            if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
+            const input = document.getElementById('family-shopping-item-input');
+            const name = (typeof prefilledName === 'string' ? prefilledName : (input && input.value || '')).trim();
+            if (!name) { if (input) input.focus(); return; }
+            const myName = (userProgress && userProgress.nickname) || currentUser.displayName || '一位使用者';
+            const newItem = {
+                id: `fam_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                name, addedByUid: currentUser.uid, addedByName: myName,
+                assignedToUid: null, assignedToName: null, bought: false,
+                createdAt: Date.now(),
+            };
+            const ok = await mutateFamilyShoppingListAtomic(items => { items.unshift(newItem); });
+            if (ok) {
+                if (input) input.value = '';
+                showToast(typeof prefilledName === 'string' ? `已加入家庭採購清單：${name}` : '已新增');
+                await renderFamilyShoppingList();
+            }
+        }
+        async function removeFamilyShoppingItem(id) {
+            await mutateFamilyShoppingListAtomic(items => {
+                const idx = items.findIndex(i => i.id === id);
+                if (idx !== -1) items.splice(idx, 1);
+            });
+            await renderFamilyShoppingList();
+        }
+        async function toggleFamilyShoppingItemBought(id) {
+            await mutateFamilyShoppingListAtomic(items => {
+                const item = items.find(i => i.id === id);
+                if (item) item.bought = !item.bought;
+            });
+            await renderFamilyShoppingList();
+        }
+        // 指定要哪個家庭成員去買，避免大家重複採購同一樣東西——選單裡的人選跟家庭冰箱共用同一份成員名單
+        async function assignFamilyShoppingItem(id, uid, name) {
+            await mutateFamilyShoppingListAtomic(items => {
+                const item = items.find(i => i.id === id);
+                if (item) { item.assignedToUid = uid || null; item.assignedToName = uid ? name : null; }
+            });
+            await renderFamilyShoppingList();
+        }
+        async function renderFamilyShoppingList() {
+            const el = document.getElementById('family-shopping-list-items');
+            if (!el || !currentUser) return;
+            const [items, fridgeId] = await Promise.all([loadFamilyShoppingList(true), getActiveFridgeId()]);
+            // 抓一次目前的家庭成員名單，給「指定誰去買」的下拉選單用——這裡直接沿用家庭冰箱的
+            // members清單，同一個家庭群組，不用另外再維護一份成員清單
+            let members = [{ uid: currentUser.uid, name: '你' }];
+            try {
+                const doc = await db.collection('fridges').doc(fridgeId).get();
+                const memberUids = (doc.exists && doc.data().members) || [currentUser.uid];
+                members = await Promise.all(memberUids.map(async uid => {
+                    if (uid === currentUser.uid) return { uid, name: '你' };
+                    try {
+                        const p = await db.collection('userProfiles').doc(uid).get();
+                        const name = (p.exists && (p.data().nickname || p.data().displayName)) || '一位成員';
+                        return { uid, name };
+                    } catch { return { uid, name: '一位成員' }; }
+                }));
+            } catch (err) { console.warn('讀取家庭成員清單失敗', err); }
+            if (!items.length) {
+                el.innerHTML = `<p class="text-xs text-center py-4" style="color:var(--muted)">目前沒有家庭採購品項</p>`;
+                return;
+            }
+            el.innerHTML = items.map(item => {
+                const assignOptions = members.map(m =>
+                    `<option value="${m.uid}" ${item.assignedToUid === m.uid ? 'selected' : ''}>${escapeHtmlAttr(m.name)}</option>`
+                ).join('');
+                return `<div class="flex items-center gap-2 px-4 py-2.5 rounded-2xl flex-wrap" style="background:var(--cream)">
+                    <span onclick="toggleFamilyShoppingItemBought('${escapeHtmlAttr(item.id)}')" class="flex-1 text-sm cursor-pointer select-none min-w-0" style="${item.bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
+                        ${item.bought ? '✅ ' : ''}${escapeHtmlAttr(item.name)}
+                        <span class="block text-xs mt-0.5" style="color:var(--muted)">${item.addedByName ? `${escapeHtmlAttr(item.addedByName)}新增的` : ''}</span>
+                    </span>
+                    <select onchange="assignFamilyShoppingItem('${escapeHtmlAttr(item.id)}', this.value, this.options[this.selectedIndex].text)" class="form-input !py-1 !px-2 text-xs shrink-0" style="width:auto;" title="指定要誰去買">
+                        <option value="">未指定</option>
+                        ${assignOptions}
+                    </select>
+                    <button onclick="removeFamilyShoppingItem('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--danger)">移除</button>
+                </div>`;
+            }).join('');
         }
         // 載入使用者目前的採購提醒設定，把畫面上的開關/時間/日期都還原成上次儲存的狀態
         // 填入小時的下拉選單選項，補0讓個位數也是兩位數顯示（例如09），24小時制固定顯示，
