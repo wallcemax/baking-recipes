@@ -110,6 +110,26 @@ async function sendToUserDevices(uid, title, body, notificationTag) {
     }
     return { sentAny, reason: sentAny ? 'ok' : 'all-failed' };
 }
+// 決定通知裡要顯示發送者的什麼名字：接收方對發送方的自訂稱謂優先，沒設定過才退回
+// 發送方自己的暱稱/Google帳號名稱。稱謂只影響接收方自己看到的內容，所以一定是用
+// 「接收方」的稱謂表去查，不是用品項當初新增時就固定寫死的addedByName字串——
+// 跟Cloudflare Worker那邊(即時通知)用的是同一套邏輯，只是這裡改用firebase-admin的語法，
+// 兩邊沒辦法共用同一份程式碼，但邏輯要保持一致
+async function resolveDisplayNameForRecipient(recipientUid, senderUid) {
+    try {
+        const labelsDoc = await db.collection('familyMemberLabels').doc(recipientUid).get();
+        const label = labelsDoc.exists && labelsDoc.data()[senderUid];
+        if (label) return label;
+    } catch (err) { /* 查不到就繼續往下退回預設名字，不要因為這個失敗就整個中斷 */ }
+    try {
+        const profileDoc = await db.collection('userProfiles').doc(senderUid).get();
+        if (profileDoc.exists) {
+            const data = profileDoc.data();
+            if (data.nickname || data.displayName) return data.nickname || data.displayName;
+        }
+    } catch (err) { /* 同上，查不到就用最後的預設值 */ }
+    return '有人';
+}
 
 // 取得現在的台灣時間（伺服器可能跑在UTC時區，這裡手動校正+8小時，不依賴伺服器本身的時區設定）
 function getTaiwanNow() {
@@ -290,8 +310,13 @@ async function checkFamilyShoppingItemReminders(currentHour, todayStr) {
             }
 
             const title = '🛒 家人請你幫忙買';
-            const addedByText = itemSnapshot.addedByName ? `${itemSnapshot.addedByName}請你買` : '有人請你買';
-            const body = `${addedByText}：${itemSnapshot.name}`;
+            // 用接收方(itemSnapshot.assignedToUid)對新增者(itemSnapshot.addedByUid)設定的稱謂，
+            // 不是用品項新增當下就固定寫死的addedByName字串——這樣接收方之後改了稱謂，
+            // 舊品項的提醒也會跟著顯示最新設定，不會卡在建立當下的舊名字
+            const displayName = itemSnapshot.addedByUid
+                ? await resolveDisplayNameForRecipient(itemSnapshot.assignedToUid, itemSnapshot.addedByUid)
+                : (itemSnapshot.addedByName || '有人');
+            const body = `${displayName}請你買：${itemSnapshot.name}`;
             const notificationTag = `family-shopping-${familyId}-${item.id}-${todayStr}-${currentHour}`;
             const result = await sendToUserDevices(itemSnapshot.assignedToUid, title, body, notificationTag);
 
