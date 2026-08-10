@@ -6544,7 +6544,7 @@
         }
         // 新增品項到家庭採購清單：可以是直接在家庭清單這裡輸入新增的，也可以是從個人清單「請家人買」
         // 複製過來的(這時候prefilledName會帶著品項名稱進來，不用使用者自己重打一次)
-        async function addFamilyShoppingItem(prefilledName) {
+        async function addFamilyShoppingItem(prefilledName, priceNote) {
             if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
             const input = document.getElementById('family-shopping-item-input');
             const name = (typeof prefilledName === 'string' ? prefilledName : (input && input.value || '')).trim();
@@ -6555,6 +6555,9 @@
                 name, addedByUid: currentUser.uid, addedByName: myName,
                 assignedToUid: null, assignedToName: null, bought: false,
                 createdAt: Date.now(),
+                // 從食譜缺料清單「一鍵請家人買」帶過來的話，可能會附帶「之前用過什麼牌子/多少錢」的
+                // 參考資訊，讓家人知道之前買的行情，判斷這次會不會買貴——手動輸入新增的品項沒有這個
+                priceNote: priceNote || null,
             };
             const ok = await mutateFamilyShoppingListAtomic(items => { items.unshift(newItem); });
             if (ok) {
@@ -6711,6 +6714,7 @@
                     <span onclick="toggleFamilyShoppingItemBought('${escapeHtmlAttr(item.id)}')" class="flex-1 text-sm cursor-pointer select-none min-w-0" style="${item.bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
                         ${item.bought ? '✅ ' : ''}${escapeHtmlAttr(item.name)}
                         <span class="block text-xs mt-0.5" style="color:var(--muted)">${addedByDisplay ? `${escapeHtmlAttr(addedByDisplay)}新增的` : ''}</span>
+                        ${item.priceNote ? `<span class="block text-xs mt-0.5" style="color:var(--sage)">🕐 ${escapeHtmlAttr(item.priceNote)}（參考行情，判斷有沒有買貴用）</span>` : ''}
                     </span>
                     <select onchange="assignFamilyShoppingItem('${escapeHtmlAttr(item.id)}', this.value, this.options[this.selectedIndex].text, '${escapeHtmlAttr(item.name).replace(/'/g, "\\'")}')" class="form-input !py-1 !px-2 text-xs shrink-0" style="width:auto;" title="指定要誰去買">
                         <option value="">未指定</option>
@@ -6965,18 +6969,25 @@
                             const g = groups[key];
                             const displayName = g.rawNames.join('、'); // 同一組裡如果有好幾個寫法不同的原始名稱，全部列出來
                             const bought = !!shoppingListPurchasedCache[key];
-                            // 「請家人買」按鈕：用event.stopPropagation()擋住事件冒泡，不然點這顆按鈕
-                            // 會連帶觸發整行的「標記已購買」點擊事件(因為按鈕是包在那個可點擊的行容器裡面)
-                            const askFamilyBtn = `<button onclick="event.stopPropagation(); addFamilyShoppingItem('${escapeHtmlAttr(displayName).replace(/'/g, "\\'")}')" class="text-xs shrink-0" style="color:var(--sage)" title="複製這個品項到家庭採購清單，請家人幫忙買">👨‍👩‍👧 請家人買</button>`;
                             if (g.isStaple) {
+                                const askFamilyBtnStaple = `<button onclick="event.stopPropagation(); addFamilyShoppingItem('${escapeHtmlAttr(displayName).replace(/'/g, "\\'")}')" class="text-xs shrink-0" style="color:var(--sage)" title="複製這個品項到家庭採購清單，請家人幫忙買">👨‍👩‍👧 請家人買</button>`;
                                 return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
-                                    <div class="flex justify-between items-center"><span data-ing-label>${bought ? '✅ ' : ''}${displayName} <span style="color:var(--muted)">常備品</span></span></div>
+                                    <div class="flex justify-between items-center"><span data-ing-label>${bought ? '✅ ' : ''}${displayName} <span style="color:var(--muted)">常備品</span></span>${askFamilyBtnStaple}</div>
                                 </div>`;
                             }
                             const stockLine = `<p class="text-xs mt-0.5 num-tabular" style="color:var(--muted)">需要${g.grams.toFixed(0)}g，庫存${(g.stockGrams || 0).toFixed(0)}g，<span style="color:var(--danger)">還缺${g.shortfallGrams.toFixed(0)}g</span></p>`;
+                            // 「之前使用」的品牌+價格資訊，一鍵加入家庭採購清單時要一起帶過去，讓家人知道
+                            // 之前買的是什麼牌子、大概多少錢，才能判斷這次買貴了還是差不多——這串純文字
+                            // (不含HTML標籤)會存進家庭採購清單那筆資料的priceNote欄位
+                            const priceNoteText = g.recommendedEntry
+                                ? `之前用過：${g.recommendedName}（${g.recommendedEntry.purchasePrice ? `${g.recommendedEntry.purchasePrice}元／${g.recommendedEntry.purchaseAmount}${g.recommendedEntry.purchaseUnit}` : `約NT$${g.recommendedEntry.pricePer100g.toFixed(1)}/100g`}）`
+                                : '';
                             const recLine = g.recommendedEntry
-                                ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🕐 之前使用：${g.recommendedName}（${g.recommendedEntry.purchasePrice ? `${g.recommendedEntry.purchasePrice}元／${g.recommendedEntry.purchaseAmount}${g.recommendedEntry.purchaseUnit}` : `約NT$${g.recommendedEntry.pricePer100g.toFixed(1)}/100g`}）${g.unitsNeeded ? `・需${g.unitsNeeded}份` : ''}${g.fallbackEstimate ? '（沒有完整包裝資訊，用缺的克數概算）' : ''}</p>`
+                                ? `<p class="text-xs mt-0.5" style="color:var(--sage)">🕐 ${priceNoteText}${g.unitsNeeded ? `・需${g.unitsNeeded}份` : ''}${g.fallbackEstimate ? '（沒有完整包裝資訊，用缺的克數概算）' : ''}</p>`
                                 : `<p class="text-xs mt-0.5" style="color:var(--muted)">尚未設定價格，成本沒有算進總計裡</p>`;
+                            // 「請家人買」按鈕：用event.stopPropagation()擋住事件冒泡，不然點這顆按鈕
+                            // 會連帶觸發整行的「標記已購買」點擊事件(因為按鈕是包在那個可點擊的行容器裡面)
+                            const askFamilyBtn = `<button onclick="event.stopPropagation(); addFamilyShoppingItem('${escapeHtmlAttr(displayName).replace(/'/g, "\\'")}', '${escapeHtmlAttr(priceNoteText).replace(/'/g, "\\'")}')" class="text-xs shrink-0" style="color:var(--sage)" title="複製這個品項到家庭採購清單，請家人幫忙買">👨‍👩‍👧 請家人買</button>`;
                             return `<div id="shopping-ing-row-${idx}" onclick="toggleIngredientPurchased('${escapeHtmlAttr(key)}', ${idx}, '${escapeHtmlAttr(displayName)}')" class="text-sm cursor-pointer select-none" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">
                                 <div class="flex items-center justify-between gap-2">
                                     <span data-ing-label class="min-w-0">${bought ? '✅ ' : ''}${displayName}</span>
