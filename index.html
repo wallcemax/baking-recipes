@@ -7447,6 +7447,42 @@
             if (!confirm('確定要離開這個家庭冰箱嗎？會切換回你自己的個人冰箱')) return;
             try {
                 const fridgeId = await getActiveFridgeId();
+                // 離開之前，先清掉指定給自己的所有提醒索引、並把品項本身的指定/提醒欄位重設——
+                // 一定要在真正離開(把自己從members移除)之前做，因為離開之後Firestore規則就
+                // 不會再讓你讀取這個家庭的清單/索引了。不然會出現兩個問題：①已經離開群組了，
+                // 但之前被指定的提醒還是照常發送；②清單上一直顯示「指定給已經離開群組的人」，
+                // 對留在群組裡的家人來說很困惑
+                try {
+                    const listRef = db.collection('familyShoppingLists').doc(fridgeId);
+                    const listDoc = await listRef.get();
+                    const items = (listDoc.exists && listDoc.data().items) || [];
+                    const myAssignedItemIds = items
+                        .filter(item => item.assignedToUid === currentUser.uid)
+                        .map(item => item.id);
+                    if (myAssignedItemIds.length) {
+                        const batch = db.batch();
+                        myAssignedItemIds.forEach(itemId => {
+                            batch.delete(db.collection('familyShoppingReminders').doc(itemId));
+                        });
+                        await batch.commit();
+                        // 品項本身的重設另外用交易處理(items是陣列，沒辦法用updateMask精準改單一元素)
+                        await db.runTransaction(async (tx) => {
+                            const freshDoc = await tx.get(listRef);
+                            const freshItems = (freshDoc.exists && freshDoc.data().items) || [];
+                            const resetItems = freshItems.map(item => {
+                                if (item.assignedToUid !== currentUser.uid) return item;
+                                return {
+                                    ...item, assignedToUid: null, assignedToName: null,
+                                    reminderTime: null, reminderDate: null, reminderLastNotifiedDate: null,
+                                    location: null, preciseTime: null,
+                                };
+                            });
+                            tx.set(listRef, { items: resetItems }, { merge: true });
+                        });
+                    }
+                } catch (err) {
+                    console.warn('離開家庭前清理提醒索引失敗（不影響離開本身，但可能會殘留舊提醒）', err);
+                }
                 await db.collection('fridgeMemberships').doc(currentUser.uid).delete();
                 await db.collection('fridges').doc(fridgeId).set({
                     members: firebase.firestore.FieldValue.arrayRemove(currentUser.uid),
