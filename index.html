@@ -7025,6 +7025,10 @@
                 await db.collection('fridgeMemberships').doc(currentUser.uid).set({ fridgeId });
                 await db.collection('fridges').doc(fridgeId).set({
                     members: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+                    // 新加入的成員預設是「僅檢視」，比較保守安全，擁有者要另外手動把信任的人
+                    // 升級成「可編輯」——用merge:true寫入，Firestore對map欄位是深層合併，
+                    // 不會把其他成員原本已經設定好的角色洗掉，只會新增/更新自己這一筆
+                    memberRoles: { [currentUser.uid]: 'viewer' },
                 }, { merge: true });
                 await db.collection('householdInvites').doc(currentUser.uid).delete();
                 activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null; userIngredientCostCache = null;
@@ -7033,6 +7037,7 @@
                 await renderFridgeItemsList();
                 await renderFridgeStaplesList();
                 await renderFridgeMembersList();
+                showToast('已加入家庭冰箱，目前是「僅檢視」權限，請冰箱擁有者到成員列表把你設為「可編輯」');
             } catch (err) {
                 alert('接受邀請失敗：' + err.message);
             }
