@@ -961,19 +961,19 @@
                         <input type="checkbox" id="shopping-reminder-enabled" onchange="onShoppingReminderToggle()" class="w-4 h-4">
                         <span class="font-display font-semibold text-sm">🔔 採購提醒</span>
                     </label>
-                    <p class="text-xs mb-3" style="color:var(--muted)">只要清單裡還有東西沒買，就會在設定的整點推播提醒你去採購</p>
+                    <p class="text-xs mb-3" style="color:var(--muted)">只要清單裡還有東西沒買，就會在設定的時間精確推播提醒你去採購</p>
                     <div id="shopping-reminder-fields" class="hidden">
                         <div class="grid grid-cols-2 gap-3 mb-3">
                             <div>
-                                <label class="text-xs block mb-1" style="color:var(--muted)">提醒時間（只能整點，24小時制）</label>
-                                <select id="shopping-reminder-hour" class="form-input !py-1.5 text-sm"></select>
+                                <label class="text-xs block mb-1" style="color:var(--muted)">提醒時間（精確到分鐘）</label>
+                                <input type="time" id="shopping-reminder-time" class="form-input !py-1.5 text-sm">
                             </div>
                             <div>
                                 <label class="text-xs block mb-1" style="color:var(--muted)">指定日期（選填）</label>
                                 <input type="date" id="shopping-reminder-date" class="form-input !py-1.5 text-sm">
                             </div>
                         </div>
-                        <p class="text-xs mb-3" style="color:var(--muted)">只設定時間、不選日期 → 每天到了那個整點都會提醒；如果有選日期 → 只有那天那個整點會提醒一次，之後就不會再提醒了</p>
+                        <p class="text-xs mb-3" style="color:var(--muted)">只設定時間、不選日期 → 每天到了那個時間點都會提醒；如果有選日期 → 只有那天那個時間點會提醒一次，之後就不會再提醒了</p>
                         <button onclick="saveShoppingReminderSettings()" class="btn-secondary text-xs !px-4 !py-2">儲存提醒設定</button>
                         <p id="shopping-reminder-status" class="text-xs mt-2" style="color:var(--sage)"></p>
                     </div>
@@ -995,6 +995,10 @@
                 <div class="mt-8 pt-6 border-t" style="border-color:var(--line)">
                     <h3 class="font-display font-semibold text-sm mb-1">👨‍👩‍👧 家庭採購清單</h3>
                     <p class="text-xs mb-3" style="color:var(--muted)">跟上面的個人清單是分開的——這裡是「請家人幫忙買」用的共用清單，可以指定要誰去買，避免大家重複採購同一樣東西</p>
+                    <div id="family-shopping-notif-banner" class="hidden text-xs mb-3 px-3 py-2 rounded-xl flex items-center justify-between gap-2 flex-wrap" style="background:var(--cream)">
+                        <span>🔔 開啟通知後，家人指定你買東西時手機才收得到提醒（不用另外去個人提醒或冰箱設定裡開）</span>
+                        <button id="family-shopping-notif-btn" onclick="enableFamilyShoppingNotifications()" class="btn-secondary text-xs !px-3 !py-1.5 shrink-0">開啟通知</button>
+                    </div>
                     <div class="flex gap-2 mb-3">
                         <input id="family-shopping-item-input" placeholder="輸入品項，例如：衛生紙" class="form-input !py-2 text-sm" onkeydown="if(event.key==='Enter'){event.preventDefault(); addFamilyShoppingItem();}">
                         <button onclick="addFamilyShoppingItem()" class="btn-primary shrink-0 !px-4 !py-2 text-sm">+ 新增品項</button>
@@ -6492,6 +6496,7 @@
             try { await renderShoppingListModal(); } catch (err) { console.warn('渲染採購清單失敗', err); }
             try { loadShoppingReminderSettings(); } catch (err) { console.warn('載入採購提醒設定失敗', err); }
             try { await renderFamilyShoppingList(); } catch (err) { console.warn('渲染家庭採購清單失敗', err); }
+            try { await checkFamilyShoppingNotifStatus(); } catch (err) { console.warn('檢查家庭採購通知狀態失敗', err); }
             pushModalHistoryState();
         }
         function closeShoppingListModal(fromPopState) {
@@ -6736,29 +6741,18 @@
                 </div>`;
             }).join('');
         }
-        // 載入使用者目前的採購提醒設定，把畫面上的開關/時間/日期都還原成上次儲存的狀態
-        // 填入小時的下拉選單選項，補0讓個位數也是兩位數顯示（例如09），24小時制固定顯示，
-        // 不受手機/瀏覽器的12小時制系統設定影響，不會有上下午混淆的問題。只能選整點，
-        // 因為排程本身就是每小時整點檢查一次，讓使用者以為能選分鐘只是假精確，乾脆拿掉
-        function populateReminderTimeSelects() {
-            const hourSel = document.getElementById('shopping-reminder-hour');
-            if (hourSel.options.length === 0) {
-                for (let h = 0; h < 24; h++) {
-                    hourSel.innerHTML += `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`;
-                }
-            }
-        }
+        // 載入使用者目前的採購提醒設定，把畫面上的開關/時間/日期都還原成上次儲存的狀態。
+        // 改成精確到分鐘的時間輸入(跟家庭採購清單那邊一致)，不再只能選整點——排程已經搬到
+        // Cloudflare Worker用Cron Trigger每分鐘檢查，可以真的做到分鐘級精確度，不再是假精確
         async function loadShoppingReminderSettings() {
             if (!currentUser) return;
-            populateReminderTimeSelects();
             try {
                 const doc = await db.collection('shoppingReminders').doc(currentUser.uid).get();
                 const data = doc.exists ? doc.data() : null;
                 const enabled = !!(data && data.enabled);
                 document.getElementById('shopping-reminder-enabled').checked = enabled;
                 document.getElementById('shopping-reminder-fields').classList.toggle('hidden', !enabled);
-                const [savedH] = ((data && data.time) || '09:00').split(':');
-                document.getElementById('shopping-reminder-hour').value = String(parseInt(savedH, 10));
+                document.getElementById('shopping-reminder-time').value = (data && data.time) || '09:00';
                 document.getElementById('shopping-reminder-date').value = (data && data.date) || '';
                 document.getElementById('shopping-reminder-status').textContent = '';
             } catch (err) {
@@ -6780,8 +6774,8 @@
         }
         async function saveShoppingReminderSettings() {
             if (!currentUser) { alert('請先登入'); return; }
-            const hourVal = document.getElementById('shopping-reminder-hour').value;
-            const time = `${String(hourVal).padStart(2, '0')}:00`; // 只能選整點，分鐘固定是00
+            const time = document.getElementById('shopping-reminder-time').value; // 'HH:MM'格式，精確到分鐘
+            if (!time) { alert('請設定提醒時間'); return; }
             const date = document.getElementById('shopping-reminder-date').value; // 選填，YYYY-MM-DD格式或空字串
             const statusEl = document.getElementById('shopping-reminder-status');
             statusEl.textContent = '設定中...';
@@ -7212,6 +7206,36 @@
                 return { ok: true };
             } catch (err) {
                 return { ok: false, error: err.message };
+            }
+        }
+        // 家庭採購清單專屬的通知開啟入口：不用先繞去個人提醒設定或冰箱設定才能授權——
+        // 直接沿用共用的ensureNotificationTokenRegistered()，跟其他兩個入口做的事完全一樣，
+        // 只是多開一個路徑方便使用者，確保「家人指定買東西」這件事真的能收到通知，
+        // 不會因為使用者剛好沒用過其他兩個功能而完全收不到
+        async function enableFamilyShoppingNotifications() {
+            const btn = document.getElementById('family-shopping-notif-btn');
+            if (btn) { btn.textContent = '設定中...'; btn.disabled = true; }
+            const result = await ensureNotificationTokenRegistered();
+            if (result.ok) {
+                showToast('🔔 通知已開啟，之後家人指定你買東西會收到提醒');
+                document.getElementById('family-shopping-notif-banner').classList.add('hidden');
+            } else {
+                showToast(`⚠️ 開啟通知失敗：${result.error}`);
+                if (btn) { btn.textContent = '開啟通知'; btn.disabled = false; }
+            }
+        }
+        // 檢查目前有沒有已經授權過的通知權杖，沒有的話才顯示「開啟通知」的橫幅——
+        // 已經授權過(不管是透過個人提醒、冰箱設定、還是這個入口本身)就不用再顯示，避免
+        // 已經開過通知的人還一直看到這個提示
+        async function checkFamilyShoppingNotifStatus() {
+            const banner = document.getElementById('family-shopping-notif-banner');
+            if (!banner || !currentUser) return;
+            try {
+                const doc = await db.collection('fcmTokens').doc(currentUser.uid).get();
+                const hasToken = doc.exists && Array.isArray(doc.data().tokens) && doc.data().tokens.length > 0;
+                banner.classList.toggle('hidden', hasToken);
+            } catch (err) {
+                console.warn('檢查通知授權狀態失敗', err);
             }
         }
         async function enableFridgeNotifications() {
