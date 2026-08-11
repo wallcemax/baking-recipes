@@ -945,21 +945,6 @@
     </div>
 
     <!-- 採購清單：加入多篇食譜、各自設定要做幾份，統一算出食材加總花費（例如一週菜單） -->
-    <!-- 家庭操作紀錄：獨立的檢視視窗，不是塞在冰箱視窗裡面——這樣用新分頁開啟時，
-         可以直接顯示乾淨的紀錄畫面，不用連帶載入整個冰箱食材管理介面 -->
-    <div id="family-activity-log-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
-        <div class="bg-white w-full md:max-w-lg max-h-[85vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
-            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
-                <h2 class="font-display text-xl sm:text-2xl font-bold">📋 操作紀錄</h2>
-                <button onclick="closeFamilyActivityLogModal()" class="text-3xl leading-none" style="color:var(--muted)" aria-label="關閉">×</button>
-            </div>
-            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
-                <p class="text-xs mb-4" style="color:var(--muted)">只顯示最近50筆紀錄</p>
-                <div id="family-activity-log-list" class="space-y-1.5"></div>
-            </div>
-        </div>
-    </div>
-
     <div id="shopping-list-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
         <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
             <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0 modal-photo-header" style="border-color:var(--line); background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785486399/Procurement_List_kumbtn.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785486399/Procurement_List_kumbtn.png') 2x);">
@@ -1122,7 +1107,7 @@
                 <p id="fridge-viewer-hint" class="hidden text-xs text-center mb-4 px-4 py-2 rounded-xl" style="background:var(--cream); color:var(--muted)">👁️ 你目前是「僅檢視」權限，只能看冰箱內容，沒辦法新增或編輯</p>
                 <input id="fridge-items-search" oninput="renderFridgeItemsList()" placeholder="🔍 搜尋冰箱食材..." class="form-input mb-3">
                 <div id="family-activity-log-section" class="hidden mb-3">
-                    <a href="javascript:void(0)" onclick="openFamilyActivityLogInNewTab()" class="text-xs" style="color:var(--sage); text-decoration:underline">📋 查看最近的操作紀錄（在新分頁開啟）</a>
+                    <a href="javascript:void(0)" onclick="openFamilyActivityLogModal()" class="text-xs" style="color:var(--sage); text-decoration:underline">📋 查看最近的操作紀錄</a>
                 </div>
                 <div id="fridge-items-list" class="space-y-2 mb-6"></div>
                 <div class="pt-4 pb-4 border-t" style="border-color:var(--line)">
@@ -1157,6 +1142,22 @@
                     <input type="file" id="fridge-item-photo-file" accept="image/jpeg,image/png,image/webp" capture="environment" class="hidden" onchange="handleFridgeItemPhotoOcr(event)">
                 </div>
                 <p id="fridge-item-photo-status" class="hidden text-xs mt-2 text-center" style="color:var(--chambray)"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 家庭操作紀錄：獨立的檢視視窗，不是塞在冰箱視窗裡面，畫面比較乾淨；DOM順序特地放在
+         fridge-modal後面，這樣兩個視窗z-index相同的情況下，才會正確疊在冰箱視窗上方顯示，
+         不會被冰箱視窗蓋住 -->
+    <div id="family-activity-log-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-lg max-h-[85vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">📋 操作紀錄</h2>
+                <button onclick="closeFamilyActivityLogModal()" class="text-3xl leading-none" style="color:var(--muted)" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <p class="text-xs mb-4" style="color:var(--muted)">只顯示最近50筆紀錄</p>
+                <div id="family-activity-log-list" class="space-y-1.5"></div>
             </div>
         </div>
     </div>
@@ -3216,15 +3217,6 @@
                 }
                 renderFridgeMembersList(); // 一登入就先確認一次是不是家庭冰箱，篩選按鈕的標籤才會馬上顯示正確文字，不用等打開冰箱視窗
                 loadMusicSettings();
-                // 從冰箱視窗「查看操作紀錄」開新分頁過來的話，網址會帶上?showActivityLog=1這個參數，
-                // 這裡偵測到就自動幫忙開啟紀錄視窗，不用使用者自己再手動點開冰箱、找到入口
-                try {
-                    const params = new URLSearchParams(location.search);
-                    if (params.get('showActivityLog') === '1') {
-                        history.replaceState(null, '', location.pathname); // 先清掉參數，避免重新整理又自動觸發一次
-                        openFamilyActivityLogModal();
-                    }
-                } catch (e) { console.warn('從網址參數開啟操作紀錄失敗', e); }
             } else {
                 info.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-sm flex items-center gap-2"><i class="fab fa-google"></i> 登入</button>`;
                 if (infoMobile) infoMobile.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-xs !px-3 !py-1.5 flex items-center gap-1"><i class="fab fa-google"></i> 登入</button>`;
@@ -7242,12 +7234,6 @@
             const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
             if (sameDay) return `今天 ${timeStr}`;
             return `${d.getMonth() + 1}/${d.getDate()} ${timeStr}`;
-        }
-        // 開新分頁顯示操作紀錄：用網址參數?showActivityLog=1帶到新分頁，新分頁的index.html載入、
-        // 登入狀態確認完成後，會自動偵測到這個參數並直接開啟紀錄視窗——這樣使用者可以一邊在原本
-        // 那個分頁繼續操作冰箱，一邊在新分頁查紀錄，兩邊互不干擾，也不用把紀錄硬塞進冰箱視窗裡面
-        function openFamilyActivityLogInNewTab() {
-            window.open(`${location.pathname}?showActivityLog=1`, '_blank');
         }
         async function openFamilyActivityLogModal() {
             if (!currentUser) return;
