@@ -6502,9 +6502,14 @@
             await saveShoppingList(list);
         }
 
+        // 採購清單裡「食譜內容」的session級快取：openShoppingListModal()重新打開視窗時會清空，
+        // 確保每次打開都拿到最新內容；但同一次開啟期間(調整份數會觸發多次重新渲染)不會對
+        // 沒變過的食譜重複讀取Firestore——這是跟成員名字快取同一個原則的優化
+        let shoppingListRecipeDocCache = {};
         async function openShoppingListModal() {
             if (!currentUser) { alert('請先登入才能使用採購清單'); return; }
             document.getElementById('shopping-list-modal').classList.remove('hidden');
+            shoppingListRecipeDocCache = {}; // 每次重新打開視窗都重置，確保拿到最新的食譜內容
             try { await renderShoppingListModal(); } catch (err) { console.warn('渲染採購清單失敗', err); }
             try { loadShoppingReminderSettings(); } catch (err) { console.warn('載入採購提醒設定失敗', err); }
             try { await renderFamilyShoppingList(); } catch (err) { console.warn('渲染家庭採購清單失敗', err); }
@@ -6749,15 +6754,9 @@
             try {
                 const doc = await db.collection('fridges').doc(fridgeId).get();
                 const memberUids = (doc.exists && doc.data().members) || [currentUser.uid];
-                members = await Promise.all(memberUids.map(async uid => {
-                    if (uid === currentUser.uid) return { uid, name: '你' };
-                    if (myLabels[uid]) return { uid, name: myLabels[uid] };
-                    try {
-                        const p = await db.collection('userProfiles').doc(uid).get();
-                        const name = (p.exists && (p.data().nickname || p.data().displayName)) || '一位成員';
-                        return { uid, name };
-                    } catch { return { uid, name: '一位成員' }; }
-                }));
+                members = await Promise.all(memberUids.map(async uid => ({
+                    uid, name: await resolveMemberDisplayName(uid, myLabels),
+                })));
             } catch (err) { console.warn('讀取家庭成員清單失敗', err); }
             const memberNameByUid = {}; // 給下面「誰新增的」那行文字查詢用
             members.forEach(m => { memberNameByUid[m.uid] = m.name; });
@@ -6900,21 +6899,29 @@
 
             summaryEl.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:var(--muted)">加總計算中…</div>`;
 
-            // 逐篇食譜去抓最新的食材資料（怕食譜後來被編輯過），再依這次要做的份數比例縮放，
-            // 先只加總「總共需要多少克」，成本要等下面第二階段才算（因為成本要用「整包多少錢」去推算，不是用零星克數概算）
+            // 逐篇食譜去抓最新的食材資料，先查這個session的快取(openShoppingListModal()重新
+            // 打開視窗時會清空)，同一次開啟期間(例如調整份數觸發的多次重新渲染)不會對沒變過的
+            // 食譜重複讀取Firestore；重新打開視窗才會拿到最新內容，避免在別的地方剛編輯過食譜、
+            // 卻在採購清單看到舊資料的風險
             const ingredientTotals = {}; // 依食材名稱加總：{grams}
             const perRecipeGrams = []; // 記錄每篇食譜各自用了哪些食材多少克，用來估算「這篇食譜大概花多少錢」的參考值
             const missingRecipes = [];
             await Promise.all(list.map(async item => {
-                let recipeDoc;
-                try {
-                    recipeDoc = await db.collection('recipes').doc(item.recipeId).get();
-                } catch (err) {
-                    missingRecipes.push(item.recipeName);
-                    return;
+                let recipe;
+                if (shoppingListRecipeDocCache[item.recipeId]) {
+                    recipe = shoppingListRecipeDocCache[item.recipeId];
+                } else {
+                    let recipeDoc;
+                    try {
+                        recipeDoc = await db.collection('recipes').doc(item.recipeId).get();
+                    } catch (err) {
+                        missingRecipes.push(item.recipeName);
+                        return;
+                    }
+                    if (!recipeDoc.exists) { missingRecipes.push(item.recipeName); return; }
+                    recipe = { id: recipeDoc.id, ...recipeDoc.data() };
+                    shoppingListRecipeDocCache[item.recipeId] = recipe;
                 }
-                if (!recipeDoc.exists) { missingRecipes.push(item.recipeName); return; }
-                const recipe = { id: recipeDoc.id, ...recipeDoc.data() };
                 const factor = item.servings / (recipe.servings || 1);
                 const thisRecipeGrams = {};
                 await Promise.all((recipe.ingredients || []).map(async ing => {
@@ -7092,6 +7099,27 @@
                 myFamilyMemberLabelsCache = myFamilyMemberLabelsCache || {};
             }
             return myFamilyMemberLabelsCache;
+        }
+        // 成員顯示名稱的共用快取：家庭採購清單、冰箱成員名單這兩個地方都需要「把uid轉換成
+        // 要顯示的名字」，而且都是「幾乎每次操作(指定成員/標記已購買/設定提醒/切換權限…)都會
+        // 重新渲染一次」的畫面——如果每次渲染都重新查一次userProfiles，會變成典型的N+1讀取問題：
+        // 成員人數沒變、名字也沒變，卻因為畫面重新渲染而一直重複查同樣的資料。
+        // 這裡用一個全域的uid->名稱快取，整個瀏覽期間每個uid只查一次Firestore，不管被
+        // 幾個不同的渲染函式呼叫幾次都一樣；只有稱謂設定改變時(setMyFamilyMemberLabel)才會
+        // 清掉快取重新算，其他情況下都直接吃快取，不會重複打Firestore
+        let memberDisplayNameCache = {};
+        async function resolveMemberDisplayName(uid, myLabels) {
+            if (uid === currentUser.uid) return '你';
+            if (myLabels && myLabels[uid]) return myLabels[uid]; // 我自己設定的稱謂優先，這個不用查Firestore、也不用快取(已經在myLabels裡了)
+            if (memberDisplayNameCache[uid] !== undefined) return memberDisplayNameCache[uid];
+            try {
+                const p = await db.collection('userProfiles').doc(uid).get();
+                const name = (p.exists && (p.data().nickname || p.data().displayName)) || '一位成員';
+                memberDisplayNameCache[uid] = name;
+                return name;
+            } catch {
+                return '一位成員'; // 查詢失敗的話不快取，下次還有機會重新查到正確的名字
+            }
         }
         async function setMyFamilyMemberLabel(uid) {
             if (!currentUser) return;
@@ -7574,15 +7602,7 @@
                 const myLabels = await loadMyFamilyMemberLabels();
                 const memberRows = await Promise.all(members.map(async uid => {
                     const isMe = uid === currentUser.uid;
-                    let name = isMe ? '你' : '一位成員';
-                    if (!isMe) {
-                        try {
-                            const p = await db.collection('userProfiles').doc(uid).get();
-                            // 顯示順序：我自訂的稱謂 > 對方自己設定的暱稱 > Google帳號名稱——
-                            // 自訂稱謂只影響我自己的畫面，跟KTV系統共用的暱稱資料是分開的兩件事
-                            name = myLabels[uid] || (p.exists && (p.data().nickname || p.data().displayName)) || '一位成員';
-                        } catch {}
-                    }
+                    const name = await resolveMemberDisplayName(uid, myLabels);
                     const isThisOwner = uid === fridgeId;
                     const role = isThisOwner ? 'owner' : (memberRoles[uid] || 'editor');
                     const roleLabel = role === 'owner' ? '建立者' : (role === 'viewer' ? '僅檢視' : '可編輯');
@@ -7595,11 +7615,11 @@
                     // 自訂稱謂的編輯欄位：每個「別人」都能設定，只有自己那一列不用(不需要幫自己取稱謂)
                     const labelEditor = !isMe ? `
                         <span class="flex items-center gap-1">
-                            <input type="text" id="family-label-input-${uid}" placeholder="幫他取個稱呼" value="${escapeHtmlAttr(myLabels[uid] || '')}" class="form-input !py-0.5 !px-1.5 text-xs" style="width:5.5rem;" onkeydown="if(event.key==='Enter') setMyFamilyMemberLabel('${uid}')">
+                            <input type="text" id="family-label-input-${uid}" placeholder="幫他取個稱呼" value="${escapeHtmlText(myLabels[uid] || '')}" class="form-input !py-0.5 !px-1.5 text-xs" style="width:5.5rem;" onkeydown="if(event.key==='Enter') setMyFamilyMemberLabel('${uid}')">
                             <button onclick="setMyFamilyMemberLabel('${uid}')" class="text-xs shrink-0" style="color:var(--sage)">設定</button>
                         </span>` : '';
                     return `<div class="flex items-center justify-between text-xs py-1 flex-wrap gap-1">
-                        <span>${escapeHtmlAttr(name)}${isShared ? `（${roleLabel}）` : ''}</span>
+                        <span>${escapeHtmlText(name)}${isShared ? `（${roleLabel}）` : ''}</span>
                         <span class="flex items-center gap-2">${toggleBtn}${labelEditor}</span>
                     </div>`;
                 }));
