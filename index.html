@@ -597,7 +597,7 @@
                     <input id="personal-nickname-input" type="text" placeholder="輸入暱稱（選填）" maxlength="8" style="flex:0 0 8rem; padding:0.4rem 0.8rem; border-radius:999px; border:1px solid var(--line); font-size:0.85rem;">
                     <button onclick="saveNickname()" class="text-xs font-medium shrink-0" style="color:var(--jam)">儲存</button>
                 </div>
-                <div class="grid sm:grid-cols-2 gap-3 mb-3">
+                <div class="grid sm:grid-cols-2 gap-3 mb-6">
                     <button onclick="showProfileModal()" class="personal-info-card">
                         <span class="personal-info-card-icon">🏅</span>
                         <span class="personal-info-card-text">
@@ -610,15 +610,6 @@
                         <span class="personal-info-card-text">
                             <span class="personal-info-card-title">做菜音樂</span>
                             <span id="personal-music-status" class="personal-info-card-sub">尚未設定</span>
-                        </span>
-                    </button>
-                </div>
-                <div class="grid sm:grid-cols-2 gap-3 mb-6">
-                    <button onclick="showSettingsModal()" class="personal-info-card">
-                        <span class="personal-info-card-icon">⚙️</span>
-                        <span class="personal-info-card-text">
-                            <span class="personal-info-card-title">通知與設定</span>
-                            <span id="personal-settings-status" class="personal-info-card-sub">管理通知權限、家人稱謂</span>
                         </span>
                     </button>
                 </div>
@@ -954,42 +945,17 @@
     </div>
 
     <!-- 採購清單：加入多篇食譜、各自設定要做幾份，統一算出食材加總花費（例如一週菜單） -->
-    <!-- 統一的通知與設定視窗：整合原本分散在冰箱/採購清單/家庭採購清單三個地方各自獨立的
-         「開啟通知」按鈕，變成一個集中管理的地方。實際授權瀏覽器通知權限的底層邏輯完全沒變
-         (ensureNotificationTokenRegistered)，這裡只是提供一個清楚、好找的統一入口 -->
-    <div id="settings-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
-        <div class="bg-white w-full md:max-w-lg max-h-[88vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+    <!-- 家庭操作紀錄：獨立的檢視視窗，不是塞在冰箱視窗裡面——這樣用新分頁開啟時，
+         可以直接顯示乾淨的紀錄畫面，不用連帶載入整個冰箱食材管理介面 -->
+    <div id="family-activity-log-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-lg max-h-[85vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
             <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
-                <h2 class="font-display text-xl sm:text-2xl font-bold">⚙️ 通知與設定</h2>
-                <button onclick="closeSettingsModal()" class="text-3xl leading-none" style="color:var(--muted)" aria-label="關閉">×</button>
+                <h2 class="font-display text-xl sm:text-2xl font-bold">📋 操作紀錄</h2>
+                <button onclick="closeFamilyActivityLogModal()" class="text-3xl leading-none" style="color:var(--muted)" aria-label="關閉">×</button>
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
-                <div class="mb-6 p-4 rounded-2xl" style="background:var(--cream)">
-                    <p class="font-display font-semibold text-sm mb-1">🔔 瀏覽器通知權限</p>
-                    <p class="text-xs mb-3" style="color:var(--muted)">開啟一次，冰箱到期提醒、採購提醒、家人指定採購通知都會共用這個授權，不用每個功能各自開一次</p>
-                    <div class="flex items-center gap-2 mb-2">
-                        <span id="settings-notif-status-badge" class="text-xs px-2.5 py-1 rounded-full" style="background:var(--line)">檢查中...</span>
-                    </div>
-                    <button id="settings-notif-btn" onclick="enableNotificationsFromSettings()" class="btn-secondary w-full">開啟通知權限</button>
-                    <p id="settings-notif-error" class="hidden text-xs mt-2" style="color:var(--danger)"></p>
-                </div>
-
-                <div class="mb-6 p-4 rounded-2xl" style="background:var(--cream)">
-                    <p class="font-display font-semibold text-sm mb-1">⏰ 個人採購提醒時間</p>
-                    <p class="text-xs mb-3" style="color:var(--muted)">要設定「幾點提醒我採購清單裡還有東西沒買」，請到採購清單裡設定——那裡才看得到清單內容，設定起來比較直覺</p>
-                    <button onclick="closeSettingsModal(); openShoppingListModal();" class="btn-secondary w-full text-sm">前往採購清單設定 →</button>
-                </div>
-
-                <div id="settings-family-section" class="hidden mb-6 p-4 rounded-2xl" style="background:var(--cream)">
-                    <p class="font-display font-semibold text-sm mb-1">👨‍👩‍👧 家人稱謂與家庭冰箱</p>
-                    <p class="text-xs mb-3" style="color:var(--muted)">幫家人取自訂稱呼、管理成員權限、查看操作紀錄，都在「我的冰箱」裡的成員名單管理</p>
-                    <button onclick="closeSettingsModal(); openFridgeModal();" class="btn-secondary w-full text-sm">前往我的冰箱管理 →</button>
-                </div>
-
-                <div class="p-4 rounded-2xl" style="background:var(--cream)">
-                    <p class="font-display font-semibold text-sm mb-1">✏️ 我的暱稱</p>
-                    <p class="text-xs" style="color:var(--muted)">暱稱設定在個人頁面最上方，全站（包含KTV系統、家人稱謂顯示）都會優先顯示你設定的暱稱</p>
-                </div>
+                <p class="text-xs mb-4" style="color:var(--muted)">只顯示最近50筆紀錄</p>
+                <div id="family-activity-log-list" class="space-y-1.5"></div>
             </div>
         </div>
     </div>
@@ -1155,6 +1121,9 @@
                 </div>
                 <p id="fridge-viewer-hint" class="hidden text-xs text-center mb-4 px-4 py-2 rounded-xl" style="background:var(--cream); color:var(--muted)">👁️ 你目前是「僅檢視」權限，只能看冰箱內容，沒辦法新增或編輯</p>
                 <input id="fridge-items-search" oninput="renderFridgeItemsList()" placeholder="🔍 搜尋冰箱食材..." class="form-input mb-3">
+                <div id="family-activity-log-section" class="hidden mb-3">
+                    <a href="javascript:void(0)" onclick="openFamilyActivityLogInNewTab()" class="text-xs" style="color:var(--sage); text-decoration:underline">📋 查看最近的操作紀錄（在新分頁開啟）</a>
+                </div>
                 <div id="fridge-items-list" class="space-y-2 mb-6"></div>
                 <div class="pt-4 pb-4 border-t" style="border-color:var(--line)">
                     <p class="font-semibold text-sm mb-1">🧂 常備食材清單</p>
@@ -1175,10 +1144,6 @@
                     <p class="font-semibold text-sm mb-1">👨‍👩‍👧 家庭冰箱</p>
                     <p class="text-xs mb-3" style="color:var(--muted)">邀請家人加入，大家共用同一個冰箱、一起管理庫存。對方要自己按接受才會真的加入，不會未經同意就被拉進來</p>
                     <div id="fridge-members-list" class="mb-3"></div>
-                    <div id="family-activity-log-section" class="hidden mb-3">
-                        <a href="javascript:void(0)" onclick="toggleFamilyActivityLog()" class="text-xs" style="color:var(--sage); text-decoration:underline">📋 查看最近的操作紀錄</a>
-                        <div id="family-activity-log-list" class="hidden mt-2 space-y-1" style="max-height:12rem; overflow-y:auto;"></div>
-                    </div>
                     <div class="flex gap-2">
                         <input id="fridge-invite-email" type="email" placeholder="輸入家人的帳號email" class="form-input flex-1">
                         <button onclick="inviteToHousehold()" class="btn-secondary whitespace-nowrap">送出邀請</button>
@@ -1526,7 +1491,7 @@
             const adminAchModal = document.getElementById('admin-achievements-modal');
             const orphanModal = document.getElementById('orphaned-images-modal');
             const shoppingModal = document.getElementById('shopping-list-modal');
-            const settingsModal = document.getElementById('settings-modal');
+            const activityLogModal = document.getElementById('family-activity-log-modal');
             const myCostsModal = document.getElementById('my-ingredient-costs-modal');
             const costModal = document.getElementById('ingredient-cost-modal');
             const fridgeModal = document.getElementById('fridge-modal');
@@ -1549,8 +1514,8 @@
                 closeOrphanedImagesModal(true);
             } else if (shoppingModal && !shoppingModal.classList.contains('hidden')) {
                 closeShoppingListModal(true);
-            } else if (settingsModal && !settingsModal.classList.contains('hidden')) {
-                closeSettingsModal(true);
+            } else if (activityLogModal && !activityLogModal.classList.contains('hidden')) {
+                closeFamilyActivityLogModal(true);
             } else if (costModal && !costModal.classList.contains('hidden')) {
                 // 設定食材價格要排在「我的食材成本」前面判斷：這個視窗常常是疊在「我的食材成本」上面
                 // 開啟的，如果順序反過來，「我的食材成本」會先被誤判成要關的那一層，跳過真正該關的
@@ -3251,6 +3216,15 @@
                 }
                 renderFridgeMembersList(); // 一登入就先確認一次是不是家庭冰箱，篩選按鈕的標籤才會馬上顯示正確文字，不用等打開冰箱視窗
                 loadMusicSettings();
+                // 從冰箱視窗「查看操作紀錄」開新分頁過來的話，網址會帶上?showActivityLog=1這個參數，
+                // 這裡偵測到就自動幫忙開啟紀錄視窗，不用使用者自己再手動點開冰箱、找到入口
+                try {
+                    const params = new URLSearchParams(location.search);
+                    if (params.get('showActivityLog') === '1') {
+                        history.replaceState(null, '', location.pathname); // 先清掉參數，避免重新整理又自動觸發一次
+                        openFamilyActivityLogModal();
+                    }
+                } catch (e) { console.warn('從網址參數開啟操作紀錄失敗', e); }
             } else {
                 info.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-sm flex items-center gap-2"><i class="fab fa-google"></i> 登入</button>`;
                 if (infoMobile) infoMobile.innerHTML = `<button onclick="googleLogin()" class="btn-secondary text-xs !px-3 !py-1.5 flex items-center gap-1"><i class="fab fa-google"></i> 登入</button>`;
@@ -3354,18 +3328,6 @@
             const favRecipes = allRecipes.filter(r => userFavorites.has(r.id)).slice(0, 18);
             renderPersonalScrollRow('personal-mine-scroll', mineRecipes, '還沒有建立過任何食譜');
             renderPersonalScrollRow('personal-fav-scroll', favRecipes, '還沒有收藏任何食譜');
-            updatePersonalSettingsPreview(); // 通知狀態快速預覽，不用點進設定視窗也能在卡片上看到目前開了沒
-        }
-        // 設定卡片的狀態預覽：獨立成一個小函式(而不是塞進renderPersonalDashboard本身)，
-        // 是因為這裡需要查Firestore(非同步)，不該讓整個儀表板渲染都跟著等這個查詢跑完才顯示
-        async function updatePersonalSettingsPreview() {
-            const el = document.getElementById('personal-settings-status');
-            if (!el || !currentUser) return;
-            try {
-                const doc = await db.collection('fcmTokens').doc(currentUser.uid).get();
-                const hasToken = doc.exists && Array.isArray(doc.data().tokens) && doc.data().tokens.length > 0;
-                el.textContent = hasToken ? '🔔 通知已開啟' : '通知尚未開啟，點擊設定';
-            } catch (err) { /* 查詢失敗就維持預設文字，不影響其他部分正常顯示 */ }
         }
         function renderPersonalScrollRow(containerId, recipes, emptyText) {
             const el = document.getElementById(containerId);
@@ -7281,18 +7243,21 @@
             if (sameDay) return `今天 ${timeStr}`;
             return `${d.getMonth() + 1}/${d.getDate()} ${timeStr}`;
         }
-        // 點連結才展開/收合，而且只有「第一次展開」才真的去讀資料——不會一打開冰箱視窗就自動載入，
-        // 維持「使用者不主動查看，就不產生額外讀取成本」的原則，跟其他快取一樣的設計思路
-        let familyActivityLogLoaded = false;
-        async function toggleFamilyActivityLog() {
-            const listEl = document.getElementById('family-activity-log-list');
-            if (!listEl) return;
-            const willShow = listEl.classList.contains('hidden');
-            listEl.classList.toggle('hidden', !willShow);
-            if (willShow && !familyActivityLogLoaded) {
-                familyActivityLogLoaded = true;
-                await renderFamilyActivityLog();
-            }
+        // 開新分頁顯示操作紀錄：用網址參數?showActivityLog=1帶到新分頁，新分頁的index.html載入、
+        // 登入狀態確認完成後，會自動偵測到這個參數並直接開啟紀錄視窗——這樣使用者可以一邊在原本
+        // 那個分頁繼續操作冰箱，一邊在新分頁查紀錄，兩邊互不干擾，也不用把紀錄硬塞進冰箱視窗裡面
+        function openFamilyActivityLogInNewTab() {
+            window.open(`${location.pathname}?showActivityLog=1`, '_blank');
+        }
+        async function openFamilyActivityLogModal() {
+            if (!currentUser) return;
+            document.getElementById('family-activity-log-modal').classList.remove('hidden');
+            await renderFamilyActivityLog();
+            pushModalHistoryState();
+        }
+        function closeFamilyActivityLogModal(fromPopState) {
+            document.getElementById('family-activity-log-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
         }
         async function renderFamilyActivityLog() {
             const el = document.getElementById('family-activity-log-list');
@@ -7472,65 +7437,6 @@
         // 直接沿用共用的ensureNotificationTokenRegistered()，跟其他兩個入口做的事完全一樣，
         // 只是多開一個路徑方便使用者，確保「家人指定買東西」這件事真的能收到通知，
         // 不會因為使用者剛好沒用過其他兩個功能而完全收不到
-        // ========== 統一的通知與設定視窗 ==========
-        // 整合原本分散在冰箱/採購清單/家庭採購清單三個地方各自獨立的「開啟通知」按鈕。
-        // 實際授權邏輯完全沒變，還是同一個ensureNotificationTokenRegistered()，這裡只是
-        // 提供一個從個人頁面就能找到、清楚集中的入口，不用去翻三個不同的地方才找得到
-        async function showSettingsModal() {
-            if (!currentUser) { alert('請先登入才能使用設定'); return; }
-            document.getElementById('settings-modal').classList.remove('hidden');
-            // 是不是共用家庭，決定要不要顯示「家人稱謂與家庭冰箱」那個區塊——個人冰箱沒有
-            // 家人可以取稱謂，顯示這個區塊沒有意義
-            try {
-                const fridgeId = await getActiveFridgeId();
-                const isShared = fridgeId !== currentUser.uid;
-                document.getElementById('settings-family-section')?.classList.toggle('hidden', !isShared);
-            } catch (err) { console.warn('檢查家庭狀態失敗', err); }
-            await refreshSettingsNotifStatus();
-            pushModalHistoryState();
-        }
-        function closeSettingsModal(fromPopState) {
-            document.getElementById('settings-modal').classList.add('hidden');
-            consumeModalHistoryState(fromPopState);
-        }
-        // 檢查目前有沒有已經授權過的通知權杖，更新畫面上的狀態徽章跟按鈕文字
-        async function refreshSettingsNotifStatus() {
-            const badge = document.getElementById('settings-notif-status-badge');
-            const btn = document.getElementById('settings-notif-btn');
-            if (!badge || !currentUser) return;
-            try {
-                const doc = await db.collection('fcmTokens').doc(currentUser.uid).get();
-                const hasToken = doc.exists && Array.isArray(doc.data().tokens) && doc.data().tokens.length > 0;
-                if (hasToken) {
-                    badge.textContent = '✅ 已開啟';
-                    badge.style.background = 'var(--sage)';
-                    badge.style.color = 'white';
-                    if (btn) btn.textContent = '🔄 重新設定這個裝置的通知';
-                } else {
-                    badge.textContent = '尚未開啟';
-                    badge.style.background = 'var(--line)';
-                    badge.style.color = '';
-                    if (btn) btn.textContent = '開啟通知權限';
-                }
-            } catch (err) {
-                console.warn('檢查通知狀態失敗', err);
-            }
-        }
-        async function enableNotificationsFromSettings() {
-            const btn = document.getElementById('settings-notif-btn');
-            const errEl = document.getElementById('settings-notif-error');
-            if (btn) { btn.textContent = '設定中...'; btn.disabled = true; }
-            if (errEl) errEl.classList.add('hidden');
-            const result = await ensureNotificationTokenRegistered();
-            if (result.ok) {
-                showToast('🔔 通知已開啟，冰箱到期、採購提醒、家人指定採購都會共用這個授權');
-                await refreshSettingsNotifStatus();
-            } else {
-                if (errEl) { errEl.textContent = `開啟失敗：${result.error}`; errEl.classList.remove('hidden'); }
-                if (btn) btn.textContent = '開啟通知權限';
-            }
-            if (btn) btn.disabled = false;
-        }
         async function enableFamilyShoppingNotifications() {
             const btn = document.getElementById('family-shopping-notif-btn');
             if (btn) { btn.textContent = '設定中...'; btn.disabled = true; }
@@ -7698,7 +7604,7 @@
                 await db.collection('householdInvites').doc(currentUser.uid).delete();
                 activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null; userIngredientCostCache = null;
                 myFridgeRoleCache = null; myFridgeRoleCacheKey = null;
-                familyActivityLogCache = null; familyActivityLogCacheKey = null; familyActivityLogLoaded = false;
+                familyActivityLogCache = null; familyActivityLogCacheKey = null;
                 document.getElementById('fridge-invite-banner').innerHTML = '';
                 await renderFridgeItemsList();
                 await renderFridgeStaplesList();
@@ -7765,7 +7671,7 @@
                 }, { merge: true });
                 activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null; userIngredientCostCache = null;
                 myFridgeRoleCache = null; myFridgeRoleCacheKey = null;
-                familyActivityLogCache = null; familyActivityLogCacheKey = null; familyActivityLogLoaded = false;
+                familyActivityLogCache = null; familyActivityLogCacheKey = null;
                 await renderFridgeItemsList();
                 await renderFridgeStaplesList();
                 await renderFridgeMembersList();
