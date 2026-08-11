@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>美食大富翁｜Just Do Eat</title>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+<style>
+* { box-sizing: border-box; }
+body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(circle at 20% 0%, #fff8e9, transparent 35%), linear-gradient(135deg, #f3dfc0, #dfbf91);
+    font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    color: #3b291d;
+}
+.container { width: min(1180px, 96%); margin: auto; padding: 20px 0 50px; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
+.logo { font-family: Georgia, serif; font-size: 26px; font-weight: 900; }
+.subtitle { color: #80664d; font-size: 12px; margin-top: 2px; }
+a.back-link { color: #a8324a; text-decoration: none; font-weight: 700; font-size: 13px; }
+button { border: 1px solid #d7b991; background: #fffaf1; color: #553a27; padding: 10px 16px; border-radius: 13px; font-weight: 800; cursor: pointer; transition: .2s; font-size: 14px; font-family: inherit; }
+button:hover { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(80,50,25,.15); }
+button:disabled { opacity: .4; cursor: not-allowed; transform: none; box-shadow: none; }
+.primary { color: white; background: #a8324a; border-color: #a8324a; }
+.card { background: rgba(255,247,231,.92); border: 1px solid #d5b78c; border-radius: 24px; padding: 16px; box-shadow: 0 20px 50px rgba(80,50,25,.15); margin-bottom: 14px; }
+input, select { border: 1px solid #d7b991; background: #fffaf9; border-radius: 12px; padding: 10px 12px; font-size: 14px; font-family: inherit; width: 100%; }
+
+/* 大廳/建房/等待室 */
+.room-list-item { width: 100%; text-align: left; background: #fffaf2; border: 1px solid #e0c8a5; border-radius: 16px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; }
+.room-list-item:hover { background: #fdf1de; }
+.player-slot { background: #fffaf2; border: 1px solid #e0c8a5; border-radius: 16px; padding: 10px; text-align: center; font-size: 13px; }
+.player-slot.ready { background: #dcefd9; border-color: #a9d3a2; }
+.player-slot.empty { opacity: .4; background: #f0e3cc; }
+
+/* 棋盤 */
+.players { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 8px; margin-bottom: 12px; }
+.player { display: flex; align-items: center; gap: 8px; background: #fffaf2; border: 2px solid #e0c8a5; border-radius: 16px; padding: 9px 11px; }
+.player.bankrupt { opacity: .4; text-decoration: line-through; }
+.player.current-turn { border-color: #a8324a; box-shadow: 0 0 0 3px rgba(168,50,74,.15); }
+.avatar { width: 36px; height: 36px; border-radius: 50%; background: #f0ddbd; display: grid; place-items: center; font-size: 19px; flex-shrink: 0; }
+.player-name { font-weight: 900; font-size: 13px; }
+.player-money { font-weight: 900; color: #a8324a; font-size: 13px; }
+.board-wrapper { display: flex; justify-content: center; }
+.board { width: min(720px, 94vw); aspect-ratio: 1/1; display: grid; grid-template-columns: repeat(7,1fr); grid-template-rows: repeat(7,1fr); gap: 4px; background: #4a3021; padding: 5px; border-radius: 18px; box-shadow: 0 20px 40px rgba(70,40,20,.3), inset 0 0 0 2px #755037; }
+.cell { position: relative; display: flex; align-items: center; justify-content: center; text-align: center; background: #fffaf0; border-radius: 8px; border: 1px solid #ead6b9; font-weight: 800; font-size: 10px; cursor: default; overflow: hidden; padding: 2px; }
+.cell small { position: absolute; top: 2px; left: 3px; font-size: 7px; color: #977c62; }
+.cell .icon { display: block; font-size: 18px; }
+.cell.food { background: #eaf1df; }
+.cell.event { background: #f7e2e8; }
+.cell.chance { background: #e4edf4; }
+.cell.special { background: #f2ddba; }
+.cell.corner { background: #f1d49b; font-size: 11px; }
+.cell .owner-mark { position: absolute; top: 1px; right: 2px; font-size: 8px; }
+.cell .house-mark { position: absolute; bottom: 1px; left: 2px; font-size: 8px; }
+.player-piece { position: absolute; font-size: 13px; filter: drop-shadow(0 2px 1px rgba(50,30,15,.35)); }
+.center { grid-column: 2/7; grid-row: 2/7; position: relative; display: flex; align-items: center; justify-content: center; border-radius: 12px; background: radial-gradient(circle, #fff9ed 0%, #f4dfba 100%); border: 2px solid #d3ad76; overflow: hidden; }
+.center-content { text-align: center; z-index: 2; padding: 6px; }
+.game-title-big { font-family: Georgia, serif; font-size: clamp(18px,3.4vw,28px); font-weight: 900; color: #a8324a; }
+
+/* 控制列 */
+.controls { display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.status { text-align: center; margin-top: 10px; font-weight: 800; color: #a8324a; font-size: 14px; min-height: 20px; }
+.log { margin-top: 12px; background: #fffaf2; border: 1px solid #dfc7a6; border-radius: 14px; padding: 10px 13px; font-size: 12px; color: #765d47; max-height: 90px; overflow-y: auto; }
+
+/* Modal */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(40,25,15,.5); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+.modal-box { background: #fffaf1; border-radius: 22px; max-width: 420px; width: 100%; max-height: 85vh; overflow-y: auto; padding: 20px; box-shadow: 0 25px 60px rgba(0,0,0,.3); }
+.hidden { display: none !important; }
+.chip { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 11px; background: #f0ddbd; margin: 2px; }
+.toast { position: fixed; right: 16px; bottom: 16px; background: #38271c; color: white; padding: 12px 16px; border-radius: 14px; opacity: 0; transition: .25s; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,.25); z-index: 100; max-width: 320px; }
+
+@media(max-width: 700px) {
+    .cell { font-size: 8px; }
+    .cell .icon { font-size: 14px; }
+    .game-title-big { font-size: 16px; }
+    .player-piece { font-size: 10px; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <div>
+            <div class="logo">🎲 Just Do Eat · 美食大富翁</div>
+            <div class="subtitle">吃遍世界・賺遍美食街・成為料理大亨</div>
+        </div>
+        <a href="index.html" class="back-link">← 回到 JUST DO EAT</a>
+    </div>
+
+    <div id="login-gate" class="card hidden" style="text-align:center; padding:40px 20px;">
+        <p class="mb-3">請先登入才能玩美食大富翁</p>
+        <button class="primary" onclick="googleLogin()">使用 Google 登入</button>
+    </div>
+
+    <div id="app-root"></div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+    // ---------------------------------------------------------------
+    // Firebase初始化：跟主站(index.html)用同一份設定，共用同一個登入狀態
+    // ---------------------------------------------------------------
+    const firebaseConfig = {
+        apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
+        authDomain: "recipe-synchronization.firebaseapp.com",
+        projectId: "recipe-synchronization",
+        storageBucket: "recipe-synchronization.firebasestorage.app",
+        messagingSenderId: "559668909743",
+        appId: "1:559668909743:web:63dc34572b98839479265a"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    let currentUser = null;
+    let myDisplayName = null;
+
+    function googleLogin() {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        auth.signInWithPopup(provider).catch(err => showToast('登入失敗：' + err.message));
+    }
+    function showToast(message) {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.style.opacity = '1';
+        clearTimeout(showToast._t);
+        showToast._t = setTimeout(() => { toast.style.opacity = '0'; }, 2600);
+    }
+    function escapeHtml(str) {
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    auth.onAuthStateChanged(async user => {
+        currentUser = user;
+        document.getElementById('login-gate').classList.toggle('hidden', !!user);
+        if (!user) { document.getElementById('app-root').innerHTML = ''; return; }
+        try {
+            const doc = await db.collection('userProgress').doc(user.uid).get();
+            myDisplayName = (doc.exists && doc.data().nickname) || user.displayName || '玩家';
+        } catch (e) { myDisplayName = user.displayName || '玩家'; }
+        renderMonopolyLobby();
+    });
+
+    // ============================================================
+    // 棋盤資料：24格(4角落+13可購買地+3機會格+3事件格+1特殊格)，
+    // 跟使用者提供的設計稿版面一致。food類型的格子在遊戲開始時會
+    // 抽真實食譜資料換上名稱/圖片/售價(依熱量或隨機決定)，不是固定死的文字
+    // ============================================================
+    const BOARD_LAYOUT = [
+        { type: 'corner', name: '起點', icon: '🏁', corner: 'go' },
+        { type: 'food', name: '麵包街', icon: '🍞', basePrice: 800 },
+        { type: 'food', name: '可頌店', icon: '🥐', basePrice: 900 },
+        { type: 'chance', name: '神秘料理箱', icon: '🎁' },
+        { type: 'food', name: '甜點巷', icon: '🍰', basePrice: 1000 },
+        { type: 'food', name: '珍奶站', icon: '🧋', basePrice: 700 },
+        { type: 'event', name: '食安稽查', icon: '🚨' },
+        { type: 'food', name: '壽司街', icon: '🍣', basePrice: 1400 },
+        { type: 'special', name: '豪華餐廳', icon: '💰', basePrice: 2400 },
+        { type: 'food', name: '拉麵屋', icon: '🍜', basePrice: 1300 },
+        { type: 'corner', name: '停車場', icon: '🚗', corner: 'parking' },
+        { type: 'chance', name: '幸運轉盤', icon: '🎲' },
+        { type: 'food', name: '餃子館', icon: '🥟', basePrice: 1100 },
+        { type: 'event', name: '美食度假村', icon: '🏝️' },
+        { type: 'corner', name: '美食王國', icon: '🏆', corner: 'jail' },
+        { type: 'food', name: '漢堡城', icon: '🍔', basePrice: 1200 },
+        { type: 'food', name: '沙拉村', icon: '🥗', basePrice: 600 },
+        { type: 'event', name: '辣椒挑戰', icon: '🔥' },
+        { type: 'food', name: '漁港', icon: '🐟', basePrice: 1500 },
+        { type: 'food', name: '烤雞堡', icon: '🍗', basePrice: 1000 },
+        { type: 'corner', name: '回家休息', icon: '🏠', corner: 'gotojail' },
+        { type: 'food', name: '豬排町', icon: '🐷', basePrice: 1100 },
+        { type: 'food', name: '飯糰站', icon: '🍙', basePrice: 500 },
+        { type: 'chance', name: '驚喜事件', icon: '🎁' },
+    ];
+    const BOARD_SIZE = BOARD_LAYOUT.length; // 24
+    const MAX_MONOPOLY_MEMBERS = 4;
+    const START_MONEY = 15000;
+    const PASS_GO_BONUS = 2000;
+    const HOUSE_COST_RATIO = 0.5; // 蓋一棟房子的造價是地價的一半
+    const MAX_HOUSES = 4; // 4棟房子之後可以再蓋1間旅館(用第5級表示)
+    const JAIL_TILE_INDEX = BOARD_LAYOUT.findIndex(c => c.corner === 'jail');
+    const GOTOJAIL_TILE_INDEX = BOARD_LAYOUT.findIndex(c => c.corner === 'gotojail');
+
+    // 機會卡效果池：隨機抽一張套用，正負效果都有，主題圍繞料理/餐飲場景
+    const CHANCE_CARDS = [
+        { text: '🎉 新品試吃大成功！獲得 $1000', effect: (p) => ({ money: 1000 }) },
+        { text: '😱 食材過期被迫報廢，損失 $600', effect: (p) => ({ money: -600 }) },
+        { text: '⭐ 被美食部落客推薦！獲得 $1500', effect: (p) => ({ money: 1500 }) },
+        { text: '🔧 廚房設備故障，維修費 $800', effect: (p) => ({ money: -800 }) },
+        { text: '🎫 獲得一張「免服務費」卡，下次繳費可折抵 $500', effect: (p) => ({ money: 500 }) },
+        { text: '🚓 衛生檢查不合格，直接關店整頓！', effect: (p) => ({ toJail: true }) },
+        { text: '🎊 前進到起點，直接收 $2000 開幕禮金！', effect: (p) => ({ moveTo: 0, collectGo: true }) },
+        { text: '💸 繳交食品安全講習費 $300', effect: (p) => ({ money: -300 }) },
+        { text: '🍀 幸運星探照到你，獲得 $700', effect: (p) => ({ money: 700 }) },
+        { text: '📉 原物料漲價，額外支出 $500', effect: (p) => ({ money: -500 }) },
+    ];
+    // 事件格是固定效果(不是隨機抽)，踩到哪一格效果就是哪一格專屬的
+    const EVENT_TILE_EFFECTS = {
+        '食安稽查': { text: '被抽中食安稽查，繳交檢驗費 $400', money: -400 },
+        '美食度假村': { text: '員工旅遊放鬆一下，花費 $500，但心情變好獲得靈感 $300', money: -200 },
+        '辣椒挑戰': { text: '挑戰辣度成功，獲得挑戰獎金 $600', money: 600 },
+    };
+
+    let monopolyState = {
+        roomId: null, unsubscribe: null, lastSeenStatus: null, gameOverScoreSaved: false,
+    };
+    function monopolyCleanup() {
+        if (monopolyState.unsubscribe) { monopolyState.unsubscribe(); monopolyState.unsubscribe = null; }
+        if (monopolyLobbyUnsubscribe) { monopolyLobbyUnsubscribe(); monopolyLobbyUnsubscribe = null; }
+        monopolyState = { roomId: null, unsubscribe: null, lastSeenStatus: null, gameOverScoreSaved: false };
+    }
+
+    // ---------- 大廳：房間列表 ----------
+    let monopolyLobbyUnsubscribe = null;
+    function renderMonopolyLobby() {
+        monopolyCleanup();
+        document.getElementById('app-root').innerHTML = `
+            <div class="card">
+                <button class="primary" style="width:100%; margin-bottom:10px;" onclick="openCreateMonopolyRoomForm()">➕ 建立新房間</button>
+                <p style="font-weight:800; font-size:14px; margin-bottom:8px;">🚪 目前開放的房間</p>
+                <div id="monopoly-room-list"><p style="text-align:center; color:#8a7159; font-size:13px;">載入中...</p></div>
+            </div>
+        `;
+        monopolyLobbyUnsubscribe = db.collection('monopolyGameRooms').where('status', '==', 'waiting').limit(20)
+            .onSnapshot(snap => {
+                const listEl = document.getElementById('monopoly-room-list');
+                if (!listEl) return;
+                const staleMs = 30 * 60 * 1000;
+                const now = Date.now();
+                const activeRooms = snap.docs.filter(doc => {
+                    const c = doc.data().createdAt;
+                    if (!c || typeof c.toMillis !== 'function') return true;
+                    return (now - c.toMillis()) < staleMs;
+                });
+                if (!activeRooms.length) { listEl.innerHTML = `<p style="text-align:center; color:#8a7159; font-size:13px;">目前沒有開放中的房間，建立一個新的吧！</p>`; return; }
+                listEl.innerHTML = activeRooms.map(doc => {
+                    const d = doc.data();
+                    const modeLabel = d.mode === 'lastStanding' ? '死鬥模式' : `纏鬥模式・${d.totalRounds}回合`;
+                    return `<button class="room-list-item" onclick="promptJoinMonopolyRoom('${doc.id}')">
+                        <b>${escapeHtml(d.roomName || '未命名房間')}</b>
+                        <span style="display:block; font-size:11px; color:#8a7159; margin-top:3px;">👑${escapeHtml((d.members[0] && d.members[0].name) || '?')}・${d.members.length}/${MAX_MONOPOLY_MEMBERS}人・${modeLabel}</span>
+                    </button>`;
+                }).join('');
+            }, err => {
+                const listEl = document.getElementById('monopoly-room-list');
+                if (listEl) listEl.innerHTML = `<p style="text-align:center; color:#a8324a; font-size:13px;">載入失敗：${err.message}</p>`;
+            });
+    }
+    function openCreateMonopolyRoomForm() {
+        document.getElementById('app-root').innerHTML = `
+            <div class="card">
+                <label style="font-size:12px; color:#8a7159;">房間名稱</label>
+                <input id="mp-room-name" placeholder="例如：週末美食大戰" style="margin-bottom:10px;">
+                <label style="font-size:12px; color:#8a7159;">密碼（給朋友加入用）</label>
+                <input id="mp-room-password" placeholder="設定一個密碼" style="margin-bottom:10px;">
+                <label style="font-size:12px; color:#8a7159;">遊戲模式</label>
+                <div style="display:flex; gap:8px; margin-bottom:6px;">
+                    <button id="mp-mode-rounds-btn" onclick="setMpCreateMode('rounds')" class="chip" style="flex:1; cursor:pointer; background:#a8324a; color:white;">纏鬥模式(固定回合)</button>
+                    <button id="mp-mode-last-btn" onclick="setMpCreateMode('lastStanding')" class="chip" style="flex:1; cursor:pointer;">死鬥模式(戰到剩一人)</button>
+                </div>
+                <p style="font-size:11px; color:#8a7159; margin-bottom:10px;">纏鬥模式：玩到每個人都繞完固定圈數，資產最多的獲勝。死鬥模式：玩到只剩一個人沒破產為止，傳統大富翁玩法，可能玩比較久</p>
+                <div id="mp-rounds-row" style="margin-bottom:10px;">
+                    <label style="font-size:12px; color:#8a7159;">回合數(每人繞完幾圈)</label>
+                    <select id="mp-rounds-select">
+                        <option value="5">5圈</option><option value="10" selected>10圈</option><option value="15">15圈</option><option value="20">20圈</option>
+                    </select>
+                </div>
+                <p style="font-size:12px; color:#8a7159; margin-bottom:12px;">最多 ${MAX_MONOPOLY_MEMBERS} 人，可購買的地產會抽取平台真實食譜當主題</p>
+                <button class="primary" style="width:100%; margin-bottom:8px;" onclick="createMonopolyRoom()">建立房間</button>
+                <button style="width:100%;" onclick="renderMonopolyLobby()">返回</button>
+            </div>
+        `;
+    }
+    let mpCreateMode = 'rounds';
+    function setMpCreateMode(mode) {
+        mpCreateMode = mode;
+        document.getElementById('mp-mode-rounds-btn').style.background = mode === 'rounds' ? '#a8324a' : '';
+        document.getElementById('mp-mode-rounds-btn').style.color = mode === 'rounds' ? 'white' : '';
+        document.getElementById('mp-mode-last-btn').style.background = mode === 'lastStanding' ? '#a8324a' : '';
+        document.getElementById('mp-mode-last-btn').style.color = mode === 'lastStanding' ? 'white' : '';
+        document.getElementById('mp-rounds-row').classList.toggle('hidden', mode !== 'rounds');
+    }
+    function generateMonopolyRoomId() {
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        let code = '';
+        for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+        return code;
+    }
+    async function createMonopolyRoom() {
+        const roomName = (document.getElementById('mp-room-name').value || '').trim() || '未命名房間';
+        const password = (document.getElementById('mp-room-password').value || '').trim();
+        if (!password) { showToast('請設定密碼'); return; }
+        const totalRounds = parseInt(document.getElementById('mp-rounds-select').value, 10);
+        const roomId = generateMonopolyRoomId();
+        try {
+            // 開新房間前，先強制關閉這個人之前建立、還沒關閉的舊房間(常見情境是玩到一半直接關分頁)，
+            // 避免同一個人手上同時卡著好幾個廢棄房間——跟靈魂畫手同一套處理邏輯
+            const oldRoomsSnap = await db.collection('monopolyGameRooms').where('hostUid', '==', currentUser.uid).get();
+            for (const oldDoc of oldRoomsSnap.docs) await oldDoc.ref.delete();
+
+            await db.collection('monopolyGameRooms').doc(roomId).set({
+                hostUid: currentUser.uid,
+                members: [{ uid: currentUser.uid, name: myDisplayName }],
+                memberUids: [currentUser.uid],
+                roomName, password,
+                status: 'waiting',
+                mode: mpCreateMode, totalRounds: mpCreateMode === 'rounds' ? totalRounds : null,
+                readyUids: [],
+                board: null, players: null, turnOrder: null, currentTurnUid: null,
+                eventLog: [], createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            });
+            enterMonopolyRoom(roomId);
+        } catch (err) { showToast('建立房間失敗：' + err.message); }
+    }
+    function promptJoinMonopolyRoom(roomId) {
+        const password = prompt('請輸入房間密碼');
+        if (password === null) return;
+        joinMonopolyRoom(roomId, password);
+    }
+    async function joinMonopolyRoom(roomId, password) {
+        try {
+            const ref = db.collection('monopolyGameRooms').doc(roomId);
+            const doc = await ref.get();
+            if (!doc.exists) { showToast('房間不存在，可能剛好被關閉了'); renderMonopolyLobby(); return; }
+            const data = doc.data();
+            if (data.password !== password) { showToast('密碼錯誤'); return; }
+            if (data.status !== 'waiting') { showToast('這個房間已經開始遊戲了，沒辦法中途加入'); return; }
+            if (data.members.length >= MAX_MONOPOLY_MEMBERS) { showToast('房間已滿'); return; }
+            if (data.memberUids.includes(currentUser.uid)) { enterMonopolyRoom(roomId); return; }
+            await ref.update({
+                members: firebase.firestore.FieldValue.arrayUnion({ uid: currentUser.uid, name: myDisplayName }),
+                memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+            });
+            enterMonopolyRoom(roomId);
+        } catch (err) { showToast('加入房間失敗：' + err.message); }
+    }
+
+    // ---------- 房間：即時同步 ----------
+    function enterMonopolyRoom(roomId) {
+        monopolyState.roomId = roomId;
+        monopolyState.unsubscribe = db.collection('monopolyGameRooms').doc(roomId).onSnapshot(doc => {
+            if (!doc.exists) { showToast('房間已經被關閉'); monopolyCleanup(); renderMonopolyLobby(); return; }
+            const data = doc.data();
+            if (data.status === 'waiting') renderMonopolyWaitingRoom(data);
+            else if (data.status === 'playing') renderMonopolyBoard(data);
+            else if (data.status === 'gameover') renderMonopolyGameOver(data);
+        }, err => console.warn('房間同步失敗', err));
+    }
+    function renderMonopolyWaitingRoom(data) {
+        const isHost = data.hostUid === currentUser.uid;
+        const readyUids = data.readyUids || [];
+        const allReady = data.members.length >= 2 && data.members.every(m => readyUids.includes(m.uid));
+        const iAmReady = readyUids.includes(currentUser.uid);
+        const slots = Array.from({ length: MAX_MONOPOLY_MEMBERS }, (_, i) => {
+            const m = data.members[i];
+            if (!m) return `<div class="player-slot empty">空位</div>`;
+            const ready = readyUids.includes(m.uid);
+            const kickBtn = (isHost && m.uid !== currentUser.uid)
+                ? `<br><button onclick="event.stopPropagation(); kickMonopolyMember('${m.uid}','${escapeHtml(m.name).replace(/'/g, "\\'")}')" style="font-size:10px; padding:3px 8px; margin-top:4px; color:#a8324a;">✕踢除</button>` : '';
+            return `<div class="player-slot ${ready ? 'ready' : ''}">${m.uid === data.hostUid ? '👑 ' : ''}${escapeHtml(m.name)}<br>${ready ? '✅已準備' : '⏳準備中'}${kickBtn}</div>`;
+        }).join('');
+        const modeLabel = data.mode === 'lastStanding' ? '死鬥模式(戰到只剩一人)' : `纏鬥模式(${data.totalRounds}回合)`;
+        document.getElementById('app-root').innerHTML = `
+            <div class="card">
+                <p style="font-size:12px; color:#8a7159;">房間代碼</p>
+                <p style="font-size:22px; font-weight:900; letter-spacing:2px;">${monopolyState.roomId}</p>
+                <p style="font-weight:800; font-size:14px; margin:10px 0 6px;">👥 房間成員（${data.members.length}/${MAX_MONOPOLY_MEMBERS}）・至少2人才能開始</p>
+                <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:8px;">${slots}</div>
+                <p style="font-size:12px; color:#8a7159;">${modeLabel}</p>
+            </div>
+            <div class="card">
+                <button class="primary" style="width:100%; margin-bottom:8px;" onclick="toggleMonopolyReady(${!iAmReady})">${iAmReady ? '取消準備' : '✅ 我準備好了'}</button>
+                <button style="width:100%;" onclick="confirmStartMonopolyGame()" ${allReady ? '' : 'disabled'}>${allReady ? '🎲 開始遊戲' : '等待全部人準備好...'}</button>
+            </div>
+            <button style="width:100%;" onclick="leaveMonopolyRoom()">離開房間</button>
+        `;
+    }
+    async function toggleMonopolyReady(ready) {
+        try {
+            await db.collection('monopolyGameRooms').doc(monopolyState.roomId).update({
+                readyUids: ready ? firebase.firestore.FieldValue.arrayUnion(currentUser.uid) : firebase.firestore.FieldValue.arrayRemove(currentUser.uid),
+            });
+        } catch (err) { console.warn('切換準備狀態失敗', err); }
+    }
+    async function kickMonopolyMember(uid, name) {
+        if (!confirm(`確定要把「${name}」踢出房間嗎？`)) return;
+        try {
+            const ref = db.collection('monopolyGameRooms').doc(monopolyState.roomId);
+            const doc = await ref.get();
+            const data = doc.data();
+            const members = data.members.filter(m => m.uid !== uid);
+            await ref.update({ members, memberUids: members.map(m => m.uid), readyUids: (data.readyUids || []).filter(u => u !== uid) });
+        } catch (err) { showToast('踢除失敗：' + err.message); }
+    }
+    async function leaveMonopolyRoom() {
+        try {
+            const ref = db.collection('monopolyGameRooms').doc(monopolyState.roomId);
+            const doc = await ref.get();
+            if (doc.exists) {
+                const data = doc.data();
+                const members = data.members.filter(m => m.uid !== currentUser.uid);
+                if (!members.length || data.hostUid === currentUser.uid) {
+                    await ref.delete();
+                } else {
+                    await ref.update({ members, memberUids: members.map(m => m.uid) });
+                }
+            }
+        } catch (err) { console.warn(err); }
+        monopolyCleanup();
+        renderMonopolyLobby();
+    }
+
+    // ---------- 開始遊戲：抽真實食譜資料組成棋盤、初始化玩家狀態 ----------
+    async function confirmStartMonopolyGame() {
+        const ref = db.collection('monopolyGameRooms').doc(monopolyState.roomId);
+        try {
+            const claimed = await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                if (!freshDoc.exists || freshDoc.data().status !== 'waiting') return false;
+                const d = freshDoc.data();
+                const readyUids = d.readyUids || [];
+                if (d.members.length < 2 || !d.members.every(m => readyUids.includes(m.uid))) return false;
+                return d; // 先只做確認，實際組資料在交易外面做(因為要另外查recipes集合，交易裡不方便夾別的查詢)
+            });
+            if (!claimed) { showToast('還沒全部人準備好，或已經被其他成員開始了'); return; }
+
+            // 抽真實食譜當作可購買地產的主題——隨機抽13篇(對應13個food格)，數量不夠的話允許重複抽
+            let recipeSample = [];
+            try {
+                const recipesSnap = await db.collection('recipes').limit(80).get();
+                const allRecipes = recipesSnap.docs.map(d => ({ id: d.id, name: d.data().name, imageUrl: d.data().imageUrl || null }));
+                const foodTileCount = BOARD_LAYOUT.filter(c => c.type === 'food').length;
+                const shuffled = allRecipes.sort(() => Math.random() - 0.5);
+                for (let i = 0; i < foodTileCount; i++) {
+                    recipeSample.push(shuffled.length ? shuffled[i % shuffled.length] : null);
+                }
+            } catch (err) { console.warn('抽取食譜失敗，改用預設地名', err); }
+
+            let foodIdx = 0;
+            const board = BOARD_LAYOUT.map(tile => {
+                const t = { type: tile.type, name: tile.name, icon: tile.icon, corner: tile.corner || null, ownerUid: null, houses: 0, mortgaged: false };
+                if (tile.type === 'food' || tile.type === 'special') {
+                    const recipe = tile.type === 'food' ? recipeSample[foodIdx++] : null;
+                    t.name = recipe ? recipe.name : tile.name;
+                    t.recipeImage = recipe ? recipe.imageUrl : null;
+                    t.price = tile.basePrice;
+                    t.rentBase = Math.round(tile.basePrice * 0.1);
+                }
+                return t;
+            });
+
+            const roomDoc = await ref.get();
+            const roomData = roomDoc.data();
+            const turnOrder = roomData.members.map(m => m.uid).sort(() => Math.random() - 0.5); // 隨機決定行動順序
+            const players = {};
+            roomData.members.forEach(m => {
+                players[m.uid] = { name: m.name, position: 0, money: START_MONEY, properties: [], inJail: false, jailTurns: 0, bankrupt: false, doublesCount: 0, laps: 0 };
+            });
+
+            await ref.update({
+                status: 'playing', board, players, turnOrder, currentTurnUid: turnOrder[0],
+                currentRound: 1, lastDiceRoll: null, eventLog: ['🎲 遊戲開始！' + (turnOrder.map(uid => players[uid].name).join(' → '))],
+                pendingAction: null,
+            });
+        } catch (err) { showToast('開始遊戲失敗：' + err.message); }
+    }
+
+    // ---------- 遊戲畫面：棋盤+玩家狀態+操作按鈕 ----------
+    function renderMonopolyBoard(data) {
+        const myUid = currentUser.uid;
+        const isMyTurn = data.currentTurnUid === myUid;
+        const me = data.players[myUid];
+
+        const playersHtml = data.turnOrder.map(uid => {
+            const p = data.players[uid];
+            const isCurrent = uid === data.currentTurnUid;
+            return `<div class="player ${p.bankrupt ? 'bankrupt' : ''} ${isCurrent ? 'current-turn' : ''}">
+                <div class="avatar">${uid === myUid ? '🧑‍🍳' : '👤'}</div>
+                <div style="min-width:0;">
+                    <div class="player-name">${escapeHtml(p.name)}${p.inJail ? ' 🔒' : ''}</div>
+                    <div class="player-money">$${p.money.toLocaleString()}</div>
+                </div>
+            </div>`;
+        }).join('');
+
+        // 棋盤格子：依BOARD_LAYOUT的視覺順序放進7x7網格(跟設計稿一樣的外圈排列方式)
+        const gridPositions = computeBoardGridPositions();
+        let cellsHtml = '';
+        BOARD_LAYOUT.forEach((tileDef, idx) => {
+            const tile = data.board[idx];
+            const piecesHere = data.turnOrder.filter(uid => data.players[uid].position === idx && !data.players[uid].bankrupt);
+            const piecesHtml = piecesHere.map((uid, i) => `<span class="player-piece" style="right:${2 + i * 11}px; bottom:2px;">${uid === myUid ? '🧑‍🍳' : '👤'}</span>`).join('');
+            const ownerMark = tile.ownerUid ? `<span class="owner-mark">${tile.ownerUid === myUid ? '⭐' : '🔸'}</span>` : '';
+            const houseMark = tile.houses > 0 ? `<span class="house-mark">${tile.houses >= 5 ? '🏨' : '🏠'.repeat(tile.houses)}</span>` : '';
+            cellsHtml += `<div class="cell ${tileDef.type}" style="grid-column:${gridPositions[idx].col}; grid-row:${gridPositions[idx].row};">
+                <small>${String(idx + 1).padStart(2, '0')}</small>
+                <div><span class="icon">${tileDef.icon}</span>${escapeHtml(tile.name)}</div>
+                ${ownerMark}${houseMark}${piecesHtml}
+            </div>`;
+        });
+
+        document.getElementById('app-root').innerHTML = `
+            <div class="players">${playersHtml}</div>
+            <div class="card" style="padding:10px;">
+                <div class="board-wrapper">
+                    <div class="board">
+                        ${cellsHtml}
+                        <div class="cell corner" style="grid-column:2/7; grid-row:2/7; background:radial-gradient(circle,#fff9ed 0%,#f4dfba 100%); border:2px solid #d3ad76;">
+                            <div class="center-content">
+                                <div class="game-title-big">美食大富翁</div>
+                                <div style="font-size:11px; color:#8a7159; margin-top:4px;">${data.mode === 'lastStanding' ? '死鬥模式' : `纏鬥模式 第${data.currentRound}/${data.totalRounds}圈`}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="controls">
+                    <button class="primary" onclick="rollMonopolyDice()" ${isMyTurn && !data.pendingAction ? '' : 'disabled'}>🎲 擲骰子${data.lastDiceRoll ? `（上次：${data.lastDiceRoll[0]}+${data.lastDiceRoll[1]}）` : ''}</button>
+                    <button onclick="openMonopolyHouseModal()" ${isMyTurn && !data.pendingAction ? '' : 'disabled'}>🏠 蓋房</button>
+                    <button onclick="endMonopolyTurn()" ${isMyTurn && data.pendingAction === null && data.lastDiceRoll ? '' : 'disabled'}>➡️ 結束回合</button>
+                    <button onclick="leaveMonopolyRoom()">離開房間</button>
+                </div>
+                <div class="status">${isMyTurn ? '🎲 輪到你了！' : `等待 ${escapeHtml(data.players[data.currentTurnUid].name)} 行動...`}</div>
+                <div class="log">${(data.eventLog || []).slice(-8).reverse().map(e => `<div>${escapeHtml(e)}</div>`).join('')}</div>
+            </div>
+            <div id="monopoly-action-modal"></div>
+        `;
+        // 有待處理的動作(例如剛好踩到可以買的地、需要決定買不買)，而且是輪到我，就跳出對應的操作視窗
+        if (isMyTurn && data.pendingAction) renderMonopolyPendingAction(data);
+    }
+    // 把24格的棋盤位置(索引0~23)換算成7x7 CSS Grid的座標，跟設計稿的外圈排列一致：
+    // 第0~6格沿著上排走(col從1到7)，第7~11格沿著右邊往下走，第12~18格沿著下排往左走，
+    // 第19~23格沿著左邊往上走，剛好繞一圈回到起點
+    function computeBoardGridPositions() {
+        const positions = [];
+        for (let i = 0; i < BOARD_SIZE; i++) {
+            if (i <= 6) positions.push({ col: i + 1, row: 1 });
+            else if (i <= 11) positions.push({ col: 7, row: i - 6 + 1 });
+            else if (i <= 18) positions.push({ col: 7 - (i - 12), row: 7 });
+            else positions.push({ col: 1, row: 7 - (i - 19) - 1 });
+        }
+        return positions;
+    }
+
+    // ---------- 擲骰、移動、落地判斷 ----------
+    async function rollMonopolyDice() {
+        const ref = db.collection('monopolyGameRooms').doc(monopolyState.roomId);
+        const d1 = 1 + Math.floor(Math.random() * 6);
+        const d2 = 1 + Math.floor(Math.random() * 6);
+        const isDouble = d1 === d2;
+        try {
+            await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                const data = freshDoc.data();
+                if (data.currentTurnUid !== currentUser.uid || data.pendingAction) return;
+                const players = { ...data.players };
+                const me = { ...players[currentUser.uid] };
+                if (me.inJail) {
+                    // 在監獄裡：擲出對子就直接出獄，不是對子就留在監獄、這回合不能行動(直接算結束回合)
+                    if (isDouble) {
+                        me.inJail = false; me.jailTurns = 0;
+                    } else {
+                        me.jailTurns += 1;
+                        if (me.jailTurns >= 3) { me.inJail = false; me.jailTurns = 0; } // 關滿3輪強制放出來
+                        players[currentUser.uid] = me;
+                        tx.update(ref, {
+                            players, lastDiceRoll: [d1, d2],
+                            eventLog: firebase.firestore.FieldValue.arrayUnion(`🔒 ${me.name} 還在整頓中，這回合不能行動`),
+                        });
+                        return;
+                    }
+                }
+                me.doublesCount = isDouble ? (me.doublesCount + 1) : 0;
+                if (me.doublesCount >= 3) {
+                    // 連續三次對子，送進監獄，不移動
+                    me.position = JAIL_TILE_INDEX; me.inJail = true; me.doublesCount = 0;
+                    players[currentUser.uid] = me;
+                    tx.update(ref, { players, lastDiceRoll: [d1, d2], eventLog: firebase.firestore.FieldValue.arrayUnion(`🚔 ${me.name} 連續擲出三次對子，被抓去整頓！`) });
+                    return;
+                }
+                const steps = d1 + d2;
+                const oldPos = me.position;
+                let newPos = (oldPos + steps) % BOARD_SIZE;
+                const passedGo = newPos < oldPos || (oldPos + steps) >= BOARD_SIZE;
+                let logMsg = `🎲 ${me.name} 擲出 ${d1}+${d2}，移動到「${data.board[newPos].name}」`;
+                if (passedGo && newPos !== 0) { me.money += PASS_GO_BONUS; logMsg += `，經過起點獲得 $${PASS_GO_BONUS}`; }
+                me.position = newPos;
+                players[currentUser.uid] = me;
+
+                // 落地判斷：決定要不要跳出待處理動作(買地/繳租/機會卡/事件)
+                const tile = data.board[newPos];
+                const tileDef = BOARD_LAYOUT[newPos];
+                let pendingAction = null;
+                let extraLog = [];
+                let updatedBoard = data.board;
+
+                if (tileDef.corner === 'gotojail') {
+                    me.position = JAIL_TILE_INDEX; me.inJail = true;
+                    players[currentUser.uid] = me;
+                    extraLog.push(`🚔 ${me.name} 被送去整頓了！`);
+                } else if (tileDef.type === 'food' || tileDef.type === 'special') {
+                    if (!tile.ownerUid) {
+                        pendingAction = { type: 'buy', tileIndex: newPos, uid: currentUser.uid };
+                    } else if (tile.ownerUid !== currentUser.uid && !tile.mortgaged) {
+                        const rent = calcMonopolyRent(tile);
+                        me.money -= rent;
+                        const owner = { ...players[tile.ownerUid] };
+                        owner.money += rent;
+                        players[tile.ownerUid] = owner;
+                        players[currentUser.uid] = me;
+                        extraLog.push(`💸 ${me.name} 付給 ${owner.name} 租金 $${rent}`);
+                        if (me.money < 0) pendingAction = { type: 'bankrupt-check', uid: currentUser.uid, owedTo: tile.ownerUid };
+                    }
+                } else if (tileDef.type === 'chance') {
+                    const card = CHANCE_CARDS[Math.floor(Math.random() * CHANCE_CARDS.length)];
+                    const result = card.effect(me);
+                    if (result.money) me.money += result.money;
+                    if (result.toJail) { me.position = JAIL_TILE_INDEX; me.inJail = true; }
+                    if (result.moveTo !== undefined) { me.position = result.moveTo; if (result.collectGo) me.money += PASS_GO_BONUS; }
+                    players[currentUser.uid] = me;
+                    extraLog.push(`🎴 ${card.text}`);
+                    if (me.money < 0) pendingAction = { type: 'bankrupt-check', uid: currentUser.uid, owedTo: null };
+                } else if (tileDef.type === 'event') {
+                    const ev = EVENT_TILE_EFFECTS[tileDef.name];
+                    if (ev) {
+                        me.money += ev.money;
+                        players[currentUser.uid] = me;
+                        extraLog.push(`📌 ${ev.text}`);
+                        if (me.money < 0) pendingAction = { type: 'bankrupt-check', uid: currentUser.uid, owedTo: null };
+                    }
+                }
+
+                tx.update(ref, {
+                    players, board: updatedBoard, lastDiceRoll: [d1, d2], pendingAction,
+                    eventLog: firebase.firestore.FieldValue.arrayUnion(logMsg, ...extraLog),
+                });
+            });
+        } catch (err) { showToast('擲骰失敗：' + err.message); }
+    }
+    // 租金計算：基礎租金隨房子數量倍增(0棟=基礎租金，1~4棟依序倍增，5=旅館租金最高)
+    function calcMonopolyRent(tile) {
+        const multipliers = [1, 5, 15, 30, 45, 60]; // index對應houses數量(0~5，5是旅館)
+        return tile.rentBase * multipliers[Math.min(tile.houses, 5)];
+    }
+
+    // ---------- 待處理動作：購買地產 / 破產處理 ----------
+    function renderMonopolyPendingAction(data) {
+        const action = data.pendingAction;
+        const modalEl = document.getElementById('monopoly-action-modal');
+        if (!modalEl || !action || action.uid !== currentUser.uid) return;
+        if (action.type === 'buy') {
+            const tile = data.board[action.tileIndex];
+            modalEl.innerHTML = `
+                <div class="modal-backdrop"><div class="modal-box" style="text-align:center;">
+                    ${tile.recipeImage ? `<img src="${tile.recipeImage}" style="width:100%; height:140px; object-fit:cover; border-radius:14px; margin-bottom:10px;">` : ''}
+                    <p style="font-weight:900; font-size:18px;">${escapeHtml(tile.name)}</p>
+                    <p style="color:#8a7159; margin:6px 0 14px;">要花 <b style="color:#a8324a;">$${tile.price.toLocaleString()}</b> 買下這個地方嗎？</p>
+                    <div style="display:flex; gap:8px;">
+                        <button class="primary" style="flex:1;" onclick="resolveMonopolyBuy(true)" ${data.players[currentUser.uid].money < tile.price ? 'disabled' : ''}>購買</button>
+                        <button style="flex:1;" onclick="resolveMonopolyBuy(false)">不買</button>
+                    </div>
+                    ${data.players[currentUser.uid].money < tile.price ? `<p style="font-size:11px; color:#a8324a; margin-top:8px;">餘額不足</p>` : ''}
+                </div></div>`;
+        } else if (action.type === 'bankrupt-check') {
+            const me = data.players[currentUser.uid];
+            const myProps = (me.properties || []).map(i => ({ idx: i, tile: data.board[i] })).filter(p => !p.tile.mortgaged);
+            modalEl.innerHTML = `
+                <div class="modal-backdrop"><div class="modal-box">
+                    <p style="font-weight:900; font-size:16px; color:#a8324a; text-align:center; margin-bottom:8px;">⚠️ 資金不足（$${me.money.toLocaleString()}）</p>
+                    <p style="font-size:12px; color:#8a7159; text-align:center; margin-bottom:12px;">典當地產換現金，或直接宣告破產</p>
+                    ${myProps.length ? myProps.map(p => `
+                        <div style="display:flex; justify-content:space-between; align-items:center; background:#fffaf2; border-radius:12px; padding:8px 12px; margin-bottom:6px;">
+                            <span>${escapeHtml(p.tile.name)}（典當可得 $${Math.round(p.tile.price / 2).toLocaleString()}）</span>
+                            <button onclick="mortgageMonopolyProperty(${p.idx})" style="font-size:12px; padding:6px 10px;">典當</button>
+                        </div>`).join('') : '<p style="text-align:center; color:#8a7159; font-size:13px;">沒有可以典當的地產了</p>'}
+                    <button class="primary" style="width:100%; margin-top:10px;" onclick="declareMonopolyBankrupt()">💔 宣告破產</button>
+                </div></div>`;
+        }
+    }
+    async function resolveMonopolyBuy(buy) {
+        const ref = db.collection('monopolyGameRooms').doc(monopolyState.roomId);
+        try {
+            await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                const data = freshDoc.data();
+                if (!data.pendingAction || data.pendingAction.uid !== currentUser.uid || data.pendingAction.type !== 'buy') return;
+                const tileIndex = data.pendingAction.tileIndex;
+                const board = [...data.board];
+                const tile = { ...board[tileIndex] };
+                const players = { ...data.players };
+                const me = { ...players[currentUser.uid] };
+                let log = null;
+                if (buy && me.money >= tile.price) {
+                    me.money -= tile.price;
+                    tile.ownerUid = currentUser.uid;
+                    me.properties = [...(me.properties || []), tileIndex];
+                    log = `🏪 ${me.name} 買下了「${tile.name}」`;
+                } else {
+                    log = `🙅 ${me.name} 沒有買下「${tile.name}」`;
+                }
+                board[tileIndex] = tile;
+                players[currentUser.uid] = me;
+                tx.update(ref, { board, players, pendingAction: null, eventLog: firebase.firestore.FieldValue.arrayUnion(log) });
+            });
+        } catch (err) { showToast('操作失敗：' + err.message); }
+    }
+    async function mortgageMonopolyProperty(tileIndex) {
+        const ref = db.collection('monopolyGameRooms').doc(monopolyState.roomId);
+        try {
+            await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                const data = freshDoc.data();
+                const board = [...data.board];
+                const tile = { ...board[tileIndex] };
+                if (tile.ownerUid !== currentUser.uid || tile.mortgaged) return;
+                const players = { ...data.players };
+                const me = { ...players[currentUser.uid] };
+                const value = Math.round(tile.price / 2);
+                me.money += value;
+                tile.mortgaged = true; tile.houses = 0;
+                board[tileIndex] = tile;
+                players[currentUser.uid] = me;
+                const stillOwes = me.money < 0;
+                tx.update(ref, {
+                    board, players, pendingAction: stillOwes ? data.pendingAction : null,
+                    eventLog: firebase.firestore.FieldValue.arrayUnion(`🏚️ ${me.name} 典當了「${tile.name}」換得 $${value}`),
+                });
+            });
+        } catch (err) { showToast('典當失敗：' + err.message); }
+    }
+    async function declareMonopolyBankrupt() {
+        if (!confirm('確定要宣告破產嗎？這個動作沒辦法復原')) return;
+        const ref = db.collection('monopolyGameRooms').doc(monopolyState.roomId);
+        try {
+            await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                const data = freshDoc.data();
+                const board = [...data.board];
+                const players = { ...data.players };
+                const me = { ...players[currentUser.uid] };
+                (me.properties || []).forEach(idx => {
+                    board[idx] = { ...board[idx], ownerUid: null, houses: 0, mortgaged: false };
+                });
+                me.bankrupt = true; me.properties = []; me.money = 0;
+                players[currentUser.uid] = me;
+                const remainingActive = data.turnOrder.filter(uid => !players[uid].bankrupt);
+                const updates = { board, players, pendingAction: null, eventLog: firebase.firestore.FieldValue.arrayUnion(`💔 ${me.name} 宣告破產，退出遊戲！`) };
+                if (data.mode === 'lastStanding' && remainingActive.length <= 1) {
+                    updates.status = 'gameover';
+                }
+                tx.update(ref, updates);
+            });
+        } catch (err) { showToast('操作失敗：' + err.message); }
+    }
+
+    // ---------- 蓋房 ----------
+    function openMonopolyHouseModal() {
+        db.collection('monopolyGameRooms').doc(monopolyState.roomId).get().then(doc => {
+            const data = doc.data();
+            const me = data.players[currentUser.uid];
+            const myProps = (me.properties || []).map(i => ({ idx: i, tile: data.board[i] })).filter(p => !p.tile.mortgaged);
+            const modalEl = document.getElementById('monopoly-action-modal');
+            if (!modalEl) return;
+            modalEl.innerHTML = `
+                <div class="modal-backdrop" onclick="if(event.target===this) this.parentElement.innerHTML=''"><div class="modal-box">
+                    <p style="font-weight:900; font-size:16px; margin-bottom:10px;">🏠 蓋房子</p>
+                    ${myProps.length ? myProps.map(p => {
+                        const cost = Math.round(p.tile.price * HOUSE_COST_RATIO);
+                        const maxed = p.tile.houses >= 5;
+                        return `<div style="display:flex; justify-content:space-between; align-items:center; background:#fffaf2; border-radius:12px; padding:8px 12px; margin-bottom:6px;">
+                            <span>${escapeHtml(p.tile.name)}（目前${p.tile.houses >= 5 ? '🏨旅館' : '🏠'.repeat(p.tile.houses) || '無房子'}）</span>
+                            <button onclick="buildMonopolyHouse(${p.idx})" style="font-size:12px; padding:6px 10px;" ${maxed || me.money < cost ? 'disabled' : ''}>${maxed ? '已滿' : `+1棟 $${cost}`}</button>
+                        </div>`;
+                    }).join('') : '<p style="text-align:center; color:#8a7159; font-size:13px;">你還沒有任何地產可以蓋房子</p>'}
+                    <button style="width:100%; margin-top:8px;" onclick="document.getElementById('monopoly-action-modal').innerHTML=''">關閉</button>
+                </div></div>`;
+        });
+    }
+    async function buildMonopolyHouse(tileIndex) {
+        const ref = db.collection('monopolyGameRooms').doc(monopolyState.roomId);
+        try {
+            await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                const data = freshDoc.data();
+                const board = [...data.board];
+                const tile = { ...board[tileIndex] };
+                if (tile.ownerUid !== currentUser.uid || tile.houses >= 5) return;
+                const cost = Math.round(tile.price * HOUSE_COST_RATIO);
+                const players = { ...data.players };
+                const me = { ...players[currentUser.uid] };
+                if (me.money < cost) return;
+                me.money -= cost;
+                tile.houses += 1;
+                board[tileIndex] = tile;
+                players[currentUser.uid] = me;
+                tx.update(ref, { board, players, eventLog: firebase.firestore.FieldValue.arrayUnion(`🏗️ ${me.name} 在「${tile.name}」蓋了新房子`) });
+            });
+            openMonopolyHouseModal();
+        } catch (err) { showToast('蓋房失敗：' + err.message); }
+    }
+
+    // ---------- 結束回合：輪到下一位，連續對子的話同一人再擲一次 ----------
+    async function endMonopolyTurn() {
+        const ref = db.collection('monopolyGameRooms').doc(monopolyState.roomId);
+        try {
+            await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                const data = freshDoc.data();
+                if (data.currentTurnUid !== currentUser.uid || data.pendingAction) return;
+                const me = data.players[currentUser.uid];
+                if (me.doublesCount > 0 && !me.inJail) {
+                    tx.update(ref, { lastDiceRoll: null });
+                    return;
+                }
+                const activeOrder = data.turnOrder.filter(uid => !data.players[uid].bankrupt);
+                const curIdxInActive = activeOrder.indexOf(currentUser.uid);
+                const nextUid = activeOrder[(curIdxInActive + 1) % activeOrder.length];
+                const isNewRound = (curIdxInActive + 1) >= activeOrder.length;
+                const updates = { currentTurnUid: nextUid, lastDiceRoll: null, pendingAction: null };
+                if (isNewRound) {
+                    const newRound = data.currentRound + 1;
+                    updates.currentRound = newRound;
+                    if (data.mode === 'rounds' && newRound > data.totalRounds) {
+                        updates.status = 'gameover';
+                    }
+                }
+                tx.update(ref, updates);
+            });
+        } catch (err) { showToast('操作失敗：' + err.message); }
+    }
+
+    // ---------- 遊戲結束：依現金+地產估值排名 ----------
+    function renderMonopolyGameOver(data) {
+        const results = data.turnOrder.map(uid => {
+            const p = data.players[uid];
+            const propValue = (p.properties || []).reduce((sum, idx) => sum + Math.round(data.board[idx].price / 2), 0);
+            return { uid, name: p.name, money: p.money, bankrupt: p.bankrupt, total: p.money + propValue };
+        }).sort((a, b) => b.total - a.total);
+        const isHost = data.hostUid === currentUser.uid;
+        if (isHost && !monopolyState.gameOverScoreSaved) {
+            monopolyState.gameOverScoreSaved = true;
+            results.forEach((r, i) => {
+                if (r.bankrupt) return;
+                db.collection('gameScores').add({ gameId: 'monopoly', userId: r.uid, userName: r.name, score: Math.max(0, r.total), createdAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(() => {});
+            });
+        }
+        const rows = results.map((r, i) => {
+            const medal = i === 0 ? '🏆' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+            return `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-radius:16px; margin-bottom:8px; background:${i === 0 ? '#a8324a' : '#fffaf2'}; color:${i === 0 ? 'white' : ''};">
+                <span style="font-weight:800;">${medal} ${escapeHtml(r.name)}${r.bankrupt ? '（已破產）' : ''}${i === 0 ? '（料理大亨！）' : ''}</span>
+                <span style="font-weight:900; font-size:18px;">$${r.total.toLocaleString()}</span>
+            </div>`;
+        }).join('');
+        document.getElementById('app-root').innerHTML = `
+            <div class="card" style="text-align:center;">
+                <p style="font-size:36px; margin-bottom:6px;">🎉</p>
+                <p style="font-family:Georgia,serif; font-weight:900; font-size:20px;">遊戲結束！</p>
+            </div>
+            <div class="card">${rows}</div>
+            <div style="display:flex; gap:8px;">
+                ${isHost ? `<button class="primary" style="flex:1;" onclick="backToMonopolyWaitingRoom()">🔄 再玩一場</button>` : ''}
+                <button style="flex:1;" onclick="leaveMonopolyRoom()">離開房間</button>
+            </div>
+        `;
+    }
+    async function backToMonopolyWaitingRoom() {
+        monopolyState.gameOverScoreSaved = false;
+        try {
+            await db.collection('monopolyGameRooms').doc(monopolyState.roomId).update({
+                status: 'waiting', readyUids: [], board: null, players: null, turnOrder: null, currentTurnUid: null, eventLog: [],
+            });
+        } catch (err) { showToast('重設房間失敗：' + err.message); }
+    }
+</script>
+</body>
+</html>
