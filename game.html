@@ -10800,8 +10800,19 @@
                 const snap = await db.collection('drawGameRooms').where('status', '==', 'waiting').limit(20).get();
                 const listEl = document.getElementById('draw-room-list');
                 if (!listEl) return;
-                if (snap.empty) { listEl.innerHTML = `<p class="text-sm text-center py-4" style="color:var(--muted)">目前沒有開放中的房間，建立一個新的吧！</p>`; return; }
-                listEl.innerHTML = snap.docs.map(doc => {
+                // 篩選掉「建立超過30分鐘、卻還停在等待室」的房間——這代表建立者根本沒有回來開始
+                // 遊戲，視為已經放棄的房間，不在列表顯示。這裡只是「不顯示」，不是真的把
+                // Firestore裡的房間刪掉(刪除權限規則只開放給房主本人，避免任何人能亂刪別人的房間)，
+                // 但至少使用者不會再看到卡在列表上、進去也沒人回應的死房間
+                const staleThresholdMs = 30 * 60 * 1000;
+                const now = Date.now();
+                const activeRooms = snap.docs.filter(doc => {
+                    const createdAt = doc.data().createdAt;
+                    if (!createdAt || typeof createdAt.toMillis !== 'function') return true; // 剛建立、serverTimestamp還沒回填的房間，先當作有效
+                    return (now - createdAt.toMillis()) < staleThresholdMs;
+                });
+                if (!activeRooms.length) { listEl.innerHTML = `<p class="text-sm text-center py-4" style="color:var(--muted)">目前沒有開放中的房間，建立一個新的吧！</p>`; return; }
+                listEl.innerHTML = activeRooms.map(doc => {
                     const d = doc.data();
                     const modeLabel = d.mode === 'system' ? '系統出題' : `固定LV${d.fixedLevel}`;
                     return `<button onclick="promptJoinDrawGameRoom('${doc.id}')" class="w-full text-left px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)">
@@ -10873,7 +10884,7 @@
                     status: 'waiting', // waiting / drawing / judging(AI評分中) / reveal(揭曉結果) / gameover(全部回合結束)
                     mode: drawCreateMode, fixedLevel: level, totalRounds: rounds,
                     currentRound: 0, currentLevel: null, currentWord: null, roundStartAt: null,
-                    submissions: {}, roundResults: {}, cumulativeScores: {},
+                    submissions: {}, roundResults: {}, cumulativeScores: {}, scoresSaved: false,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 });
                 drawGameState.isHost = true;
@@ -11048,9 +11059,11 @@
                 if (gridEl) gridEl.innerHTML = statusSlots;
             }
 
-            // 全部人都送出了，房主負責觸發批次評分——只讓房主一個人做，避免好幾個成員同時觸發
+            // 全部人都送出了，觸發批次評分——不限制只有房主才能做，避免房主斷線/離開後
+            // 遊戲卡死沒有人能推進。真正「只會被處理一次」的保護是在triggerDrawGameJudging()
+            // 內部用Firestore交易搶佔資格，不是靠這裡的本地旗標判斷「我是不是房主」
             const submittedCount = Object.keys(data.submissions || {}).length;
-            if (drawGameState.isHost && submittedCount >= data.members.length && !drawGameState.judgeTriggered) {
+            if (submittedCount >= data.members.length && !drawGameState.judgeTriggered) {
                 drawGameState.judgeTriggered = true;
                 triggerDrawGameJudging(data);
             }
@@ -11180,8 +11193,25 @@
             document.getElementById('game-modal-body').innerHTML = `<div class="text-center py-8"><p class="text-4xl mb-3">🤖</p><p>AI正在評分所有人的作品...</p></div>`;
         }
         async function triggerDrawGameJudging(data) {
+            const ref = db.collection('drawGameRooms').doc(drawGameState.roomId);
+            // 用交易搶佔「觸發評分」的資格：交易內部重新讀一次最新狀態，只有確認還是drawing狀態
+            // 才搶得到、順便原子性地改成judging，搶不到的人（可能同時有好幾個成員的裝置都
+            // 偵測到「全部人都送出了」）直接放棄，不會重複呼叫一次評分API——這是真正安全的
+            // 「只做一次」保護，不像之前只靠isHost這個前端判斷，房主斷線就沒人能觸發
+            let claimed = false;
             try {
-                await db.collection('drawGameRooms').doc(drawGameState.roomId).update({ status: 'judging' });
+                claimed = await db.runTransaction(async (tx) => {
+                    const freshDoc = await tx.get(ref);
+                    if (!freshDoc.exists || freshDoc.data().status !== 'drawing') return false;
+                    tx.update(ref, { status: 'judging' });
+                    return true;
+                });
+            } catch (err) {
+                console.warn('搶佔評分資格失敗', err);
+                return;
+            }
+            if (!claimed) return; // 已經被其他成員的裝置搶先觸發了，這裡不用再做一次
+            try {
                 const submissionsList = Object.entries(data.submissions)
                     .filter(([uid, s]) => s.imageUrl) // 上傳失敗、沒有網址的人不送去評分，等一下直接給0分
                     .map(([uid, s]) => ({ uid, imageUrl: s.imageUrl }));
@@ -11217,11 +11247,11 @@
                     cumulativeScores[m.uid] = (cumulativeScores[m.uid] || 0) + score;
                 });
 
-                await db.collection('drawGameRooms').doc(drawGameState.roomId).update({ status: 'reveal', roundResults, cumulativeScores, judgingError: judgingError || null });
+                await ref.update({ status: 'reveal', roundResults, cumulativeScores, judgingError: judgingError || null });
             } catch (err) {
                 alert('評分過程發生錯誤：' + err.message);
                 // 評分失敗也要想辦法讓遊戲繼續走，不要整個卡在judging狀態動不了
-                try { await db.collection('drawGameRooms').doc(drawGameState.roomId).update({ status: 'waiting' }); } catch (e) {}
+                try { await ref.update({ status: 'waiting' }); } catch (e) {}
             }
         }
 
@@ -11246,34 +11276,46 @@
                 </div>
                 ${data.judgingError ? `<div class="px-4 py-3 rounded-2xl mb-3 text-xs" style="background:#fde8e8; color:var(--danger)">⚠️ AI評分失敗，這輪全部人先算0分：${escapeHtml(data.judgingError)}</div>` : ''}
                 <div class="grid grid-cols-2 gap-3 mb-4">${cards}</div>
-                ${drawGameState.isHost
-                    ? `<button onclick="proceedDrawGameAfterReveal()" class="btn-amber w-full">${isLastRound ? '🏁 查看總結果' : '➡️ 下一回合'}</button>`
-                    : `<p class="text-sm text-center" style="color:var(--muted)">等待房主繼續...</p>`}
+                <button onclick="proceedDrawGameAfterReveal()" class="btn-amber w-full">${isLastRound ? '🏁 查看總結果' : '➡️ 下一回合'}</button>
                 <button onclick="leaveDrawGameRoom()" class="btn-secondary w-full mt-2">離開房間</button>
             `;
         }
         async function proceedDrawGameAfterReveal() {
-            const doc = await db.collection('drawGameRooms').doc(drawGameState.roomId).get();
+            const ref = db.collection('drawGameRooms').doc(drawGameState.roomId);
+            const doc = await ref.get();
             const data = doc.data();
-            // 這一輪已經評分完成、揭曉過了，畫面不會再需要顯示這些圖片，清掉Cloudinary上的檔案——
-            // 只有房主會呼叫這個函式(按鈕只有房主看得到)，天然就只會觸發一次，不會每個玩家各自
-            // 重複刪除同一批圖片、浪費請求
+            if (!data || data.status !== 'reveal') return; // 已經被其他成員推進過了，這裡不用再做一次
+            const isLastRound = data.currentRound >= data.totalRounds;
+            const nextLevel = data.mode === 'system' ? (1 + Math.floor(Math.random() * 5)) : data.fixedLevel;
+            const word = isLastRound ? null : pickDrawWordForLevel(nextLevel);
+            // 用交易搶佔「推進」的資格：交易內部重新確認還是reveal狀態才搶得到、原子性地改成
+            // drawing或gameover，搶不到的人（可能好幾個成員同時點了「下一回合」）直接放棄——
+            // 這樣才不會好幾個人各自重複清理圖片、重複把回合數往前推好幾輪
+            let claimed = false;
+            try {
+                claimed = await db.runTransaction(async (tx) => {
+                    const freshDoc = await tx.get(ref);
+                    if (!freshDoc.exists || freshDoc.data().status !== 'reveal') return false;
+                    if (isLastRound) {
+                        tx.update(ref, { status: 'gameover' });
+                    } else {
+                        tx.update(ref, {
+                            status: 'drawing', currentRound: data.currentRound + 1, currentLevel: nextLevel, currentWord: word,
+                            roundStartAt: firebase.firestore.FieldValue.serverTimestamp(), submissions: {}, roundResults: {},
+                        });
+                    }
+                    return true;
+                });
+            } catch (err) {
+                alert('推進失敗：' + err.message);
+                return;
+            }
+            if (!claimed) return;
+            // 只有搶到資格的這個人，才需要清理這一輪的圖片——避免好幾個成員同時點擊時，
+            // 每個人都各自重複呼叫一次刪除，浪費請求
             Object.values(data.submissions || {}).forEach(s => {
                 if (s.imageUrl) deleteDrawGameCloudinaryImage(s.imageUrl);
             });
-            if (data.currentRound >= data.totalRounds) {
-                try { await db.collection('drawGameRooms').doc(drawGameState.roomId).update({ status: 'gameover' }); }
-                catch (err) { alert('結算失敗：' + err.message); }
-                return;
-            }
-            const nextLevel = data.mode === 'system' ? (1 + Math.floor(Math.random() * 5)) : data.fixedLevel;
-            const word = pickDrawWordForLevel(nextLevel);
-            try {
-                await db.collection('drawGameRooms').doc(drawGameState.roomId).update({
-                    status: 'drawing', currentRound: data.currentRound + 1, currentLevel: nextLevel, currentWord: word,
-                    roundStartAt: firebase.firestore.FieldValue.serverTimestamp(), submissions: {}, roundResults: {},
-                });
-            } catch (err) { alert('進入下一回合失敗：' + err.message); }
         }
 
         // ---------- 遊戲結束：全部回合累計總分排名，總冠軍就是靈魂畫手 ----------
@@ -11286,12 +11328,11 @@
                     <span class="text-xl font-bold">${r.score}</span>
                 </div>`;
             }).join('');
-            // 冠軍分數送進共用的gameScores排行榜
-            if (drawGameState.isHost && !drawGameState.gameOverScoreSaved) {
-                drawGameState.gameOverScoreSaved = true;
-                results.forEach(r => {
-                    db.collection('gameScores').add({ gameId: 'draw', userId: r.uid, userName: r.name, score: r.score, createdAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(() => {});
-                });
+            // 冠軍分數送進共用的gameScores排行榜——不再限制只有房主才能觸發(房主可能已經斷線，
+            // 由其他成員推進到這個畫面)，改成用房間文件本身的scoresSaved旗標判斷、透過交易搶佔，
+            // 確保不管是誰的裝置先偵測到這個畫面，分數都只會被寫入一次，不會重複
+            if (!data.scoresSaved) {
+                saveDrawGameScoresOnce(results);
             }
             document.getElementById('game-modal-body').innerHTML = `
                 <div class="text-center mb-4">
@@ -11300,17 +11341,32 @@
                     <p class="text-xs" style="color:var(--muted)">共 ${data.totalRounds} 回合累計總分</p>
                 </div>
                 ${rows}
-                ${drawGameState.isHost ? `<button onclick="backToDrawGameWaitingRoom()" class="btn-amber w-full mt-4">🔄 再玩一場</button>` : ''}
+                <button onclick="backToDrawGameWaitingRoom()" class="btn-amber w-full mt-4">🔄 再玩一場</button>
                 <button onclick="leaveDrawGameRoom()" class="btn-secondary w-full mt-2">離開房間</button>
             `;
         }
+        async function saveDrawGameScoresOnce(results) {
+            const ref = db.collection('drawGameRooms').doc(drawGameState.roomId);
+            let claimed = false;
+            try {
+                claimed = await db.runTransaction(async (tx) => {
+                    const freshDoc = await tx.get(ref);
+                    if (!freshDoc.exists || freshDoc.data().scoresSaved) return false;
+                    tx.update(ref, { scoresSaved: true });
+                    return true;
+                });
+            } catch (err) { console.warn('搶佔存分數資格失敗', err); return; }
+            if (!claimed) return; // 已經被其他成員的裝置存過了
+            results.forEach(r => {
+                db.collection('gameScores').add({ gameId: 'draw', userId: r.uid, userName: r.name, score: r.score, createdAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(() => {});
+            });
+        }
         async function backToDrawGameWaitingRoom() {
             drawGameState.hasSubmitted = false;
-            drawGameState.gameOverScoreSaved = false;
             try {
                 await db.collection('drawGameRooms').doc(drawGameState.roomId).update({
                     status: 'waiting', currentRound: 0, currentLevel: null, currentWord: null, roundStartAt: null,
-                    submissions: {}, roundResults: {}, cumulativeScores: {},
+                    submissions: {}, roundResults: {}, cumulativeScores: {}, scoresSaved: false,
                 });
             } catch (err) { alert('重設房間失敗：' + err.message); }
         }
