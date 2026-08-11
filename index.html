@@ -597,7 +597,7 @@
                     <input id="personal-nickname-input" type="text" placeholder="輸入暱稱（選填）" maxlength="8" style="flex:0 0 8rem; padding:0.4rem 0.8rem; border-radius:999px; border:1px solid var(--line); font-size:0.85rem;">
                     <button onclick="saveNickname()" class="text-xs font-medium shrink-0" style="color:var(--jam)">儲存</button>
                 </div>
-                <div class="grid sm:grid-cols-2 gap-3 mb-6">
+                <div class="grid sm:grid-cols-2 gap-3 mb-3">
                     <button onclick="showProfileModal()" class="personal-info-card">
                         <span class="personal-info-card-icon">🏅</span>
                         <span class="personal-info-card-text">
@@ -610,6 +610,15 @@
                         <span class="personal-info-card-text">
                             <span class="personal-info-card-title">做菜音樂</span>
                             <span id="personal-music-status" class="personal-info-card-sub">尚未設定</span>
+                        </span>
+                    </button>
+                </div>
+                <div class="grid sm:grid-cols-2 gap-3 mb-6">
+                    <button onclick="showSettingsModal()" class="personal-info-card">
+                        <span class="personal-info-card-icon">⚙️</span>
+                        <span class="personal-info-card-text">
+                            <span class="personal-info-card-title">通知與設定</span>
+                            <span id="personal-settings-status" class="personal-info-card-sub">管理通知權限、家人稱謂</span>
                         </span>
                     </button>
                 </div>
@@ -945,6 +954,46 @@
     </div>
 
     <!-- 採購清單：加入多篇食譜、各自設定要做幾份，統一算出食材加總花費（例如一週菜單） -->
+    <!-- 統一的通知與設定視窗：整合原本分散在冰箱/採購清單/家庭採購清單三個地方各自獨立的
+         「開啟通知」按鈕，變成一個集中管理的地方。實際授權瀏覽器通知權限的底層邏輯完全沒變
+         (ensureNotificationTokenRegistered)，這裡只是提供一個清楚、好找的統一入口 -->
+    <div id="settings-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-lg max-h-[88vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">⚙️ 通知與設定</h2>
+                <button onclick="closeSettingsModal()" class="text-3xl leading-none" style="color:var(--muted)" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <div class="mb-6 p-4 rounded-2xl" style="background:var(--cream)">
+                    <p class="font-display font-semibold text-sm mb-1">🔔 瀏覽器通知權限</p>
+                    <p class="text-xs mb-3" style="color:var(--muted)">開啟一次，冰箱到期提醒、採購提醒、家人指定採購通知都會共用這個授權，不用每個功能各自開一次</p>
+                    <div class="flex items-center gap-2 mb-2">
+                        <span id="settings-notif-status-badge" class="text-xs px-2.5 py-1 rounded-full" style="background:var(--line)">檢查中...</span>
+                    </div>
+                    <button id="settings-notif-btn" onclick="enableNotificationsFromSettings()" class="btn-secondary w-full">開啟通知權限</button>
+                    <p id="settings-notif-error" class="hidden text-xs mt-2" style="color:var(--danger)"></p>
+                </div>
+
+                <div class="mb-6 p-4 rounded-2xl" style="background:var(--cream)">
+                    <p class="font-display font-semibold text-sm mb-1">⏰ 個人採購提醒時間</p>
+                    <p class="text-xs mb-3" style="color:var(--muted)">要設定「幾點提醒我採購清單裡還有東西沒買」，請到採購清單裡設定——那裡才看得到清單內容，設定起來比較直覺</p>
+                    <button onclick="closeSettingsModal(); openShoppingListModal();" class="btn-secondary w-full text-sm">前往採購清單設定 →</button>
+                </div>
+
+                <div id="settings-family-section" class="hidden mb-6 p-4 rounded-2xl" style="background:var(--cream)">
+                    <p class="font-display font-semibold text-sm mb-1">👨‍👩‍👧 家人稱謂與家庭冰箱</p>
+                    <p class="text-xs mb-3" style="color:var(--muted)">幫家人取自訂稱呼、管理成員權限、查看操作紀錄，都在「我的冰箱」裡的成員名單管理</p>
+                    <button onclick="closeSettingsModal(); openFridgeModal();" class="btn-secondary w-full text-sm">前往我的冰箱管理 →</button>
+                </div>
+
+                <div class="p-4 rounded-2xl" style="background:var(--cream)">
+                    <p class="font-display font-semibold text-sm mb-1">✏️ 我的暱稱</p>
+                    <p class="text-xs" style="color:var(--muted)">暱稱設定在個人頁面最上方，全站（包含KTV系統、家人稱謂顯示）都會優先顯示你設定的暱稱</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="shopping-list-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
         <div class="bg-white w-full md:max-w-2xl max-h-[92vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
             <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0 modal-photo-header" style="border-color:var(--line); background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785486399/Procurement_List_kumbtn.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785486399/Procurement_List_kumbtn.png') 2x);">
@@ -1126,6 +1175,10 @@
                     <p class="font-semibold text-sm mb-1">👨‍👩‍👧 家庭冰箱</p>
                     <p class="text-xs mb-3" style="color:var(--muted)">邀請家人加入，大家共用同一個冰箱、一起管理庫存。對方要自己按接受才會真的加入，不會未經同意就被拉進來</p>
                     <div id="fridge-members-list" class="mb-3"></div>
+                    <div id="family-activity-log-section" class="hidden mb-3">
+                        <a href="javascript:void(0)" onclick="toggleFamilyActivityLog()" class="text-xs" style="color:var(--sage); text-decoration:underline">📋 查看最近的操作紀錄</a>
+                        <div id="family-activity-log-list" class="hidden mt-2 space-y-1" style="max-height:12rem; overflow-y:auto;"></div>
+                    </div>
                     <div class="flex gap-2">
                         <input id="fridge-invite-email" type="email" placeholder="輸入家人的帳號email" class="form-input flex-1">
                         <button onclick="inviteToHousehold()" class="btn-secondary whitespace-nowrap">送出邀請</button>
@@ -1473,6 +1526,7 @@
             const adminAchModal = document.getElementById('admin-achievements-modal');
             const orphanModal = document.getElementById('orphaned-images-modal');
             const shoppingModal = document.getElementById('shopping-list-modal');
+            const settingsModal = document.getElementById('settings-modal');
             const myCostsModal = document.getElementById('my-ingredient-costs-modal');
             const costModal = document.getElementById('ingredient-cost-modal');
             const fridgeModal = document.getElementById('fridge-modal');
@@ -1495,6 +1549,8 @@
                 closeOrphanedImagesModal(true);
             } else if (shoppingModal && !shoppingModal.classList.contains('hidden')) {
                 closeShoppingListModal(true);
+            } else if (settingsModal && !settingsModal.classList.contains('hidden')) {
+                closeSettingsModal(true);
             } else if (costModal && !costModal.classList.contains('hidden')) {
                 // 設定食材價格要排在「我的食材成本」前面判斷：這個視窗常常是疊在「我的食材成本」上面
                 // 開啟的，如果順序反過來，「我的食材成本」會先被誤判成要關的那一層，跳過真正該關的
@@ -2064,7 +2120,7 @@
 
             const titlesList = document.getElementById('profile-titles-list');
             titlesList.innerHTML = unlockedTitles.length
-                ? unlockedTitles.map(r => `<div class="badge-card ${getRarityClass(r.threshold)}" title="${escapeHtmlAttr(getRuleReason(r))}">
+                ? unlockedTitles.map(r => `<div class="badge-card ${getRarityClass(r.threshold)}" title="${escapeHtmlText(getRuleReason(r))}">
                     <div class="badge-icon">${r.title.icon}</div>
                     <p class="text-xs font-semibold leading-snug" style="font-family:'Noto Serif TC', serif;">${r.title.name}</p>
                   </div>`).join('')
@@ -2599,15 +2655,15 @@
                 listEl.innerHTML = entries.map(e => `
                     <div class="p-4 rounded-2xl mb-3" style="background:var(--paper); box-shadow:0 4px 12px -4px rgba(58,42,30,0.08)">
                         <div class="flex items-center justify-between mb-2">
-                            <span class="text-sm font-semibold">${escapeHtmlAttr(e.date || '')}</span>
+                            <span class="text-sm font-semibold">${escapeHtmlText(e.date || '')}</span>
                             <button onclick="deleteJournalEntry('${e.id}')" class="text-xs" style="color:var(--danger)">刪除</button>
                         </div>
-                        ${e.notes ? `<p class="text-sm mb-1"><span style="color:var(--muted)">調整：</span>${escapeHtmlAttr(e.notes)}</p>` : ''}
-                        ${e.result ? `<p class="text-sm"><span style="color:var(--muted)">結果：</span>${escapeHtmlAttr(e.result)}</p>` : ''}
+                        ${e.notes ? `<p class="text-sm mb-1"><span style="color:var(--muted)">調整：</span>${escapeHtmlText(e.notes)}</p>` : ''}
+                        ${e.result ? `<p class="text-sm"><span style="color:var(--muted)">結果：</span>${escapeHtmlText(e.result)}</p>` : ''}
                     </div>
                 `).join('');
             } catch (err) {
-                listEl.innerHTML = `<p class="text-sm" style="color:var(--danger)">載入失敗：${escapeHtmlAttr(err.message)}</p>`;
+                listEl.innerHTML = `<p class="text-sm" style="color:var(--danger)">載入失敗：${escapeHtmlText(err.message)}</p>`;
             }
         }
         async function saveJournalEntry() {
@@ -2827,7 +2883,7 @@
             pickerEl.classList.remove('hidden');
             document.getElementById('music-playlist-list').innerHTML = musicPlaylistCandidates.map(p => `
                 <button onclick="selectMusicPlaylist('${escapeHtmlAttr(p.id)}')" class="w-full text-left px-3 py-2 rounded-xl text-sm flex items-center justify-between gap-2" style="background:var(--cream)">
-                    <span class="truncate">${escapeHtmlAttr(p.title)}</span>
+                    <span class="truncate">${escapeHtmlText(p.title)}</span>
                     <span class="text-xs shrink-0" style="color:var(--muted)">${p.itemCount}首</span>
                 </button>
             `).join('');
@@ -3298,6 +3354,18 @@
             const favRecipes = allRecipes.filter(r => userFavorites.has(r.id)).slice(0, 18);
             renderPersonalScrollRow('personal-mine-scroll', mineRecipes, '還沒有建立過任何食譜');
             renderPersonalScrollRow('personal-fav-scroll', favRecipes, '還沒有收藏任何食譜');
+            updatePersonalSettingsPreview(); // 通知狀態快速預覽，不用點進設定視窗也能在卡片上看到目前開了沒
+        }
+        // 設定卡片的狀態預覽：獨立成一個小函式(而不是塞進renderPersonalDashboard本身)，
+        // 是因為這裡需要查Firestore(非同步)，不該讓整個儀表板渲染都跟著等這個查詢跑完才顯示
+        async function updatePersonalSettingsPreview() {
+            const el = document.getElementById('personal-settings-status');
+            if (!el || !currentUser) return;
+            try {
+                const doc = await db.collection('fcmTokens').doc(currentUser.uid).get();
+                const hasToken = doc.exists && Array.isArray(doc.data().tokens) && doc.data().tokens.length > 0;
+                el.textContent = hasToken ? '🔔 通知已開啟' : '通知尚未開啟，點擊設定';
+            } catch (err) { /* 查詢失敗就維持預設文字，不影響其他部分正常顯示 */ }
         }
         function renderPersonalScrollRow(containerId, recipes, emptyText) {
             const el = document.getElementById(containerId);
@@ -3308,7 +3376,7 @@
                 const recipeJson = JSON.stringify(r).replace(/"/g, '&quot;');
                 return `<div class="personal-scroll-item personal-grid-item" onclick="showDetail(${recipeJson})">
                     <img src="${img}" loading="lazy">
-                    <p>${escapeHtmlAttr(r.name)}</p>
+                    <p>${escapeHtmlText(r.name)}</p>
                 </div>`;
             }).join('');
         }
@@ -3542,7 +3610,7 @@
                     <h3 class="font-display font-bold text-xl mb-1.5 leading-snug" style="font-family:'Chiron GoRound TC', sans-serif;">${r.name}${visBadge}</h3>
                     ${r.tagline ? `<p class="text-sm mb-1.5 truncate" style="color:var(--espresso-soft); font-family:'Cactus Classical Serif', serif;">${r.tagline}</p>` : ''}
                     <p class="text-sm" style="color:var(--espresso-soft); font-family:'Chiron Sung HK', serif;">${r.sizeValue ? `${r.sizeValue}${r.sizeUnit} · ` : ''}${r.servings} 個</p>
-                    ${r.tags && r.tags.length ? `<div class="flex flex-wrap gap-1 mt-2">${r.tags.map(t => `<span onclick="event.stopPropagation(); searchByTag('${escapeHtmlAttr(t)}')" class="text-xs px-2 py-0.5 rounded-full cursor-pointer" style="background:var(--cream); color:var(--espresso-soft)">#${t}</span>`).join('')}</div>` : ''}
+                    ${r.tags && r.tags.length ? `<div class="flex flex-wrap gap-1 mt-2">${r.tags.map(t => `<span onclick="event.stopPropagation(); searchByTag('${escapeHtmlAttr(t)}')" class="text-xs px-2 py-0.5 rounded-full cursor-pointer" style="background:var(--cream); color:var(--espresso-soft)">#${escapeHtmlText(t)}</span>`).join('')}</div>` : ''}
                     <p class="text-sm text-right mt-2" style="color:var(--espresso-soft); font-family:'Chiron Sung HK', serif;"><span id="author-title-${r.id}" style="font-family:'Noto Serif TC', serif;"></span><span id="author-name-${r.id}">${r.authorName||''}</span></p>
                 `;
                 div.onclick = () => showDetail(r);
@@ -3710,7 +3778,7 @@
                 // 詳細頁裡本來就都有，縮圖上不用再疊功能圖示，畫面更乾淨
                 return `<div class="personal-scroll-item personal-grid-item" onclick="showDetail(${recipeJson})">
                     <img src="${img}" loading="lazy">
-                    <p>${escapeHtmlAttr(r.name)}</p>
+                    <p>${escapeHtmlText(r.name)}</p>
                 </div>`;
             }).join('');
         }
@@ -4538,7 +4606,7 @@
                         <span class="px-3.5 py-1 text-xs font-medium rounded-full" style="background:#F4E4EA; color:var(--jam)">${icon} ${categoryDisplayLabel(recipe.category)}</span>${visBadge}
                         <h2 class="font-display text-2xl sm:text-3xl font-bold mt-3 leading-snug" style="font-family:'Chiron GoRound TC', sans-serif;">${recipe.name}</h2>
                         ${recipe.tagline ? `<p class="text-sm mt-1" style="color:var(--espresso-soft); font-family:'Chiron Sung HK', serif;">${recipe.tagline}</p>` : ''}
-                        ${recipe.tags && recipe.tags.length ? `<div class="flex flex-wrap gap-1 mt-2">${recipe.tags.map(t => `<span onclick="searchByTagFromDetail('${escapeHtmlAttr(t)}')" class="text-xs px-2 py-0.5 rounded-full cursor-pointer" style="background:var(--cream); color:var(--espresso-soft)">#${t}</span>`).join('')}</div>` : ''}
+                        ${recipe.tags && recipe.tags.length ? `<div class="flex flex-wrap gap-1 mt-2">${recipe.tags.map(t => `<span onclick="searchByTagFromDetail('${escapeHtmlAttr(t)}')" class="text-xs px-2 py-0.5 rounded-full cursor-pointer" style="background:var(--cream); color:var(--espresso-soft)">#${escapeHtmlText(t)}</span>`).join('')}</div>` : ''}
                         <div id="baking-humidity-tip"></div>
                     </div>
                     <div class="flex flex-col items-end gap-2 shrink-0">
@@ -5114,8 +5182,9 @@
                     ...(justUpdatedSpec && justUpdatedSpec.previousPricePer100g !== undefined ? { previousPricePer100g: justUpdatedSpec.previousPricePer100g } : {}),
                 };
             });
-            if (!ok) alert('儲存失敗，請稍後再試一次');
-            return ok;
+            if (!ok) { alert('儲存失敗，請稍後再試一次'); return false; }
+            logFamilyActivity(await getActiveFridgeId(), 'cost_change', trimmedName, `每100g約NT$${price.toFixed(1)}`);
+            return true;
         }
         // 把一筆食材成本資料從舊名稱搬到新名稱（用在「同名但規格不同」偵測到衝突、決定分開存的時候），
         // 資料內容原封不動搬過去，只是換一個key，關鍵字連結（誰套用了這筆）也會一併搬過去
@@ -5456,7 +5525,7 @@
                     const applyRow = similar.length ? `
                         <div class="flex gap-2 mt-2">
                             <select id="orphan-apply-select-${doc.id}" class="form-input flex-1 !py-1.5 !text-xs">
-                                ${similar.map(s => `<option value="${escapeHtmlAttr(s.name)}">${s.name}（${(s.info.kcal || 0).toFixed ? s.info.kcal.toFixed(0) : s.info.kcal} kcal/100g）</option>`).join('')}
+                                ${similar.map(s => `<option value="${escapeHtmlText(s.name)}">${escapeHtmlText(String(s.name))}（${(s.info.kcal || 0).toFixed ? s.info.kcal.toFixed(0) : s.info.kcal} kcal/100g）</option>`).join('')}
                             </select>
                             <button onclick="applyNutritionOrphanToExisting('${doc.id}', '${safeName}')" class="text-xs px-3 py-1.5 rounded-full shrink-0" style="background:var(--sage); color:white">套用</button>
                         </div>` : '';
@@ -5834,8 +5903,8 @@
                     ${noDataNames.length > 0 ? `<div class="text-xs mt-2" style="color:var(--muted)">❔ 以下食材查無熱量資料（資料庫沒收錄，AI暫時也估不出來，可能是額度限制或查詢失敗），沒有列入熱量計算：
                         <div class="flex flex-wrap gap-x-2 gap-y-1 mt-1">
                             ${noDataNames.map(n => admin
-                                ? `<span>${n}<a href="javascript:void(0)" onclick="openAdminNutritionModalFor('${escapeHtmlAttr(n)}')" class="ml-1" style="color:var(--chambray); text-decoration:underline">去設定</a></span>`
-                                : `<span>${n}</span>`
+                                ? `<span>${escapeHtmlText(n)}<a href="javascript:void(0)" onclick="openAdminNutritionModalFor('${escapeHtmlAttr(n)}')" class="ml-1" style="color:var(--chambray); text-decoration:underline">去設定</a></span>`
+                                : `<span>${escapeHtmlText(n)}</span>`
                             ).join('')}
                         </div>
                     </div>` : ''}
@@ -5876,7 +5945,7 @@
 
             if (rows.every(r => r.status !== 'ok')) {
                 liveBox.innerHTML = `<div class="px-5 py-4 rounded-2xl text-sm" style="background:var(--cream); color:var(--muted)">目前還沒有任何食材設定成本，點下面的食材可以開始設定</div>
-                    <div class="flex flex-wrap gap-2 mt-2">${rows.map(r => `<button onclick="openIngredientCostEditor('${escapeHtmlAttr(r.name)}')" class="chip text-xs">${r.name} 設定價格</button>`).join('')}</div>`;
+                    <div class="flex flex-wrap gap-2 mt-2">${rows.map(r => `<button onclick="openIngredientCostEditor('${escapeHtmlAttr(r.name)}')" class="chip text-xs">${escapeHtmlText(r.name)} 設定價格</button>`).join('')}</div>`;
                 return;
             }
             const perCost = totalCost / newServings;
@@ -5889,8 +5958,8 @@
                     ${aiSuggestedCount > 0 ? `<p class="text-xs mt-1" style="color:var(--sage)">🤖 有 ${aiSuggestedCount} 項食材是AI估算的參考價，點下面的食材可以修改成你自己的價格</p>` : ''}
                     <div class="flex flex-wrap gap-2 mt-3">
                         ${rows.map(r => r.status === 'ok'
-                            ? `<button onclick="openIngredientCostEditor('${escapeHtmlAttr(r.name)}')" class="chip text-xs">${r.name} NT$${r.cost.toFixed(1)}${r.source === 'ai_suggested' ? ' 🤖' : ''}</button>`
-                            : `<button onclick="openIngredientCostEditor('${escapeHtmlAttr(r.name)}')" class="chip text-xs" style="color:var(--muted)">${r.name} 設定價格</button>`
+                            ? `<button onclick="openIngredientCostEditor('${escapeHtmlAttr(r.name)}')" class="chip text-xs">${escapeHtmlText(r.name)} NT$${r.cost.toFixed(1)}${r.source === 'ai_suggested' ? ' 🤖' : ''}</button>`
+                            : `<button onclick="openIngredientCostEditor('${escapeHtmlAttr(r.name)}')" class="chip text-xs" style="color:var(--muted)">${escapeHtmlText(r.name)} 設定價格</button>`
                         ).join('')}
                     </div>
                     <p class="text-xs mt-3" style="color:var(--muted)">價格只有你自己看得到，<a href="javascript:void(0)" onclick="openMyIngredientCostsModal()" style="text-decoration:underline">前往「我的食材成本」統一管理 →</a></p>
@@ -5931,7 +6000,7 @@
                 <label class="text-xs block mb-1" style="color:var(--muted)">套用類似食材的價格（你之前設定過的）</label>
                 <div class="flex gap-2">
                     <select id="ingredient-cost-modal-similar-select" class="form-input flex-1 text-sm">
-                        ${similar.map(c => `<option value="${escapeHtmlAttr(c.name)}">${c.name}（NT$${c.info.pricePer100g.toFixed(2)}/100g）</option>`).join('')}
+                        ${similar.map(c => `<option value="${escapeHtmlText(c.name)}">${escapeHtmlText(String(c.name))}（NT$${c.info.pricePer100g.toFixed(2)}/100g）</option>`).join('')}
                     </select>
                     <button onclick="applySimilarIngredientCost()" class="btn-secondary text-sm whitespace-nowrap">套用</button>
                 </div>`;
@@ -6471,7 +6540,7 @@
             el.innerHTML = shoppingListManualItemsCache.map(item => {
                 const bought = !!shoppingListPurchasedCache[`manual_${item.id}`];
                 return `<div class="flex items-center gap-3 px-4 py-2.5 rounded-2xl" style="background:var(--cream)">
-                    <span onclick="toggleManualItemPurchased('${escapeHtmlAttr(item.id)}')" class="flex-1 text-sm cursor-pointer select-none min-w-0 truncate" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">${bought ? '✅ ' : ''}${item.name}</span>
+                    <span onclick="toggleManualItemPurchased('${escapeHtmlAttr(item.id)}')" class="flex-1 text-sm cursor-pointer select-none min-w-0 truncate" style="${bought ? 'text-decoration:line-through; opacity:.45;' : ''}">${bought ? '✅ ' : ''}${escapeHtmlText(item.name)}</span>
                     <button onclick="addFamilyShoppingItem('${escapeHtmlAttr(item.name)}')" class="text-xs shrink-0" style="color:var(--sage)" title="複製這個品項到家庭採購清單，請家人幫忙買">👨‍👩‍👧 請家人買</button>
                     <button onclick="removeManualShoppingItem('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--danger)">移除</button>
                 </div>`;
@@ -6583,6 +6652,7 @@
             };
             const ok = await mutateFamilyShoppingListAtomic(items => { items.unshift(newItem); });
             if (ok) {
+                logFamilyActivity(await getActiveFridgeId(), 'shopping_add', name);
                 if (input) input.value = '';
                 showToast(typeof prefilledName === 'string' ? `已加入家庭採購清單：${name}` : '已新增');
                 await renderFamilyShoppingList();
@@ -6616,10 +6686,13 @@
         }
         async function removeFamilyShoppingItem(id) {
             const fridgeId = await getActiveFridgeId();
+            const currentList = await loadFamilyShoppingList();
+            const removedItem = currentList.find(i => i.id === id);
             await mutateFamilyShoppingListAtomic(items => {
                 const idx = items.findIndex(i => i.id === id);
                 if (idx !== -1) items.splice(idx, 1);
             });
+            if (removedItem) logFamilyActivity(fridgeId, 'shopping_remove', removedItem.name);
             await syncFamilyShoppingReminderIndex(id, fridgeId, false); // 品項都刪掉了，提醒索引當然也要跟著刪掉
             await renderFamilyShoppingList();
         }
@@ -6631,6 +6704,7 @@
                 if (item) { item.bought = !item.bought; itemAfter = { ...item }; }
             });
             if (itemAfter) {
+                logFamilyActivity(fridgeId, itemAfter.bought ? 'shopping_bought' : 'shopping_unbought', itemAfter.name);
                 // 標記成已購買的話，提醒索引要刪掉(買完了不用再提醒)；如果是從已購買切回未購買，
                 // 而且這個品項本來就有設定精確時間，要把索引補回來，不然買錯取消勾選之後提醒就
                 // 永遠消失了
@@ -6659,7 +6733,10 @@
                 }
             });
             // 換人的話，原本的提醒索引也要跟著刪掉(不然Worker還是會查到、通知到舊的那個人)
-            if (changingPerson) await syncFamilyShoppingReminderIndex(id, fridgeId, false);
+            if (changingPerson) {
+                await syncFamilyShoppingReminderIndex(id, fridgeId, false);
+                logFamilyActivity(fridgeId, 'shopping_assign', itemName || '一個品項', uid ? `指定給${name}` : '取消指定');
+            }
             // 這裡不再發送即時通知——指定人只是單純寫入資料，不會馬上通知對方。
             // 要通知的話，必須另外填地點/時間(選填)、按下「設定提醒」才會真的發送，
             // 這樣使用者才有機會先把訊息內容(去哪買、幾點買)填好，通知裡才能帶著完整資訊
@@ -6766,7 +6843,7 @@
             }
             el.innerHTML = items.map(item => {
                 const assignOptions = members.map(m =>
-                    `<option value="${m.uid}" ${item.assignedToUid === m.uid ? 'selected' : ''}>${escapeHtmlAttr(m.name)}</option>`
+                    `<option value="${m.uid}" ${item.assignedToUid === m.uid ? 'selected' : ''}>${escapeHtmlText(m.name)}</option>`
                 ).join('');
                 // 「誰新增的」這行文字，優先用我對他的自訂稱謂，沒設定過才用存進資料裡的名字
                 const addedByDisplay = (item.addedByUid && memberNameByUid[item.addedByUid]) || item.addedByName;
@@ -6778,9 +6855,9 @@
                     <div class="w-full mt-1 pt-1.5" style="border-top:1px dashed var(--line)">
                         <p class="text-xs w-full mb-1" style="color:var(--muted)">💡 指定人不會馬上通知對方，要填好下面資訊、按「設定提醒」才會真的發送——地點跟時間都是選填</p>
                         <div class="flex items-center gap-1.5 flex-wrap">
-                            <input type="text" id="family-reminder-location-${escapeHtmlAttr(item.id)}" placeholder="去哪買(選填)" value="${escapeHtmlText(item.location || '')}" class="form-input !py-1 !px-1.5 text-xs" style="width:6rem;">
-                            <input type="time" id="family-reminder-time-${escapeHtmlAttr(item.id)}" value="${item.preciseTime || ''}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;" title="幾點幾分要買(選填)，即時通知的訊息內容會顯示這個精確時間；但排程用的整點提醒只能精確到小時">
-                            <input type="date" id="family-reminder-date-${escapeHtmlAttr(item.id)}" value="${item.reminderDate || ''}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;" title="選填，只提醒一次；留空則每天提醒到買完">
+                            <input type="text" id="family-reminder-location-${escapeHtmlText(item.id)}" placeholder="去哪買(選填)" value="${escapeHtmlText(item.location || '')}" class="form-input !py-1 !px-1.5 text-xs" style="width:6rem;">
+                            <input type="time" id="family-reminder-time-${escapeHtmlText(item.id)}" value="${item.preciseTime || ''}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;" title="幾點幾分要買(選填)，即時通知的訊息內容會顯示這個精確時間；但排程用的整點提醒只能精確到小時">
+                            <input type="date" id="family-reminder-date-${escapeHtmlText(item.id)}" value="${item.reminderDate || ''}" class="form-input !py-1 !px-1.5 text-xs" style="width:auto;" title="選填，只提醒一次；留空則每天提醒到買完">
                             <button onclick="setFamilyShoppingItemReminder('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--sage)">設定提醒</button>
                             ${item.reminderTime ? `<button onclick="cancelFamilyShoppingItemReminder('${escapeHtmlAttr(item.id)}')" class="text-xs shrink-0" style="color:var(--danger)">取消提醒</button>` : ''}
                         </div>
@@ -7141,6 +7218,100 @@
             }
         }
 
+        // ========== 家庭共用空間操作紀錄 ==========
+        // 記錄「誰在共用的冰箱/食材成本/家庭採購清單做了什麼」，主要是為了家人之間萬一有疑問
+        // （例如「東西是誰吃掉的」「價格是誰改的」）可以回頭查——只有真正共用的空間(成員數>1)才
+        // 記錄，個人自己使用的冰箱不記錄，沒有意義也省寫入量。
+        //
+        // 資料結構故意用扁平集合、每筆紀錄各自是一個獨立小文件(familyActivityLogs/{自動ID})，
+        // 不是「一份文件裡塞一個陣列、每次操作都append進去」——那種做法會像之前家庭採購提醒踩過
+        // 的坑一樣，陣列會無限增長，讀取的時候得整份讀出來，沒辦法只查最近幾筆。扁平集合搭配
+        // Firestore查詢(orderBy+limit)，查看紀錄的時候只讀「真的要看的那幾十筆」，不會因為
+        // 紀錄越積越多就讀取量跟著爆炸。
+        //
+        // 查看紀錄是使用者主動點開才會讀取(不是每次打開冰箱就自動載入)，維持「不用的人零成本」
+        async function logFamilyActivity(familyId, action, itemName, detail) {
+            if (!currentUser) return;
+            if (familyId === currentUser.uid) return; // 個人冰箱(沒有真正共用)不記錄，只有多人共用的家庭空間才需要留紀錄
+            try {
+                const displayName = (userProgress && userProgress.nickname) || currentUser.displayName || '一位使用者';
+                await db.collection('familyActivityLogs').add({
+                    familyId, uid: currentUser.uid, displayName,
+                    action, itemName: itemName || '', detail: detail || '',
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+            } catch (err) {
+                // 記錄失敗不影響原本的操作本身，這只是輔助性質的紀錄，不該讓操作因為記錄失敗而卡住
+                console.warn('記錄家庭操作紀錄失敗', err && err.message);
+            }
+        }
+        // 動作代碼對應的中文說明，給畫面顯示用
+        const FAMILY_ACTIVITY_LABELS = {
+            fridge_add: '新增了冰箱食材', fridge_edit: '編輯了冰箱食材', fridge_remove: '移除了冰箱食材',
+            cost_change: '更新了食材成本', shopping_add: '新增了採購品項', shopping_remove: '移除了採購品項',
+            shopping_bought: '標記已購買', shopping_unbought: '取消已購買標記', shopping_assign: '指定了採購負責人',
+        };
+        let familyActivityLogCache = null;
+        let familyActivityLogCacheKey = null;
+        async function loadFamilyActivityLog(forceRefresh) {
+            if (!currentUser) return [];
+            const fridgeId = await getActiveFridgeId();
+            if (fridgeId === currentUser.uid) return []; // 個人冰箱沒有紀錄可看
+            if (!forceRefresh && familyActivityLogCache && familyActivityLogCacheKey === fridgeId) return familyActivityLogCache;
+            try {
+                const snap = await db.collection('familyActivityLogs')
+                    .where('familyId', '==', fridgeId)
+                    .orderBy('createdAt', 'desc')
+                    .limit(50) // 只查最近50筆，不是整份歷史都讀出來——這是控制讀取量的關鍵
+                    .get();
+                familyActivityLogCache = snap.docs.map(d => d.data());
+                familyActivityLogCacheKey = fridgeId;
+            } catch (err) {
+                console.warn('讀取家庭操作紀錄失敗', err && err.message);
+                familyActivityLogCache = familyActivityLogCache || [];
+            }
+            return familyActivityLogCache;
+        }
+        function formatActivityLogTime(createdAt) {
+            if (!createdAt || typeof createdAt.toDate !== 'function') return '';
+            const d = createdAt.toDate();
+            const now = new Date();
+            const sameDay = d.toDateString() === now.toDateString();
+            const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            if (sameDay) return `今天 ${timeStr}`;
+            return `${d.getMonth() + 1}/${d.getDate()} ${timeStr}`;
+        }
+        // 點連結才展開/收合，而且只有「第一次展開」才真的去讀資料——不會一打開冰箱視窗就自動載入，
+        // 維持「使用者不主動查看，就不產生額外讀取成本」的原則，跟其他快取一樣的設計思路
+        let familyActivityLogLoaded = false;
+        async function toggleFamilyActivityLog() {
+            const listEl = document.getElementById('family-activity-log-list');
+            if (!listEl) return;
+            const willShow = listEl.classList.contains('hidden');
+            listEl.classList.toggle('hidden', !willShow);
+            if (willShow && !familyActivityLogLoaded) {
+                familyActivityLogLoaded = true;
+                await renderFamilyActivityLog();
+            }
+        }
+        async function renderFamilyActivityLog() {
+            const el = document.getElementById('family-activity-log-list');
+            if (!el || !currentUser) return;
+            el.innerHTML = `<p class="text-xs text-center py-4" style="color:var(--muted)">載入中...</p>`;
+            const logs = await loadFamilyActivityLog(true);
+            if (!logs.length) {
+                el.innerHTML = `<p class="text-xs text-center py-4" style="color:var(--muted)">目前還沒有任何紀錄</p>`;
+                return;
+            }
+            el.innerHTML = logs.map(log => `
+                <div class="flex items-start gap-2 px-3 py-2 rounded-xl text-xs" style="background:var(--cream)">
+                    <span class="shrink-0" style="color:var(--muted)">${formatActivityLogTime(log.createdAt)}</span>
+                    <span class="min-w-0">
+                        <b>${escapeHtmlText(log.displayName)}</b>${FAMILY_ACTIVITY_LABELS[log.action] || log.action}${log.itemName ? `：${escapeHtmlText(log.itemName)}` : ''}${log.detail ? `<span style="color:var(--muted)">（${escapeHtmlText(log.detail)}）</span>` : ''}
+                    </span>
+                </div>`).join('');
+        }
+
         // 冰箱成員角色：'editor'(可以編輯，預設值，維持原本行為不變) / 'viewer'(僅檢視，
         // 不能新增/編輯食材、不能改食材成本、按大功告成不會扣庫存)。角色資料存在fridges文件的
         // memberRoles欄位裡(格式:{uid: 'viewer'})，冰箱建立者(owner)不受這個欄位限制，永遠是完整權限。
@@ -7301,6 +7472,65 @@
         // 直接沿用共用的ensureNotificationTokenRegistered()，跟其他兩個入口做的事完全一樣，
         // 只是多開一個路徑方便使用者，確保「家人指定買東西」這件事真的能收到通知，
         // 不會因為使用者剛好沒用過其他兩個功能而完全收不到
+        // ========== 統一的通知與設定視窗 ==========
+        // 整合原本分散在冰箱/採購清單/家庭採購清單三個地方各自獨立的「開啟通知」按鈕。
+        // 實際授權邏輯完全沒變，還是同一個ensureNotificationTokenRegistered()，這裡只是
+        // 提供一個從個人頁面就能找到、清楚集中的入口，不用去翻三個不同的地方才找得到
+        async function showSettingsModal() {
+            if (!currentUser) { alert('請先登入才能使用設定'); return; }
+            document.getElementById('settings-modal').classList.remove('hidden');
+            // 是不是共用家庭，決定要不要顯示「家人稱謂與家庭冰箱」那個區塊——個人冰箱沒有
+            // 家人可以取稱謂，顯示這個區塊沒有意義
+            try {
+                const fridgeId = await getActiveFridgeId();
+                const isShared = fridgeId !== currentUser.uid;
+                document.getElementById('settings-family-section')?.classList.toggle('hidden', !isShared);
+            } catch (err) { console.warn('檢查家庭狀態失敗', err); }
+            await refreshSettingsNotifStatus();
+            pushModalHistoryState();
+        }
+        function closeSettingsModal(fromPopState) {
+            document.getElementById('settings-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
+        }
+        // 檢查目前有沒有已經授權過的通知權杖，更新畫面上的狀態徽章跟按鈕文字
+        async function refreshSettingsNotifStatus() {
+            const badge = document.getElementById('settings-notif-status-badge');
+            const btn = document.getElementById('settings-notif-btn');
+            if (!badge || !currentUser) return;
+            try {
+                const doc = await db.collection('fcmTokens').doc(currentUser.uid).get();
+                const hasToken = doc.exists && Array.isArray(doc.data().tokens) && doc.data().tokens.length > 0;
+                if (hasToken) {
+                    badge.textContent = '✅ 已開啟';
+                    badge.style.background = 'var(--sage)';
+                    badge.style.color = 'white';
+                    if (btn) btn.textContent = '🔄 重新設定這個裝置的通知';
+                } else {
+                    badge.textContent = '尚未開啟';
+                    badge.style.background = 'var(--line)';
+                    badge.style.color = '';
+                    if (btn) btn.textContent = '開啟通知權限';
+                }
+            } catch (err) {
+                console.warn('檢查通知狀態失敗', err);
+            }
+        }
+        async function enableNotificationsFromSettings() {
+            const btn = document.getElementById('settings-notif-btn');
+            const errEl = document.getElementById('settings-notif-error');
+            if (btn) { btn.textContent = '設定中...'; btn.disabled = true; }
+            if (errEl) errEl.classList.add('hidden');
+            const result = await ensureNotificationTokenRegistered();
+            if (result.ok) {
+                showToast('🔔 通知已開啟，冰箱到期、採購提醒、家人指定採購都會共用這個授權');
+                await refreshSettingsNotifStatus();
+            } else {
+                if (errEl) { errEl.textContent = `開啟失敗：${result.error}`; errEl.classList.remove('hidden'); }
+                if (btn) btn.textContent = '開啟通知權限';
+            }
+            if (btn) btn.disabled = false;
+        }
         async function enableFamilyShoppingNotifications() {
             const btn = document.getElementById('family-shopping-notif-btn');
             if (btn) { btn.textContent = '設定中...'; btn.disabled = true; }
@@ -7468,6 +7698,7 @@
                 await db.collection('householdInvites').doc(currentUser.uid).delete();
                 activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null; userIngredientCostCache = null;
                 myFridgeRoleCache = null; myFridgeRoleCacheKey = null;
+                familyActivityLogCache = null; familyActivityLogCacheKey = null; familyActivityLogLoaded = false;
                 document.getElementById('fridge-invite-banner').innerHTML = '';
                 await renderFridgeItemsList();
                 await renderFridgeStaplesList();
@@ -7534,6 +7765,7 @@
                 }, { merge: true });
                 activeFridgeIdCache = null; fridgeItemsCache = null; fridgeStaplesCache = null; userIngredientCostCache = null;
                 myFridgeRoleCache = null; myFridgeRoleCacheKey = null;
+                familyActivityLogCache = null; familyActivityLogCacheKey = null; familyActivityLogLoaded = false;
                 await renderFridgeItemsList();
                 await renderFridgeStaplesList();
                 await renderFridgeMembersList();
@@ -7597,6 +7829,8 @@
                 // 用ID判斷的話，邀請人永遠會被誤判成「還沒加入任何家庭」，即使成員清單其實已經有好幾個人了
                 const isShared = members.length > 1;
                 updateFridgeLabels(isShared);
+                const logSection = document.getElementById('family-activity-log-section');
+                if (logSection) logSection.classList.toggle('hidden', !isShared);
                 // 載入我自己設定的家庭成員稱謂表(格式:{對方uid: 我對他的稱呼})，這份資料完全私有，
                 // 只有我自己看得到、也只影響我自己畫面上顯示的名字，不影響別人怎麼稱呼這個人
                 const myLabels = await loadMyFamilyMemberLabels();
@@ -8239,6 +8473,7 @@
                     if (items2[editingIndex]) items2[editingIndex] = newItemData;
                 });
                 if (ok) {
+                    logFamilyActivity(await getActiveFridgeId(), 'fridge_edit', existingItem.name, `庫存改為${newStock}${existingItem.unit}`);
                     cancelEditFridgeItem();
                     renderFridgeItemsList();
                 }
@@ -8264,6 +8499,7 @@
                 items.unshift(newItemData); // 插入到清單最前面，讓剛加的食材排在最上面，不用等排序
             });
             if (ok) {
+                logFamilyActivity(await getActiveFridgeId(), 'fridge_add', name, `${totalAmount}${unit}`);
                 // 條碼欄位有值的話（不管是掃描帶入的、還是你自己手動打的），把「條碼→這次確認送出的名稱」
                 // 存進自建字典，下次同一個條碼就能直接沿用，等於是用這個動作順便建檔
                 const barcode = barcodeInput.value.trim();
@@ -8303,7 +8539,10 @@
                 if (matchIdx >= 0) currentItems.splice(matchIdx, 1);
                 else if (currentItems[idx]) currentItems.splice(idx, 1);
             });
-            if (ok) renderFridgeItemsList();
+            if (ok) {
+                logFamilyActivity(await getActiveFridgeId(), 'fridge_remove', item.name);
+                renderFridgeItemsList();
+            }
         }
 
         // ========== 常備食材清單 ==========
@@ -8389,7 +8628,7 @@
             const staples = await loadFridgeStaples(true);
             // 每一項都可以刪除，不分內建/自訂——內建項目刪掉之後可以在上面的輸入框重新打一次同樣的名字加回來
             el.innerHTML = staples.map(s => {
-                return `<span class="chip text-xs" style="display:inline-flex; align-items:center; gap:4px;">${s}<button type="button" onclick="removeFridgeStaple('${escapeHtmlAttr(s)}')" style="color:var(--danger)">×</button></span>`;
+                return `<span class="chip text-xs" style="display:inline-flex; align-items:center; gap:4px;">${escapeHtmlText(s)}<button type="button" onclick="removeFridgeStaple('${escapeHtmlAttr(s)}')" style="color:var(--danger)">×</button></span>`;
             }).join('');
         }
 
