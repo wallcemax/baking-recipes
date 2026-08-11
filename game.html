@@ -531,6 +531,9 @@
         const auth = firebase.auth();
         const db = firebase.firestore();
         auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
+        // 靈魂畫手遊戲送圖片給AI評分要用到，game.html在這之前從來沒呼叫過Worker，
+        // 這是第一次需要——跟index.html用的是同一支Worker
+        const CLOUDFLARE_AI_PROXY_URL = 'https://baking-recipes-ai.wallcemax.workers.dev/';
 
         let currentUser = null;
         let userProgress = null;
@@ -946,6 +949,7 @@
             dashGameCleanup();
             dinerGameCleanup();
             tinyDinerCleanup();
+            drawGameCleanup();
             if (typeof rpgCleanup === 'function') rpgCleanup();
             // 回到選單一律重設header連結成預設的「回到首頁」，離開RPG(或任何遊戲)都會經過這裡
             const navLink = document.getElementById('header-nav-link');
@@ -982,6 +986,11 @@
                     <p class="font-display font-bold text-lg">小餐廳經營模擬</p>
                     <p class="text-xs mt-1" style="color:var(--espresso-soft)">用平台真實食譜的熱量換算售價，排菜單、抓備料量，經營 10 天看誰賺最多！</p>
                 </button>
+                <button onclick="playSfx('click'); openDrawGameLobby()" class="w-full p-5 rounded-2xl text-left mb-4" style="border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s; background:linear-gradient(135deg, #ffe8d6, #ffd6a5);">
+                    <span class="text-3xl mb-2 block">🎨</span>
+                    <p class="font-display font-bold text-lg">靈魂畫手</p>
+                    <p class="text-xs mt-1" style="color:var(--espresso-soft)">多人房間限時作畫，AI幫你評分像不像！越快畫完、AI越看得懂，分數越高——快速畫個輪廓也能是靈魂畫手</p>
+                </button>
                 ${(isAdmin() || (userProgress && userProgress.rpgUnlocked)) ? `
                 <button onclick="playSfx('click'); startRpgGame()" class="w-full p-5 rounded-2xl text-left mb-6 modal-photo-header" style="border:1px solid var(--line); box-shadow:0 4px 12px -6px rgba(58,42,30,0.25); transition:transform .15s; background-image: image-set(url('https://res.cloudinary.com/bumzwp9g/image/upload/w_700,q_auto,f_auto/v1785683414/RPG_eis4me.png') 1x, url('https://res.cloudinary.com/bumzwp9g/image/upload/w_1400,q_auto,f_auto/v1785683414/RPG_eis4me.png') 2x);">
                     <img src="https://res.cloudinary.com/bumzwp9g/image/upload/w_120,q_auto,f_auto/v1785683414/RPG_eis4me.png" class="w-14 h-14 rounded-xl object-cover mb-2" alt="">
@@ -997,6 +1006,7 @@
                             <button onclick="showLeaderboard('dash')" class="chip">廚房挑戰賽</button>
                             <button onclick="showLeaderboard('diner')" class="chip">深夜食堂</button>
                             <button onclick="showLeaderboard('tinydiner')" class="chip">餐廳經營</button>
+                            <button onclick="showLeaderboard('draw')" class="chip">靈魂畫手</button>
                             ${(isAdmin() || (userProgress && userProgress.rpgUnlocked)) ? `<button onclick="showLeaderboard('rpg')" class="chip">異世界料理者</button>` : ''}
                         </div>
                     </div>
@@ -10683,6 +10693,385 @@
                 const list = document.getElementById('leaderboard-list');
                 if (list) list.innerHTML = `<p class="text-sm" style="color:var(--danger)">載入失敗：${err.message}</p>`;
             }
+        }
+        // ============================================================
+        // 靈魂畫手：多人房間限時作畫，AI評分像不像
+        // ------------------------------------------------------------
+        // 房間結構參考KTV房間的做法(host/members/即時同步)，但簡化很多——這裡不需要
+        // KTV那種複雜的播放佇列，只需要「大家看到同一個題目、同時倒數、各自畫、各自送出評分、
+        // 全部送出後看排行榜」這個相對單純的流程
+        // ============================================================
+        const DRAW_GAME_WORDS = {
+            1: ['車子', '奶瓶', '太陽', '雨傘', '蘋果', '眼鏡', '帽子', '剪刀', '湯匙', '時鐘', '房子', '樹', '魚', '鳥', '花', '氣球', '襪子', '牙刷'],
+            2: ['飲水機', '熱水瓶', '腳踏車', '電風扇', '咖啡機', '洗衣機', '冰箱', '沙發', '電視', '相機', '吉他', '手機', '筆電', '微波爐', '檯燈', '書櫃', '烤麵包機', '果汁機'],
+            3: ['鋼琴', '古箏', '小提琴', '大提琴', '薩克斯風', '直升機', '帆船', '摩天輪', '風車', '城堡', '火車', '顯微鏡', '望遠鏡', '縫紉機', '印表機', '天秤', '羅盤', '沙漏'],
+            4: ['IC電路板', '齒輪組', '引擎', '主機板', '太陽能板', 'DNA雙螺旋', '化學實驗裝置', '機械手臂', '渦輪引擎', '伺服器機房', '電路圖', '衛星', '核反應爐', '3D印表機', '無人機', '風力發電機', '基因剪輯'],
+            5: ['蒙娜麗莎的微笑', '戴珍珠耳環的少女', '星夜', '吶喊', '拾穗', '雅典學院', '維納斯的誕生', '大衛像', '自由引導人民', '睡蓮', '創世紀', '最後的晚餐'],
+        };
+        const DRAW_GAME_TIME_LIMIT = 180; // 3分鐘，單位秒
+        let drawGameState = {
+            roomId: null, unsubscribe: null, canvas: null, ctx: null,
+            drawing: false, lastX: 0, lastY: 0, timerInterval: null, deadline: null,
+            hasSubmitted: false, isHost: false,
+        };
+
+        function drawGameCleanup() {
+            if (drawGameState.unsubscribe) { drawGameState.unsubscribe(); drawGameState.unsubscribe = null; }
+            if (drawGameState.timerInterval) { clearInterval(drawGameState.timerInterval); drawGameState.timerInterval = null; }
+            drawGameState = { roomId: null, unsubscribe: null, canvas: null, ctx: null, drawing: false, lastX: 0, lastY: 0, timerInterval: null, deadline: null, hasSubmitted: false, isHost: false };
+        }
+
+        // ---------- 大廳：建立房間 / 加入房間 ----------
+        function openDrawGameLobby() {
+            if (!currentUser) { alert('請先登入才能玩靈魂畫手'); return; }
+            currentGameScreen = 'draw-lobby';
+            document.getElementById('game-modal-title').textContent = '🎨 靈魂畫手';
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="rounded-2xl px-4 py-4 mb-4" style="background:var(--cream)">
+                    <p class="text-sm mb-3">多人房間限時作畫，題目分5個難度等級，AI幫你評分「像不像」——越快畫完、AI越看得懂，分數越高！快速畫個輪廓、AI也認得出來，一樣是靈魂畫手</p>
+                    <button onclick="createDrawGameRoom()" class="btn-amber w-full mb-2">➕ 建立房間</button>
+                    <div class="flex gap-2">
+                        <input id="draw-join-code" placeholder="輸入房間代碼" class="form-input" style="text-transform:uppercase" maxlength="6">
+                        <button onclick="joinDrawGameRoom()" class="btn-secondary shrink-0">加入</button>
+                    </div>
+                </div>
+                <button onclick="renderGameMenu()" class="btn-secondary w-full">返回選單</button>
+            `;
+        }
+        function generateDrawRoomCode() {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 拿掉容易看錯的0/O/1/I
+            let code = '';
+            for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+            return code;
+        }
+        async function createDrawGameRoom() {
+            const roomId = generateDrawRoomCode();
+            const myName = (userProgress && userProgress.nickname) || currentUser.displayName || '玩家';
+            try {
+                await db.collection('drawGameRooms').doc(roomId).set({
+                    hostUid: currentUser.uid,
+                    members: [{ uid: currentUser.uid, name: myName }],
+                    memberUids: [currentUser.uid], // 純uid陣列，給Firestore規則檢查用(規則語言不確定支援members.map()這種轉換)
+                    status: 'waiting', // waiting(等待中) / drawing(作畫中) / results(看結果)
+                    level: 1, currentWord: null, roundStartAt: null, submissions: {},
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+                drawGameState.isHost = true;
+                enterDrawGameRoom(roomId);
+            } catch (err) {
+                alert('建立房間失敗：' + err.message);
+            }
+        }
+        async function joinDrawGameRoom() {
+            const code = (document.getElementById('draw-join-code').value || '').trim().toUpperCase();
+            if (!code) { alert('請輸入房間代碼'); return; }
+            const myName = (userProgress && userProgress.nickname) || currentUser.displayName || '玩家';
+            try {
+                const ref = db.collection('drawGameRooms').doc(code);
+                const doc = await ref.get();
+                if (!doc.exists) { alert('找不到這個房間，確認代碼有沒有打對'); return; }
+                if (doc.data().status !== 'waiting') { alert('這個房間已經開始遊戲了，沒辦法中途加入'); return; }
+                await ref.update({
+                    members: firebase.firestore.FieldValue.arrayUnion({ uid: currentUser.uid, name: myName }),
+                    memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+                });
+                drawGameState.isHost = false;
+                enterDrawGameRoom(code);
+            } catch (err) {
+                alert('加入房間失敗：' + err.message);
+            }
+        }
+
+        // ---------- 房間畫面：即時同步房間狀態，依status切換顯示等待室/畫布/結果 ----------
+        function enterDrawGameRoom(roomId) {
+            drawGameState.roomId = roomId;
+            currentGameScreen = 'draw-room';
+            document.getElementById('game-modal-title').textContent = `🎨 房間 ${roomId}`;
+            drawGameState.unsubscribe = db.collection('drawGameRooms').doc(roomId).onSnapshot(doc => {
+                if (!doc.exists) { alert('房間已經被關閉'); drawGameCleanup(); renderGameMenu(); return; }
+                const data = doc.data();
+                drawGameState.isHost = data.hostUid === currentUser.uid;
+                if (data.status === 'waiting') renderDrawGameWaitingRoom(data);
+                else if (data.status === 'drawing') renderDrawGameCanvas(data);
+                else if (data.status === 'results') renderDrawGameResults(data);
+            }, err => {
+                console.warn('房間同步失敗', err);
+            });
+        }
+        function renderDrawGameWaitingRoom(data) {
+            const membersHtml = data.members.map(m => `<div class="px-3 py-2 rounded-xl mb-1" style="background:var(--cream)">${m.uid === data.hostUid ? '👑 ' : ''}${escapeHtml(m.name)}</div>`).join('');
+            const levelOptions = [1, 2, 3, 4, 5].map(lv => `<option value="${lv}" ${data.level === lv ? 'selected' : ''}>LV${lv}</option>`).join('');
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="rounded-2xl px-4 py-4 mb-4" style="background:var(--cream)">
+                    <p class="text-xs mb-2" style="color:var(--muted)">房間代碼（分享給朋友）</p>
+                    <p class="text-2xl font-bold mb-3" style="letter-spacing:0.1em">${drawGameState.roomId}</p>
+                    <p class="text-sm font-semibold mb-2">👥 房間成員（${data.members.length}人）</p>
+                    ${membersHtml}
+                </div>
+                ${drawGameState.isHost ? `
+                <div class="rounded-2xl px-4 py-4 mb-4" style="background:var(--cream)">
+                    <p class="text-sm font-semibold mb-2">選擇難度</p>
+                    <select id="draw-level-select" onchange="updateDrawGameLevel(this.value)" class="form-input mb-3">${levelOptions}</select>
+                    <button onclick="startDrawGameRound()" class="btn-amber w-full">🎨 開始作畫</button>
+                </div>` : `<p class="text-sm text-center" style="color:var(--muted)">等待房主開始遊戲...</p>`}
+                <button onclick="leaveDrawGameRoom()" class="btn-secondary w-full mt-4">離開房間</button>
+            `;
+        }
+        async function updateDrawGameLevel(level) {
+            try { await db.collection('drawGameRooms').doc(drawGameState.roomId).update({ level: parseInt(level, 10) }); } catch (err) { console.warn(err); }
+        }
+        async function startDrawGameRound() {
+            const doc = await db.collection('drawGameRooms').doc(drawGameState.roomId).get();
+            const level = doc.data().level || 1;
+            const words = DRAW_GAME_WORDS[level];
+            const word = words[Math.floor(Math.random() * words.length)];
+            try {
+                await db.collection('drawGameRooms').doc(drawGameState.roomId).update({
+                    status: 'drawing', currentWord: word, roundStartAt: firebase.firestore.FieldValue.serverTimestamp(), submissions: {},
+                });
+            } catch (err) { alert('開始遊戲失敗：' + err.message); }
+        }
+        async function leaveDrawGameRoom() {
+            try {
+                const ref = db.collection('drawGameRooms').doc(drawGameState.roomId);
+                const doc = await ref.get();
+                if (doc.exists) {
+                    const members = doc.data().members.filter(m => m.uid !== currentUser.uid);
+                    const memberUids = members.map(m => m.uid);
+                    if (!members.length || doc.data().hostUid === currentUser.uid) {
+                        await ref.delete(); // 房主離開、或最後一個人離開，房間直接關閉
+                    } else {
+                        await ref.update({ members, memberUids });
+                    }
+                }
+            } catch (err) { console.warn('離開房間時發生錯誤', err); }
+            drawGameCleanup();
+            renderGameMenu();
+        }
+        function escapeHtml(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // ---------- 畫布：作畫階段 ----------
+        function renderDrawGameCanvas(data) {
+            // 已經送出評分過的人，畫面改成「等待其他人」，不能再畫
+            if (drawGameState.hasSubmitted || (data.submissions && data.submissions[currentUser.uid])) {
+                renderDrawGameWaitingForOthers(data);
+                return;
+            }
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center mb-3">
+                    <p class="text-xs" style="color:var(--muted)">請畫出</p>
+                    <p class="text-3xl font-bold" style="color:var(--jam)">${escapeHtml(data.currentWord)}</p>
+                    <p class="text-xs mt-1" style="color:var(--muted)">難度 LV${data.level}</p>
+                </div>
+                <p id="draw-game-timer" class="text-center text-2xl font-bold mb-2">03:00</p>
+                <canvas id="draw-game-canvas" width="500" height="400" style="width:100%; aspect-ratio:5/4; background:white; border:2px solid var(--line); border-radius:1rem; touch-action:none; cursor:crosshair;"></canvas>
+                <div class="flex gap-2 mt-3">
+                    <button onclick="clearDrawGameCanvas()" class="btn-secondary flex-1">🗑️ 清除重畫</button>
+                    <button onclick="submitDrawGameDrawing()" class="btn-amber flex-1">✅ 送出評分</button>
+                </div>
+            `;
+            initDrawGameCanvas();
+            startDrawGameTimer(data.roundStartAt);
+        }
+        function initDrawGameCanvas() {
+            const canvas = document.getElementById('draw-game-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#2d2418';
+            ctx.lineWidth = 4;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            drawGameState.canvas = canvas;
+            drawGameState.ctx = ctx;
+
+            // 座標換算：canvas實際像素尺寸(width/height屬性)跟畫面顯示尺寸(CSS的100%寬度)不一定一樣，
+            // 要用getBoundingClientRect()量出目前顯示尺寸、換算成畫布內部座標比例，
+            // 不然在手機這種畫面比屬性尺寸小很多的情況下，畫的線條位置會整個偏掉
+            function getPos(e) {
+                const rect = canvas.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return {
+                    x: (clientX - rect.left) * (canvas.width / rect.width),
+                    y: (clientY - rect.top) * (canvas.height / rect.height),
+                };
+            }
+            function start(e) {
+                e.preventDefault();
+                drawGameState.drawing = true;
+                const pos = getPos(e);
+                drawGameState.lastX = pos.x; drawGameState.lastY = pos.y;
+            }
+            function move(e) {
+                if (!drawGameState.drawing) return;
+                e.preventDefault();
+                const pos = getPos(e);
+                ctx.beginPath();
+                ctx.moveTo(drawGameState.lastX, drawGameState.lastY);
+                ctx.lineTo(pos.x, pos.y);
+                ctx.stroke();
+                drawGameState.lastX = pos.x; drawGameState.lastY = pos.y;
+            }
+            function end() { drawGameState.drawing = false; }
+            canvas.addEventListener('mousedown', start);
+            canvas.addEventListener('mousemove', move);
+            canvas.addEventListener('mouseup', end);
+            canvas.addEventListener('mouseleave', end);
+            canvas.addEventListener('touchstart', start, { passive: false });
+            canvas.addEventListener('touchmove', move, { passive: false });
+            canvas.addEventListener('touchend', end);
+        }
+        function clearDrawGameCanvas() {
+            if (!drawGameState.ctx || !drawGameState.canvas) return;
+            drawGameState.ctx.fillStyle = 'white';
+            drawGameState.ctx.fillRect(0, 0, drawGameState.canvas.width, drawGameState.canvas.height);
+        }
+        function startDrawGameTimer(roundStartAt) {
+            if (drawGameState.timerInterval) clearInterval(drawGameState.timerInterval);
+            // roundStartAt剛寫入的當下，從即時監聽拿到的可能還是本地暫存的樂觀更新值(pending)，
+            // serverTimestamp()要等伺服器真正處理完才會回填正確時間，這裡先用本地時間概略起算，
+            // 之後onSnapshot收到伺服器確認的正式時間、重新呼叫這個函式時會自動校正
+            const startMs = (roundStartAt && typeof roundStartAt.toMillis === 'function') ? roundStartAt.toMillis() : Date.now();
+            drawGameState.deadline = startMs + DRAW_GAME_TIME_LIMIT * 1000;
+            const tick = () => {
+                const remain = Math.max(0, Math.round((drawGameState.deadline - Date.now()) / 1000));
+                const el = document.getElementById('draw-game-timer');
+                if (el) {
+                    const m = String(Math.floor(remain / 60)).padStart(2, '0');
+                    const s = String(remain % 60).padStart(2, '0');
+                    el.textContent = `${m}:${s}`;
+                    el.style.color = remain <= 20 ? 'var(--danger)' : '';
+                }
+                if (remain <= 0) {
+                    clearInterval(drawGameState.timerInterval);
+                    if (!drawGameState.hasSubmitted) submitDrawGameDrawing(true); // 時間到自動送出，不管有沒有畫完
+                }
+            };
+            tick();
+            drawGameState.timerInterval = setInterval(tick, 1000);
+        }
+        function renderDrawGameWaitingForOthers(data) {
+            const total = data.members.length;
+            const submitted = Object.keys(data.submissions || {}).length;
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-8">
+                    <p class="text-4xl mb-3">⏳</p>
+                    <p class="font-semibold mb-1">已送出評分，等待其他人...</p>
+                    <p class="text-sm" style="color:var(--muted)">${submitted} / ${total} 人已完成</p>
+                </div>
+            `;
+        }
+
+        // ---------- 送出評分：畫布轉圖片 → 打Worker評分 → 算最終分數 → 寫進房間資料 ----------
+        async function submitDrawGameDrawing(isAutoSubmit) {
+            if (drawGameState.hasSubmitted) return;
+            drawGameState.hasSubmitted = true;
+            if (drawGameState.timerInterval) { clearInterval(drawGameState.timerInterval); drawGameState.timerInterval = null; }
+            const canvas = drawGameState.canvas;
+            if (!canvas) return;
+
+            const roomDoc = await db.collection('drawGameRooms').doc(drawGameState.roomId).get();
+            const data = roomDoc.data();
+            const level = data.level || 1;
+            const targetWord = data.currentWord;
+            const startMs = (data.roundStartAt && typeof data.roundStartAt.toMillis === 'function') ? data.roundStartAt.toMillis() : Date.now();
+            const timeUsedSec = Math.min(DRAW_GAME_TIME_LIMIT, Math.max(0, (Date.now() - startMs) / 1000));
+
+            document.getElementById('game-modal-body').innerHTML = `<div class="text-center py-8"><p class="text-4xl mb-3">🤖</p><p>AI評分中...</p></div>`;
+
+            const imageBase64 = canvas.toDataURL('image/png').split(',')[1];
+            let matchScore = 0, hasText = false, reasoning = '';
+            try {
+                const idToken = await currentUser.getIdToken();
+                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'judge_drawing', idToken, imageBase64, mimeType: 'image/png', targetWord, level }),
+                });
+                const result = await res.json();
+                if (res.ok) { matchScore = result.matchScore || 0; hasText = !!result.hasText; reasoning = result.reasoning || ''; }
+                else console.warn('評分失敗', result.error);
+            } catch (err) {
+                console.warn('評分請求失敗', err);
+            }
+
+            // 計分公式：基礎分是AI信心分數(已經反映畫得清不清楚、細節夠不夠)，
+            // 乘上速度加成(越快送出加成越高，最多+50%)跟難度加成(等級越高倍率越高，鼓勵挑戰高難度)，
+            // 最後扣掉文字懲罰(偵測到文字直接扣30分，防止用寫字取代畫圖作弊)
+            const speedRatio = 1 - (timeUsedSec / DRAW_GAME_TIME_LIMIT); // 0~1，越快送出越接近1
+            const speedMultiplier = 1 + speedRatio * 0.5; // 最多+50%加成
+            const levelMultiplier = 1 + (level - 1) * 0.15; // LV1=1.0倍 ~ LV5=1.6倍
+            let finalScore = Math.round(matchScore * speedMultiplier * levelMultiplier);
+            if (hasText) finalScore = Math.max(0, finalScore - 30);
+
+            const myName = (userProgress && userProgress.nickname) || currentUser.displayName || '玩家';
+            try {
+                await db.collection('drawGameRooms').doc(drawGameState.roomId).update({
+                    [`submissions.${currentUser.uid}`]: {
+                        name: myName, score: finalScore, matchScore, hasText, reasoning,
+                        timeUsedSec: Math.round(timeUsedSec), level,
+                    },
+                });
+                // 同步記錄一筆進共用的gameScores排行榜，跟其他小遊戲共用同一份集合，用gameId區分
+                await db.collection('gameScores').add({
+                    gameId: 'draw', userId: currentUser.uid, userName: myName, score: finalScore,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+            } catch (err) {
+                console.warn('寫入評分結果失敗', err);
+            }
+
+            // 房主負責檢查是不是全部人都送出了，是的話把房間狀態切到results——
+            // 只讓房主一個人做這個判斷，避免好幾個成員同時檢查、同時搶著寫入results狀態
+            if (drawGameState.isHost) checkAllSubmittedAndFinish();
+        }
+        async function checkAllSubmittedAndFinish() {
+            try {
+                const doc = await db.collection('drawGameRooms').doc(drawGameState.roomId).get();
+                const data = doc.data();
+                if (!data || data.status !== 'drawing') return;
+                const submittedCount = Object.keys(data.submissions || {}).length;
+                if (submittedCount >= data.members.length) {
+                    await db.collection('drawGameRooms').doc(drawGameState.roomId).update({ status: 'results' });
+                }
+            } catch (err) { console.warn('檢查完成狀態失敗', err); }
+        }
+
+        // ---------- 結果畫面 ----------
+        function renderDrawGameResults(data) {
+            const results = Object.entries(data.submissions || {})
+                .map(([uid, s]) => ({ uid, ...s }))
+                .sort((a, b) => b.score - a.score);
+            const rows = results.map((r, i) => {
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                return `<div class="flex items-center justify-between px-4 py-3 rounded-2xl mb-2" style="background:var(--cream)">
+                    <span class="min-w-0">
+                        <span class="font-semibold">${medal} ${escapeHtml(r.name)}</span>
+                        <span class="block text-xs mt-0.5" style="color:var(--muted)">AI信心${r.matchScore}分・耗時${r.timeUsedSec}秒${r.hasText ? '・⚠️偵測到文字扣分' : ''}</span>
+                        ${r.reasoning ? `<span class="block text-xs mt-0.5" style="color:var(--muted)">「${escapeHtml(r.reasoning)}」</span>` : ''}
+                    </span>
+                    <span class="text-xl font-bold shrink-0 ml-2" style="color:var(--jam)">${r.score}</span>
+                </div>`;
+            }).join('');
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center mb-3">
+                    <p class="text-xs" style="color:var(--muted)">題目是</p>
+                    <p class="text-2xl font-bold" style="color:var(--jam)">${escapeHtml(data.currentWord)}</p>
+                </div>
+                <p class="font-semibold text-sm mb-2">🏆 本輪結果</p>
+                ${rows || '<p class="text-sm text-center" style="color:var(--muted)">還沒有人送出</p>'}
+                ${drawGameState.isHost ? `<button onclick="backToDrawGameWaitingRoom()" class="btn-amber w-full mt-4">🔄 再玩一輪</button>` : `<p class="text-sm text-center mt-4" style="color:var(--muted)">等待房主開始下一輪...</p>`}
+                <button onclick="leaveDrawGameRoom()" class="btn-secondary w-full mt-2">離開房間</button>
+            `;
+        }
+        async function backToDrawGameWaitingRoom() {
+            drawGameState.hasSubmitted = false;
+            try {
+                await db.collection('drawGameRooms').doc(drawGameState.roomId).update({ status: 'waiting', currentWord: null, roundStartAt: null, submissions: {} });
+            } catch (err) { alert('重設房間失敗：' + err.message); }
         }
 </script>
 </body>
