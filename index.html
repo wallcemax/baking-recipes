@@ -4350,7 +4350,14 @@
                     });
                 }
             });
-            if (changed) await saveFridgeItems(fridgeItems);
+            if (changed) {
+                // 扣完之後，數量歸零(或接近零，容許浮點數誤差)的品項直接從清單移除，不要留著一筆
+                // 空紀錄——這是「冰箱庫存比對」畫面會一直顯示已經用完的品牌「庫存0g」的根源：
+                // 之前扣到0之後那筆資料還留在冰箱裡，之後買越多不同品牌，這種空紀錄只會越堆越多。
+                // 用filter直接濾掉，不影響前面用index(b.idx)扣庫存的邏輯(那些都已經執行完了才做這一步)
+                const cleanedItems = fridgeItems.filter(item => item.amount > 0.001);
+                await saveFridgeItems(cleanedItems);
+            }
         }
 
         async function finishRecipe() {
@@ -8589,7 +8596,7 @@
             await Promise.all(Object.values(groups).map(async group => {
                 const batchIdxs = fridgeItems
                     .map((item, idx) => ({ item, idx }))
-                    .filter(({ item }) => group.matchNames.includes(item.name.trim()))
+                    .filter(({ item }) => group.matchNames.includes(item.name.trim()) && item.amount > 0.001) // 濾掉數量是0(或接近0)的品項——不管是新的扣庫存邏輯之後不會再產生，還是使用者冰箱裡修正之前就累積下來的舊資料，這裡都一併擋掉，不會在比對畫面顯示「已經用完的品牌還有庫存0g」這種沒有意義的資訊
                     .sort((a, b) => {
                         if (!a.item.expiryDate && !b.item.expiryDate) return 0;
                         if (!a.item.expiryDate) return 1;
