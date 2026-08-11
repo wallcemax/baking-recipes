@@ -538,6 +538,47 @@
         const CLOUDINARY_CLOUD_NAME_DG = 'bumzwp9g';
         const CLOUDINARY_UPLOAD_PRESET = 'barking';
         const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME_DG}/image/upload`;
+        // 從Cloudinary的圖片網址中取出public_id（刪除API需要的識別碼）——跟index.html用同一套邏輯，
+        // 網址格式通常是 .../upload/v版本號/資料夾/檔名.副檔名，取「版本號後面到副檔名前面」這一段
+        function extractCloudinaryPublicId(url) {
+            if (!url) return null;
+            const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[a-zA-Z0-9]+)?$/);
+            return match ? match[1] : null;
+        }
+        // 靈魂畫手每回合結束、AI已經評分完成之後，玩家畫的圖就沒有繼續留在Cloudinary的必要了——
+        // 這裡先嘗試透過Worker直接刪除，失敗的話(網路問題、Worker還沒設定好)退回記錄成孤兒圖片，
+        // 讓管理員之後可以在「孤兒圖片清單」看到、手動處理，這是跟index.html刪除食譜圖片同一套
+        // 雙重保險的做法，不會因為單次刪除失敗就讓這張圖從此沒人管
+        async function deleteDrawGameCloudinaryImage(url) {
+            if (!url) return;
+            const publicId = extractCloudinaryPublicId(url);
+            if (!publicId || !currentUser) { logOrphanedDrawGameImage(url); return; }
+            try {
+                const idToken = await currentUser.getIdToken();
+                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'delete_image', public_id: publicId, idToken }),
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    console.warn('刪除靈魂畫手作品失敗，記錄成孤兒等待後續處理', data.error || res.status);
+                    logOrphanedDrawGameImage(url);
+                }
+            } catch (err) {
+                console.warn('刪除靈魂畫手作品時發生錯誤，記錄成孤兒等待後續處理', err && err.message);
+                logOrphanedDrawGameImage(url);
+            }
+        }
+        function logOrphanedDrawGameImage(url) {
+            if (!url || !db) return;
+            try {
+                db.collection('orphanedCloudinaryImages').add({
+                    url, reason: 'draw-game-artwork',
+                    userId: currentUser ? currentUser.uid : null,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                }).catch(err => console.warn('記錄孤兒圖片失敗', err && err.message));
+            } catch (err) { console.warn('記錄孤兒圖片失敗', err && err.message); }
+        }
 
         let currentUser = null;
         let userProgress = null;
@@ -10732,13 +10773,13 @@
         let drawGameState = {
             roomId: null, unsubscribe: null, canvas: null, ctx: null,
             drawing: false, lastX: 0, lastY: 0, timerInterval: null, deadline: null,
-            hasSubmitted: false, isHost: false, lastRenderedStatus: null, judgeTriggered: false,
+            hasSubmitted: false, isHost: false, lastRenderedStatus: null, judgeTriggered: false, lastSeenRound: 0,
         };
 
         function drawGameCleanup() {
             if (drawGameState.unsubscribe) { drawGameState.unsubscribe(); drawGameState.unsubscribe = null; }
             if (drawGameState.timerInterval) { clearInterval(drawGameState.timerInterval); drawGameState.timerInterval = null; }
-            drawGameState = { roomId: null, unsubscribe: null, canvas: null, ctx: null, drawing: false, lastX: 0, lastY: 0, timerInterval: null, deadline: null, hasSubmitted: false, isHost: false, lastRenderedStatus: null, judgeTriggered: false };
+            drawGameState = { roomId: null, unsubscribe: null, canvas: null, ctx: null, drawing: false, lastX: 0, lastY: 0, timerInterval: null, deadline: null, hasSubmitted: false, isHost: false, lastRenderedStatus: null, judgeTriggered: false, lastSeenRound: 0 };
         }
         function escapeHtml(str) {
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -10932,6 +10973,13 @@
                     const members = data.members.filter(m => m.uid !== currentUser.uid);
                     const memberUids = members.map(m => m.uid);
                     if (!members.length || data.hostUid === currentUser.uid) {
+                        // 房間真的被關閉了(房主離開、或最後一個人離開)，把還沒被清理過的作品
+                        // (還沒進到下一輪、還留在submissions裡的)一併清掉，避免中途離開的情況
+                        // 留下沒人管的圖片——正常玩到底的話這些圖片早就在proceedDrawGameAfterReveal()
+                        // 清過了，這裡是專門處理「玩到一半有人離開」這種中途中斷的情況
+                        Object.values(data.submissions || {}).forEach(s => {
+                            if (s.imageUrl) deleteDrawGameCloudinaryImage(s.imageUrl);
+                        });
                         await ref.delete(); // 房主離開、或最後一個人離開，房間直接關閉
                     } else {
                         await ref.update({ members, memberUids });
@@ -10944,6 +10992,19 @@
 
         // ---------- 作畫階段：畫布 + 其他人的即時狀態 ----------
         function renderDrawGameCanvas(data) {
+            // 偵測回合有沒有真的換了——不管有沒有經過等待室畫面，只要回合編號變了，就要重設
+            // 所有「這一回合專屬」的本地狀態(hasSubmitted/judgeTriggered/lastRenderedStatus)。
+            // 這是修正「進入第二回合，非房主的人被誤判成已經送出、畫面卡死」這個bug的關鍵：
+            // 之前這幾個旗標只有在renderDrawGameWaitingRoom()裡才會重設，但多回合遊戲從reveal
+            // 直接跳到下一輪的drawing、根本不會經過等待室，導致上一輪的hasSubmitted=true
+            // 一直殘留到新的一輪，畫面誤判成「早就送出了」，實際上submissions裡根本沒有這筆資料，
+            // 房間永遠等不到真正的送出、卡在原地
+            if (drawGameState.lastSeenRound !== data.currentRound) {
+                drawGameState.lastSeenRound = data.currentRound;
+                drawGameState.hasSubmitted = false;
+                drawGameState.judgeTriggered = false;
+                drawGameState.lastRenderedStatus = null;
+            }
             const alreadySubmitted = drawGameState.hasSubmitted || (data.submissions && data.submissions[currentUser.uid]);
             // 狀態列：6個成員格子，顯示「作畫中」或「✅已完成」，讓大家知道還在等誰
             const statusSlots = data.members.map(m => {
@@ -11126,15 +11187,17 @@
                     .map(([uid, s]) => ({ uid, imageUrl: s.imageUrl }));
 
                 let resultsByUid = {};
+                let judgingError = null;
                 if (submissionsList.length) {
                     const idToken = await currentUser.getIdToken();
                     const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ action: 'judge_drawings_batch', idToken, submissions: submissionsList, targetWord: data.currentWord, level: data.currentLevel }),
                     });
-                    const result = await res.json();
+                    let result;
+                    try { result = await res.json(); } catch (e) { result = { error: `伺服器回應無法解析(${res.status})` }; }
                     if (res.ok) resultsByUid = result.results || {};
-                    else console.warn('批次評分失敗', result.error);
+                    else { judgingError = result.error || `評分請求失敗(${res.status})`; console.warn('批次評分失敗', judgingError); }
                 }
 
                 // 算最終分數：AI信心分數 × 速度加成(最多+50%) × 難度加成(LV1~LV5，1.0~1.6倍)，
@@ -11154,7 +11217,7 @@
                     cumulativeScores[m.uid] = (cumulativeScores[m.uid] || 0) + score;
                 });
 
-                await db.collection('drawGameRooms').doc(drawGameState.roomId).update({ status: 'reveal', roundResults, cumulativeScores });
+                await db.collection('drawGameRooms').doc(drawGameState.roomId).update({ status: 'reveal', roundResults, cumulativeScores, judgingError: judgingError || null });
             } catch (err) {
                 alert('評分過程發生錯誤：' + err.message);
                 // 評分失敗也要想辦法讓遊戲繼續走，不要整個卡在judging狀態動不了
@@ -11181,6 +11244,7 @@
                     <p class="text-xs" style="color:var(--muted)">第 ${data.currentRound}／${data.totalRounds} 回合・題目是</p>
                     <p class="text-2xl font-bold" style="color:var(--jam)">${escapeHtml(data.currentWord)}</p>
                 </div>
+                ${data.judgingError ? `<div class="px-4 py-3 rounded-2xl mb-3 text-xs" style="background:#fde8e8; color:var(--danger)">⚠️ AI評分失敗，這輪全部人先算0分：${escapeHtml(data.judgingError)}</div>` : ''}
                 <div class="grid grid-cols-2 gap-3 mb-4">${cards}</div>
                 ${drawGameState.isHost
                     ? `<button onclick="proceedDrawGameAfterReveal()" class="btn-amber w-full">${isLastRound ? '🏁 查看總結果' : '➡️ 下一回合'}</button>`
@@ -11191,6 +11255,12 @@
         async function proceedDrawGameAfterReveal() {
             const doc = await db.collection('drawGameRooms').doc(drawGameState.roomId).get();
             const data = doc.data();
+            // 這一輪已經評分完成、揭曉過了，畫面不會再需要顯示這些圖片，清掉Cloudinary上的檔案——
+            // 只有房主會呼叫這個函式(按鈕只有房主看得到)，天然就只會觸發一次，不會每個玩家各自
+            // 重複刪除同一批圖片、浪費請求
+            Object.values(data.submissions || {}).forEach(s => {
+                if (s.imageUrl) deleteDrawGameCloudinaryImage(s.imageUrl);
+            });
             if (data.currentRound >= data.totalRounds) {
                 try { await db.collection('drawGameRooms').doc(drawGameState.roomId).update({ status: 'gameover' }); }
                 catch (err) { alert('結算失敗：' + err.message); }
