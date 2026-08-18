@@ -4311,6 +4311,7 @@
             if (!fridgeItems.length) return; // 冰箱是空的，沒東西可以扣
             const rows = await computeFridgeMatchRows(recipe, factor, fridgeItems);
             let changed = false;
+            const deductedNames = []; // 記錄這次扣了哪些食材，等一下要寫進操作紀錄裡
             // 同一個groupKey（套用同一個品牌/通用名稱的食材們）只處理一次，用整組加總的需求量去扣，
             // 不要每個食材列各自扣一次，不然同一批庫存會被重複扣好幾次
             const processedGroups = new Set();
@@ -4336,6 +4337,7 @@
                         remainingGrams -= useGrams;
                         changed = true;
                     });
+                    deductedNames.push(r.name);
                 } else {
                     // 換算不出克數，但單位剛好一樣的情況：一批一批直接相減（這種情況沒辦法正確分組加總，
                     // 只能用這一列自己的需求量，比較保守）
@@ -4348,6 +4350,7 @@
                         remaining -= use;
                         changed = true;
                     });
+                    deductedNames.push(r.name);
                 }
             });
             if (changed) {
@@ -4357,6 +4360,11 @@
                 // 用filter直接濾掉，不影響前面用index(b.idx)扣庫存的邏輯(那些都已經執行完了才做這一步)
                 const cleanedItems = fridgeItems.filter(item => item.amount > 0.001);
                 await saveFridgeItems(cleanedItems);
+                // 記錄一筆操作紀錄：這裡是之前接「家庭共用空間操作紀錄」功能時漏掉的地方——
+                // 新增/編輯/移除食材、改成本都有接，唯獨「完成食譜自動扣庫存」這條路徑當初沒接到，
+                // 導致做完食譜、庫存明明有變動，卻完全查不到是誰做的
+                const fridgeId = await getActiveFridgeId();
+                logFamilyActivity(fridgeId, 'fridge_recipe_deduct', recipe.name, deductedNames.length ? `扣了：${deductedNames.join('、')}` : '');
             }
         }
 
@@ -7210,6 +7218,7 @@
         // 動作代碼對應的中文說明，給畫面顯示用
         const FAMILY_ACTIVITY_LABELS = {
             fridge_add: '新增了冰箱食材', fridge_edit: '編輯了冰箱食材', fridge_remove: '移除了冰箱食材',
+            fridge_recipe_deduct: '完成食譜自動扣了庫存',
             cost_change: '更新了食材成本', shopping_add: '新增了採購品項', shopping_remove: '移除了採購品項',
             shopping_bought: '標記已購買', shopping_unbought: '取消已購買標記', shopping_assign: '指定了採購負責人',
         };
