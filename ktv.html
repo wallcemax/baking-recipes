@@ -1499,39 +1499,47 @@
         } catch (err) { console.warn('讀取歌曲索引快取失敗', err); }
     }
     let popularityLoaded = false;
-    // 熱門度(被點過幾次)的一次性載入：跟歌曲索引同一套安全模式，整個登入階段只讀一次，
-    // 存成videoId對應次數的物件，之後評分排序都是查這份本地快取，不會額外打Firestore
+    // 熱門度(被點過幾次)的一次性載入：跟歌曲索引同一套安全模式，整個登入階段只讀一次。
+    // 這次改成連title/thumbnail完整資料都一起存起來(不是只存count數字)——公播挑歌直接用
+    // 這份快取，不用再另外去跟cachedSongIndexEntries比對交集。之前的做法會有個問題：
+    // ktvSongIndex(歌曲索引)是用「最近更新時間」排序、只留500筆，跟ktvGlobalSongStats
+    // (熱門度，用「點播次數」排序)是兩個不同排序邏輯的集合，資料範圍不一定完全重疊——
+    // 熱門度很高但很久沒被重新搜尋過的歌，很可能已經不在「最近更新的500筆」索引快取裡，
+    // 導致真正找得到完整資料的候選池被砍到只剩沒幾首，公播歌曲才會一直重複那幾首
     async function loadPopularityCache() {
         if (popularityLoaded) return;
         popularityLoaded = true;
         try {
             const snap = await db.collection('ktvGlobalSongStats').orderBy('count', 'desc').limit(300).get();
             const map = {};
-            snap.docs.forEach(d => { map[d.id] = d.data().count || 0; });
+            const fullEntries = [];
+            snap.docs.forEach(d => {
+                const data = d.data();
+                map[d.id] = data.count || 0;
+                if (data.title) fullEntries.push({ videoId: d.id, title: data.title, thumbnail: data.thumbnail || null, count: data.count || 0 });
+            });
             cachedPopularityByVideoId = map;
+            cachedPopularSongFullEntries = fullEntries;
         } catch (err) { console.warn('讀取熱門度快取失敗', err); }
     }
     // 深度搜尋找到的每一首歌，同時攤平寫進歌曲索引(用videoId當文件ID，同一首歌重複搜到
     // 只會更新同一筆，不會愈存愈多份重複資料)
     let cachedSongIndexEntries = []; // 歌曲索引的前端快取，整個登入階段只從Firestore讀一次，之後搜尋都在前端比對，不會每次搜尋都重新打Firestore
     let cachedPopularityByVideoId = {}; // 熱門度(被點過幾次)的前端快取，同樣整個登入階段只讀一次，給搜尋結果評分排序用
-    // 佇列空掉時，從熱門歌曲裡隨機挑一首當公播歌曲——直接組合已經快取好的cachedPopularityByVideoId
-    // (熱門度)+cachedSongIndexEntries(歌名等完整資料)，不用額外打Firestore查詢。只從「熱門度前50名」
-    // 裡面隨機挑，不是從全部快取過的歌曲裡挑，這樣才符合「熱門選單」的精神，不會挑到冷門到只被點過一次的歌
+    let cachedPopularSongFullEntries = []; // 熱門歌曲的完整資料(含歌名/縮圖)快取，公播挑歌專用，避免跟歌曲索引交叉比對導致候選池過小
+    // 佇列空掉時，從熱門歌曲裡隨機挑一首當公播歌曲——直接用cachedPopularSongFullEntries
+    // (已經是完整資料，不用再跨集合比對)。特別排除掉「剛剛才播過的那一首」，避免候選池
+    // 比較小的時候(例如熱門歌曲總共才3-5首)，隨機挑選很容易連續兩次抽到同一首、感覺像卡住不動
     function pickRandomPopularSongForBroadcast() {
-        const topPopular = Object.entries(cachedPopularityByVideoId)
-            .filter(([videoId, count]) => count > 0)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 50)
-            .map(([videoId]) => videoId);
-        if (!topPopular.length) return null;
-        // 從熱門videoId清單裡，只保留「歌曲索引裡也查得到完整資料(至少要有歌名)」的那些，
-        // 避免挑到只有熱門度紀錄、但索引資料已經被刪除/封鎖掉的孤兒videoId
-        const candidates = topPopular
-            .map(videoId => cachedSongIndexEntries.find(e => e.videoId === videoId))
-            .filter(e => e && e.title && !blockedVideoIds.has(e.videoId));
+        const candidates = cachedPopularSongFullEntries
+            .filter(e => e.title && !blockedVideoIds.has(e.videoId))
+            .slice(0, 50); // 只從熱門度前50名裡面挑，不是全部快取過的歌曲都算，符合「熱門選單」的精神
         if (!candidates.length) return null;
-        return candidates[Math.floor(Math.random() * candidates.length)];
+        // 候選池有2首以上的話，優先排除掉剛剛才播的那首，避免立刻重複；
+        // 只剩1首能選(候選池本身就只有這麼多)的話，沒得選，只好還是播同一首
+        const avoidRepeat = candidates.filter(e => e.videoId !== hostLastPublicBroadcastVideoId);
+        const pool = avoidRepeat.length > 0 ? avoidRepeat : candidates;
+        return pool[Math.floor(Math.random() * pool.length)];
     }
     let songIndexLoaded = false;
     function upsertKtvSongIndex(results) {
