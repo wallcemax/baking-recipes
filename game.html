@@ -10998,7 +10998,9 @@
                     <p class="text-xs" style="color:var(--muted)">${modeLabel}・共${data.totalRounds}回合</p>
                 </div>
                 <button onclick="toggleDrawGameReady(${!iAmReady})" class="w-full mb-2 ${iAmReady ? 'btn-secondary' : 'btn-amber'}">${iAmReady ? '取消準備' : '✅ 我準備好了'}</button>
-                <button onclick="confirmStartDrawGameRound()" class="btn-amber w-full" ${allReady ? '' : 'disabled style="opacity:.4;"'}>${allReady ? `🎨 ${isNextRound ? '開始下一回合' : '開始遊戲'}` : '等待全部人準備好...'}</button>
+                ${drawGameState.isHost
+                    ? `<button onclick="confirmStartDrawGameRound()" class="btn-amber w-full" ${allReady ? '' : 'disabled style="opacity:.4;"'}>${allReady ? `🎨 ${isNextRound ? '開始下一回合' : '開始遊戲'}` : '等待全部人準備好...'}</button>`
+                    : `<p class="text-center text-xs py-2" style="color:var(--muted)">${allReady ? '✅ 全部人都準備好了，等待房主開始...' : '等待全部人準備好...'}</p>`}
                 <button onclick="leaveDrawGameRoom()" class="btn-secondary w-full mt-4">離開房間</button>
             `;
         }
@@ -11049,6 +11051,7 @@
                     if (!freshDoc.exists) return false;
                     const d = freshDoc.data();
                     if (d.status !== 'waiting') return false;
+                    if (d.hostUid !== currentUser.uid) return false; // 只有房主能觸發開始遊戲，這是伺服器端(交易內)的驗證，不只是前端隱藏按鈕而已
                     const readyUids = d.readyUids || [];
                     if (!d.members.length || !d.members.every(m => readyUids.includes(m.uid))) return false;
                     const level = d.mode === 'system' ? (1 + Math.floor(Math.random() * 5)) : d.fixedLevel;
@@ -11061,7 +11064,7 @@
                     });
                     return true;
                 });
-                if (!claimed) console.log('還沒全部人準備好，或已經被其他成員開始了');
+                if (!claimed) console.log('還沒全部人準備好、不是房主、或已經被觸發過了');
             } catch (err) { alert('開始遊戲失敗：' + err.message); }
         }
         async function leaveDrawGameRoom() {
