@@ -3414,6 +3414,24 @@
             });
         }
 
+        // 分享食譜：組出帶有?openRecipe=ID的網址——這個網址參數機制本來就存在(是給game.html
+        // 「虛擬廚房挑戰賽」過關推薦食譜時跳轉用的，index.html載入時偵測到這個參數會自動開啟
+        // 對應食譜的詳細頁)，這裡直接重複利用同一套機制當作分享連結，不用另外做一套。
+        // 優先用手機/部分桌機瀏覽器支援的原生分享選單(navigator.share)，不支援的話退回複製到
+        // 剪貼簿，兩者都不支援的最後手段是跳出prompt讓使用者自己手動複製。這個功能刻意不檢查
+        // 登入狀態——分享是給任何人用的，公開食譜本來就不需要登入也能瀏覽
+        function shareRecipe(recipeId, recipeName) {
+            const url = `${location.origin}${location.pathname}?openRecipe=${encodeURIComponent(recipeId)}`;
+            if (navigator.share) {
+                navigator.share({ title: recipeName, text: `來看看這篇食譜：${recipeName}`, url }).catch(() => {}); // 使用者按取消不用特別處理
+            } else if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url)
+                    .then(() => showToast('連結已複製，貼給朋友就能直接開啟這篇食譜', 'success'))
+                    .catch(() => prompt('複製這個連結分享給朋友：', url));
+            } else {
+                prompt('複製這個連結分享給朋友：', url);
+            }
+        }
         function toggleFavorite(recipeId, event) {
             if (event) event.stopPropagation();
             if (!currentUser) { alert('請先登入才能收藏食譜'); return; }
@@ -4581,6 +4599,9 @@
                     </div>
                     <div class="flex flex-col items-end gap-2 shrink-0">
                         <div class="flex items-center gap-2">
+                            <button onclick="shareRecipe('${recipe.id}', '${escapeHtmlAttr(recipe.name)}')" class="fav-btn" style="background:var(--cream)" aria-label="分享食譜" title="分享這篇食譜給朋友">
+                                🔗
+                            </button>
                             <button onclick="addToShoppingList(${recipeJson})" class="fav-btn" style="background:var(--cream)" aria-label="加入採購清單" title="加入採購清單">
                                 🛒
                             </button>
