@@ -4606,8 +4606,8 @@
                     <div id="detail-top-controls">
                     ${recipe.sizeValue ? `<p class="text-xs mb-2" style="color:var(--muted)">原始：${recipe.sizeValue}${recipe.sizeUnit} × ${recipe.servings} 個。換算時會同時依尺寸（面積比）與數量計算份量</p>` : ''}
                     <div class="flex gap-3 mb-4 flex-wrap">
-                        <input id="scale-servings" value="${recipe.servings}" type="number" class="form-input flex-1" style="min-width:100px" placeholder="數量">
                         ${recipe.sizeValue ? `<input id="scale-size" value="${recipe.sizeValue}" type="text" class="form-input flex-1" style="min-width:100px" placeholder="尺寸（${recipe.sizeUnit}）">` : ''}
+                        <input id="scale-servings" value="${recipe.servings}" type="number" class="form-input flex-1" style="min-width:100px" placeholder="數量（個）">
                         <button onclick="scaleRecipe(${recipeJson})" class="btn-amber whitespace-nowrap">換算</button>
                     </div>
                     <div class="mb-8">
@@ -7234,7 +7234,6 @@
         async function loadFamilyActivityLog(forceRefresh) {
             if (!currentUser) return [];
             const fridgeId = await getActiveFridgeId();
-            showToast(`🔍 [除錯]loadFamilyActivityLog開始查詢，fridgeId=${fridgeId}`);
             // 這裡踩到跟logFamilyActivity()完全一樣的漏洞：不能只看fridgeId是不是等於自己的uid
             // 就判定「個人冰箱、沒有紀錄可看」——冰箱文件的ID本來就是建立者自己的uid(命名慣例)，
             // 如果只憑這個判斷，建立者自己永遠會被誤判成「個人冰箱」直接回傳空陣列，連Firestore
@@ -7243,10 +7242,9 @@
             try {
                 const fridgeDoc = await db.collection('fridges').doc(fridgeId).get();
                 const memberCount = (fridgeDoc.exists && Array.isArray(fridgeDoc.data().members)) ? fridgeDoc.data().members.length : 1;
-                showToast(`🔍 [除錯]冰箱members人數:${memberCount}`);
-                if (memberCount <= 1) { showToast('ℹ️ [除錯]人數不足2人，判定個人冰箱，回傳空陣列'); return []; }
+                if (memberCount <= 1) return [];
             } catch (err) {
-                showToast(`⚠️ [除錯]讀取冰箱文件失敗：${err && err.message}`);
+                console.warn('讀取冰箱文件失敗', err && err.message);
                 return [];
             }
             if (!forceRefresh && familyActivityLogCache && familyActivityLogCacheKey === fridgeId) return familyActivityLogCache;
@@ -7256,11 +7254,9 @@
                     .orderBy('createdAt', 'desc')
                     .limit(50) // 只查最近50筆，不是整份歷史都讀出來——這是控制讀取量的關鍵
                     .get();
-                showToast(`🔍 [除錯]查詢完成，找到${snap.docs.length}筆紀錄`);
                 familyActivityLogCache = snap.docs.map(d => d.data());
                 familyActivityLogCacheKey = fridgeId;
             } catch (err) {
-                showToast(`⚠️ [除錯]查詢familyActivityLogs失敗：${err && err.message}`);
                 console.warn('讀取家庭操作紀錄失敗', err && err.message);
                 familyActivityLogCache = familyActivityLogCache || [];
             }
