@@ -661,6 +661,9 @@
     let hostLastPlayedVideoId = null;
     let hostLastPublicBroadcastVideoId = null; // 追蹤目前公播播的是哪一首，避免佇列持續是空的時候反覆重新挑歌
     let hostSessionStartMs = null; // 這次擔任房主是從什麼時候開始的，離開房間時用來累加時數統計(給戴著助聽器的稱號用)
+    let hostHoursAutoSaveTimer = null; // 每10分鐘自動把「這段期間累積的時數」存進資料庫的計時器，不用等使用者按離開房間才觸發
+    let knownHostHours = 0; // 本地追蹤目前累積的房主時數，判斷有沒有跨過成就門檻用，避免每次都要額外多讀一次資料庫
+    const KTV_HOST_HOURS_ACHIEVEMENT_THRESHOLD = 48; // 跟index.html的ACHIEVEMENT_RULES裡ktv_host_48h這條規則的threshold對齊
     let nextUpAnnouncedForVideo = null; // 目前這首歌是不是已經廣播過「快結束了，下一位請準備」，避免每秒輪詢重複廣播
     let nextUpPollTimer = null;
     let pendingJoinRoomId = null; // 等待輸入密碼的房間ID
@@ -954,7 +957,10 @@
         resetReactionUiState(); // 多一層保險，確保不會帶著上一個房間殘留的掌聲動畫狀態進到新房間
         lastPlayedWheelSpinToken = null;
         lastAnnouncedWheelResultAt = 0;
-        if (asHost) hostSessionStartMs = Date.now(); // 記錄這次擔任房主的開始時間，離開房間時用來累加時數統計
+        if (asHost) {
+            hostSessionStartMs = Date.now(); // 記錄這次擔任房主的開始時間
+            initHostHoursAutoSave(); // 不await，讓這個檢查在背景執行，不阻塞後面切換畫面的流程
+        }
         document.getElementById('room-list-view').classList.add('hidden');
         document.getElementById('room-view').classList.remove('hidden');
         document.getElementById(asHost ? 'host-view' : 'member-view').classList.remove('hidden');
@@ -1133,23 +1139,61 @@
         loadMyHistoryList();
         loadFavoritesList();
     }
+    // 進房間當房主時呼叫，不await(讓呼叫端不被這次讀取卡住)——先查一次目前累積的房主時數，
+    // 如果已經達到48小時的成就門檻，代表這個稱號/成就已經拿到了，不需要再繼續追蹤累積，
+    // 省下之後的讀寫流量；沒達到的話才啟動每10分鐘自動存檔的計時器
+    async function initHostHoursAutoSave() {
+        try {
+            const progressDoc = await db.collection('userProgress').doc(currentUser.uid).get();
+            const existingHours = (progressDoc.exists && progressDoc.data().ktvHostHours) || 0;
+            knownHostHours = existingHours;
+            // 這段檢查跑完的時候，使用者搞不好已經離開房間了(不再是房主)，這裡要重新確認一次
+            // isHost還是true，不然可能會在使用者已經離開之後，意外幫他重新啟動計時器
+            if (existingHours < KTV_HOST_HOURS_ACHIEVEMENT_THRESHOLD && isHost && hostSessionStartMs) {
+                // 每10分鐘自動把「這段期間累積的時數」存進資料庫，不用等使用者按離開房間才觸發——
+                // 就算使用者中途直接關網頁、沒有正常走離開房間的流程，最多也只會漏掉還沒滿10分鐘
+                // 的那一小段，不會像之前那樣整段掛著的時間完全不算
+                if (hostHoursAutoSaveTimer) clearInterval(hostHoursAutoSaveTimer);
+                hostHoursAutoSaveTimer = setInterval(saveAccumulatedHostHours, 10 * 60 * 1000);
+            }
+        } catch (err) { console.warn('讀取房主時數統計失敗', err); }
+    }
+    // 把「從上次存檔到現在」這段期間累積的房主時數，存進資料庫、並把起算時間重設成現在——
+    // 這是定時器跟離開房間共用的同一套邏輯，確保不會有「定時器存了一次、離開房間又把整段
+    // 時間重複存一次」這種重複計算的問題(因為每次存完都會把hostSessionStartMs往前推進到
+    // 「現在」，下一段只會計算真正還沒存過的那一段)
+    function saveAccumulatedHostHours() {
+        if (!isHost || !hostSessionStartMs || !currentUser) return;
+        // 已經知道累積時數達標了，這一筆就不用再寫了(連最後零頭都省下來)，順便停掉計時器
+        if (knownHostHours >= KTV_HOST_HOURS_ACHIEVEMENT_THRESHOLD) {
+            if (hostHoursAutoSaveTimer) { clearInterval(hostHoursAutoSaveTimer); hostHoursAutoSaveTimer = null; }
+            hostSessionStartMs = Date.now(); // 還是要重設起算點，避免之後(理論上不會再用到，但保險起見)重複計算
+            return;
+        }
+        const hours = (Date.now() - hostSessionStartMs) / 3600000;
+        hostSessionStartMs = Date.now(); // 重設起算點，避免下次呼叫時把這段時間重複算進去
+        if (hours > 0) {
+            knownHostHours += hours; // 本地追蹤累積值，不用每次存檔後都額外多讀一次資料庫確認目前總數
+            db.collection('userProgress').doc(currentUser.uid).set({
+                ktvHostHours: firebase.firestore.FieldValue.increment(hours),
+            }, { merge: true }).catch(err => console.warn('更新房主時數統計失敗', err));
+            // 這次存檔後如果已經跨過48小時的成就門檻，這場之後就不用再繼續存了，停掉計時器省流量
+            if (knownHostHours >= KTV_HOST_HOURS_ACHIEVEMENT_THRESHOLD && hostHoursAutoSaveTimer) {
+                clearInterval(hostHoursAutoSaveTimer);
+                hostHoursAutoSaveTimer = null;
+            }
+        }
+    }
     function exitToLobby() {
         if (roomUnsubscribe) { roomUnsubscribe(); roomUnsubscribe = null; }
         if (membersUnsubscribe) { membersUnsubscribe(); membersUnsubscribe = null; }
         if (reactionsUnsubscribe) { reactionsUnsubscribe(); reactionsUnsubscribe = null; }
         if (wheelUnsubscribe) { wheelUnsubscribe(); wheelUnsubscribe = null; }
         if (nextUpPollTimer) { clearInterval(nextUpPollTimer); nextUpPollTimer = null; }
-        // 這次擔任房主的時長累加進統計，給首頁「戴著助聽器的」稱號判定用。
+        // 停掉每10分鐘自動存檔的定時器，並把「還沒滿10分鐘、還沒存過」的最後一小段時間存起來。
         // 用小時為單位(不是分鐘)，跟成就規則裡的threshold:48對齊
-        if (isHost && hostSessionStartMs && currentUser) {
-            const hours = (Date.now() - hostSessionStartMs) / 3600000;
-            hostSessionStartMs = null;
-            if (hours > 0) {
-                db.collection('userProgress').doc(currentUser.uid).set({
-                    ktvHostHours: firebase.firestore.FieldValue.increment(hours),
-                }, { merge: true }).catch(err => console.warn('更新房主時數統計失敗', err));
-            }
-        }
+        if (hostHoursAutoSaveTimer) { clearInterval(hostHoursAutoSaveTimer); hostHoursAutoSaveTimer = null; }
+        if (isHost) { saveAccumulatedHostHours(); hostSessionStartMs = null; }
         leaveMemberRecord();
         if (ytPlayer) { try { ytPlayer.destroy(); } catch (e) {} ytPlayer = null; ytPlayerReady = false; }
         if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
