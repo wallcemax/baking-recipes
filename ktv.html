@@ -434,6 +434,12 @@
 </head>
 <body>
 
+    <!-- 公播歌曲提示橫幅：佇列空掉、自動播放熱門歌曲時顯示，右上角固定位置，房主/成員畫面都看得到。
+         預設隱藏，由renderRoomState()依照currentRoomData.publicBroadcastActive決定顯示/隱藏 -->
+    <div id="public-broadcast-banner" class="hidden" style="position:fixed; top:12px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px);">
+        📻 目前正在撥放公播歌曲，請點歌...
+    </div>
+
     <!-- ---------- 房間列表：建立新房間 / 目前存在的房間清單 ---------- -->
     <div id="room-list-view">
         <header>
@@ -654,6 +660,7 @@
     let prevMemberUids = [];
     let currentMemberList = []; // 目前房間裡的成員名單快取，成員列表下拉選單顯示用
     let hostLastPlayedVideoId = null;
+    let hostLastPublicBroadcastVideoId = null; // 追蹤目前公播播的是哪一首，避免佇列持續是空的時候反覆重新挑歌
     let hostSessionStartMs = null; // 這次擔任房主是從什麼時候開始的，離開房間時用來累加時數統計(給戴著助聽器的稱號用)
     let nextUpAnnouncedForVideo = null; // 目前這首歌是不是已經廣播過「快結束了，下一位請準備」，避免每秒輪詢重複廣播
     let nextUpPollTimer = null;
@@ -1032,8 +1039,28 @@
                 if (headVideoId && headVideoId !== hostLastPlayedVideoId) {
                     hostLastPlayedVideoId = headVideoId;
                     playHostVideo(headVideoId);
+                    // 真的有人點歌了，佇列不再是空的，把公播狀態清掉——這個判斷只要headVideoId
+                    // 存在就一定要清，不管跟上一首是不是同一首，避免公播狀態卡住不會消失
+                    if (data.publicBroadcastActive) {
+                        db.collection('ktvRooms').doc(currentRoomId).update({ publicBroadcastActive: false, publicBroadcastTitle: null }).catch(() => {});
+                    }
                 } else if (!headVideoId) {
                     hostLastPlayedVideoId = null;
+                    // 佇列空了，沒有人在等歌播——自動挑一首熱門公播歌曲播放，不算進點歌次數、
+                    // 也不會真的加進佇列(佇列本身還是空的)，避免整個房間冷場沒聲音。
+                    // 用publicBroadcastVideoId記錄「目前公播播的是哪一首」，避免佇列一直維持空狀態時
+                    // (onSnapshot可能因為其他欄位變化而重複觸發)反覆重新挑歌、打斷正在播的公播歌曲
+                    if (!data.publicBroadcastActive || hostLastPublicBroadcastVideoId === null) {
+                        const picked = pickRandomPopularSongForBroadcast();
+                        if (picked) {
+                            hostLastPublicBroadcastVideoId = picked.videoId;
+                            hostLastPlayedVideoId = picked.videoId; // 讓上面的headVideoId比對邏輯不會跟公播歌曲搞混
+                            playHostVideo(picked.videoId);
+                            db.collection('ktvRooms').doc(currentRoomId).update({
+                                publicBroadcastActive: true, publicBroadcastTitle: picked.title,
+                            }).catch(err => console.warn('廣播公播狀態失敗', err));
+                        }
+                    }
                 }
             }
         }, err => console.warn('房間監聽失敗', err));
@@ -1185,6 +1212,16 @@
 
     function renderRoomState() {
         if (!currentRoomData) return;
+        // 公播提示橫幅：不管房主還是成員，只要房間目前是公播狀態就顯示，離開公播狀態(有人點歌了)就隱藏
+        const broadcastBanner = document.getElementById('public-broadcast-banner');
+        if (broadcastBanner) {
+            broadcastBanner.classList.toggle('hidden', !currentRoomData.publicBroadcastActive);
+            if (currentRoomData.publicBroadcastActive) {
+                broadcastBanner.textContent = currentRoomData.publicBroadcastTitle
+                    ? `📻 目前正在撥放公播歌曲《${currentRoomData.publicBroadcastTitle}》，請點歌...`
+                    : '📻 目前正在撥放公播歌曲，請點歌...';
+            }
+        }
         if (!isHost) {
             const nameEl = document.getElementById('member-room-name');
             if (nameEl) nameEl.textContent = currentRoomData.name || '';
@@ -1482,6 +1519,24 @@
     // 只會更新同一筆，不會愈存愈多份重複資料)
     let cachedSongIndexEntries = []; // 歌曲索引的前端快取，整個登入階段只從Firestore讀一次，之後搜尋都在前端比對，不會每次搜尋都重新打Firestore
     let cachedPopularityByVideoId = {}; // 熱門度(被點過幾次)的前端快取，同樣整個登入階段只讀一次，給搜尋結果評分排序用
+    // 佇列空掉時，從熱門歌曲裡隨機挑一首當公播歌曲——直接組合已經快取好的cachedPopularityByVideoId
+    // (熱門度)+cachedSongIndexEntries(歌名等完整資料)，不用額外打Firestore查詢。只從「熱門度前50名」
+    // 裡面隨機挑，不是從全部快取過的歌曲裡挑，這樣才符合「熱門選單」的精神，不會挑到冷門到只被點過一次的歌
+    function pickRandomPopularSongForBroadcast() {
+        const topPopular = Object.entries(cachedPopularityByVideoId)
+            .filter(([videoId, count]) => count > 0)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 50)
+            .map(([videoId]) => videoId);
+        if (!topPopular.length) return null;
+        // 從熱門videoId清單裡，只保留「歌曲索引裡也查得到完整資料(至少要有歌名)」的那些，
+        // 避免挑到只有熱門度紀錄、但索引資料已經被刪除/封鎖掉的孤兒videoId
+        const candidates = topPopular
+            .map(videoId => cachedSongIndexEntries.find(e => e.videoId === videoId))
+            .filter(e => e && e.title && !blockedVideoIds.has(e.videoId));
+        if (!candidates.length) return null;
+        return candidates[Math.floor(Math.random() * candidates.length)];
+    }
     let songIndexLoaded = false;
     function upsertKtvSongIndex(results) {
         if (!results || !results.length) return;
@@ -2041,6 +2096,11 @@
     async function advanceQueue() {
         if (!currentRoomData || !currentRoomId) return;
         const newQueue = (currentRoomData.queue || []).slice(1);
+        // 不管剛結束的是佇列裡真實點播的歌、還是公播歌曲，這裡都清掉「目前公播是哪一首」的記錄——
+        // 如果佇列本來就是空的(代表剛才播完的是公播歌曲)，這樣下一次onSnapshot觸發時才會正確
+        // 判斷「公播歌曲播完了，需要重新挑一首新的」，不會因為這個變數還留著舊值而誤判成
+        // 「公播還在繼續播、不用做任何事」，導致歌曲播完卻沒有接下一首、房間變安靜
+        hostLastPublicBroadcastVideoId = null;
         try {
             // 順手清掉上一首的「快結束提醒」廣播，不要留著舊資料在Firestore裡，
             // 避免之後有人重新整理/重新進房間時被誤判成新通知
