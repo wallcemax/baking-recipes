@@ -492,7 +492,7 @@
                 <!-- 公播歌曲提示橫幅：一定要放在fullscreen-wrapper裡面，不然全螢幕時看不到——
                      跟下面命運輪盤視窗、toast提示是同一個道理，瀏覽器全螢幕API規範下，
                      不屬於被全螢幕元素底下的內容會直接被跳過不顯示 -->
-                <div id="public-broadcast-banner-host" class="hidden" style="position:fixed; top:12px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px);"></div>
+                <div id="public-broadcast-banner-host" class="hidden" style="position:fixed; top:76px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px);"></div>
                 <div id="ktv-yt-player-target-wrap"><div id="ktv-yt-player-target" style="width:100%;height:100%"></div></div>
                 <div id="reaction-layer"></div>
                 <div id="reaction-banner"></div>
@@ -576,7 +576,7 @@
 
         <!-- 一般成員視角：純點歌遙控器，沒有播放畫面（因為畫面不會跟房主同步） -->
         <div id="member-view" class="hidden">
-            <div id="public-broadcast-banner-member" class="hidden" style="position:fixed; top:12px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px);"></div>
+            <div id="public-broadcast-banner-member" class="hidden" style="position:fixed; top:70px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px);"></div>
             <div id="member-reaction-layer" style="position:fixed; inset:0; z-index:40; pointer-events:none; overflow:hidden;"></div>
             <div id="member-reaction-banner" style="position:fixed; top:35%; left:50%; transform:translate(-50%,-50%) scale(0.7); z-index:41; font-size:1.9rem; font-weight:800; color:var(--jam); text-shadow:0 2px 10px rgba(0,0,0,0.15); opacity:0; pointer-events:none; text-align:center;"></div>
             <div id="member-toast-stack" style="position:fixed; top:1rem; right:1rem; left:1rem; z-index:60; display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; pointer-events:none;"></div>
@@ -1045,20 +1045,12 @@
                     }
                 } else if (!headVideoId) {
                     hostLastPlayedVideoId = null;
-                    // 佇列空了，沒有人在等歌播——自動挑一首熱門公播歌曲播放，不算進點歌次數、
-                    // 也不會真的加進佇列(佇列本身還是空的)，避免整個房間冷場沒聲音。
-                    // 用publicBroadcastVideoId記錄「目前公播播的是哪一首」，避免佇列一直維持空狀態時
-                    // (onSnapshot可能因為其他欄位變化而重複觸發)反覆重新挑歌、打斷正在播的公播歌曲
+                    // 佇列空了，沒有人在等歌播——自動挑一首熱門公播歌曲播放。這裡是給「房間剛建立、
+                    // 從頭到尾佇列都還沒有過任何歌」這種情況用的保險，正常情況下(公播歌曲自然播完)
+                    // 是由advanceQueue()直接觸發，不會走到這裡，因為那種情況寫入的queue內容
+                    // 跟原本一樣，onSnapshot不保證會重新觸發
                     if (!data.publicBroadcastActive || hostLastPublicBroadcastVideoId === null) {
-                        const picked = pickRandomPopularSongForBroadcast();
-                        if (picked) {
-                            hostLastPublicBroadcastVideoId = picked.videoId;
-                            hostLastPlayedVideoId = picked.videoId; // 讓上面的headVideoId比對邏輯不會跟公播歌曲搞混
-                            playHostVideo(picked.videoId);
-                            db.collection('ktvRooms').doc(currentRoomId).update({
-                                publicBroadcastActive: true, publicBroadcastTitle: picked.title,
-                            }).catch(err => console.warn('廣播公播狀態失敗', err));
-                        }
+                        playNextBroadcastSong();
                     }
                 }
             }
@@ -2097,13 +2089,25 @@
     }
     // 把佇列最前面那首拿掉，接下一首——不管是歌自然播完(ENDED事件)還是房主手動按「切歌」，
     // 都是呼叫這個函式（其他裝置會透過onSnapshot同步收到變化）
+    // 挑一首熱門歌曲當公播播放，並廣播狀態給所有裝置——獨立成函式，讓advanceQueue()可以在
+    // 佇列確認清空的當下直接呼叫，不用被動等onSnapshot監聽重新觸發。這是很重要的差異：
+    // Firestore的onSnapshot在「寫入的值跟現有值完全相同」時，不保證一定會重新觸發回呼
+    // (佇列播完公播歌曲時，寫入queue:[]，但佇列本來就已經是[]，等於沒有真的改變任何資料)，
+    // 如果只依賴監聽事件被動反應，公播歌曲播完之後就會卡住、沒有任何動作接續
+    function playNextBroadcastSong() {
+        if (!isHost || !currentRoomId) return;
+        const picked = pickRandomPopularSongForBroadcast();
+        if (!picked) return;
+        hostLastPublicBroadcastVideoId = picked.videoId;
+        hostLastPlayedVideoId = picked.videoId; // 讓headVideoId比對邏輯不會跟公播歌曲搞混
+        playHostVideo(picked.videoId);
+        db.collection('ktvRooms').doc(currentRoomId).update({
+            publicBroadcastActive: true, publicBroadcastTitle: picked.title,
+        }).catch(err => console.warn('廣播公播狀態失敗', err));
+    }
     async function advanceQueue() {
         if (!currentRoomData || !currentRoomId) return;
         const newQueue = (currentRoomData.queue || []).slice(1);
-        // 不管剛結束的是佇列裡真實點播的歌、還是公播歌曲，這裡都清掉「目前公播是哪一首」的記錄——
-        // 如果佇列本來就是空的(代表剛才播完的是公播歌曲)，這樣下一次onSnapshot觸發時才會正確
-        // 判斷「公播歌曲播完了，需要重新挑一首新的」，不會因為這個變數還留著舊值而誤判成
-        // 「公播還在繼續播、不用做任何事」，導致歌曲播完卻沒有接下一首、房間變安靜
         hostLastPublicBroadcastVideoId = null;
         try {
             // 順手清掉上一首的「快結束提醒」廣播，不要留著舊資料在Firestore裡，
@@ -2112,6 +2116,11 @@
                 queue: newQueue, nextUpAnnouncement: firebase.firestore.FieldValue.delete(),
             });
         } catch (err) { console.warn('推進佇列失敗', err); }
+        // 拿掉現在這首之後，佇列確認是空的話，直接觸發挑下一首公播歌曲——不要被動等
+        // onSnapshot監聽重新觸發，因為「佇列播完公播歌曲」這種情況下，寫入的queue:[]
+        // 跟原本就是[]完全一樣，Firestore不保證這種「值沒變」的寫入一定會讓監聽重新觸發，
+        // 如果只靠監聽被動反應，公播歌曲播完就會卡住、沒有任何動作接續
+        if (!newQueue.length) playNextBroadcastSong();
     }
     // 每秒檢查一次播放進度，剩不到20秒且佇列裡有下一首的話，廣播提醒下一位點歌的人準備。
     // 只有房主端知道實際播放進度，所以這個輪詢/廣播只在房主端執行，其他人透過房間監聽收到廣播
