@@ -434,12 +434,6 @@
 </head>
 <body>
 
-    <!-- 公播歌曲提示橫幅：佇列空掉、自動播放熱門歌曲時顯示，右上角固定位置，房主/成員畫面都看得到。
-         預設隱藏，由renderRoomState()依照currentRoomData.publicBroadcastActive決定顯示/隱藏 -->
-    <div id="public-broadcast-banner" class="hidden" style="position:fixed; top:12px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px);">
-        📻 目前正在撥放公播歌曲，請點歌...
-    </div>
-
     <!-- ---------- 房間列表：建立新房間 / 目前存在的房間清單 ---------- -->
     <div id="room-list-view">
         <header>
@@ -495,6 +489,10 @@
                 <button class="btn" onclick="toggleFullscreen()">⛶ 全螢幕開始使用</button>
             </div>
             <div id="fullscreen-wrapper">
+                <!-- 公播歌曲提示橫幅：一定要放在fullscreen-wrapper裡面，不然全螢幕時看不到——
+                     跟下面命運輪盤視窗、toast提示是同一個道理，瀏覽器全螢幕API規範下，
+                     不屬於被全螢幕元素底下的內容會直接被跳過不顯示 -->
+                <div id="public-broadcast-banner-host" class="hidden" style="position:fixed; top:12px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px);"></div>
                 <div id="ktv-yt-player-target-wrap"><div id="ktv-yt-player-target" style="width:100%;height:100%"></div></div>
                 <div id="reaction-layer"></div>
                 <div id="reaction-banner"></div>
@@ -578,6 +576,7 @@
 
         <!-- 一般成員視角：純點歌遙控器，沒有播放畫面（因為畫面不會跟房主同步） -->
         <div id="member-view" class="hidden">
+            <div id="public-broadcast-banner-member" class="hidden" style="position:fixed; top:12px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px);"></div>
             <div id="member-reaction-layer" style="position:fixed; inset:0; z-index:40; pointer-events:none; overflow:hidden;"></div>
             <div id="member-reaction-banner" style="position:fixed; top:35%; left:50%; transform:translate(-50%,-50%) scale(0.7); z-index:41; font-size:1.9rem; font-weight:800; color:var(--jam); text-shadow:0 2px 10px rgba(0,0,0,0.15); opacity:0; pointer-events:none; text-align:center;"></div>
             <div id="member-toast-stack" style="position:fixed; top:1rem; right:1rem; left:1rem; z-index:60; display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; pointer-events:none;"></div>
@@ -1212,16 +1211,21 @@
 
     function renderRoomState() {
         if (!currentRoomData) return;
-        // 公播提示橫幅：不管房主還是成員，只要房間目前是公播狀態就顯示，離開公播狀態(有人點歌了)就隱藏
-        const broadcastBanner = document.getElementById('public-broadcast-banner');
-        if (broadcastBanner) {
-            broadcastBanner.classList.toggle('hidden', !currentRoomData.publicBroadcastActive);
-            if (currentRoomData.publicBroadcastActive) {
-                broadcastBanner.textContent = currentRoomData.publicBroadcastTitle
-                    ? `📻 目前正在撥放公播歌曲《${currentRoomData.publicBroadcastTitle}》，請點歌...`
-                    : '📻 目前正在撥放公播歌曲，請點歌...';
-            }
-        }
+        // 公播提示橫幅：不管房主還是成員，只要房間目前是公播狀態就顯示，離開公播狀態(有人點歌了)就隱藏。
+        // 房主端跟成員端是兩個獨立的DOM元素(分別放在fullscreen-wrapper跟member-view裡面)，
+        // 不是同一個元素——房主的全螢幕是用瀏覽器原生Fullscreen API，全螢幕狀態下只有
+        // 「被全螢幕的那個元素」底下的內容才看得到，放在body最外層的話全螢幕時會直接消失不見
+        const broadcastText = currentRoomData.publicBroadcastActive
+            ? (currentRoomData.publicBroadcastTitle
+                ? `📻 目前正在撥放公播歌曲《${currentRoomData.publicBroadcastTitle}》，請點歌...`
+                : '📻 目前正在撥放公播歌曲，請點歌...')
+            : '';
+        ['public-broadcast-banner-host', 'public-broadcast-banner-member'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.classList.toggle('hidden', !currentRoomData.publicBroadcastActive);
+            if (currentRoomData.publicBroadcastActive) el.textContent = broadcastText;
+        });
         if (!isHost) {
             const nameEl = document.getElementById('member-room-name');
             if (nameEl) nameEl.textContent = currentRoomData.name || '';
