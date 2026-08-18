@@ -5433,7 +5433,8 @@
         async function loadAdminNutritionList() {
             const listEl = document.getElementById('admin-nutri-list');
             if (!listEl) return;
-            const keyword = (document.getElementById('admin-nutri-search')?.value || '').trim();
+            const rawKeyword = (document.getElementById('admin-nutri-search')?.value || '').trim();
+            const keyword = rawKeyword.toLowerCase();
             listEl.innerHTML = '<p class="text-sm" style="color:var(--muted)">載入中…</p>';
             try {
                 // 抓多一點筆數(200)回來，搜尋用關鍵字在前端過濾——Firestore沒辦法直接做「名稱裡有包含」
@@ -5443,11 +5444,11 @@
                 if (keyword) {
                     docs = docs.filter(doc => {
                         const d = doc.data();
-                        if ((d.name || doc.id).includes(keyword)) return true;
-                        return (d.keywords || []).some(k => k.includes(keyword));
+                        if ((d.name || doc.id).toLowerCase().includes(keyword)) return true;
+                        return (d.keywords || []).some(k => k.toLowerCase().includes(keyword));
                     });
                 }
-                if (!docs.length) { listEl.innerHTML = `<p class="text-sm" style="color:var(--muted)">${keyword ? `查無「${keyword}」的資料` : '目前還沒有任何資料'}</p>`; return; }
+                if (!docs.length) { listEl.innerHTML = `<p class="text-sm" style="color:var(--muted)">${keyword ? `查無「${escapeHtmlText(rawKeyword)}」的資料` : '目前還沒有任何資料'}</p>`; return; }
                 listEl.innerHTML = docs.map(doc => {
                     const d = doc.data();
                     const badge = d.source === 'admin_manual'
@@ -6251,20 +6252,21 @@
             const viewerHint = document.getElementById('my-cost-viewer-hint');
             if (viewerHint) viewerHint.classList.toggle('hidden', canEdit);
             const searchInput = document.getElementById('my-cost-search');
-            const keyword = (searchInput && searchInput.value || '').trim();
+            const rawKeyword = (searchInput && searchInput.value || '').trim();
+            const keyword = rawKeyword.toLowerCase();
             let names = Object.keys(costs).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
             if (keyword) {
                 // 名稱本身有包含關鍵字、或者這筆資料套用的別名裡有包含關鍵字，都算符合（例如搜尋「鮮奶」
                 // 也能找到套用了「鮮奶」這個別名的「心璞鮮乳」，不用一定要打品牌名稱才搜得到）
                 names = names.filter(name => {
-                    if (name.includes(keyword)) return true;
+                    if (name.toLowerCase().includes(keyword)) return true;
                     const kws = costs[name].keywords || [];
-                    return kws.some(k => k.includes(keyword));
+                    return kws.some(k => k.toLowerCase().includes(keyword));
                 });
             }
             if (!names.length) {
                 listEl.innerHTML = keyword
-                    ? `<div class="empty-state"><div class="empty-state-icon">🔍</div><p>查無「${keyword}」的資料</p></div>`
+                    ? `<div class="empty-state"><div class="empty-state-icon">🔍</div><p>查無「${escapeHtmlText(rawKeyword)}」的資料</p></div>`
                     : `<div class="empty-state"><div class="empty-state-icon">💰</div><p>還沒有任何食材價格資料，去食譜詳細頁點食材、或用上面的表單新增一個吧</p></div>`;
                 return;
             }
@@ -7832,13 +7834,14 @@
                 return;
             }
             const searchInput = document.getElementById('fridge-items-search');
-            const keyword = (searchInput && searchInput.value || '').trim();
+            const rawKeyword = (searchInput && searchInput.value || '').trim();
+            const keyword = rawKeyword.toLowerCase();
             // 先把每個食材配上它在原始陣列裡的index（編輯/刪除按鈕需要這個才能對到正確的那一筆），
             // 篩選之後index要維持原本的值，不能因為篩選過就變成篩選後清單的順序
             const indexed = items.map((item, idx) => ({ item, idx }));
-            const filtered = keyword ? indexed.filter(({ item }) => item.name.includes(keyword)) : indexed;
+            const filtered = keyword ? indexed.filter(({ item }) => item.name.toLowerCase().includes(keyword)) : indexed;
             if (!filtered.length) {
-                listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:var(--muted)">查無「${keyword}」的食材</p>`;
+                listEl.innerHTML = `<p class="text-sm text-center py-6" style="color:var(--muted)">查無「${escapeHtmlText(rawKeyword)}」的食材</p>`;
                 return;
             }
             const costs = await loadUserIngredientCosts(); // 拿來顯示每個食材目前設定的成本（如果有的話）
@@ -8862,18 +8865,19 @@
                 return;
             }
             const searchInput = document.getElementById('market-prices-search');
-            const keyword = (searchInput && searchInput.value || '').trim();
+            const rawKeyword = (searchInput && searchInput.value || '').trim();
+            const keyword = rawKeyword.toLowerCase();
             const isAllTab = marketPricesActiveTab === 'all';
 
             let items = isAllTab ? getMergedMarketPriceList() : (marketPricesCache[`${marketPricesActiveTab}All`] || []);
             // 高CP值推薦：疊加篩選，只留下真便宜的項目（不管目前選哪個分類，篩選完才排序分頁）
             if (marketPricesGreatValueOnly) items = items.filter(item => item.isGreatValue);
-            if (keyword) items = items.filter(item => item.name.includes(keyword));
+            if (keyword) items = items.filter(item => item.name.toLowerCase().includes(keyword));
             items = sortMarketPriceItems(items, marketPricesSortDir);
 
             if (!items.length) {
                 listEl.innerHTML = keyword
-                    ? `<p class="text-sm text-center py-6" style="color:var(--muted)">查無「${keyword}」的資料（可能是政府資料裡沒有用這個名稱，試試看別的寫法，例如「甘藍」而不是「高麗菜」；也可以切到別的分頁再試試看）</p>`
+                    ? `<p class="text-sm text-center py-6" style="color:var(--muted)">查無「${escapeHtmlText(rawKeyword)}」的資料（可能是政府資料裡沒有用這個名稱，試試看別的寫法，例如「甘藍」而不是「高麗菜」；也可以切到別的分頁再試試看）</p>`
                     : (marketPricesGreatValueOnly
                         ? `<p class="text-sm text-center py-6" style="color:var(--muted)">這個分類目前沒有符合「高CP值推薦」條件的項目，換個分類看看，或關掉這個篩選看看完整清單</p>`
                         : `<p class="text-sm text-center py-6" style="color:var(--muted)">這個分類目前還沒有資料</p>`);
