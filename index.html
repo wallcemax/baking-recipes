@@ -7212,13 +7212,27 @@
                 const memberCount = (fridgeDoc.exists && Array.isArray(fridgeDoc.data().members)) ? fridgeDoc.data().members.length : 1;
                 if (memberCount <= 1) return; // 真的只有自己一個人在用，不用記錄
                 const displayName = (userProgress && userProgress.nickname) || currentUser.displayName || '一位使用者';
-                await db.collection('familyActivityLogs').add({
+                const docRef = await db.collection('familyActivityLogs').add({
                     familyId, uid: currentUser.uid, displayName,
                     action, itemName: itemName || '', detail: detail || '',
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 });
+                // 暫時性驗證：不只信任.add()呼叫本身有沒有丟出例外就當作成功——Firestore SDK
+                // 在某些情境下，本地端會先樂觀地讓寫入呼叫成功回傳，但伺服器端規則其實把這筆
+                // 資料拒絕掉了，這種「本地看起來成功、伺服器其實沒收」的情況不會被一般的
+                // try/catch抓到。這裡改成寫入後用{source:'server'}強制跳過本地快取、直接跟
+                // 伺服器要這筆資料，確認真的有留在伺服器上才算數
+                try {
+                    const verifyDoc = await docRef.get({ source: 'server' });
+                    if (!verifyDoc.exists) {
+                        showToast(`⚠️ [除錯]寫入呼叫沒有報錯，但伺服器端驗證不到這筆資料——可能是規則在背景拒絕了寫入`);
+                    }
+                } catch (verifyErr) {
+                    showToast(`⚠️ [除錯]驗證寫入結果失敗：${verifyErr && verifyErr.message}`);
+                }
             } catch (err) {
                 // 記錄失敗不影響原本的操作本身，這只是輔助性質的紀錄，不該讓操作因為記錄失敗而卡住
+                showToast(`⚠️ [除錯]寫入操作紀錄時直接拋出錯誤：${err && err.message}`);
                 console.warn('記錄家庭操作紀錄失敗', err && err.message);
             }
         }
