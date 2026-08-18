@@ -7201,8 +7201,7 @@
         //
         // 查看紀錄是使用者主動點開才會讀取(不是每次打開冰箱就自動載入)，維持「不用的人零成本」
         async function logFamilyActivity(familyId, action, itemName, detail) {
-            showToast(`🔍 [除錯]logFamilyActivity被呼叫：familyId=${familyId}, action=${action}`);
-            if (!currentUser) { showToast('⚠️ [除錯]沒有currentUser，直接return'); return; }
+            if (!currentUser) return;
             try {
                 // 判斷「這個冰箱是不是真的有跟別人共用」，不能只看familyId是不是等於自己的uid——
                 // 冰箱文件的ID本來就是建立者自己的uid(命名慣例)，如果只憑這個判斷，建立者自己的
@@ -7211,33 +7210,15 @@
                 // 還是其他成員操作，只要冰箱真的是多人共用狀態，就會正確記錄
                 const fridgeDoc = await db.collection('fridges').doc(familyId).get();
                 const memberCount = (fridgeDoc.exists && Array.isArray(fridgeDoc.data().members)) ? fridgeDoc.data().members.length : 1;
-                showToast(`🔍 [除錯]冰箱文件存在:${fridgeDoc.exists}, members人數:${memberCount}`);
-                if (memberCount <= 1) { showToast('ℹ️ [除錯]人數不足2人，判定個人冰箱，跳過不記錄'); return; }
+                if (memberCount <= 1) return; // 真的只有自己一個人在用，不用記錄
                 const displayName = (userProgress && userProgress.nickname) || currentUser.displayName || '一位使用者';
-                const docRef = await db.collection('familyActivityLogs').add({
+                await db.collection('familyActivityLogs').add({
                     familyId, uid: currentUser.uid, displayName,
                     action, itemName: itemName || '', detail: detail || '',
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 });
-                showToast(`🔍 [除錯].add()呼叫成功回傳，文件ID:${docRef.id}，開始驗證伺服器端是否真的有這筆資料...`);
-                // 暫時性驗證：不只信任.add()呼叫本身有沒有丟出例外就當作成功——Firestore SDK
-                // 在某些情境下，本地端會先樂觀地讓寫入呼叫成功回傳，但伺服器端規則其實把這筆
-                // 資料拒絕掉了，這種「本地看起來成功、伺服器其實沒收」的情況不會被一般的
-                // try/catch抓到。這裡改成寫入後用{source:'server'}強制跳過本地快取、直接跟
-                // 伺服器要這筆資料，確認真的有留在伺服器上才算數
-                try {
-                    const verifyDoc = await docRef.get({ source: 'server' });
-                    if (verifyDoc.exists) {
-                        showToast(`✅ [除錯]伺服器驗證成功，資料真的有寫進去了！`);
-                    } else {
-                        showToast(`⚠️ [除錯]寫入呼叫沒有報錯，但伺服器端驗證不到這筆資料——可能是規則在背景拒絕了寫入`);
-                    }
-                } catch (verifyErr) {
-                    showToast(`⚠️ [除錯]驗證寫入結果失敗：${verifyErr && verifyErr.message}`);
-                }
             } catch (err) {
                 // 記錄失敗不影響原本的操作本身，這只是輔助性質的紀錄，不該讓操作因為記錄失敗而卡住
-                showToast(`⚠️ [除錯]寫入操作紀錄時直接拋出錯誤：${err && err.message}`);
                 console.warn('記錄家庭操作紀錄失敗', err && err.message);
             }
         }
@@ -7253,7 +7234,21 @@
         async function loadFamilyActivityLog(forceRefresh) {
             if (!currentUser) return [];
             const fridgeId = await getActiveFridgeId();
-            if (fridgeId === currentUser.uid) return []; // 個人冰箱沒有紀錄可看
+            showToast(`🔍 [除錯]loadFamilyActivityLog開始查詢，fridgeId=${fridgeId}`);
+            // 這裡踩到跟logFamilyActivity()完全一樣的漏洞：不能只看fridgeId是不是等於自己的uid
+            // 就判定「個人冰箱、沒有紀錄可看」——冰箱文件的ID本來就是建立者自己的uid(命名慣例)，
+            // 如果只憑這個判斷，建立者自己永遠會被誤判成「個人冰箱」直接回傳空陣列，連Firestore
+            // 都還沒查詢就結束了，即使伺服器上其實已經有這個家庭的紀錄。改成跟寫入端同一套邏輯：
+            // 真正讀冰箱文件、檢查members人數
+            try {
+                const fridgeDoc = await db.collection('fridges').doc(fridgeId).get();
+                const memberCount = (fridgeDoc.exists && Array.isArray(fridgeDoc.data().members)) ? fridgeDoc.data().members.length : 1;
+                showToast(`🔍 [除錯]冰箱members人數:${memberCount}`);
+                if (memberCount <= 1) { showToast('ℹ️ [除錯]人數不足2人，判定個人冰箱，回傳空陣列'); return []; }
+            } catch (err) {
+                showToast(`⚠️ [除錯]讀取冰箱文件失敗：${err && err.message}`);
+                return [];
+            }
             if (!forceRefresh && familyActivityLogCache && familyActivityLogCacheKey === fridgeId) return familyActivityLogCache;
             try {
                 const snap = await db.collection('familyActivityLogs')
@@ -7261,9 +7256,11 @@
                     .orderBy('createdAt', 'desc')
                     .limit(50) // 只查最近50筆，不是整份歷史都讀出來——這是控制讀取量的關鍵
                     .get();
+                showToast(`🔍 [除錯]查詢完成，找到${snap.docs.length}筆紀錄`);
                 familyActivityLogCache = snap.docs.map(d => d.data());
                 familyActivityLogCacheKey = fridgeId;
             } catch (err) {
+                showToast(`⚠️ [除錯]查詢familyActivityLogs失敗：${err && err.message}`);
                 console.warn('讀取家庭操作紀錄失敗', err && err.message);
                 familyActivityLogCache = familyActivityLogCache || [];
             }
