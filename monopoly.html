@@ -539,10 +539,20 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
         `;
     }
     async function pickMonopolyCharacter(charId) {
+        const ref = db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId);
         try {
-            await db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId).update({
-                [`charSelections.${currentUser.uid}`]: charId,
+            const claimed = await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                const data = freshDoc.data();
+                const charSelections = data.charSelections || {};
+                // 確認這個角色沒有被「別人」選走才真的寫入——不能只靠介面上disabled擋，
+                // 避免兩人幾乎同時點同一個角色的race condition，讓兩人選到同一個角色
+                const takenByOther = Object.entries(charSelections).some(([uid, cid]) => cid === charId && uid !== currentUser.uid);
+                if (takenByOther) return false;
+                tx.update(ref, { [`charSelections.${currentUser.uid}`]: charId });
+                return true;
             });
+            if (!claimed) showToast('這個角色剛好被別人選走了，換一個吧');
         } catch (err) { showToast('選擇角色失敗：' + err.message); }
     }
     async function toggleMonopolyReady(ready) {
@@ -805,6 +815,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
             logs.push(`🎁 ${me.name} 獲得道具「${ITEM_DEFS[granted].icon}${ITEM_DEFS[granted].name}」`);
         } else if (tileDef.type === 'rest') {
             me.restNextTurn = true;
+            me.restJustSet = true; // 標記「這是剛踩到公休格的這一輪」，跟真正該被跳過的下一輪做區分
             logs.push(`💤 ${me.name} 踩到公休一天，下一輪要休息`);
         }
         // foodstreet-in/foodstreet-out/corner 這幾種格子本身沒有額外效果(起點的獎金已經在移動時處理過了)
@@ -1259,7 +1270,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                     <button onclick="endMonopolyTurn()" ${isMyTurn && data.pendingAction === null && (data.lastDiceRoll || me.restNextTurn) ? '' : 'disabled'}>➡️ 結束回合</button>
                     <button onclick="confirmMonopolySurrender()">🏳 投降</button>
                 </div>
-                <div class="status">${me.restNextTurn && isMyTurn ? '💤 你正在公休，這回合休息' : (isMyTurn ? '🎲 輪到你了！' : `等待 ${escapeHtml(data.players[data.currentTurnUid].name)} 行動...`)}</div>
+                <div class="status">${me.restNextTurn && !me.restJustSet && isMyTurn ? '💤 你正在公休，這回合休息' : (isMyTurn ? '🎲 輪到你了！' : `等待 ${escapeHtml(data.players[data.currentTurnUid].name)} 行動...`)}</div>
                 <div class="log">${(data.eventLog || []).slice(-8).reverse().map(e => `<div>${escapeHtml(e)}</div>`).join('')}</div>
             </div>
             <div id="monopoly-action-modal"></div>
@@ -1496,11 +1507,17 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                 if (data.currentTurnUid !== currentUser.uid || data.pendingAction) return;
                 const players = { ...data.players };
                 const me = { ...players[currentUser.uid] };
-                if (me.restNextTurn) {
+                if (me.restJustSet) {
+                    // 這是剛踩到公休格、正常結束這一輪——不能在這裡就清掉restNextTurn，
+                    // 不然「下一輪要休息」的效果會直接被吃掉，永遠不會真的跳過任何一輪
+                    me.restJustSet = false;
+                    players[currentUser.uid] = me;
+                    tx.update(ref, { players });
+                } else if (me.restNextTurn) {
+                    // 真正輪到要跳過的這一輪：清掉restNextTurn，代表懲罰已經生效過了
                     me.restNextTurn = false;
                     players[currentUser.uid] = me;
                     tx.update(ref, { players });
-                    // 公休只跳過這一輪，直接往下走到換人邏輯(不會再擲骰)
                 } else if (me.doublesCount > 0) {
                     // 剛才擲出對子(只有用雙數骰子道具才可能發生)，同一個人可以再擲一次，不換人
                     tx.update(ref, { lastDiceRoll: null });
