@@ -356,6 +356,18 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
     const START_MONEY = 15000;
     const PASS_GO_BONUS = 2000;
     const MAX_TRADES_PER_TURN = 3;
+    const MAX_NPC_COUNT = 3;
+
+    // NPC個性：決定「現金要留多少比例(相對於起始資金)才會出手買地/宣傳」——比例越低代表越
+    // 敢花錢、越積極；比例越高代表越保守、寧可放棄機會也要留緩衝金。隨機分配給每個NPC，
+    // 同一場遊戲裡三種個性都可能出現，讓每個NPC的下場風格不一樣
+    const NPC_PERSONALITIES = {
+        aggressive: { label: '積極型', reserveRatio: 0.05 },
+        balanced: { label: '穩健型', reserveRatio: 0.15 },
+        conservative: { label: '保守型', reserveRatio: 0.4 },
+    };
+    const NPC_NAME_POOL = ['電腦小明', '電腦阿花', '電腦小豪', '電腦阿珍', '電腦阿吉', '電腦小美'];
+    function isNpcUid(uid) { return typeof uid === 'string' && uid.startsWith('npc_'); }
 
     let monopolyState = { roomId: null, unsubscribe: null, myCharId: null };
     let monopolyLobbyUnsubscribe = null;
@@ -501,20 +513,28 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
         const isHost = data.hostUid === currentUser.uid;
         const readyUids = data.readyUids || [];
         const charSelections = data.charSelections || {};
-        const allPicked = data.members.every(m => charSelections[m.uid]);
-        const allReady = data.members.length >= 2 && data.members.every(m => readyUids.includes(m.uid));
+        const npcCount = data.members.filter(m => isNpcUid(m.uid)).length;
+        // NPC一律視為「已經選好角色、已經準備好」，不需要額外的準備流程——加入NPC的當下
+        // 就會直接配好角色、寫進readyUids，這裡的判斷只是保險，即使資料沒同步也不會卡住
+        const allPicked = data.members.every(m => isNpcUid(m.uid) || charSelections[m.uid]);
+        const allReady = data.members.length >= 2 && data.members.every(m => isNpcUid(m.uid) || readyUids.includes(m.uid));
         const canStart = allPicked && allReady;
         const iAmReady = readyUids.includes(currentUser.uid);
 
         const slots = Array.from({ length: MAX_MONOPOLY_MEMBERS }, (_, i) => {
             const m = data.members[i];
             if (!m) return `<div class="player-slot empty">空位</div>`;
-            const ready = readyUids.includes(m.uid);
+            const isNpc = isNpcUid(m.uid);
+            const ready = isNpc || readyUids.includes(m.uid);
             const charId = charSelections[m.uid];
             const char = CHARACTERS.find(c => c.id === charId);
-            const kickBtn = (isHost && m.uid !== currentUser.uid)
-                ? `<br><button onclick="event.stopPropagation(); kickMonopolyMember('${m.uid}','${escapeHtml(m.name).replace(/'/g, "\\'")}')" style="font-size:10px; padding:3px 8px; margin-top:4px; color:#a8324a;">✕踢除</button>` : '';
-            return `<div class="player-slot ${ready ? 'ready' : ''}">${m.uid === data.hostUid ? '👑 ' : ''}${escapeHtml(m.name)}<br>${char ? `${char.emoji}${char.name}` : '（未選角色）'}<br>${ready ? '✅已準備' : '⏳準備中'}${kickBtn}</div>`;
+            const personalityLabel = isNpc && m.personality ? `・${NPC_PERSONALITIES[m.personality].label}` : '';
+            const removeBtn = isHost
+                ? (isNpc
+                    ? `<br><button onclick="event.stopPropagation(); removeMonopolyNpc('${m.uid}')" style="font-size:10px; padding:3px 8px; margin-top:4px; color:#a8324a;">✕移除</button>`
+                    : (m.uid !== currentUser.uid ? `<br><button onclick="event.stopPropagation(); kickMonopolyMember('${m.uid}','${escapeHtml(m.name).replace(/'/g, "\\'")}')" style="font-size:10px; padding:3px 8px; margin-top:4px; color:#a8324a;">✕踢除</button>` : ''))
+                : '';
+            return `<div class="player-slot ${ready ? 'ready' : ''}">${m.uid === data.hostUid ? '👑 ' : (isNpc ? '🤖 ' : '')}${escapeHtml(m.name)}${personalityLabel}<br>${char ? `${char.emoji}${char.name}` : '（未選角色）'}<br>${ready ? '✅已準備' : '⏳準備中'}${removeBtn}</div>`;
         }).join('');
 
         const charGrid = CHARACTERS.map(c => {
@@ -533,8 +553,9 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
             <div class="card">
                 <p style="font-size:12px; color:#8a7159;">房間代碼</p>
                 <p style="font-size:22px; font-weight:900; letter-spacing:2px;">${monopolyState.roomId}</p>
-                <p style="font-weight:800; font-size:14px; margin:10px 0 6px;">👥 房間成員（${data.members.length}/${MAX_MONOPOLY_MEMBERS}）・至少2人才能開始</p>
+                <p style="font-weight:800; font-size:14px; margin:10px 0 6px;">👥 房間成員（${data.members.length}/${MAX_MONOPOLY_MEMBERS}）・至少2人才能開始（含電腦NPC）</p>
                 <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:8px;">${slots}</div>
+                ${isHost && data.members.length < MAX_MONOPOLY_MEMBERS && npcCount < MAX_NPC_COUNT ? `<button style="width:100%; margin-bottom:8px;" onclick="addMonopolyNpc()">🤖 加入電腦NPC（一人也能玩）</button>` : ''}
                 <p style="font-size:12px; color:#8a7159;">${modeLabels[data.mode] || data.mode}${data.weatherEnabled ? '・🌦️天氣系統開啟' : ''}</p>
             </div>
             <div class="card">
@@ -587,6 +608,50 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                 charSelections,
             });
         } catch (err) { showToast('踢除失敗：' + err.message); }
+    }
+    // 加入電腦NPC：隨機分配一個還沒被選走的角色、隨機分配三種個性之一，直接標記為已準備——
+    // NPC沒有真人在操作，不需要走「選角色→按準備」這個流程，加入的當下就一次配好
+    async function addMonopolyNpc() {
+        const ref = db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId);
+        try {
+            await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                const data = freshDoc.data();
+                if (data.members.length >= MAX_MONOPOLY_MEMBERS) return;
+                const npcCount = data.members.filter(m => isNpcUid(m.uid)).length;
+                if (npcCount >= MAX_NPC_COUNT) return;
+                const charSelections = data.charSelections || {};
+                const takenCharIds = new Set(Object.values(charSelections));
+                const availableChars = CHARACTERS.filter(c => !takenCharIds.has(c.id));
+                if (!availableChars.length) return; // 角色都被選光了，加不了新的NPC
+                const char = availableChars[Math.floor(Math.random() * availableChars.length)];
+                const personalityKeys = Object.keys(NPC_PERSONALITIES);
+                const personality = personalityKeys[Math.floor(Math.random() * personalityKeys.length)];
+                const npcUid = `npc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+                const npcName = NPC_NAME_POOL[Math.floor(Math.random() * NPC_NAME_POOL.length)] + `(${NPC_PERSONALITIES[personality].label})`;
+                const members = [...data.members, { uid: npcUid, name: npcName, personality }];
+                tx.update(ref, {
+                    members, memberUids: [...data.memberUids, npcUid],
+                    charSelections: { ...charSelections, [npcUid]: char.id },
+                    readyUids: firebase.firestore.FieldValue.arrayUnion(npcUid),
+                });
+            });
+        } catch (err) { showToast('加入NPC失敗：' + err.message); }
+    }
+    async function removeMonopolyNpc(npcUid) {
+        try {
+            const ref = db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId);
+            const doc = await ref.get();
+            const data = doc.data();
+            const members = data.members.filter(m => m.uid !== npcUid);
+            const charSelections = { ...data.charSelections };
+            delete charSelections[npcUid];
+            await ref.update({
+                members, memberUids: members.map(m => m.uid),
+                readyUids: (data.readyUids || []).filter(u => u !== npcUid),
+                charSelections,
+            });
+        } catch (err) { showToast('移除NPC失敗：' + err.message); }
     }
     async function leaveMonopolyRoom() {
         try {
@@ -654,6 +719,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                         position: 0, onBranch: false, pendingBranchEntry: false,
                         money: startMoney, shops: [], items: {},
                         bankrupt: false, doublesCount: 0,
+                        isNpc: isNpcUid(m.uid), npcPersonality: m.personality || null,
                     };
                 });
 
@@ -763,7 +829,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                 }
                 players[currentUser.uid] = me;
 
-                const resolution = resolveTileLanding(data, players, me, moveResult.pos, logMsg);
+                const resolution = resolveTileLanding(data, players, me, moveResult.pos, logMsg, currentUser.uid);
                 tx.update(ref, {
                     players: resolution.players, board: resolution.board, lastDiceRoll: [d1, d2],
                     pendingAction: resolution.pendingAction,
@@ -776,7 +842,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
         } catch (err) { showToast('擲骰失敗：' + err.message); }
     }
     // ---------- 落地判定：依格子類型決定要做什麼，回傳更新後的players/board/pendingAction ----------
-    function resolveTileLanding(data, players, me, pos, firstLogMsg) {
+    function resolveTileLanding(data, players, me, pos, firstLogMsg, actingUid) {
         const tileDef = getTileDef(pos);
         const board = [...data.board];
         const logs = [firstLogMsg];
@@ -785,46 +851,46 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
         if (tileDef.type === 'shop') {
             const tile = { ...board[pos] };
             if (!tile.ownerUid) {
-                pendingAction = { type: 'buy_shop', tileIndex: pos, uid: currentUser.uid };
-            } else if (tile.ownerUid === currentUser.uid) {
+                pendingAction = { type: 'buy_shop', tileIndex: pos, uid: actingUid };
+            } else if (tile.ownerUid === actingUid) {
                 // 踩到自己的店：可以選擇宣傳升級(每次踩到才能宣傳一次)
-                if ((tile.stars || 0) < 5) pendingAction = { type: 'promote_offer', tileIndex: pos, uid: currentUser.uid };
+                if ((tile.stars || 0) < 5) pendingAction = { type: 'promote_offer', tileIndex: pos, uid: actingUid };
             } else if (!tile.mortgaged) {
                 const owner = { ...players[tile.ownerUid] };
                 const rent = calcShopRent(pos, tile, owner, data.currentRound, data.weather);
                 // VIP卡可以免除這次租金：先檢查身上有沒有，詢問要不要使用交給待處理動作處理，
                 // 這裡先算出應繳金額、留給confirmPayRent流程判斷道具的使用
-                pendingAction = { type: 'pay_rent', tileIndex: pos, uid: currentUser.uid, ownerUid: tile.ownerUid, amount: rent };
+                pendingAction = { type: 'pay_rent', tileIndex: pos, uid: actingUid, ownerUid: tile.ownerUid, amount: rent };
             }
             board[pos] = tile;
         } else if (tileDef.type === 'special') {
             const tile = { ...board[pos] };
             if (!tile.ownerUid) {
-                pendingAction = { type: 'buy_special', tileIndex: pos, uid: currentUser.uid };
-            } else if (tile.ownerUid !== currentUser.uid && !tile.mortgaged) {
+                pendingAction = { type: 'buy_special', tileIndex: pos, uid: actingUid };
+            } else if (tile.ownerUid !== actingUid && !tile.mortgaged) {
                 const rent = calcSpecialShopRent(tile.ownerUid, board);
-                pendingAction = { type: 'pay_rent', tileIndex: pos, uid: currentUser.uid, ownerUid: tile.ownerUid, amount: rent };
+                pendingAction = { type: 'pay_rent', tileIndex: pos, uid: actingUid, ownerUid: tile.ownerUid, amount: rent };
             }
         } else if (tileDef.type === 'event') {
             const card = EVENT_CARDS[Math.floor(Math.random() * EVENT_CARDS.length)];
-            const result = applyEventOrChance(card, me, board, pos, data);
+            const result = applyEventOrChance(card, me, board, pos, data, actingUid);
             me.money = result.money;
             logs.push(`🎴 ${card.text}`);
-            if (result.needsLuckySalt) pendingAction = { type: 'event_penalty_check', uid: currentUser.uid, amount: result.penaltyAmount, cardText: card.text };
-            else if (me.money < 0) pendingAction = { type: 'bankrupt_check', uid: currentUser.uid };
+            if (result.needsLuckySalt) pendingAction = { type: 'event_penalty_check', uid: actingUid, amount: result.penaltyAmount, cardText: card.text };
+            else if (me.money < 0) pendingAction = { type: 'bankrupt_check', uid: actingUid };
         } else if (tileDef.type === 'chance') {
             const card = CHANCE_CARDS[Math.floor(Math.random() * CHANCE_CARDS.length)];
-            const result = applyEventOrChance(card, me, board, pos, data);
+            const result = applyEventOrChance(card, me, board, pos, data, actingUid);
             me.money = result.money;
             logs.push(`🍀 ${card.text}`);
             if (result.grantedItem) logs.push(`🎁 ${me.name} 獲得道具「${ITEM_DEFS[result.grantedItem].icon}${ITEM_DEFS[result.grantedItem].name}」`);
-            if (me.money < 0) pendingAction = { type: 'bankrupt_check', uid: currentUser.uid };
+            if (me.money < 0) pendingAction = { type: 'bankrupt_check', uid: actingUid };
         } else if (tileDef.type === 'tax') {
             const totalAssets = calcTotalAssets(me, board);
             const taxAmount = totalAssets > 20000 ? Math.round(totalAssets * 0.05) : 1000;
             me.money -= taxAmount;
             logs.push(`💸 ${me.name} 繳交稅金 ${fmtMoney(taxAmount)}${totalAssets > 20000 ? '（總資產超過$20,000，繳5%）' : ''}`);
-            if (me.money < 0) pendingAction = { type: 'bankrupt_check', uid: currentUser.uid };
+            if (me.money < 0) pendingAction = { type: 'bankrupt_check', uid: actingUid };
         } else if (tileDef.type === 'item-tile') {
             const itemKeys = Object.keys(ITEM_DEFS);
             const granted = itemKeys[Math.floor(Math.random() * itemKeys.length)];
@@ -837,11 +903,11 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
         }
         // foodstreet-in/foodstreet-out/corner 這幾種格子本身沒有額外效果(起點的獎金已經在移動時處理過了)
 
-        players[currentUser.uid] = me;
+        players[actingUid] = me;
         return { players, board, pendingAction, logs };
     }
     // 事件/運氣卡效果套用：money變化、特殊效果(移到起點、租金加成、獲得道具等)
-    function applyEventOrChance(card, me, board, pos, data) {
+    function applyEventOrChance(card, me, board, pos, data, actingUid) {
         let money = me.money;
         let needsLuckySalt = false, penaltyAmount = 0, grantedItem = null;
         if (card.money) {
@@ -858,7 +924,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
         }
         if (card.special === 'redcatPenalty') {
             const redcatIdx = BOARD_LAYOUT.findIndex(t => t.name === '紅貓拉麵');
-            if (board[redcatIdx] && board[redcatIdx].ownerUid === currentUser.uid) money -= 1000;
+            if (board[redcatIdx] && board[redcatIdx].ownerUid === actingUid) money -= 1000;
         }
         if (card.special === 'grantRandomItem') {
             const itemKeys = Object.keys(ITEM_DEFS);
@@ -1307,6 +1373,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
         checkAndTriggerWorldEvents(data);
         checkWeatherChange(data);
         listenForMonopolyUrge(data);
+        maybeRunNpcTurn(data);
 
         // 棋子動畫層：一格一格跳過去，不是瞬間傳送到終點
         requestAnimationFrame(() => renderAndAnimatePieces(data, gridPositions, foodstreetPositions));
@@ -1546,7 +1613,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
     async function openMonopolyTradeModal() {
         const doc = await db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId).get();
         const data = doc.data();
-        const otherPlayers = data.turnOrder.filter(uid => uid !== currentUser.uid && !data.players[uid].bankrupt);
+        const otherPlayers = data.turnOrder.filter(uid => uid !== currentUser.uid && !data.players[uid].bankrupt && !isNpcUid(uid));
         const modalEl = document.getElementById('monopoly-side-modal');
         if (!modalEl) return;
         const tradesUsed = (data.tradeOffers || []).filter(t => t.initiatorUid === currentUser.uid && t.round === data.currentRound).length;
@@ -1814,7 +1881,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
         if (isHost && !monopolyGameOverScoreSaved) {
             monopolyGameOverScoreSaved = true;
             results.forEach(r => {
-                if (r.bankrupt) return;
+                if (r.bankrupt || isNpcUid(r.uid)) return; // NPC的分數不存進真人排行榜(而且NPC假uid本來就過不了gameScores規則的userId==auth.uid檢查)
                 db.collection('gameScores').add({ gameId: 'monopoly', userId: r.uid, userName: r.name, score: Math.max(0, r.total), createdAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(() => {});
             });
         }
@@ -1884,6 +1951,297 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                 <p style="font-size:13px; line-height:1.6;">${MODE_INFO_TEXT[mode] || ''}</p>
                 <button style="width:100%; margin-top:12px;" onclick="document.getElementById('monopoly-side-modal').innerHTML=''">關閉</button>
             </div></div>`;
+    }
+
+    // ============================================================
+    // NPC自動代打：只有房主的裝置會驅動NPC回合(避免多人同時搶著幫同一個NPC行動)。
+    // 每次renderMonopolyBoard收到新的房間狀態，都會檢查「現在是不是輪到NPC」，
+    // 是的話就跑一段NPC的行動序列(擲骰->處理落地事件->結束回合)，序列跑完後
+    // 如果連續對子還輪到同一個NPC，會在下一次render時自然再被觸發一次，
+    // 不用寫成複雜的遞迴迴圈
+    // ============================================================
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+    let npcTurnInProgress = false;
+    function maybeRunNpcTurn(data) {
+        if (!data || data.hostUid !== currentUser.uid) return; // 只有房主負責驅動NPC回合
+        if (npcTurnInProgress) return;
+        if (data.status !== 'playing') return;
+        const currentPlayer = data.players[data.currentTurnUid];
+        if (!currentPlayer || !currentPlayer.isNpc || currentPlayer.bankrupt) return;
+        npcTurnInProgress = true;
+        runNpcTurnSequence(data.currentTurnUid).catch(err => console.warn('NPC回合執行失敗', err)).finally(() => { npcTurnInProgress = false; });
+    }
+    async function runNpcTurnSequence(npcUid) {
+        const ref = db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId);
+        await sleep(1100); // 給玩家一點時間看清楚換誰的回合，不要瞬間就動作
+        let doc = await ref.get();
+        let data = doc.data();
+        if (!data || data.currentTurnUid !== npcUid || data.status !== 'playing') return;
+        const personality = (data.players[npcUid] && data.players[npcUid].npcPersonality) || 'balanced';
+
+        // 保險檢查：理論上NPC自己的回合開始時不該有殘留的pendingAction，但如果有(例如上一動作
+        // 觸發了破產判定還沒處理完)，先處理掉
+        if (data.pendingAction && data.pendingAction.uid === npcUid) {
+            await npcResolvePendingActionLoop(npcUid, personality);
+            doc = await ref.get(); data = doc.data();
+            if (!data || data.currentTurnUid !== npcUid) return;
+        }
+
+        // 擲骰(NPC不主動使用雙數骰子/遙控骰子道具，維持簡單版邏輯)
+        if (!data.pendingAction && (!data.lastDiceRoll || (data.players[npcUid].doublesCount || 0) > 0)) {
+            await npcRollDice(npcUid);
+            await sleep(950);
+            doc = await ref.get(); data = doc.data();
+            if (!data || data.currentTurnUid !== npcUid) return;
+        }
+
+        // 處理擲骰後產生的待處理動作(可能是購買/宣傳/繳租/事件懲罰，繳租或事件懲罰又可能
+        // 連帶觸發破產判定，所以用loop版本一路處理到沒有pendingAction為止)
+        if (data.pendingAction && data.pendingAction.uid === npcUid) {
+            await sleep(700);
+            await npcResolvePendingActionLoop(npcUid, personality);
+            doc = await ref.get(); data = doc.data();
+            if (!data || data.currentTurnUid !== npcUid) return;
+        }
+
+        await sleep(600);
+        await npcEndTurn(npcUid);
+    }
+    // 反覆處理pendingAction，直到清空為止(繳租/事件懲罰扣到負數會連帶觸發破產判定，
+    // 破產判定裡NPC會先嘗試抵押店鋪，抵押完可能還是不夠、需要再次判斷是否要宣告破產)
+    async function npcResolvePendingActionLoop(npcUid, personality) {
+        const ref = db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId);
+        for (let guard = 0; guard < 20; guard++) { // guard避免萬一邏輯有誤造成無限迴圈，20次一定夠用
+            const doc = await ref.get();
+            const data = doc.data();
+            if (!data || !data.pendingAction || data.pendingAction.uid !== npcUid) return;
+            await npcResolvePendingAction(npcUid, personality, data.pendingAction, data);
+            await sleep(600);
+        }
+    }
+    // ---------- NPC擲骰：跟真人版rollMonopolyDice()邏輯一致，但用明確的npcUid而不是currentUser.uid ----------
+    async function npcRollDice(npcUid) {
+        const ref = db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId);
+        const d1 = 1 + Math.floor(Math.random() * 6);
+        const steps = d1;
+        try {
+            await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                const data = freshDoc.data();
+                if (data.currentTurnUid !== npcUid || data.pendingAction) return;
+                if (data.lastDiceRoll && (data.players[npcUid].doublesCount || 0) <= 0) return;
+                const players = { ...data.players };
+                const npc = { ...players[npcUid] };
+                npc.doublesCount = 0; // NPC簡化版不使用雙數骰子道具，不會有連續對子的情況
+
+                let startPos = npc.position, startOnBranch = npc.onBranch || false;
+                if (npc.pendingBranchEntry) { startPos = MAIN_LOOP_SIZE - 1; startOnBranch = true; npc.pendingBranchEntry = false; }
+                const moveResult = simulateMove(startPos, startOnBranch, steps);
+                let logMsg = `🎲 ${npc.name} 擲出 ${d1}，移動到「${getTileDef(moveResult.pos).name}」`;
+                if (moveResult.passedGo) { npc.money += PASS_GO_BONUS; logMsg += `，經過起點獲得 ${fmtMoney(PASS_GO_BONUS)}`; }
+                npc.position = moveResult.pos;
+                npc.onBranch = moveResult.onBranch;
+                if (!moveResult.onBranch && moveResult.pos === FOODSTREET_ENTRANCE_INDEX) {
+                    npc.pendingBranchEntry = true;
+                    logMsg += '，下一回合將進入美食街支線';
+                }
+                players[npcUid] = npc;
+
+                const resolution = resolveTileLanding(data, players, npc, moveResult.pos, logMsg, npcUid);
+                tx.update(ref, {
+                    players: resolution.players, board: resolution.board, lastDiceRoll: [d1, null],
+                    pendingAction: resolution.pendingAction,
+                    eventLog: firebase.firestore.FieldValue.arrayUnion(...resolution.logs),
+                    lastMovePath: { uid: npcUid, startPos, startOnBranch, steps: moveResult.path, moveToken: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}` },
+                });
+            });
+        } catch (err) { console.warn('NPC擲骰失敗', err); }
+    }
+    // ---------- NPC決策：依個性的現金緩衝門檻決定買不買/升不升級，道具能省則省 ----------
+    async function npcResolvePendingAction(npcUid, personality, pendingAction, snapshotData) {
+        const ref = db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId);
+        const reserveRatio = NPC_PERSONALITIES[personality].reserveRatio;
+        const minReserve = START_MONEY * reserveRatio;
+
+        if (pendingAction.type === 'buy_shop' || pendingAction.type === 'buy_special') {
+            try {
+                await db.runTransaction(async (tx) => {
+                    const freshDoc = await tx.get(ref);
+                    const data = freshDoc.data();
+                    if (!data.pendingAction || data.pendingAction.uid !== npcUid) return;
+                    const tileIndex = data.pendingAction.tileIndex;
+                    const board = [...data.board];
+                    const tile = { ...board[tileIndex] };
+                    const tileDef = getTileDef(tileIndex);
+                    const players = { ...data.players };
+                    const npc = { ...players[npcUid] };
+                    const buy = (npc.money - tile.price) >= minReserve;
+                    let log;
+                    if (buy) {
+                        npc.money -= tile.price;
+                        tile.ownerUid = npcUid;
+                        npc.shops = [...npc.shops, tileIndex];
+                        log = `🏪 ${npc.name} 買下了「${tileDef.name}」`;
+                    } else {
+                        log = `🙅 ${npc.name} 沒有買下「${tileDef.name}」`;
+                    }
+                    board[tileIndex] = tile;
+                    players[npcUid] = npc;
+                    tx.update(ref, { board, players, pendingAction: null, eventLog: firebase.firestore.FieldValue.arrayUnion(log) });
+                });
+            } catch (err) { console.warn('NPC購買失敗', err); }
+        } else if (pendingAction.type === 'promote_offer') {
+            try {
+                await db.runTransaction(async (tx) => {
+                    const freshDoc = await tx.get(ref);
+                    const data = freshDoc.data();
+                    if (!data.pendingAction || data.pendingAction.uid !== npcUid) return;
+                    const tileIndex = data.pendingAction.tileIndex;
+                    const board = [...data.board];
+                    const tile = { ...board[tileIndex] };
+                    const tileDef = getTileDef(tileIndex);
+                    const players = { ...data.players };
+                    const npc = { ...players[npcUid] };
+                    const nextStar = (tile.stars || 0) + 1;
+                    const cost = Math.round(tile.promo * STAR_PROMO_COST_MULTIPLIER[nextStar]);
+                    let log = null;
+                    if ((npc.money - cost) >= minReserve) {
+                        npc.money -= cost;
+                        tile.stars = nextStar;
+                        log = `⭐ ${npc.name} 把「${tileDef.name}」宣傳升到 ${nextStar} 星`;
+                    }
+                    board[tileIndex] = tile;
+                    players[npcUid] = npc;
+                    tx.update(ref, { board, players, pendingAction: null, eventLog: log ? firebase.firestore.FieldValue.arrayUnion(log) : data.eventLog });
+                });
+            } catch (err) { console.warn('NPC宣傳失敗', err); }
+        } else if (pendingAction.type === 'pay_rent') {
+            try {
+                await db.runTransaction(async (tx) => {
+                    const freshDoc = await tx.get(ref);
+                    const data = freshDoc.data();
+                    if (!data.pendingAction || data.pendingAction.uid !== npcUid) return;
+                    const { tileIndex, ownerUid, amount } = data.pendingAction;
+                    const tileDef = getTileDef(tileIndex);
+                    const players = { ...data.players };
+                    const npc = { ...players[npcUid] };
+                    let log, nextPending = null;
+                    if (npc.items.vip_card > 0) {
+                        npc.items = { ...npc.items, vip_card: npc.items.vip_card - 1 };
+                        log = `🎟️ ${npc.name} 使用VIP卡免除了「${tileDef.name}」的租金`;
+                    } else {
+                        npc.money -= amount;
+                        const owner = { ...players[ownerUid] };
+                        owner.money += amount;
+                        players[ownerUid] = owner;
+                        log = `💸 ${npc.name} 付給 ${owner.name} 租金 ${fmtMoney(amount)}`;
+                        if (npc.money < 0) nextPending = { type: 'bankrupt_check', uid: npcUid };
+                    }
+                    players[npcUid] = npc;
+                    tx.update(ref, { players, pendingAction: nextPending, eventLog: firebase.firestore.FieldValue.arrayUnion(log) });
+                });
+            } catch (err) { console.warn('NPC付租失敗', err); }
+        } else if (pendingAction.type === 'event_penalty_check') {
+            try {
+                await db.runTransaction(async (tx) => {
+                    const freshDoc = await tx.get(ref);
+                    const data = freshDoc.data();
+                    if (!data.pendingAction || data.pendingAction.uid !== npcUid) return;
+                    const players = { ...data.players };
+                    const npc = { ...players[npcUid] };
+                    let log, nextPending = null;
+                    if (npc.items.lucky_salt > 0) {
+                        npc.items = { ...npc.items, lucky_salt: npc.items.lucky_salt - 1 };
+                        log = `🧂 ${npc.name} 使用幸運鹽免除了懲罰`;
+                    } else {
+                        npc.money -= data.pendingAction.amount;
+                        log = `💸 ${npc.name} 支付了 ${fmtMoney(data.pendingAction.amount)}`;
+                        if (npc.money < 0) nextPending = { type: 'bankrupt_check', uid: npcUid };
+                    }
+                    players[npcUid] = npc;
+                    tx.update(ref, { players, pendingAction: nextPending, eventLog: firebase.firestore.FieldValue.arrayUnion(log) });
+                });
+            } catch (err) { console.warn('NPC事件處理失敗', err); }
+        } else if (pendingAction.type === 'bankrupt_check') {
+            try {
+                await db.runTransaction(async (tx) => {
+                    const freshDoc = await tx.get(ref);
+                    const data = freshDoc.data();
+                    if (!data.pendingAction || data.pendingAction.uid !== npcUid || data.pendingAction.type !== 'bankrupt_check') return;
+                    const players = { ...data.players };
+                    const npc = { ...players[npcUid] };
+                    const board = [...data.board];
+                    // NPC資金不足：先抵押一間還沒抵押的店鋪換現金，能撐過就撐、撐不過才宣告破產
+                    const mortgageable = (npc.shops || []).find(idx => !board[idx].mortgaged);
+                    if (mortgageable !== undefined) {
+                        const tile = { ...board[mortgageable] };
+                        const tileDef = getTileDef(mortgageable);
+                        const value = Math.round(tile.price / 2);
+                        npc.money += value;
+                        tile.mortgaged = true;
+                        if (tile.stars !== undefined) tile.stars = 0;
+                        board[mortgageable] = tile;
+                        players[npcUid] = npc;
+                        const stillOwes = npc.money < 0;
+                        tx.update(ref, {
+                            board, players, pendingAction: stillOwes ? data.pendingAction : null,
+                            eventLog: firebase.firestore.FieldValue.arrayUnion(`🏚️ ${npc.name} 抵押了「${tileDef.name}」換得 ${fmtMoney(value)}`),
+                        });
+                    } else {
+                        // 沒有店鋪可以抵押了，只能宣告破產——邏輯跟真人版declareMonopolyBankrupt()一致
+                        const creditorUid = data.pendingAction.ownerUid;
+                        (npc.shops || []).forEach(idx => {
+                            if (creditorUid && players[creditorUid]) {
+                                board[idx] = { ...board[idx], ownerUid: creditorUid, mortgaged: false };
+                                players[creditorUid] = { ...players[creditorUid], shops: [...players[creditorUid].shops, idx] };
+                            } else {
+                                board[idx] = { ...board[idx], ownerUid: null, stars: 0, mortgaged: false };
+                            }
+                        });
+                        npc.bankrupt = true; npc.shops = []; npc.money = 0;
+                        players[npcUid] = npc;
+                        const remainingActive = data.turnOrder.filter(uid => !players[uid].bankrupt);
+                        const updates = { board, players, pendingAction: null, eventLog: firebase.firestore.FieldValue.arrayUnion(`💔 ${npc.name} 宣告破產，退出遊戲！`) };
+                        if (data.mode !== 'timed' && remainingActive.length <= 1) updates.status = 'gameover';
+                        tx.update(ref, updates);
+                    }
+                });
+            } catch (err) { console.warn('NPC破產處理失敗', err); }
+        }
+    }
+    // ---------- NPC結束回合：跟真人版endMonopolyTurn()邏輯一致，但用明確的npcUid ----------
+    async function npcEndTurn(npcUid) {
+        const ref = db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId);
+        try {
+            await db.runTransaction(async (tx) => {
+                const freshDoc = await tx.get(ref);
+                const data = freshDoc.data();
+                if (data.currentTurnUid !== npcUid || data.pendingAction) return;
+                const players = { ...data.players };
+                const npc = { ...players[npcUid] };
+                if (npc.restJustSet) {
+                    npc.restJustSet = false;
+                    players[npcUid] = npc;
+                    tx.update(ref, { players });
+                    return;
+                } else if (npc.restNextTurn) {
+                    npc.restNextTurn = false;
+                    players[npcUid] = npc;
+                    tx.update(ref, { players });
+                    return;
+                } else if ((npc.doublesCount || 0) > 0) {
+                    tx.update(ref, { lastDiceRoll: null });
+                    return;
+                }
+                const activeOrder = data.turnOrder.filter(uid => !players[uid].bankrupt);
+                const curIdxInActive = activeOrder.indexOf(npcUid);
+                const nextUid = activeOrder[(curIdxInActive + 1) % activeOrder.length];
+                const isNewRound = (curIdxInActive + 1) >= activeOrder.length;
+                const updates = { currentTurnUid: nextUid, lastDiceRoll: null, pendingAction: null, players };
+                if (isNewRound) updates.currentRound = data.currentRound + 1;
+                tx.update(ref, updates);
+            });
+        } catch (err) { console.warn('NPC結束回合失敗', err); }
     }
 </script>
 </body>
