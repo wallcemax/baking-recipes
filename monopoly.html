@@ -74,7 +74,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
 .cell.tax { background: #f5cccc; }
 .cell.item-tile { background: #e0d4f5; }
 .cell.rest { background: #dcdcdc; }
-.cell .cell-price { font-size: clamp(5px, 1.3vw, 9px); font-weight: 700; color: #a8324a; margin-top: 1px; }
+.cell .cell-price { font-size: clamp(5px, 1.3vw, 9px); font-weight: 700; color: #a8324a; margin-top: 1px; margin-bottom: 5px; }
 .cell .owner-mark { position: absolute; top: 1px; right: 2px; font-size: clamp(5px, 1.3vw, 9px); }
 .cell .star-mark { position: absolute; bottom: 10px; left: 2px; font-size: clamp(4px, 1.1vw, 8px); color: #d4a017; letter-spacing: -1px; }
 .cell .owner-color-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 5px; }
@@ -91,9 +91,9 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
    如果巢狀塞進被縮小、內縮過的.center裡面，同一組百分比數字換算出來的實際位置會完全不對，
    格子會亂飄，這正是之前發生的bug */
 #monopoly-foodstreet-layer { position: absolute; inset: 0; }
-.foodstreet-tile { position: absolute; width: 8.8%; aspect-ratio: 1/1; background: #eaf1df; border-radius: 6px; border: 1px solid #ead6b9; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: clamp(5px, 1.7vw, 10px); text-align: center; transform: translate(-50%,-50%); overflow: hidden; }
-.foodstreet-tile .icon { font-size: clamp(9px, 2.9vw, 17px); }
-.foodstreet-tile .cell-price { font-size: clamp(4px, 1.2vw, 8px); }
+.foodstreet-tile { position: absolute; width: 8.8%; aspect-ratio: 1/1; background: #eaf1df; border-radius: 6px; border: 1px solid #ead6b9; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 800; font-size: clamp(6px, 1.9vw, 12px); text-align: center; transform: translate(-50%,-50%); overflow: hidden; line-height: 1.15; }
+.foodstreet-tile .icon { font-size: clamp(11px, 3.4vw, 20px); }
+.foodstreet-tile .cell-price { font-size: clamp(5px, 1.3vw, 9px); font-weight: 700; color: #a8324a; margin-top: 1px; margin-bottom: 5px; }
 
 .controls { display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 .status { text-align: center; margin-top: 10px; font-weight: 800; color: #a8324a; font-size: 14px; min-height: 20px; }
@@ -405,6 +405,12 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
         if (monopolyLobbyUnsubscribe) { monopolyLobbyUnsubscribe(); monopolyLobbyUnsubscribe = null; }
         if (typeof monopolyUrgeUnsubscribe !== 'undefined' && monopolyUrgeUnsubscribe) { monopolyUrgeUnsubscribe(); monopolyUrgeUnsubscribe = null; }
         monopolyState = { roomId: null, unsubscribe: null, myCharId: null };
+        // 重設視覺延遲狀態，避免下次進新房間/新的一場遊戲時，帶著上一場的舊資料造成畫面異常
+        if (typeof visualPlayerMoney !== 'undefined') visualPlayerMoney = null;
+        if (typeof visualEventLogText !== 'undefined') visualEventLogText = null;
+        if (typeof lastRenderedMoney !== 'undefined') lastRenderedMoney = {};
+        if (typeof lastAnimatedMoveToken !== 'undefined') lastAnimatedMoveToken = null;
+        if (typeof piecePositionsInitialized !== 'undefined') piecePositionsInitialized = false;
     }
 
     // ---------- 大廳：房間列表 ----------
@@ -904,7 +910,9 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
             const card = EVENT_CARDS[Math.floor(Math.random() * EVENT_CARDS.length)];
             const result = applyEventOrChance(card, me, board, pos, data, actingUid);
             me.money = result.money;
-            logs.push(`🎴 ${card.text}`);
+            if (result.boostedShopName) logs.push(`🎴 ${card.text}（指定「${result.boostedShopName}」）`);
+            else if (result.noShopToBoost) logs.push(`🎴 網紅推薦！可惜${me.name}身上沒有任何店鋪，這次沒有效果`);
+            else logs.push(`🎴 ${card.text}`);
             if (result.needsLuckySalt) pendingAction = { type: 'event_penalty_check', uid: actingUid, amount: result.penaltyAmount, cardText: card.text };
             else if (me.money < 0) pendingAction = { type: 'bankrupt_check', uid: actingUid };
         } else if (tileDef.type === 'chance') {
@@ -938,7 +946,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
     // 事件/運氣卡效果套用：money變化、特殊效果(移到起點、租金加成、獲得道具等)
     function applyEventOrChance(card, me, board, pos, data, actingUid) {
         let money = me.money;
-        let needsLuckySalt = false, penaltyAmount = 0, grantedItem = null;
+        let needsLuckySalt = false, penaltyAmount = 0, grantedItem = null, boostedShopName = null, noShopToBoost = false;
         if (card.money) {
             if (card.money < 0 && me.items.lucky_salt > 0) {
                 needsLuckySalt = true; penaltyAmount = -card.money;
@@ -947,9 +955,14 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
             }
         }
         if (card.special === 'moveToStart') { me.position = 0; me.onBranch = false; money += PASS_GO_BONUS; }
-        if (card.special === 'promoteRentBoost' && me.shops.length) {
-            const myShopIdx = me.shops[Math.floor(Math.random() * me.shops.length)];
-            board[myShopIdx] = { ...board[myShopIdx], rentBoostUntilRound: (data.currentRound || 1) + 3 };
+        if (card.special === 'promoteRentBoost') {
+            if (me.shops.length) {
+                const myShopIdx = me.shops[Math.floor(Math.random() * me.shops.length)];
+                board[myShopIdx] = { ...board[myShopIdx], rentBoostUntilRound: (data.currentRound || 1) + 3 };
+                boostedShopName = getTileDef(myShopIdx).name;
+            } else {
+                noShopToBoost = true; // 身上沒有任何店鋪可以被加成，讓呼叫端知道要顯示不同的訊息
+            }
         }
         if (card.special === 'redcatPenalty') {
             const redcatIdx = BOARD_LAYOUT.findIndex(t => t.name === '紅貓拉麵');
@@ -960,7 +973,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
             grantedItem = itemKeys[Math.floor(Math.random() * itemKeys.length)];
             me.items = { ...me.items, [grantedItem]: (me.items[grantedItem] || 0) + 1 };
         }
-        return { money, needsLuckySalt, penaltyAmount, grantedItem };
+        return { money, needsLuckySalt, penaltyAmount, grantedItem, boostedShopName, noShopToBoost };
     }
     // 總資產：現金 + 店鋪估值(用購買價一半概估，跟抵押價值一致) + 道具價值(不列入，道具沒有明確標價) - 負債(此規格書沒有明確的負債欄位，先不列入)
     function calcTotalAssets(player, board) {
@@ -1316,10 +1329,32 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
     let lastRenderedMoney = {}; // 記錄每個玩家上次渲染時的金額，用來偵測變化、跳出加減錢的飄字
     let lastAnimatedMoveToken = null; // 記錄上次已經播放過動畫的移動token，避免同一段移動被重複播放
     let piecePositionsInitialized = false; // 第一次進畫面直接定位，不要整個從起點跳過來一次
+    // 視覺延遲狀態：玩家金額顯示、事件欄文字都會先用「上次已經顯示過的值」(lag)，等動畫播完
+    // 才同步成最新的，不會在棋子還在跳的時候，畫面就先把加減錢/事件結果顯示出來
+    let visualPlayerMoney = null; // {uid: 目前畫面上顯示的金額}，null代表還沒初始化過(第一次進畫面)
+    let visualEventLogText = null; // 目前畫面上顯示的事件欄文字，null代表還沒初始化過
     function renderMonopolyBoard(data) {
         const myUid = currentUser.uid;
         const isMyTurn = data.currentTurnUid === myUid;
         const me = data.players[myUid];
+
+        // 判斷這次渲染是不是對應一段「還沒播放過動畫的新移動」——如果是，玩家金額/事件欄要用
+        // 延遲(視覺上還沒更新)的舊值顯示，等animateTravelingGhost動畫播完的callback才真正同步
+        const isNewMoveForVisual = data.lastMovePath && data.lastMovePath.moveToken !== lastAnimatedMoveToken;
+        if (visualPlayerMoney === null) {
+            // 第一次進畫面，沒有「舊值」可以延遲，直接用目前資料初始化
+            visualPlayerMoney = {};
+            data.turnOrder.forEach(uid => { visualPlayerMoney[uid] = data.players[uid].money; });
+        }
+        if (visualEventLogText === null) {
+            visualEventLogText = (data.eventLog || []).length ? data.eventLog[data.eventLog.length - 1] : '🎲 遊戲開始了，擲骰子出發吧！';
+        }
+        if (!isNewMoveForVisual) {
+            // 不是新移動觸發的渲染(例如交易完成、使用道具、確認視窗點擊等不牽涉棋子移動的操作)，
+            // 這種情況沒有動畫要等，直接同步成最新值，不用延遲
+            data.turnOrder.forEach(uid => { visualPlayerMoney[uid] = data.players[uid].money; });
+            visualEventLogText = (data.eventLog || []).length ? data.eventLog[data.eventLog.length - 1] : visualEventLogText;
+        }
 
         const playersHtml = data.turnOrder.map(uid => {
             const p = data.players[uid];
@@ -1329,7 +1364,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                 <div class="avatar" style="${char ? `box-shadow:0 0 0 2px ${char.color};` : ''}">${char ? char.emoji : '👤'}</div>
                 <div style="min-width:0;">
                     <div class="player-name">${escapeHtml(p.name)}</div>
-                    <div class="player-money" id="mp-money-${uid}">${fmtMoney(p.money)}</div>
+                    <div class="player-money" id="mp-money-${uid}">${fmtMoney(visualPlayerMoney[uid])}</div>
                 </div>
             </div>`;
         }).join('');
@@ -1377,7 +1412,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                             </div>
                             <div class="turn-line" style="font-weight:900; color:#a8324a; font-size:13px;">👉 ${escapeHtml(data.players[data.currentTurnUid].name)} 的回合</div>
                         </div>
-                        <div id="monopoly-event-bar">${(data.eventLog || []).length ? escapeHtml(data.eventLog[data.eventLog.length - 1]) : '🎲 遊戲開始了，擲骰子出發吧！'}</div>
+                        <div id="monopoly-event-bar">${escapeHtml(visualEventLogText)}</div>
                         <div class="board-wrapper">
                             <div class="board" id="monopoly-board-el">
                                 ${cellsHtml}
@@ -1422,15 +1457,17 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
 
         // 棋子動畫層：一格一格跳過去，不是瞬間傳送到終點
         requestAnimationFrame(() => renderAndAnimatePieces(data, gridPositions, foodstreetPositions));
-        // 金額變化飄字：比對這次跟上次渲染的金額差異
+        // 金額變化飄字：比對「延遲後的視覺金額」而不是原始資料——新移動觸發的渲染，
+        // visualPlayerMoney還沒同步(維持舊值)，這裡不會提前跳出飄字，要等動畫完成的
+        // callback(見animateTravelingGhost)才會真正同步視覺金額並跳出飄字
         data.turnOrder.forEach(uid => {
-            const p = data.players[uid];
+            const displayMoney = visualPlayerMoney[uid];
             const prev = lastRenderedMoney[uid];
-            if (prev !== undefined && prev !== p.money) {
-                const diff = p.money - prev;
+            if (prev !== undefined && prev !== displayMoney) {
+                const diff = displayMoney - prev;
                 spawnMoneyFloatText(`mp-money-${uid}`, diff);
             }
-            lastRenderedMoney[uid] = p.money;
+            lastRenderedMoney[uid] = displayMoney;
         });
     }
     // 星級顯示：明確顯示實心+空心星星，不會因為0星就完全不顯示任何東西造成誤解
@@ -1514,17 +1551,33 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                     const realPieceEl = document.getElementById(`piece-${movePath.uid}`);
                     if (realPieceEl) realPieceEl.style.opacity = '1';
                     pieceAnimationInProgress = false;
-                    // 動畫播完了，重新查詢最新的房間資料再判斷要不要跳出待處理動作視窗——
-                    // 不要用動畫開始時就固定住的data快照，避免動畫播放這1-2秒期間房間資料
-                    // 其實已經有變化(雖然實務上很少見，但這樣寫比較保險)
-                    if (currentUser.uid === movePath.uid) {
-                        db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId).get().then(doc => {
-                            const freshData = doc.data();
-                            if (freshData && freshData.pendingAction && freshData.pendingAction.uid === currentUser.uid) {
-                                renderMonopolyPendingAction(freshData);
+                    // 動畫播完了，重新查詢最新的房間資料——不管是誰的移動，都要在這裡真正把
+                    // 視覺金額/事件欄文字同步成最新值、觸發飄字，這是「不要在棋子還在跳的時候
+                    // 就先顯示結果」這個需求的關鍵最後一步。不要用動畫開始時就固定住的data快照，
+                    // 避免動畫播放這1-2秒期間房間資料其實已經有變化
+                    db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId).get().then(doc => {
+                        const freshData = doc.data();
+                        if (!freshData) return;
+                        freshData.turnOrder.forEach(uid => {
+                            const displayMoney = freshData.players[uid].money;
+                            const prev = lastRenderedMoney[uid];
+                            if (prev !== undefined && prev !== displayMoney) {
+                                spawnMoneyFloatText(`mp-money-${uid}`, displayMoney - prev);
                             }
-                        }).catch(err => console.warn('動畫結束後查詢房間狀態失敗', err));
-                    }
+                            visualPlayerMoney[uid] = displayMoney;
+                            lastRenderedMoney[uid] = displayMoney;
+                            const moneyEl = document.getElementById(`mp-money-${uid}`);
+                            if (moneyEl) moneyEl.textContent = fmtMoney(displayMoney);
+                        });
+                        if ((freshData.eventLog || []).length) {
+                            visualEventLogText = freshData.eventLog[freshData.eventLog.length - 1];
+                            const eventBarEl = document.getElementById('monopoly-event-bar');
+                            if (eventBarEl) eventBarEl.textContent = visualEventLogText;
+                        }
+                        if (freshData.pendingAction && freshData.pendingAction.uid === currentUser.uid) {
+                            renderMonopolyPendingAction(freshData);
+                        }
+                    }).catch(err => console.warn('動畫結束後查詢房間狀態失敗', err));
                     return;
                 }
                 const step = movePath.steps[i];
@@ -1876,7 +1929,8 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
     let weatherCheckInFlight = false;
     async function checkWeatherChange(data) {
         if (!data.weatherChangeAtRound || data.currentRound < data.weatherChangeAtRound || weatherCheckInFlight) return;
-        if (data.turnOrder[0] !== currentUser.uid) return; // 只讓房間裡turnOrder排第一位的人負責觸發，避免大家都搶著寫
+        // 改成統一用hostUid判斷，跟NPC回合驅動、世界事件觸發同一個標準，減少多裝置搶著寫入的機率
+        if (data.hostUid !== currentUser.uid) return;
         weatherCheckInFlight = true;
         try {
             const ref = db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId);
@@ -1897,7 +1951,9 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
     let worldEventCheckInFlight = false;
     async function checkAndTriggerWorldEvents(data) {
         if (data.currentRound % 5 !== 0 || data.lastWorldEventRound === data.currentRound || worldEventCheckInFlight) return;
-        if (data.turnOrder[0] !== currentUser.uid) return; // 同樣只讓排第一位的人觸發，避免重複
+        // 改成統一用hostUid判斷，跟NPC回合驅動同一個標準——避免多人連線情境下不同裝置同時
+        // 對同一份房間資料搶著寫入，增加交易衝突重試的機率
+        if (data.hostUid !== currentUser.uid) return;
         worldEventCheckInFlight = true;
         try {
             const ref = db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId);
@@ -1977,6 +2033,8 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
     }
     async function backToMonopolyWaitingRoom() {
         monopolyGameOverScoreSaved = false;
+        visualPlayerMoney = null; visualEventLogText = null; lastRenderedMoney = {};
+        lastAnimatedMoveToken = null; piecePositionsInitialized = false;
         try {
             await db.collection('monopolyGameRoomsV2').doc(monopolyState.roomId).update({
                 status: 'waiting', readyUids: [], board: null, players: null, turnOrder: null, currentTurnUid: null, eventLog: [],
