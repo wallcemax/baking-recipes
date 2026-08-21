@@ -20,9 +20,12 @@ body {
    並排顯示，操作介面不用再往下捲動才看得到。只有窄螢幕直向才會退回上下堆疊，讓棋盤保有
    足夠寬度不會太擠 */
 .game-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; align-items: start; }
+/* 明確加上min-width:0，覆蓋掉CSS Grid item預設的min-width:auto行為——這是造成事件橫幅
+   撐爆整個版面寬度的真正根因：事件橫幅用white-space:nowrap讓文字不換行，這個「不換行的
+   最小內容寬度」在沒有明確min-width:0的情況下，會把整個grid欄位撐開到超出原本1fr該有的寬度 */
+.game-main { min-width: 0; }
 .game-sidebar { display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 40px); overflow-y: auto; position: sticky; top: 12px; }
 .game-sidebar .players { grid-template-columns: repeat(2, 1fr); }
-.game-sidebar .log { max-height: 160px; }
 @media (max-width: 860px) and (orientation: portrait) {
     .game-layout { grid-template-columns: 1fr; }
     .game-sidebar { position: static; max-height: none; overflow-y: visible; }
@@ -87,6 +90,9 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
 #monopoly-status-bar { position: absolute; top: 5%; left: 5%; width: 60%; background: rgba(255,250,241,.95); border: 1px solid #d3ad76; border-radius: 10px; padding: 6px 10px; font-size: clamp(8px, 1.6cqw, 13px); box-shadow: 0 3px 8px rgba(0,0,0,.12); pointer-events: auto; z-index: 22; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; }
 /* 側邊欄的「輪到你了」大橫幅：獨立、醒目，不再塞進棋盤角落的小方塊 */
 #monopoly-turn-status-banner { background: linear-gradient(135deg,#a8324a,#d1495b); color: white; border-radius: 16px; padding: 14px; font-size: 18px; font-weight: 900; text-align: center; box-shadow: 0 6px 16px rgba(168,50,74,.35); }
+/* 棋盤內日誌框：疊在.center裡狀態列下方的空間，不透明白底清楚呈現最近幾筆歷史紀錄，
+   z-index比美食街圖層高，確保文字清楚可讀不會被格子擋住 */
+#monopoly-board-log { position: absolute; top: 22%; left: 5%; width: 55%; max-height: 55%; background: rgba(255,250,241,.97); border: 1px solid #d3ad76; border-radius: 12px; padding: 8px 10px; font-size: clamp(7px, 1.2cqw, 11px); line-height: 1.6; overflow-y: auto; box-shadow: 0 4px 12px rgba(0,0,0,.15); z-index: 23; color: #5a4534; }
 /* 美食街圖層：直接鋪滿整個棋盤(跟.center是同一層級，不是巢狀在裡面)，這樣JS算出來「相對
    整個棋盤」的百分比座標(computeFoodstreetDiagonalPositions)才會套用在正確的參考基準上——
    如果巢狀塞進被縮小、內縮過的.center裡面，同一組百分比數字換算出來的實際位置會完全不對，
@@ -98,8 +104,6 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
 .foodstreet-tile .cell-price { font-size: clamp(5px, 1.3cqw, 9px); font-weight: 700; color: #a8324a; margin-bottom: 4px; }
 
 .controls { display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
-.status { text-align: center; margin-top: 10px; font-weight: 800; color: #a8324a; font-size: 14px; min-height: 20px; }
-.log { margin-top: 12px; background: #fffaf2; border: 1px solid #dfc7a6; border-radius: 14px; padding: 10px 13px; font-size: 12px; color: #765d47; max-height: 100px; overflow-y: auto; }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgba(40,25,15,.5); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
 .modal-box { background: #fffaf1; border-radius: 22px; max-width: 440px; width: 100%; max-height: 85vh; overflow-y: auto; padding: 20px; box-shadow: 0 25px 60px rgba(0,0,0,.3); }
@@ -142,7 +146,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
     .player-name, .player-money { font-size: 10px; }
     .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 0; }
     .controls button { min-height: 28px; padding: 4px 6px; font-size: 10px; }
-    .log { max-height: 55px; font-size: 9px; padding: 5px 7px; line-height: 1.3; }
+    #monopoly-board-log { font-size: 8px; padding: 5px 6px; line-height: 1.4; }
     .spotlight-compact { padding: 6px 8px; gap: 8px; }
     .spotlight-icon { font-size: 26px; }
     .spotlight-name { font-size: 13px; }
@@ -1446,6 +1450,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                                     </div>
                                 </div>
                                 <div id="monopoly-foodstreet-layer">${foodstreetHtml}</div>
+                                <div id="monopoly-board-log">${(data.eventLog || []).slice(-8).reverse().map(e => `<div>${escapeHtml(e)}</div>`).join('')}</div>
                                 <div id="monopoly-piece-layer"></div>
                             </div>
                         </div>
@@ -1466,7 +1471,6 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
                             <button onclick="confirmMonopolySurrender()">🏳 投降</button>
                         </div>
                     </div>
-                    <div class="card log">${(data.eventLog || []).slice(-10).reverse().map(e => `<div>${escapeHtml(e)}</div>`).join('')}</div>
                 </div>
             </div>
             <div id="monopoly-action-modal"></div>
@@ -2441,7 +2445,7 @@ label.field-label { font-size: 12px; color: #8a7159; display: block; margin-bott
             priceRentLine = `售價 ${fmtMoney(tile.price)}　租金 ${tile.ownerUid ? fmtMoney(rent) : '—'}`;
             if (tileDef.type === 'shop') starLine = renderStars(tile.stars || 0);
         } else {
-            ownerLine = { event: '事件格', chance: '運氣格', tax: '稅稽處', 'item-tile': '道具格', rest: '公休格', corner: '起點', 'foodstreet-in': '美食街入口', 'foodstreet-out': '美食街出口' }[tileDef.type] || '';
+            ownerLine = { event: '事件格', chance: '運氣格', tax: '稅稽處', 'item-tile': '道具格', rest: '公休格', 'foodstreet-in': '美食街入口', 'foodstreet-out': '美食街出口' }[tileDef.type] || '';
         }
         cardEl.innerHTML = `
             <div class="card spotlight-compact">
