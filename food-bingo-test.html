@@ -132,6 +132,10 @@
   ];
   const MIN_PLAYERS = 2;
   const MAX_PLAYERS_CAP = 8;
+  // 5x5總共只有12條可能的線(5列+5欄+2對角線)。用模擬跑過資料：需要6條線以上時，
+  // 平均要叫的張數會迅速逼近25(=幾乎要叫完整張卡)，設定越高、賓果遊戲該有的節奏感越薄弱，
+  // 所以開放1~6，不開放到12(理論上限)
+  const MAX_LINES_NEEDED = 6;
 
   const firebaseConfig = {
     apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
@@ -174,16 +178,14 @@
     renderLobby();
   });
 
-  function checkBingoWin(board, calledSet) {
+  // 回傳目前已經完成的所有線(可能不只一條)，呼叫端自己判斷數量夠不夠達到房主設定的needLines
+  function getCompletedLines(board, calledSet) {
     const lines = [];
     for (let r = 0; r < 5; r++) lines.push([0, 1, 2, 3, 4].map(c => r * 5 + c));
     for (let c = 0; c < 5; c++) lines.push([0, 1, 2, 3, 4].map(r => r * 5 + c));
     lines.push([0, 6, 12, 18, 24]);
     lines.push([4, 8, 12, 16, 20]);
-    for (const line of lines) {
-      if (line.every(idx => calledSet.has(board[idx]))) return line;
-    }
-    return null;
+    return lines.filter(line => line.every(idx => calledSet.has(board[idx])));
   }
   function shuffledBoard() {
     const arr = Array.from({ length: 25 }, (_, i) => i);
@@ -227,7 +229,7 @@
           const d = doc.data();
           return `<button class="room-list-item" onclick="promptJoinRoom('${doc.id}')">
             <b>${escapeHtml(d.roomName || '未命名房間')}</b>
-            <small>👑${escapeHtml((d.members[0] && d.members[0].name) || '?')} · ${d.members.length}/${d.maxPlayers}人</small>
+            <small>👑${escapeHtml((d.members[0] && d.members[0].name) || '?')} · ${d.members.length}/${d.maxPlayers}人 · 連${d.linesNeeded || 1}線獲勝</small>
           </button>`;
         }).join('');
       }, err => {
@@ -245,6 +247,9 @@
         <input id="cr-password" placeholder="設定一個密碼">
         <label class="field-label">最多幾人（2~${MAX_PLAYERS_CAP}人）</label>
         <input id="cr-maxplayers" type="number" min="${MIN_PLAYERS}" max="${MAX_PLAYERS_CAP}" value="4">
+        <label class="field-label">需要連成幾條線才算贏（1~${MAX_LINES_NEEDED}）</label>
+        <input id="cr-linesneeded" type="number" min="1" max="${MAX_LINES_NEEDED}" value="1">
+        <p style="font-size:11px; color:var(--muted); margin:4px 0 0;">5x5卡片總共只有12條可能的線（5列+5欄+2對角線）。1條線最快，平均10幾輪就分勝負；設太高（超過6條）幾乎要叫完整張卡才會贏，節奏會變很慢</p>
         <button class="btn primary" style="margin-top:14px;" onclick="createRoom()">建立房間</button>
         <button class="btn" style="margin-top:8px;" onclick="renderLobby()">返回</button>
       </div>
@@ -264,18 +269,20 @@
     if (!password) { showToast('請設定密碼'); return; }
     let maxPlayers = parseInt(document.getElementById('cr-maxplayers').value, 10) || 4;
     maxPlayers = Math.min(MAX_PLAYERS_CAP, Math.max(MIN_PLAYERS, maxPlayers));
+    let linesNeeded = parseInt(document.getElementById('cr-linesneeded').value, 10) || 1;
+    linesNeeded = Math.min(MAX_LINES_NEEDED, Math.max(1, linesNeeded));
     const roomId = generateRoomId();
     try {
       const oldRoomsSnap = await db.collection('bingoGameRooms').where('hostUid', '==', currentUser.uid).get();
       for (const oldDoc of oldRoomsSnap.docs) await oldDoc.ref.delete();
 
       await db.collection('bingoGameRooms').doc(roomId).set({
-        hostUid: currentUser.uid, roomName, password, maxPlayers,
+        hostUid: currentUser.uid, roomName, password, maxPlayers, linesNeeded,
         members: [{ uid: currentUser.uid, name: myDisplayName }],
         memberUids: [currentUser.uid], readyUids: [],
         status: 'waiting',
         playerBoards: null, diceResults: null, turnOrder: null, currentTurnIndex: 0,
-        calledItems: [], winnerUid: null, winLine: null,
+        calledItems: [], winnerUid: null, winLines: null,
         eventLog: [], createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
       enterRoom(roomId);
@@ -412,7 +419,7 @@
 
         tx.update(ref, {
           status: 'playing', playerBoards, diceResults, turnOrder, currentTurnIndex: 0,
-          calledItems: [], winnerUid: null, winLine: null,
+          calledItems: [], winnerUid: null, winLines: null,
           eventLog: firebase.firestore.FieldValue.arrayUnion(`🎲 遊戲開始！順序：${orderNames}`),
         });
         return true;
@@ -427,6 +434,7 @@
     const calledSet = new Set(data.calledItems || []);
     const isGameOver = data.status === 'gameover';
     const isMyTurn = !isGameOver && data.turnOrder[data.currentTurnIndex] === myUid;
+    const linesNeeded = data.linesNeeded || 1;
 
     const diceKey = JSON.stringify(data.diceResults);
     if (!isGameOver && lastAnnouncedDiceReveal !== diceKey && data.calledItems.length === 0) {
@@ -442,7 +450,12 @@
       return `<div class="player-chip ${isActive ? 'active' : ''} ${isWinner ? 'winner' : ''}">${isWinner ? '🏆' : ''}${escapeHtml(m ? m.name : '?')}</div>`;
     }).join('');
 
-    const winLineSet = new Set(isGameOver && data.winLine ? data.winLine : []);
+    // 把所有已完成連線的格子索引攤平成一個集合，遊戲結束時要標示的可能不只一條線
+    const winLineSet = new Set();
+    if (isGameOver && data.winLines) data.winLines.forEach(line => line.forEach(idx => winLineSet.add(idx)));
+    // 遊戲進行中，額外算一下自己目前已經連成幾條線，讓玩家知道還差幾條
+    const myCompletedLines = !isGameOver ? getCompletedLines(myBoard, calledSet) : [];
+
     const gridHtml = myBoard.map((foodIdx, i) => {
       const food = FOODS[foodIdx];
       const marked = calledSet.has(foodIdx);
@@ -459,17 +472,20 @@
     let bannerHtml;
     if (isGameOver) {
       const winnerName = (data.members.find(m => m.uid === data.winnerUid) || {}).name || '?';
-      bannerHtml = `<div class="turn-banner">🏆 ${escapeHtml(winnerName)} 連成一線，獲勝！</div>`;
+      const winMsg = linesNeeded === 1 ? '連成一線' : `連成${(data.winLines || []).length}條線`;
+      bannerHtml = `<div class="turn-banner">🏆 ${escapeHtml(winnerName)} ${winMsg}，獲勝！</div>`;
     } else if (isMyTurn) {
       bannerHtml = `<div class="turn-banner">👉 輪到你了！點一個你卡上還沒翻開的食材</div>`;
     } else {
       const turnName = (data.members.find(m => m.uid === data.turnOrder[data.currentTurnIndex]) || {}).name || '?';
       bannerHtml = `<div class="turn-banner waiting">⏳ 等待 ${escapeHtml(turnName)} 選擇食材...</div>`;
     }
+    const progressHtml = !isGameOver ? `<p style="text-align:center; font-size:12px; color:var(--muted); margin:-4px 0 12px;">目標：連成 ${linesNeeded} 條線・你目前已連成 <b style="color:var(--jam-deep);">${myCompletedLines.length}</b> 條</p>` : '';
 
     document.getElementById('app-root').innerHTML = `
       <div class="players-strip">${playersStripHtml}</div>
       ${bannerHtml}
+      ${progressHtml}
       <div class="board"><div class="grid">${gridHtml}</div></div>
       <div class="log-box">${(data.eventLog || []).slice(-8).reverse().map(e => `<div>${escapeHtml(e)}</div>`).join('')}</div>
       ${isGameOver ? `
@@ -512,21 +528,25 @@
         const calledSet = new Set(newCalledItems);
         const me = data.members.find(m => m.uid === currentUser.uid);
         const logs = [`🍽️ ${me ? me.name : '有人'} 叫了「${FOODS[foodIdx].name}」`];
+        const linesNeeded = data.linesNeeded || 1;
 
-        let winnerUid = null, winLine = null;
+        // 每叫一次牌都要檢查「所有人」有沒有達到房主設定的連線數門檻——因為所有人的同一種
+        // 食材會同步被翻開，這次叫的牌搞不好剛好幫別人湊滿需要的線數
+        let winnerUid = null, winLines = null;
         for (const uid of data.turnOrder) {
           const pBoard = data.playerBoards[uid];
-          const line = checkBingoWin(pBoard, calledSet);
-          if (line) { winnerUid = uid; winLine = line; break; }
+          const completedLines = getCompletedLines(pBoard, calledSet);
+          if (completedLines.length >= linesNeeded) { winnerUid = uid; winLines = completedLines; break; }
         }
 
         const updates = { calledItems: newCalledItems, eventLog: firebase.firestore.FieldValue.arrayUnion(...logs) };
         if (winnerUid) {
           updates.status = 'gameover';
           updates.winnerUid = winnerUid;
-          updates.winLine = winLine;
+          updates.winLines = winLines;
           const winnerName = (data.members.find(m => m.uid === winnerUid) || {}).name || '?';
-          updates.eventLog = firebase.firestore.FieldValue.arrayUnion(...logs, `🏆 ${winnerName} 連成一線，獲勝！`);
+          const winMsg = linesNeeded === 1 ? `🏆 ${winnerName} 連成一線，獲勝！` : `🏆 ${winnerName} 連成${winLines.length}條線，獲勝！`;
+          updates.eventLog = firebase.firestore.FieldValue.arrayUnion(...logs, winMsg);
         } else {
           updates.currentTurnIndex = (data.currentTurnIndex + 1) % data.turnOrder.length;
         }
@@ -541,7 +561,7 @@
       await db.collection('bingoGameRooms').doc(roomState.roomId).update({
         status: 'waiting', readyUids: [],
         playerBoards: null, diceResults: null, turnOrder: null, currentTurnIndex: 0,
-        calledItems: [], winnerUid: null, winLine: null, eventLog: [],
+        calledItems: [], winnerUid: null, winLines: null, eventLog: [],
       });
     } catch (err) { showToast('重設房間失敗：' + err.message); }
   }
