@@ -1,0 +1,1519 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>海戰指揮室｜Just Do Eat</title>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+<style>
+  :root {
+    --void: #060e1a;
+    --deep: #0a1a2e;
+    --panel: #0e2438;
+    --grid-line: #1e4a5a;
+    --grid-line-bright: #2d7d7d;
+    --scan: #4fd1c5;
+    --ink: #cfe8e6;
+    --muted: #6b8a92;
+    --intact: #3d8f6a;
+    --damaged: #e8a23a;
+    --critical: #d64545;
+    --wreck: #3a2e2e;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; } /* 頁面本身完全不捲動，內部個別區塊按需要自己捲動 */
+  body {
+    background:
+      radial-gradient(ellipse at 50% -10%, #0e2f42 0%, transparent 55%),
+      radial-gradient(ellipse at 50% 110%, #0a1f2e 0%, transparent 55%),
+      var(--void);
+    font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    color: var(--ink);
+    display: flex; flex-direction: column;
+  }
+  .mono { font-family: "SF Mono", "Consolas", "Courier New", monospace; }
+
+  header { flex-shrink: 0; padding: 8px 14px 6px; }
+  .header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .eyebrow { font-size: 9px; letter-spacing: 0.25em; color: var(--scan); font-weight: 700; margin: 0 0 2px; opacity: .85; }
+  h1 { font-family: "Arial Black", "Noto Sans TC", sans-serif; font-size: clamp(16px, 3vw, 24px); font-weight: 900; margin: 0; letter-spacing: 0.02em; text-shadow: 0 0 16px rgba(79,209,197,.35); }
+  .back-links { display: flex; align-items: center; gap: 10px; padding-top: 2px; }
+  a.back-link { color: var(--scan); font-size: 11px; font-weight: 700; text-decoration: none; letter-spacing: .02em; white-space: nowrap; }
+  a.back-link:hover { text-decoration: underline; }
+  .legend-toggle-btn { background: var(--panel); border: 1px solid var(--grid-line-bright); color: var(--scan); font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; cursor: pointer; }
+
+  .legend-popup { position: fixed; inset: 0; background: rgba(6,14,26,.75); z-index: 500; display: flex; align-items: center; justify-content: center; }
+  .legend-popup.hidden { display: none; }
+
+  .stage { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 12px 10px; width: 100%; max-width: 1400px; margin: 0 auto; }
+
+  /* -------- 左右版面：地圖主視覺(自動填滿剩餘空間) + 側邊欄(固定寬度、內部自行捲動) -------- */
+  .game-layout { flex: 1; min-height: 0; display: flex; gap: 10px; }
+  .game-main { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+  .game-sidebar { width: 260px; flex-shrink: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+
+  @media (max-width: 780px) and (orientation: portrait) {
+    .game-layout { flex-direction: column; }
+    .game-main { flex: 0 1 44vh; }
+    .game-sidebar { width: 100%; flex: 1; min-height: 0; }
+    h1 { font-size: 16px; }
+    .eyebrow { font-size: 8px; }
+  }
+
+  /* -------- 戰術資訊列 -------- */
+  /* -------- 3D 戰術投影桌：尺寸由外層flex容器(.game-main)動態分配的可用空間決定，
+     不再是寫死的固定尺寸——這樣不管螢幕多大多小，地圖都會剛好填滿可用空間、不會超出 -------- */
+  .map-stage {
+    perspective: 1400px;
+    perspective-origin: 50% 25%;
+    flex: 1; min-height: 0; width: 100%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .map-tilt {
+    transform: rotateX(46deg) rotateZ(0deg);
+    transform-style: preserve-3d;
+    /* 寬高不在這裡用CSS aspect-ratio自動計算(在巢狀flexbox+3D變形的環境下不夠可靠)，
+       改成由JS直接量測.map-stage實際可用空間、算出正方形邊長後用style.width/height強制設定 */
+  }
+  .map-frame {
+    position: relative;
+    width: 100%; height: 100%;
+    background: linear-gradient(155deg, #0c2436, #071420);
+    border: 1px solid var(--grid-line-bright);
+    border-radius: 4px;
+    box-shadow:
+      0 0 0 1px rgba(45,125,125,.15),
+      0 40px 90px -20px rgba(0,0,0,.85),
+      0 0 60px -10px rgba(79,209,197,.15);
+    padding: 3px;
+  }
+  /* 掃描動畫：一條亮線緩慢掃過整張地圖，強化雷達感 */
+  .map-frame::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, transparent 0%, rgba(79,209,197,.09) 48%, transparent 100%);
+    background-size: 100% 300%;
+    animation: scan-sweep 5.5s linear infinite;
+    pointer-events: none;
+    border-radius: 4px;
+  }
+  @keyframes scan-sweep { 0% { background-position: 0 -200%; } 100% { background-position: 0 100%; } }
+
+  .grid20 {
+    position: relative;
+    container-type: inline-size;
+    container-name: battle-grid;
+    display: grid;
+    grid-template-columns: repeat(20, 1fr);
+    grid-template-rows: repeat(20, 1fr);
+    aspect-ratio: 1 / 1;
+    gap: 1px;
+    background: var(--grid-line);
+  }
+  .cell {
+    background: #0a1c2c;
+    position: relative;
+    transition: background .15s;
+  }
+  .cell:hover { background: #123448; }
+  .cell.coord-mark::before {
+    content: attr(data-coord);
+    position: absolute; top: 1px; left: 2px;
+    font-size: 5px; color: var(--muted); opacity: .5;
+    font-family: monospace;
+  }
+
+  /* -------- 船身：造型依船型各自不同，四種朝向各自對應不同的clip-path
+     (不用transform:rotate，因為朝向N/S時外框是窄長、朝向E/W時是寬扁，長寬會互換，
+     直接切換clip-path形狀比旋轉一個固定形狀更精確可控)。用CSS自訂屬性--bow-sharp
+     控制船頭收尖的起始位置，數字越小船頭越尖銳、越大越鈍平，讓不同船型呈現不同輪廓特徵 -------- */
+  .ship-block {
+    position: absolute;
+    display: flex; align-items: center; justify-content: center;
+    transition: top .3s ease, left .3s ease, width .3s ease, height .3s ease, clip-path .3s ease;
+    pointer-events: none;
+  }
+  .ship-block .ship-pct { font-family: monospace; font-weight: 900; font-size: clamp(8px, 2cqw, 13px); text-shadow: 0 1px 3px rgba(0,0,0,.7); z-index: 2; }
+  .ship-block .bow-arrow { position: absolute; font-size: clamp(9px, 2.4cqw, 15px); text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+  .ship-block .fire-emoji { position: absolute; font-size: clamp(10px, 2.8cqw, 17px); z-index: 3; animation: fire-flicker .7s ease-in-out infinite; filter: drop-shadow(0 0 4px rgba(255,120,30,.8)); }
+  @keyframes fire-flicker { 0%, 100% { transform: scale(1) rotate(-4deg); } 50% { transform: scale(1.15) rotate(4deg); } }
+
+  /* 各船型的船頭尖銳度：數字是收尖起始的百分比位置，越小越尖銳(快速攻擊艦感)、越大越鈍平(登陸艦感) */
+  .ship-block.type-amphibious { --bow-sharp: 36; } /* 兩棲突擊艦：船頭較鈍平，登陸艦的平坦感 */
+  .ship-block.type-cruiser { --bow-sharp: 20; }    /* 巡洋艦：中等尖銳 */
+  .ship-block.type-destroyer { --bow-sharp: 12; }  /* 驅逐艦：最尖銳，快速攻擊艦的俐落感 */
+  .ship-block.type-frigate { --bow-sharp: 22; }    /* 巡防艦：中規中矩 */
+
+  /* 船頭朝北：外框窄長，clip-path在頂端收尖(收尖位置由--bow-sharp決定) */
+  .ship-block.heading-N { clip-path: polygon(50% 0%, 100% calc(var(--bow-sharp, 24) * 1%), 100% 100%, 0% 100%, 0% calc(var(--bow-sharp, 24) * 1%)); }
+  .ship-block.heading-N .bow-arrow { top: 2%; }
+  .ship-block.heading-N .fire-emoji { top: 30%; left: 50%; transform: translateX(-50%); }
+  /* 船頭朝南：clip-path在底端收尖 */
+  .ship-block.heading-S { clip-path: polygon(50% 100%, 100% calc(100% - var(--bow-sharp, 24) * 1%), 100% 0%, 0% 0%, 0% calc(100% - var(--bow-sharp, 24) * 1%)); }
+  .ship-block.heading-S .bow-arrow { bottom: 2%; }
+  .ship-block.heading-S .fire-emoji { bottom: 30%; left: 50%; transform: translateX(-50%); }
+  /* 船頭朝東：外框寬扁，clip-path在右端收尖 */
+  .ship-block.heading-E { clip-path: polygon(100% 50%, calc(100% - var(--bow-sharp, 24) * 1%) 100%, 0% 100%, 0% 0%, calc(100% - var(--bow-sharp, 24) * 1%) 0%); }
+  .ship-block.heading-E .bow-arrow { right: 2%; }
+  .ship-block.heading-E .fire-emoji { right: 30%; top: 50%; transform: translateY(-50%); }
+  /* 船頭朝西：clip-path在左端收尖 */
+  .ship-block.heading-W { clip-path: polygon(0% 50%, calc(var(--bow-sharp, 24) * 1%) 100%, 100% 100%, 100% 0%, calc(var(--bow-sharp, 24) * 1%) 0%); }
+  .ship-block.heading-W .bow-arrow { left: 2%; }
+  .ship-block.heading-W .fire-emoji { left: 30%; top: 50%; transform: translateY(-50%); }
+
+  /* 潛水艇：完全改用膠囊/橢圓造型(border-radius)取代尖形clip-path，明確區隔水下載具的輪廓，
+     不管哪個朝向都是同一種圓潤造型(細長橢圓形本身就有方向性，不需要額外用尖形強調船頭) */
+  .ship-block.type-submarine { clip-path: none; border-radius: 50%; }
+
+  .ship-block.state-intact { background: linear-gradient(160deg, #4aae7d, #2d7050); box-shadow: 0 0 18px -2px rgba(74,174,125,.55); color: #eafff2; }
+  .ship-block.state-damaged { background: linear-gradient(160deg, #f0b352, #c07f24); box-shadow: 0 0 18px -2px rgba(240,179,82,.55); color: #2a1b04; }
+  .ship-block.state-critical { background: linear-gradient(160deg, #ea5b5b, #a82f2f); box-shadow: 0 0 22px -2px rgba(234,91,91,.65); color: #fff0f0; animation: critical-pulse 1.1s ease-in-out infinite; }
+  .ship-block.state-wrecked { background: repeating-linear-gradient(45deg, #241c1c, #241c1c 4px, #1a1414 4px, #1a1414 8px); box-shadow: none; color: #8a7070; }
+  .ship-block.state-wrecked .ship-pct::after { content: ' ☠'; }
+  @keyframes critical-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
+
+  /* -------- 操作面板：本回合剩餘次數、前進/左轉/右轉按鈕 -------- */
+  .turn-panel { background: var(--panel); border: 1px solid var(--grid-line-bright); border-radius: 10px; padding: 14px 16px; margin-top: 18px; text-align: center; }
+  .turn-panel .turn-title { font-size: 13px; font-weight: 800; color: var(--scan); margin-bottom: 4px; }
+  .turn-panel .health-readout { font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+  .turn-panel .health-readout b { color: var(--ink); font-size: 14px; }
+  .health-bar { height: 8px; background: var(--deep); border-radius: 99px; overflow: hidden; margin-bottom: 10px; border: 1px solid var(--grid-line); }
+  .health-bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--intact), #6ecf9a); transition: width .3s ease, background .3s ease; }
+  .health-bar.mid i { background: linear-gradient(90deg, var(--damaged), #f2c169); }
+  .health-bar.low i { background: linear-gradient(90deg, var(--critical), #f07a7a); }
+  .turn-panel .actions-left { font-family: monospace; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .turn-panel .actions-left b { color: var(--scan); font-size: 15px; }
+  .move-btns { display: flex; justify-content: center; gap: 10px; }
+  .move-btn { background: var(--deep); border: 1px solid var(--grid-line-bright); color: var(--ink); border-radius: 8px; padding: 10px 16px; font-size: 18px; cursor: pointer; transition: background .15s, transform .1s; min-width: 54px; }
+  .move-btn:hover:not(:disabled) { background: #123448; }
+  .move-btn:active:not(:disabled) { transform: scale(.92); }
+  .move-btn:disabled { opacity: .3; cursor: not-allowed; }
+  .move-btn .btn-label { display: block; font-size: 9px; color: var(--muted); margin-top: 3px; font-family: sans-serif; }
+  .move-btn.small { padding: 8px 10px; font-size: 15px; min-width: 84px; }
+
+  .ship-switcher { text-align: center; margin: 8px 0 14px; font-size: 12px; color: var(--muted); }
+  .ship-switcher select { background: var(--panel); color: var(--ink); border: 1px solid var(--grid-line-bright); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+
+  .weapon-title { font-size: 12px; font-weight: 800; color: var(--scan); margin: 14px 0 6px; }
+  .weapon-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; }
+  .weapon-btn { background: var(--deep); border: 1px solid var(--grid-line-bright); color: var(--ink); border-radius: 8px; padding: 8px 10px; cursor: pointer; text-align: left; transition: background .15s; }
+  .weapon-btn:hover:not(:disabled) { background: #123448; }
+  .weapon-btn.active { border-color: var(--scan); box-shadow: 0 0 0 1px var(--scan); background: #123448; }
+  .weapon-btn:disabled { opacity: .3; cursor: not-allowed; }
+  .weapon-btn .wname { display: block; font-size: 12px; font-weight: 800; }
+  .weapon-btn .wmeta { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; font-family: monospace; }
+
+  /* -------- 圖例 -------- */
+  .legend { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin-top: 26px; font-size: 11px; color: var(--muted); }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; }
+
+  .coord-readout { text-align: center; margin-top: 16px; min-height: 20px; font-size: 12px; color: var(--scan); font-family: monospace; }
+
+  .corner-bracket { position: fixed; width: 26px; height: 26px; border: 2px solid var(--grid-line-bright); opacity: .5; pointer-events: none; }
+  .corner-bracket.tl { top: 14px; left: 14px; border-right: none; border-bottom: none; }
+  .corner-bracket.tr { top: 14px; right: 14px; border-left: none; border-bottom: none; }
+  .corner-bracket.bl { bottom: 14px; left: 14px; border-right: none; border-top: none; }
+  .corner-bracket.br { bottom: 14px; right: 14px; border-left: none; border-top: none; }
+
+  /* -------- 砲彈：獨立在2D螢幕座標系統的元素，不受地圖的3D transform影響，
+     用getBoundingClientRect()抓格子實際渲染後的螢幕座標當作落點目標 -------- */
+  .shell {
+    position: fixed;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff8d6, #d4a017 60%, #6b4a0a);
+    box-shadow: 0 0 8px 2px rgba(255,200,80,.7);
+    transform: translate(-50%, -50%);
+    z-index: 300;
+    pointer-events: none;
+  }
+  .shell::after {
+    content: '';
+    position: absolute; left: 50%; bottom: 100%;
+    width: 2px; height: 26px;
+    background: linear-gradient(180deg, transparent, rgba(255,200,120,.55));
+    transform: translateX(-50%);
+  }
+
+  /* 爆炸特效：命中(橘紅火焰)/落空(藍白水花)用不同色調，一眼分辨結果 */
+  .blast {
+    position: fixed;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    z-index: 250;
+    pointer-events: none;
+    opacity: 1;
+  }
+  .blast.hit { background: radial-gradient(circle, #fff5d6 0%, #ffb347 28%, #ff5b35 52%, rgba(255,80,30,0) 72%); }
+  .blast.miss { background: radial-gradient(circle, #eafbff 0%, #7fd4e8 32%, #2d7d9a 55%, rgba(45,125,154,0) 72%); }
+  .blast.animate { transition: transform .45s cubic-bezier(.15,.8,.3,1), opacity .5s ease .1s; transform: translate(-50%, -50%) scale(var(--blast-scale, 9)); opacity: 0; }
+
+  /* RPG風格傷害飄字：命中時跳出紅色數字往上飄、淡出 */
+  .dmg-float { position: fixed; font-weight: 900; font-family: "Arial Black", sans-serif; color: #ff5b5b; text-shadow: 0 0 6px rgba(0,0,0,.8), 0 2px 2px rgba(0,0,0,.6); z-index: 350; pointer-events: none; transform: translate(-50%, -50%); font-size: 15px; }
+  .dmg-float.animate { transition: transform 1s cubic-bezier(.15,.7,.3,1), opacity 1s ease .2s; transform: translate(-50%, -160%) scale(1.15); opacity: 0; }
+
+  /* 命中格子的短暫閃光，強化「這裡被打中了」的回饋 */
+  .cell.flash-hit { animation: flash-hit .5s ease; }
+  .cell.flash-miss { animation: flash-miss .5s ease; }
+  @keyframes flash-hit { 0% { background: #ff8a5b; } 100% { background: #0a1c2c; } }
+  @keyframes flash-miss { 0% { background: #4fb8d1; } 100% { background: #0a1c2c; } }
+
+  /* -------- 開火控制 + 戰報日誌 -------- */
+  .log-panel {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    border-radius: 8px; padding: 10px 14px; margin-top: 18px;
+    max-height: 150px; overflow-y: auto;
+    font-size: 12px; line-height: 1.9;
+  }
+  .log-panel .log-empty { color: var(--muted); text-align: center; }
+  .log-panel .log-hit { color: #f0b352; }
+  .log-panel .log-miss { color: var(--muted); }
+  .log-panel .log-wreck { color: var(--critical); font-weight: 700; }
+
+  /* -------- 多人連線介面 -------- */
+  .hidden { display: none !important; }
+  #multiplayer-view { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 2px; }
+  .mp-panel { background: var(--panel); border: 1px solid var(--grid-line-bright); border-radius: 10px; padding: 16px; max-width: 480px; margin: 20px auto; text-align: center; }
+  .mp-btn { background: var(--deep); border: 1px solid var(--grid-line-bright); color: var(--ink); border-radius: 8px; padding: 10px 16px; font-size: 13px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px; }
+  .mp-btn:hover:not(:disabled) { background: #123448; }
+  .mp-btn:disabled { opacity: .35; cursor: not-allowed; }
+  .mp-btn.primary { background: linear-gradient(135deg, var(--scan), #2d9d90); color: #04211d; border-color: transparent; }
+  .mp-btn.small { width: auto; padding: 6px 12px; font-size: 11px; }
+  .mp-input { width: 100%; background: var(--deep); border: 1px solid var(--grid-line-bright); border-radius: 8px; padding: 9px 12px; color: var(--ink); font-size: 13px; margin-top: 6px; font-family: inherit; }
+  .mp-label { font-size: 11px; color: var(--muted); text-align: left; display: block; margin: 10px 0 2px; }
+  .mp-room-list-item { width: 100%; text-align: left; background: var(--deep); border: 1px solid var(--grid-line); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; cursor: pointer; color: var(--ink); }
+  .mp-room-list-item:hover { border-color: var(--grid-line-bright); }
+  .mp-room-list-item b { font-size: 13px; }
+  .mp-room-list-item small { display: block; color: var(--muted); margin-top: 3px; font-size: 11px; }
+
+  .mp-members-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 10px 0; }
+  .mp-member-card { background: var(--deep); border: 2px solid var(--grid-line); border-radius: 8px; padding: 8px; font-size: 11px; text-align: center; }
+  .mp-member-card.ready { border-color: var(--intact); background: #0f2a1e; }
+  .mp-member-card .mp-mname { font-weight: 800; font-size: 12px; }
+  .mp-member-card.empty { opacity: .35; }
+
+  .mp-direction-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 8px 0; }
+  .mp-direction-btn { background: var(--deep); border: 2px solid var(--grid-line-bright); color: var(--ink); border-radius: 8px; padding: 14px 8px; font-size: 13px; font-weight: 800; cursor: pointer; }
+  .mp-direction-btn:hover:not(:disabled) { background: #123448; }
+  .mp-direction-btn.selected { border-color: var(--scan); background: #123448; box-shadow: 0 0 0 1px var(--scan); }
+  .mp-direction-btn:disabled { opacity: .3; cursor: not-allowed; }
+
+  .mp-ship-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 8px 0; }
+  .mp-ship-btn { background: var(--deep); border: 2px solid var(--grid-line-bright); color: var(--ink); border-radius: 8px; padding: 10px 8px; font-size: 11px; cursor: pointer; text-align: left; }
+  .mp-ship-btn:hover:not(:disabled) { background: #123448; }
+  .mp-ship-btn.selected { border-color: var(--scan); background: #123448; box-shadow: 0 0 0 1px var(--scan); }
+  .mp-ship-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .mp-ship-btn b { display: block; font-size: 13px; margin-bottom: 2px; }
+  .mp-locked-note { font-size: 11px; color: var(--critical); margin-top: 6px; }
+
+  @media (max-width: 500px) {
+    .coord-mark::before { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="corner-bracket tl"></div>
+<div class="corner-bracket tr"></div>
+<div class="corner-bracket bl"></div>
+<div class="corner-bracket br"></div>
+
+<div class="stage">
+  <header>
+    <div class="header-row">
+      <div>
+        <p class="eyebrow mono">JUST DO EAT · 小遊戲</p>
+        <h1>⚓ 海戰指揮室</h1>
+      </div>
+      <div class="back-links">
+        <button class="legend-toggle-btn" id="mode-toggle-btn" onclick="toggleMode()">🌐 連線對戰</button>
+        <a href="game.html" class="back-link">🎮 遊戲場</a>
+        <a href="index.html" class="back-link">← 主站</a>
+        <button class="legend-toggle-btn" onclick="toggleLegend()">📖 圖例</button>
+      </div>
+    </div>
+  </header>
+
+  <div id="legend-popup" class="legend-popup hidden" onclick="toggleLegend()">
+    <div class="legend">
+      <div class="legend-item"><span class="legend-swatch" style="background:linear-gradient(160deg,#4aae7d,#2d7050);"></span>完好（0-25%受損）</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:linear-gradient(160deg,#f0b352,#c07f24);"></span>受損（26-75%）</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:linear-gradient(160deg,#ea5b5b,#a82f2f);"></span>危急（76-99%）</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:repeating-linear-gradient(45deg,#241c1c,#241c1c 3px,#1a1414 3px,#1a1414 6px);"></span>已淘汰（100%）</div>
+    </div>
+  </div>
+
+  <div id="demo-view">
+  <div class="game-layout">
+    <div class="game-main">
+      <div class="map-stage">
+        <div class="map-tilt">
+          <div class="map-frame">
+            <div class="grid20" id="grid20"></div>
+          </div>
+        </div>
+      </div>
+      <p class="coord-readout mono" id="coord-readout">將滑鼠移到格子上查看座標</p>
+    </div>
+
+    <div class="game-sidebar">
+      <div class="ship-switcher">
+        <label>示範船型：</label>
+        <select onchange="switchDemoShipType(this.value)">
+          <option value="amphibious">兩棲突擊艦</option>
+          <option value="cruiser">巡洋艦</option>
+          <option value="destroyer">驅逐艦</option>
+          <option value="frigate">巡防艦</option>
+          <option value="submarine">潛水艇</option>
+        </select>
+      </div>
+
+      <div class="turn-panel">
+        <p class="turn-title" id="ship-title">🚢 操作「阿爾法」號（兩棲突擊艦）</p>
+        <p class="health-readout mono">血量：<b id="health-num">1000</b> / <span id="health-max">1000</span></p>
+        <div class="health-bar"><i id="health-bar-fill"></i></div>
+        <p class="actions-left">本回合剩餘操作次數：<b id="actions-left-num">4</b> / <span id="max-actions-num">4</span></p>
+        <p class="fire-status" id="fire-status" style="display:none;">🔥 著火中，每回合開始損失最大血量10%，撲滅需花費2次移動次數</p>
+        <div class="move-btns">
+          <button class="move-btn" id="btn-turn-left" onclick="doShipAction('left')">↺<span class="btn-label">左轉</span></button>
+          <button class="move-btn" id="btn-forward" onclick="doShipAction('forward')">↑<span class="btn-label">前進</span></button>
+          <button class="move-btn" id="btn-turn-right" onclick="doShipAction('right')">↻<span class="btn-label">右轉</span></button>
+        </div>
+        <div class="move-btns" style="margin-top:6px;">
+          <button class="move-btn small" id="btn-repair" onclick="repairMovement()">🔧<span class="btn-label">修復(1)</span></button>
+          <button class="move-btn small" id="btn-extinguish" onclick="extinguishFire()">🧯<span class="btn-label">滅火(2)</span></button>
+          <button class="move-btn small" id="btn-endturn" onclick="endTurn()">🔄<span class="btn-label">結束回合</span></button>
+        </div>
+        <p class="weapon-title">🎯 選擇武器</p>
+        <div class="weapon-panel" id="weapon-panel"></div>
+      </div>
+
+      <div class="log-panel mono" id="log-panel">
+        <p class="log-empty">戰報紀錄會顯示在這裡</p>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <div id="multiplayer-view" class="hidden">
+    <div id="mp-login-gate" class="mp-panel hidden">
+      <p>連線對戰需要先登入</p>
+      <button class="mp-btn primary" onclick="googleLogin()">使用 Google 登入</button>
+    </div>
+    <div id="mp-root"></div>
+  </div>
+</div>
+
+<script>
+  const MAP_SIZE = 20;
+  const ACTIONS_PER_TURN = 5;
+
+  // ============================================================
+  // 五種船型：長寬先確定下來，詳細戰損數值(血量門檻、基礎移動次數等)之後再補。
+  // 目前「船頭/船中前/船中後/船尾」四區塊戰損機制，是針對船長4格的船設計的
+  // (兩棲突擊艦、潛水艇剛好都是船長4)——船長3或2的船(巡洋艦/驅逐艦/巡防艦)
+  // 要怎麼對應到幾個區塊，等你給後續設定再調整，目前先讓它們可以正常出現、
+  // 移動、被擊中受損，只是還沒有細分區塊效果
+  // ============================================================
+  const SHIP_TYPES = {
+    amphibious: {
+      name: '兩棲突擊艦', length: 4, width: 2, baseActions: 4, maxHealth: 1000,
+      fireChance: { frontmid: 1.0 }, // 前中區塊打中必失火(100%)
+      weapons: {
+        normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } }, // uses:null代表不限次數
+        saturation: { name: '飽和攻擊', power: 100, shots: 3, sameTarget: true, uses: 5, fallMs: 480, shellSize: 7, explosionProfile: { lowpassFreq: 1300, volume: 0.35, durationSec: 0.3, bassFreq: 80 } }, // 連續快速齊射，每發音色比單發一般砲彈稍微輕快
+      },
+    },
+    cruiser: {
+      name: '巡洋艦', length: 3, width: 2, baseActions: 5, maxHealth: 800,
+      fireChance: { mid: 0.5 }, // 中段區塊打中50%機率失火
+      weapons: {
+        normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } },
+        heavy: { name: '重砲射擊', power: 150, uses: 4, aoe: { w: 2, h: 2 }, fallMs: 900, shellSize: 13, explosionProfile: { lowpassFreq: 450, volume: 0.65, durationSec: 0.85, bassFreq: 45 } }, // 較重、彈道較慢，爆炸聲低沉厚重
+      },
+    },
+    destroyer: {
+      name: '驅逐艦', length: 3, width: 2, baseActions: 5, maxHealth: 700,
+      fireChance: { mid: 0.5 },
+      weapons: {
+        normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } },
+        rocket: { name: '多管火箭彈', power: 50, uses: 3, aoe: { w: 3, h: 2 }, multiShell: true, fallMs: 550, shellSize: 7, explosionProfile: { lowpassFreq: 2000, volume: 0.22, durationSec: 0.22, bassFreq: null } }, // 多管=6管齊發，範圍內每格各一顆，單發火箭威力較小、聲音輕快清脆
+      },
+    },
+    frigate: {
+      // ⚠️ 超音速反艦飛彈的每場遊戲限用次數，你給的描述裡數字沒接到(「每場遊戲只能用)」
+      // 中間斷掉了)，這裡先暫定4次頂著(比照同樣威力150的重砲射擊)，等你確認實際數字
+      // 再改，不要把這個暫定值誤會成正式數字
+      name: '巡防艦', length: 2, width: 1, baseActions: 7, maxHealth: 300,
+      fireChance: { bow: 0.5 },
+      weapons: {
+        normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } },
+        missile: { name: '超音速反艦飛彈', power: 150, uses: 4, aoe: { w: 2, h: 1 }, fallMs: 280, shellSize: 10, whistle: true, explosionProfile: { lowpassFreq: 800, volume: 0.55, durationSec: 0.5, bassFreq: 70, crackFreq: 2800 } }, // 名符其實，墜落速度明顯加快，尖銳撞擊聲+深沉衝擊音
+      },
+    },
+    submarine: {
+      name: '潛水艇', length: 4, width: 1, baseActions: 4, maxHealth: 300,
+      fireChance: { frontmid: 1.0 },
+      weapons: {
+        normal: { name: '普通魚雷', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 600, volume: 0.4, durationSec: 0.55, bassFreq: 55 } }, // 水下爆炸悶重感
+        multitorpedo: { name: '多管魚雷', power: 100, uses: 2, pattern: 'triple-gap', fallMs: 600, shellSize: 8, explosionProfile: { lowpassFreq: 650, volume: 0.35, durationSec: 0.4, bassFreq: 55 } }, // 魚雷-空格-魚雷-空格-魚雷，同樣是水下悶重感
+      },
+    },
+  };
+  // 不同船長對應不同數量的區塊：長度4分四塊(頭/前中/中後/尾)，長度3分三塊(頭/中/尾)，
+  // 長度2分兩塊(頭/尾)——這套對應表已經用Node.js驗證過3種長度都恰好對應正確格數、
+  // 頭尾方向正確
+  const ZONE_MAP_BY_LENGTH = {
+    4: { 0: 'stern', 1: 'rearmid', 2: 'frontmid', 3: 'bow' },
+    3: { 0: 'stern', 1: 'mid', 2: 'bow' },
+    2: { 0: 'stern', 1: 'bow' },
+  };
+  const ZONE_LABEL = { bow: '船頭', frontmid: '船中前', rearmid: '船中後', mid: '船中', stern: '船尾' };
+
+  // 依剩餘血量比例換算成視覺狀態(用比例而不是絕對值，這樣不同船型血量上限不同也能共用同一套判斷)
+  function damageState(ship) {
+    const spec = SHIP_TYPES[ship.type];
+    const pctRemaining = ship.health / spec.maxHealth;
+    if (ship.health <= 0) return 'wrecked';
+    if (pctRemaining <= 0.25) return 'critical';
+    if (pctRemaining <= 0.75) return 'damaged';
+    return 'intact';
+  }
+
+  // 船隻用「基準格」+「朝向」表示，不是固定方塊。轉向時基準格保持不動、船身繞著它旋轉——
+  // 這套座標數學已經用Node.js單獨驗證過3種船長(4/3/2)、4種朝向都恰好佔滿船身格數、
+  // 船頭船尾方向正確、沒有重複格子，才套進這裡
+  const BOW_ARROW = { N: '▲', S: '▼', E: '▶', W: '◀' };
+  const TURN_LEFT = { N: 'W', W: 'S', S: 'E', E: 'N' };
+  const TURN_RIGHT = { N: 'E', E: 'S', S: 'W', W: 'N' };
+
+  function getShipCells(ship) {
+    const spec = SHIP_TYPES[ship.type];
+    const { row, col, heading } = ship;
+    const cells = [];
+    // 基準格對齊的index：長度2的船只有0,1兩格、沒有真正的中心格，用index0當基準
+    // (避免基準格落在index1導致某些朝向下算出來的格子超出預期)；長度3/4都用index1
+    const centerIdx = spec.length === 2 ? 0 : 1;
+    for (let len = 0; len < spec.length; len++) {
+      for (let wid = 0; wid < spec.width; wid++) {
+        const lenOffset = len - centerIdx;
+        const widOffset = wid;
+        let r, c;
+        if (heading === 'N') { r = row - lenOffset; c = col + widOffset; }
+        else if (heading === 'S') { r = row + lenOffset; c = col + widOffset; }
+        else if (heading === 'E') { r = row + widOffset; c = col + lenOffset; }
+        else if (heading === 'W') { r = row + widOffset; c = col - lenOffset; }
+        const zone = ZONE_MAP_BY_LENGTH[spec.length][len];
+        cells.push({ row: r, col: c, isBow: len === spec.length - 1, zone });
+      }
+    }
+    return cells;
+  }
+  function shipMoveForward(ship) {
+    const { row, col, heading } = ship;
+    if (heading === 'N') return { ...ship, row: row - 1 };
+    if (heading === 'S') return { ...ship, row: row + 1 };
+    if (heading === 'E') return { ...ship, col: col + 1 };
+    if (heading === 'W') return { ...ship, col: col - 1 };
+  }
+  function shipWithinBounds(ship) {
+    return getShipCells(ship).every(c => c.row >= 1 && c.row <= MAP_SIZE && c.col >= 1 && c.col <= MAP_SIZE);
+  }
+  // 目前這回合實際可用的最大移動次數：船隻原始設定值扣掉累積的戰損扣減(actionPenalty)，
+  // 扣減量已經包含了船頭中彈(+1)、船中後中彈(+2)、船尾中彈(封頂效果)全部疊加後的結果
+  function getMaxActions(ship) {
+    return Math.max(0, SHIP_TYPES[ship.type].baseActions - ship.actionPenalty);
+  }
+
+  // 測試用的示範船艦資料：先放一艘可操作的船驗證移動/轉向/戰損/武器邏輯，之後接連線邏輯時
+  // 會改成從房間即時同步、每個玩家各自的船隊
+  function createDemoShip(type) {
+    const spec = SHIP_TYPES[type];
+    const weaponUsesLeft = {};
+    Object.entries(spec.weapons).forEach(([key, w]) => { if (w.uses !== null) weaponUsesLeft[key] = w.uses; });
+    return { id: 'alpha', name: '阿爾法', type, row: 10, col: 10, heading: 'N', health: spec.maxHealth, onFire: false, actionPenalty: 0, weaponUsesLeft };
+  }
+  const DEMO_SHIPS = [createDemoShip('amphibious')];
+  let myShip = DEMO_SHIPS[0];
+  let actionsLeft = getMaxActions(myShip);
+
+  // 切換示範船型：方便測試5種不同船隻的戰損/武器機制，不用重新整理頁面
+  // 圖例彈出視窗：全螢幕版面把圖例改成點擊才顯示的彈窗，不佔用固定版面空間
+  function toggleLegend() {
+    document.getElementById('legend-popup').classList.toggle('hidden');
+  }
+
+  function switchDemoShipType(type) {
+    const newShip = createDemoShip(type);
+    DEMO_SHIPS[0] = newShip;
+    myShip = newShip;
+    selectedWeapon = 'normal';
+    actionsLeft = getMaxActions(myShip);
+    document.getElementById('ship-alpha')?.remove(); // 清掉舊船型的DOM元素，避免尺寸沒有正確更新
+    document.getElementById('ship-title').textContent = `🚢 操作「${myShip.name}」號（${SHIP_TYPES[type].name}）`;
+    renderShip(myShip);
+    updateTurnPanel();
+    updateWeaponPanel();
+    document.getElementById('log-panel').innerHTML = '<p class="log-empty">戰報紀錄會顯示在這裡</p>';
+    addLogEntry(`🔄 切換示範船型為「${SHIP_TYPES[type].name}」`, 'miss');
+  }
+
+  // 直接量測.map-stage實際的可用寬高，取較小值當作正方形邊長，強制設定給.map-tilt——
+  // 不依賴CSS aspect-ratio在巢狀flexbox+3D變形環境下自動計算(那個做法在Claude的
+  // artifact預覽環境裡不可靠，量出來的地圖會被拉伸變形)，改成JS直接算好精確的px數值
+  function resizeMapToFit() {
+    const stage = document.querySelector('.map-stage');
+    const tilt = document.querySelector('.map-tilt');
+    if (!stage || !tilt) return;
+    const availW = stage.clientWidth;
+    const availH = stage.clientHeight;
+    const size = Math.max(60, Math.min(availW, availH)); // 至少60px，避免容器還沒佈局完成時量到0
+    tilt.style.width = size + 'px';
+    tilt.style.height = size + 'px';
+  }
+
+  function renderGrid() {
+    const gridEl = document.getElementById('grid20');
+    let cellsHtml = '';
+    for (let r = 1; r <= MAP_SIZE; r++) {
+      for (let c = 1; c <= MAP_SIZE; c++) {
+        const colLetter = String.fromCharCode(64 + c); // 1=A, 2=B...20=T，仿照海戰棋常見的座標表示法
+        cellsHtml += `<div class="cell" data-row="${r}" data-col="${c}" data-coord="${colLetter}${r}" onmouseenter="showCoord(${r},${c})" onclick="fireAt(${r},${c})"></div>`;
+      }
+    }
+    gridEl.innerHTML = cellsHtml;
+    DEMO_SHIPS.forEach(renderShip);
+  }
+
+  // 船身用「外框bounding box」定位(取所有佔用格子的row/col最小最大值)，
+  // 再用對應朝向的clip-path裁出船頭尖形——這樣不管朝向是窄長(N/S)還是寬扁(E/W)，
+  // 外框尺寸都會正確對應船身實際佔用的格子範圍
+  function renderShip(ship) {
+    const gridEl = document.getElementById('grid20');
+    let el = document.getElementById(`ship-${ship.id}`);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = `ship-${ship.id}`;
+      gridEl.appendChild(el);
+    }
+    const cells = getShipCells(ship);
+    const rows = cells.map(c => c.row), cols = cells.map(c => c.col);
+    const minRow = Math.min(...rows), maxRow = Math.max(...rows);
+    const minCol = Math.min(...cols), maxCol = Math.max(...cols);
+    const cellPct = 100 / MAP_SIZE;
+    const spec = SHIP_TYPES[ship.type];
+    const healthPct = Math.max(0, Math.round((ship.health / spec.maxHealth) * 100));
+
+    el.className = `ship-block type-${ship.type} state-${damageState(ship)} heading-${ship.heading}`;
+    el.style.top = `${(minRow - 1) * cellPct}%`;
+    el.style.left = `${(minCol - 1) * cellPct}%`;
+    el.style.width = `${(maxCol - minCol + 1) * cellPct}%`;
+    el.style.height = `${(maxRow - minRow + 1) * cellPct}%`;
+    // 船身上的血量顯示改用百分比(比較不會在窄船身上被文字擠壓)，實際數字留給右側資訊欄顯示；
+    // 著火中額外疊加一個跳動的火焰emoji，一眼就能看出這艘船正在燒
+    el.innerHTML = `<span class="bow-arrow">${BOW_ARROW[ship.heading]}</span><span class="ship-pct">${healthPct}%</span>${ship.onFire ? '<span class="fire-emoji">🔥</span>' : ''}`;
+  }
+
+  function showCoord(r, c) {
+    const colLetter = String.fromCharCode(64 + c);
+    document.getElementById('coord-readout').textContent = `座標 ${colLetter}${r}（第${r}列・第${c}欄）`;
+  }
+
+  // ============================================================
+  // 音效：用Web Audio API即時合成，不依賴外部音效檔案
+  // ============================================================
+  let audioCtx = null;
+  function getAudioCtx() {
+    // AudioContext要在使用者手勢(點擊)裡才能啟動，開火動作本身就是點擊，天然滿足這個條件
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+  function playFireSound() {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    // 發射聲：音高快速下滑的三角波，模擬砲擊的悶重感
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(190, now);
+    osc.frequency.exponentialRampToValueAtTime(48, now + 0.16);
+    gain.gain.setValueAtTime(0.28, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.22);
+  }
+  // 風嘯聲：飛彈這種高速墜落的武器專用，用高通濾波過的白噪音+隨時間下降的濾波頻率，
+  // 模擬高速氣流呼嘯而過的感覺，音效長度跟著武器實際墜落時間(durationMs)走
+  function playWhistleSound(durationMs) {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    const durSec = durationMs / 1000;
+    const bufferSize = Math.floor(ctx.sampleRate * durSec);
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 6;
+    // 濾波中心頻率從高往低掃(呼嘯聲由尖銳漸漸貼近目標的感覺)，搭配音量微幅漸強再收尾
+    filter.frequency.setValueAtTime(3600, now);
+    filter.frequency.exponentialRampToValueAtTime(1400, now + durSec);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.16, now + durSec * 0.3);
+    gain.gain.setValueAtTime(0.16, now + durSec * 0.75);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + durSec);
+    noise.connect(filter).connect(gain).connect(ctx.destination);
+    noise.start(now);
+  }
+  // 爆炸聲改成吃武器各自的音效參數(explosionProfile)，不再是每種武器都同一種「放鞭炮」聲：
+  // lowpassFreq控制悶重/清脆(數字越小越悶重)、volume控制音量大小、durationSec控制殘響長短、
+  // bassFreq有設定的話會額外疊加低頻衝擊音(數字是起始頻率，越低越沉)強化重量感
+  function playExplosionSound(isHit, profile) {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    const p = isHit ? profile : { lowpassFreq: 1800, volume: 0.22, durationSec: 0.35, bassFreq: null }; // 落空統一用清脆水花聲，不用武器的重擊音色
+
+    const bufferSize = Math.floor(ctx.sampleRate * p.durationSec);
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = p.lowpassFreq;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(p.volume, now);
+    noise.connect(filter).connect(gain).connect(ctx.destination);
+    noise.start(now);
+
+    if (p.bassFreq) {
+      // 疊加低頻衝擊音強化重量感，起始頻率越低(bassFreq越小)聽起來越沉重
+      const osc = ctx.createOscillator();
+      const oGain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(p.bassFreq, now);
+      osc.frequency.exponentialRampToValueAtTime(p.bassFreq * 0.3, now + p.durationSec * 0.7);
+      oGain.gain.setValueAtTime(p.volume * 0.85, now);
+      oGain.gain.exponentialRampToValueAtTime(0.001, now + p.durationSec * 0.85);
+      osc.connect(oGain).connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + p.durationSec * 0.85);
+    }
+    if (p.crackFreq) {
+      // 額外的高頻「crack」聲，飛彈這種武器適合疊加一聲尖銳撞擊感在爆炸前段
+      const osc2 = ctx.createOscillator();
+      const oGain2 = ctx.createGain();
+      osc2.type = 'square';
+      osc2.frequency.setValueAtTime(p.crackFreq, now);
+      osc2.frequency.exponentialRampToValueAtTime(p.crackFreq * 0.4, now + 0.08);
+      oGain2.gain.setValueAtTime(p.volume * 0.5, now);
+      oGain2.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      osc2.connect(oGain2).connect(ctx.destination);
+      osc2.start(now);
+      osc2.stop(now + 0.09);
+    }
+  }
+
+  // ============================================================
+  // 開火流程：發射音效 -> 砲彈從畫面上方掉落到目標座標(用getBoundingClientRect
+  // 抓格子在3D傾斜後的實際螢幕座標，不用自己算透視變形的三角函數) -> 落地爆炸 -> 判定命中/落空
+  // ============================================================
+  let firingInProgress = false; // 避免砲彈還沒落地就又點別的格子，畫面同時疊好幾發搞混
+  // 依選定的武器計算實際會命中的座標清單：單發武器只有1個座標，AOE武器是矩形範圍，
+  // 飽和攻擊是同一個座標打3次，多管魚雷是「魚雷-空格-魚雷-空格-魚雷」橫向間隔陣型。
+  // 這幾種座標計算方式都已經用Node.js單獨驗證過
+  let selectedWeapon = 'normal'; // 目前選擇要用的武器key，預設一般砲彈(不限次數)
+
+  function fireAt(row, col) {
+    if (firingInProgress) return;
+    const spec = SHIP_TYPES[myShip.type];
+    const weaponSpec = spec.weapons[selectedWeapon];
+    if (weaponSpec.uses !== null) {
+      const left = myShip.weaponUsesLeft[selectedWeapon];
+      if (left <= 0) { showFireBlockedMsg(`「${weaponSpec.name}」這場遊戲的使用次數已經用完了`); return; }
+    }
+
+    firingInProgress = true;
+    playFireSound();
+    if (weaponSpec.uses !== null) myShip.weaponUsesLeft[selectedWeapon]--;
+    updateWeaponPanel();
+
+    if (weaponSpec.aoe && weaponSpec.multiShell) {
+      // 多管火箭這種「本來就是多管齊發」的範圍武器：範圍內每一格各發射一顆獨立砲彈，
+      // 不是單發+放大爆炸(那是重砲/飛彈這種單一大型彈藥的表現方式)
+      const targets = getAoeCells(weaponSpec, row, col);
+      let completedCount = 0;
+      targets.forEach((target, i) => {
+        setTimeout(() => fireSingleShell(target.row, target.col, weaponSpec, () => {
+          completedCount++;
+          if (completedCount === targets.length) firingInProgress = false;
+        }), i * 90); // 多管齊發的間隔比其他多發武器更緊湊，強調「一波打出去」的感覺
+      });
+    } else if (weaponSpec.aoe) {
+      // 單一大型彈藥的範圍武器(重砲/飛彈)：只發射「一枚」砲彈，落地後用一個放大版的
+      // 爆炸視覺涵蓋整個範圍
+      fireAoeShell(row, col, weaponSpec, () => { firingInProgress = false; });
+    } else {
+      // 一般單發武器、或本質上就是「連續多發」的武器(飽和攻擊同點連射、多管魚雷間隔陣型)：
+      // 各自獨立的砲彈+爆炸+判定，用小間隔錯開看起來像連續齊射
+      const targets = getWeaponTargetCells(weaponSpec, row, col);
+      let completedCount = 0;
+      targets.forEach((target, i) => {
+        setTimeout(() => fireSingleShell(target.row, target.col, weaponSpec, () => {
+          completedCount++;
+          if (completedCount === targets.length) firingInProgress = false;
+        }), i * 160);
+      });
+    }
+  }
+
+  function getWeaponTargetCells(weaponSpec, centerRow, centerCol) {
+    if (weaponSpec.pattern === 'triple-gap') {
+      return [
+        { row: centerRow, col: centerCol - 2 },
+        { row: centerRow, col: centerCol },
+        { row: centerRow, col: centerCol + 2 },
+      ];
+    }
+    if (weaponSpec.shots && weaponSpec.sameTarget) {
+      return Array.from({ length: weaponSpec.shots }, () => ({ row: centerRow, col: centerCol }));
+    }
+    return [{ row: centerRow, col: centerCol }];
+  }
+  // AOE武器專用：計算範圍內實際涵蓋的所有格子座標(重砲2x2、火箭3x2、飛彈2x1都用這個算)
+  function getAoeCells(weaponSpec, centerRow, centerCol) {
+    const { w, h } = weaponSpec.aoe;
+    const halfW = Math.floor(w / 2), halfH = Math.floor(h / 2);
+    const cells = [];
+    for (let dr = -halfH; dr < h - halfH; dr++) {
+      for (let dc = -halfW; dc < w - halfW; dc++) {
+        cells.push({ row: centerRow + dr, col: centerCol + dc });
+      }
+    }
+    return cells;
+  }
+
+  function fireSingleShell(row, col, weaponSpec, onDone) {
+    // 目標座標可能落在地圖範圍外(多管魚雷陣型的邊緣座標可能超出20x20)，
+    // 這種情況直接當作落空處理，不用真的去查詢格子DOM元素(找不到會出錯)
+    if (row < 1 || row > MAP_SIZE || col < 1 || col > MAP_SIZE) {
+      addLogEntry(`💦 攻擊範圍延伸到地圖外，那個位置沒有效果`, 'miss');
+      onDone();
+      return;
+    }
+    const cellEl = document.querySelector(`.cell[data-row="${row}"][data-col="${col}"]`);
+    const rect = cellEl.getBoundingClientRect();
+    const targetX = rect.left + rect.width / 2;
+    const targetY = rect.top + rect.height / 2;
+
+    const shell = createShellEl(targetX, targetY, weaponSpec);
+    if (weaponSpec.whistle) playWhistleSound(weaponSpec.fallMs);
+    requestAnimationFrame(() => {
+      shell.style.transition = `top ${weaponSpec.fallMs}ms cubic-bezier(.45,0,.85,1)`;
+      shell.style.top = targetY + 'px';
+    });
+
+    setTimeout(() => {
+      shell.remove();
+      resolveShot(row, col, targetX, targetY, weaponSpec);
+      onDone();
+    }, weaponSpec.fallMs);
+  }
+
+  // AOE武器的發射流程：一枚砲彈掉到指定中心點，落地後爆炸視覺會放大到涵蓋整個範圍，
+  // 但範圍內每一格還是要各自獨立判定命中/落空(可能同時打中船身好幾個不同區塊)
+  function fireAoeShell(centerRow, centerCol, weaponSpec, onDone) {
+    if (centerRow < 1 || centerRow > MAP_SIZE || centerCol < 1 || centerCol > MAP_SIZE) {
+      addLogEntry(`💦 目標超出地圖範圍`, 'miss');
+      onDone();
+      return;
+    }
+    const cellEl = document.querySelector(`.cell[data-row="${centerRow}"][data-col="${centerCol}"]`);
+    const rect = cellEl.getBoundingClientRect();
+    const targetX = rect.left + rect.width / 2;
+    const targetY = rect.top + rect.height / 2;
+
+    const shell = createShellEl(targetX, targetY, weaponSpec);
+    if (weaponSpec.whistle) playWhistleSound(weaponSpec.fallMs);
+    requestAnimationFrame(() => {
+      shell.style.transition = `top ${weaponSpec.fallMs}ms cubic-bezier(.45,0,.85,1)`;
+      shell.style.top = targetY + 'px';
+    });
+
+    setTimeout(() => {
+      shell.remove();
+      resolveAoeShot(centerRow, centerCol, targetX, targetY, weaponSpec);
+      onDone();
+    }, weaponSpec.fallMs);
+  }
+
+  function createShellEl(startX, startY, weaponSpec) {
+    const shell = document.createElement('div');
+    shell.className = 'shell';
+    shell.style.width = weaponSpec.shellSize + 'px';
+    shell.style.height = weaponSpec.shellSize + 'px';
+    shell.style.left = startX + 'px';
+    shell.style.top = '-30px';
+    document.body.appendChild(shell);
+    return shell;
+  }
+
+  function showFireBlockedMsg(msg) {
+    playBlockedSound();
+    addLogEntry(`🚫 ${msg}`, 'miss');
+  }
+
+  // 命中判定改成即時計算船身目前實際佔用的格子(不是固定方塊)——船隻移動/轉向之後，
+  // 這裡查到的格子範圍會自動跟著變，不需要另外同步維護
+  function findHitCellAndShip(row, col) {
+    for (const ship of DEMO_SHIPS) {
+      const cell = getShipCells(ship).find(c => c.row === row && c.col === col);
+      if (cell) return { ship, cell };
+    }
+    return null;
+  }
+
+  // 依區塊套用對應戰損效果：這套邏輯已經用Node.js單獨驗證過所有情境
+  // (船頭累加扣減+傷害減半、機率式起火不重複觸發、船中後2倍傷害+扣減2、
+  // 船尾封頂不會讓已經更嚴重的損傷變好、船長3/2的船對應到3/2個區塊)，才套進這裡
+  function applyZoneHit(ship, zone, weaponPower) {
+    const spec = SHIP_TYPES[ship.type];
+    let actualDmg = weaponPower;
+    let effectMsg = '';
+    if (zone === 'bow') {
+      actualDmg = Math.round(weaponPower / 2);
+      ship.actionPenalty += 1;
+      effectMsg = '船頭中彈，傷害減半、移動上限-1';
+    } else if (zone === 'rearmid') {
+      actualDmg = weaponPower * 2;
+      ship.actionPenalty += 2;
+      effectMsg = '船中後中彈，致命傷害(2倍)、移動上限-2';
+    } else if (zone === 'stern') {
+      ship.actionPenalty = Math.max(ship.actionPenalty, spec.baseActions - 2);
+      effectMsg = '船尾中彈，失去動力，移動上限封頂在2';
+    } else {
+      // frontmid(兩棲突擊艦/潛水艇)或mid(巡洋艦/驅逐艦)或bow(巡防艦)：依船型設定的機率判斷會不會起火
+      const fireChance = spec.fireChance[zone] || 0;
+      if (!ship.onFire && fireChance > 0 && Math.random() < fireChance) {
+        ship.onFire = true;
+        effectMsg = `${ZONE_LABEL[zone]}中彈，引發火勢！`;
+      } else if (ship.onFire) {
+        effectMsg = `${ZONE_LABEL[zone]}中彈，火勢持續延燒中`;
+      } else {
+        effectMsg = `${ZONE_LABEL[zone]}中彈`;
+      }
+    }
+    ship.health = Math.max(0, ship.health - actualDmg);
+    return { actualDmg, effectMsg };
+  }
+
+  function resolveShot(row, col, screenX, screenY, weaponSpec) {
+    const hit = findHitCellAndShip(row, col);
+    const isHit = !!hit;
+    playExplosionSound(isHit, weaponSpec.explosionProfile);
+    spawnBlast(screenX, screenY, isHit);
+
+    const cellEl = document.querySelector(`.cell[data-row="${row}"][data-col="${col}"]`);
+    const colLetter = String.fromCharCode(64 + col);
+    const coord = `${colLetter}${row}`;
+
+    if (!isHit) {
+      cellEl.classList.add('flash-miss');
+      setTimeout(() => cellEl.classList.remove('flash-miss'), 500);
+      addLogEntry(`💦 ${coord} 落空，砲彈墜入海中`, 'miss');
+      return;
+    }
+
+    cellEl.classList.add('flash-hit');
+    setTimeout(() => cellEl.classList.remove('flash-hit'), 500);
+
+    const { ship, cell } = hit;
+    if (ship.health <= 0) {
+      addLogEntry(`☠️ ${coord} 命中「${ship.name}」，但這裡已經是殘骸了`, 'hit');
+      return;
+    }
+
+    const { actualDmg, effectMsg } = applyZoneHit(ship, cell.zone, weaponSpec.power);
+    renderShip(ship);
+    updateTurnPanel();
+    spawnDamageFloat(screenX, screenY, actualDmg);
+    if (ship.health <= 0) {
+      addLogEntry(`💥 ${coord} 命中「${ship.name}」的${ZONE_LABEL[cell.zone]}，${effectMsg}，血量歸零已被淘汰！`, 'wreck');
+    } else {
+      addLogEntry(`🎯 ${coord} 命中「${ship.name}」的${ZONE_LABEL[cell.zone]}，${effectMsg}，造成${actualDmg}點傷害(剩餘${ship.health}/${SHIP_TYPES[ship.type].maxHealth})`, 'hit');
+    }
+  }
+
+  // AOE武器的命中判定：範圍內每一格各自獨立判定命中/落空(可能同時打中船身好幾個不同區塊)，
+  // 但整個範圍只用「一次」放大版爆炸視覺+一次爆炸音效呈現，不是每格各放一次
+  function resolveAoeShot(centerRow, centerCol, screenX, screenY, weaponSpec) {
+    const cells = getAoeCells(weaponSpec, centerRow, centerCol);
+    const validCells = cells.filter(c => c.row >= 1 && c.row <= MAP_SIZE && c.col >= 1 && c.col <= MAP_SIZE);
+    // 爆炸視覺縮放倍率用範圍的最大邊長決定(已經用Node.js驗證過這個算法)：
+    // 2x2->2倍、3x2->3倍、2x1->2倍，讓視覺涵蓋範圍大致對應實際命中範圍
+    const scale = Math.max(weaponSpec.aoe.w, weaponSpec.aoe.h);
+
+    const hitResults = validCells.map(c => ({ cellInfo: c, hit: findHitCellAndShip(c.row, c.col) }));
+    const anyHit = hitResults.some(r => r.hit);
+
+    playExplosionSound(anyHit, weaponSpec.explosionProfile);
+    spawnBlast(screenX, screenY, anyHit, scale);
+
+    const centerColLetter = String.fromCharCode(64 + centerCol);
+    addLogEntry(`💣 「${weaponSpec.name}」在${centerColLetter}${centerRow}引爆，範圍${weaponSpec.aoe.w}×${weaponSpec.aoe.h}`, anyHit ? 'hit' : 'miss');
+
+    hitResults.forEach(({ cellInfo, hit }) => {
+      const cellEl = document.querySelector(`.cell[data-row="${cellInfo.row}"][data-col="${cellInfo.col}"]`);
+      const colLetter = String.fromCharCode(64 + cellInfo.col);
+      const coord = `${colLetter}${cellInfo.row}`;
+
+      if (!hit) {
+        if (cellEl) { cellEl.classList.add('flash-miss'); setTimeout(() => cellEl.classList.remove('flash-miss'), 500); }
+        return; // 範圍內沒中的格子不逐一寫日誌，避免洗版，只在最後統整落空訊息
+      }
+      if (cellEl) { cellEl.classList.add('flash-hit'); setTimeout(() => cellEl.classList.remove('flash-hit'), 500); }
+
+      const { ship, cell } = hit;
+      if (ship.health <= 0) {
+        addLogEntry(`　└ ${coord}：「${ship.name}」這裡已經是殘骸了`, 'hit');
+        return;
+      }
+      const { actualDmg, effectMsg } = applyZoneHit(ship, cell.zone, weaponSpec.power);
+      renderShip(ship);
+      updateTurnPanel();
+      if (cellEl) {
+        const r = cellEl.getBoundingClientRect();
+        spawnDamageFloat(r.left + r.width / 2, r.top + r.height / 2, actualDmg);
+      }
+      if (ship.health <= 0) {
+        addLogEntry(`　└ ${coord}：命中「${ship.name}」的${ZONE_LABEL[cell.zone]}，${effectMsg}，血量歸零已被淘汰！`, 'wreck');
+      } else {
+        addLogEntry(`　└ ${coord}：命中「${ship.name}」的${ZONE_LABEL[cell.zone]}，${effectMsg}，造成${actualDmg}點傷害(剩餘${ship.health}/${SHIP_TYPES[ship.type].maxHealth})`, 'hit');
+      }
+    });
+    if (!anyHit) addLogEntry(`💦 範圍內沒有命中任何目標`, 'miss');
+  }
+
+  function spawnBlast(x, y, isHit, scale = 1) {
+    const blast = document.createElement('div');
+    blast.className = `blast ${isHit ? 'hit' : 'miss'}`;
+    blast.style.left = x + 'px';
+    blast.style.top = y + 'px';
+    blast.style.setProperty('--blast-scale', (isHit ? 9 : 5) * scale); // AOE武器爆炸範圍隨scale放大
+    document.body.appendChild(blast);
+    requestAnimationFrame(() => blast.classList.add('animate'));
+    setTimeout(() => blast.remove(), 600);
+  }
+
+  // RPG風格傷害飄字：在命中座標附近跳出紅色數字往上飄再淡出，讓傷害數字更直觀
+  function spawnDamageFloat(x, y, amount) {
+    const el = document.createElement('div');
+    el.className = 'dmg-float';
+    el.textContent = `-${amount}`;
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('animate'));
+    setTimeout(() => el.remove(), 1200);
+  }
+
+
+  function addLogEntry(text, type) {
+    const panel = document.getElementById('log-panel');
+    const emptyMsg = panel.querySelector('.log-empty');
+    if (emptyMsg) emptyMsg.remove();
+    const entry = document.createElement('p');
+    entry.className = `log-${type}`;
+    entry.style.margin = '0';
+    entry.textContent = text;
+    panel.insertBefore(entry, panel.firstChild); // 新的紀錄插在最上面，最新的最先看到
+    // 只保留最近20筆，避免日誌無限長下去
+    while (panel.children.length > 20) panel.removeChild(panel.lastChild);
+  }
+
+  // ============================================================
+  // 回合操作：前進/左轉/右轉，每回合限制3次(ACTIONS_PER_TURN)。
+  // 前進跟轉向都要先算出「動作後的船身狀態」、確認整艘船的8個格子都還在
+  // 20x20地圖範圍內才真的套用，超出邊界就擋下、不消耗這次操作次數
+  // ============================================================
+  function playTurnSound() {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(320, now);
+    osc.frequency.linearRampToValueAtTime(420, now + 0.08);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  }
+  function playBlockedSound() {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(140, now);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.1);
+  }
+
+  function doShipAction(action) {
+    if (actionsLeft <= 0) return;
+
+    let candidate;
+    if (action === 'forward') candidate = shipMoveForward(myShip);
+    else if (action === 'left') candidate = { ...myShip, heading: TURN_LEFT[myShip.heading] };
+    else if (action === 'right') candidate = { ...myShip, heading: TURN_RIGHT[myShip.heading] };
+
+    if (!shipWithinBounds(candidate)) {
+      playBlockedSound();
+      addLogEntry(`🚫 「${myShip.name}」${action === 'forward' ? '前方是地圖邊界，無法前進' : '這個方向轉向會超出地圖，動作取消'}`, 'miss');
+      return; // 超出邊界：不消耗操作次數，讓玩家重新選擇動作
+    }
+
+    // 直接修改myShip本身的屬性(myShip跟DEMO_SHIPS[0]是同一個物件參照)，不要整個用新物件
+    // 取代myShip變數——不然DEMO_SHIPS陣列裡留著的會是移動前的舊資料，之後命中判定用
+    // DEMO_SHIPS查詢船隻位置時就會抓錯地方(這是原本程式碼就有的bug，這次一併修掉)
+    myShip.row = candidate.row;
+    myShip.col = candidate.col;
+    myShip.heading = candidate.heading;
+    renderShip(myShip);
+    actionsLeft--;
+    updateTurnPanel();
+
+    if (action === 'forward') {
+      playTurnSound();
+      addLogEntry(`⛵ 「${myShip.name}」前進一格`, 'miss');
+    } else {
+      playTurnSound();
+      addLogEntry(`${action === 'left' ? '↺' : '↻'} 「${myShip.name}」${action === 'left' ? '左轉' : '右轉'}，船頭轉向`, 'miss');
+    }
+  }
+
+  // 修復移動力：花1次移動次數，回復1點移動上限扣減量(不會超過船隻原始設定值)，
+  // 已經扣掉的血量不會因此恢復——這只是修好推進系統，不是幫船補血
+  function repairMovement() {
+    if (actionsLeft <= 0 || myShip.actionPenalty <= 0) return;
+    actionsLeft--;
+    myShip.actionPenalty = Math.max(0, myShip.actionPenalty - 1);
+    updateTurnPanel();
+    addLogEntry(`🔧 「${myShip.name}」修復推進系統，移動上限回復1點(目前上限${getMaxActions(myShip)})`, 'miss');
+  }
+  // 撲滅火勢：花2次移動次數，撲滅船中前中彈引發的火勢，之後就不會再每回合扣血
+  function extinguishFire() {
+    if (actionsLeft < 2 || !myShip.onFire) return;
+    actionsLeft -= 2;
+    myShip.onFire = false;
+    updateTurnPanel();
+    addLogEntry(`🧯 「${myShip.name}」撲滅了船上的火勢`, 'miss');
+  }
+  // 結束回合：把移動次數補回到目前的最大上限(getMaxActions已經反映船頭/船中後/船尾累積的
+  // 戰損扣減)，並且如果還在著火，這時候才觸發「輪到船主自己回合開始」的10%扣血
+  function endTurn() {
+    if (myShip.onFire) {
+      const spec = SHIP_TYPES[myShip.type];
+      const fireDmg = Math.round(spec.maxHealth * 0.1); // 每回合扣血量上限的10%(絕對數值，不會隨血量降低而扣越來越少)
+      myShip.health = Math.max(0, myShip.health - fireDmg);
+      renderShip(myShip);
+      addLogEntry(`🔥 「${myShip.name}」火勢持續延燒，損失${fireDmg}點(剩餘${myShip.health}/${spec.maxHealth})`, myShip.health <= 0 ? 'wreck' : 'hit');
+    }
+    actionsLeft = getMaxActions(myShip);
+    updateTurnPanel();
+    addLogEntry(`🔄 「${myShip.name}」的新回合開始，移動次數回復到${actionsLeft}`, 'miss');
+  }
+
+  function updateTurnPanel() {
+    const spec = SHIP_TYPES[myShip.type];
+    const health = Math.max(0, myShip.health);
+    const healthPct = health / spec.maxHealth;
+    document.getElementById('health-num').textContent = health;
+    document.getElementById('health-max').textContent = spec.maxHealth;
+    const barEl = document.getElementById('health-bar-fill');
+    barEl.style.width = `${Math.round(healthPct * 100)}%`;
+    const barWrap = barEl.parentElement;
+    barWrap.className = 'health-bar' + (healthPct <= 0.25 ? ' low' : healthPct <= 0.75 ? ' mid' : '');
+
+    document.getElementById('actions-left-num').textContent = actionsLeft;
+    document.getElementById('max-actions-num').textContent = getMaxActions(myShip);
+    document.getElementById('fire-status').style.display = myShip.onFire ? 'block' : 'none';
+    const noActions = actionsLeft <= 0;
+    document.getElementById('btn-forward').disabled = noActions;
+    document.getElementById('btn-turn-left').disabled = noActions;
+    document.getElementById('btn-turn-right').disabled = noActions;
+    document.getElementById('btn-repair').disabled = noActions || myShip.actionPenalty <= 0;
+    document.getElementById('btn-extinguish').disabled = actionsLeft < 2 || !myShip.onFire;
+    updateWeaponPanel();
+  }
+
+  // 武器面板：列出這艘船目前船型可用的所有武器，顯示剩餘次數(不限次數的顯示"無限")，
+  // 用完的武器按鈕鎖住不能選；點選武器會切換selectedWeapon，下次開火就用這個武器
+  function updateWeaponPanel() {
+    const panel = document.getElementById('weapon-panel');
+    if (!panel) return;
+    const spec = SHIP_TYPES[myShip.type];
+    panel.innerHTML = Object.entries(spec.weapons).map(([key, w]) => {
+      const left = w.uses === null ? '無限' : `${myShip.weaponUsesLeft[key]}/${w.uses}`;
+      const depleted = w.uses !== null && myShip.weaponUsesLeft[key] <= 0;
+      const active = selectedWeapon === key;
+      return `<button class="weapon-btn ${active ? 'active' : ''}" ${depleted ? 'disabled' : ''} onclick="selectedWeapon='${key}'; updateWeaponPanel();">
+        <span class="wname">${w.name}</span>
+        <span class="wmeta">威力${w.power}・剩餘${left}</span>
+      </button>`;
+    }).join('');
+  }
+
+  renderGrid();
+  updateTurnPanel();
+  resizeMapToFit();
+  window.addEventListener('resize', resizeMapToFit);
+  // ResizeObserver監聽.map-stage本身的尺寸變化，不只是視窗整體resize事件——
+  // 側邊欄內容增減、螢幕方向改變等任何影響可用空間的變化都會被捕捉到並重新計算
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => resizeMapToFit());
+    const stageEl = document.querySelector('.map-stage');
+    if (stageEl) ro.observe(stageEl);
+  }
+
+  // ============================================================
+  // 多人連線模式：房間 + 選方位 + 選船型(私有、鎖定不能換)。
+  // 真正的回合戰鬥邏輯下一輪再實作，這一版先確保連線基礎架構沒問題。
+  //
+  // 船型選擇是「真正的伺服器端隔離」：寫進navalBattleRooms/{roomId}/privateShips/{uid}
+  // 這個子集合，Firestore安全規則限制只有uid等於自己的人才能讀取——這個判斷是在
+  // Firestore伺服器端執行的，不是前端說了算，其他玩家連用瀏覽器開發者工具檢查網路
+  // 封包都讀不到這筆資料。公開的房間文件只會記錄「這個人選好船了嗎(布林值)」，
+  // 不會洩漏選了什麼
+  // ============================================================
+  const DIRECTION_LABEL = { north: '🧭 北海', east: '🌅 東海', south: '☀️ 南海', west: '🌇 西海' };
+  const MP_MIN_PLAYERS = 2;
+  const MP_MAX_PLAYERS_CAP = 4;
+
+  let mpCurrentUser = null;
+  let mpDisplayName = null;
+  let mpRoomState = { roomId: null, unsubscribe: null };
+  let mpLobbyUnsubscribe = null;
+
+  function toggleMode() {
+    const demoEl = document.getElementById('demo-view');
+    const mpEl = document.getElementById('multiplayer-view');
+    const btn = document.getElementById('mode-toggle-btn');
+    const goingToMp = demoEl.classList.contains('hidden') === false;
+    demoEl.classList.toggle('hidden', goingToMp);
+    mpEl.classList.toggle('hidden', !goingToMp);
+    btn.textContent = goingToMp ? '🖥️ 單機測試' : '🌐 連線對戰';
+    if (goingToMp) initMultiplayer();
+  }
+
+  let mpInitialized = false;
+  function initMultiplayer() {
+    if (mpInitialized) return;
+    mpInitialized = true;
+    const firebaseConfig = {
+      apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
+      authDomain: "recipe-synchronization.firebaseapp.com",
+      projectId: "recipe-synchronization",
+      storageBucket: "recipe-synchronization.firebasestorage.app",
+      messagingSenderId: "559668909743",
+      appId: "1:559668909743:web:63dc34572b98839479265a"
+    };
+    firebase.initializeApp(firebaseConfig);
+    window.mpAuth = firebase.auth();
+    window.mpDb = firebase.firestore();
+
+    mpAuth.onAuthStateChanged(async user => {
+      mpCurrentUser = user;
+      document.getElementById('mp-login-gate').classList.toggle('hidden', !!user);
+      if (!user) { document.getElementById('mp-root').innerHTML = ''; return; }
+      try {
+        const doc = await mpDb.collection('userProgress').doc(user.uid).get();
+        mpDisplayName = (doc.exists && doc.data().nickname) || user.displayName || '艦長';
+      } catch (e) { mpDisplayName = user.displayName || '艦長'; }
+      renderMpLobby();
+    });
+  }
+  function googleLogin() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    mpAuth.signInWithPopup(provider).catch(err => alert('登入失敗：' + err.message));
+  }
+  function mpCleanupRoom() {
+    if (mpRoomState.unsubscribe) { mpRoomState.unsubscribe(); mpRoomState.unsubscribe = null; }
+    if (mpLobbyUnsubscribe) { mpLobbyUnsubscribe(); mpLobbyUnsubscribe = null; }
+    mpRoomState = { roomId: null, unsubscribe: null };
+  }
+
+  // ---------- 大廳：房間列表 ----------
+  function renderMpLobby() {
+    mpCleanupRoom();
+    document.getElementById('mp-root').innerHTML = `
+      <div class="mp-panel" style="text-align:left;">
+        <button class="mp-btn primary" onclick="openMpCreateForm()">➕ 建立新房間</button>
+        <p style="font-weight:800; font-size:13px; margin:14px 0 8px;">🚪 目前開放的房間</p>
+        <div id="mp-room-list"><p style="text-align:center; color:var(--muted); font-size:12px;">載入中...</p></div>
+      </div>
+    `;
+    mpLobbyUnsubscribe = mpDb.collection('navalBattleRooms').where('status', '==', 'waiting').limit(20)
+      .onSnapshot(snap => {
+        const listEl = document.getElementById('mp-room-list');
+        if (!listEl) return;
+        if (snap.empty) { listEl.innerHTML = `<p style="text-align:center; color:var(--muted); font-size:12px;">目前沒有開放中的房間，建立一個新的吧！</p>`; return; }
+        listEl.innerHTML = snap.docs.map(doc => {
+          const d = doc.data();
+          return `<button class="mp-room-list-item" onclick="promptMpJoin('${doc.id}')">
+            <b>${escapeHtmlMp(d.roomName || '未命名房間')}</b>
+            <small>👑${escapeHtmlMp((d.members[0] && d.members[0].name) || '?')} · ${d.members.length}/${d.maxPlayers}人</small>
+          </button>`;
+        }).join('');
+      }, err => {
+        const listEl = document.getElementById('mp-room-list');
+        if (listEl) listEl.innerHTML = `<p style="text-align:center; color:var(--critical); font-size:12px;">載入失敗：${err.message}</p>`;
+      });
+  }
+  function escapeHtmlMp(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function openMpCreateForm() {
+    document.getElementById('mp-root').innerHTML = `
+      <div class="mp-panel" style="text-align:left;">
+        <label class="mp-label">房間名稱</label>
+        <input class="mp-input" id="mp-cr-name" placeholder="例如：週末海戰">
+        <label class="mp-label">密碼</label>
+        <input class="mp-input" id="mp-cr-password" placeholder="設定一個密碼">
+        <label class="mp-label">最多幾人（2~4人）</label>
+        <input class="mp-input" id="mp-cr-maxplayers" type="number" min="2" max="4" value="4">
+        <button class="mp-btn primary" style="margin-top:14px;" onclick="createMpRoom()">建立房間</button>
+        <button class="mp-btn" onclick="renderMpLobby()">返回</button>
+      </div>
+    `;
+  }
+  function generateMpRoomId() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    return code;
+  }
+  async function createMpRoom() {
+    const roomName = (document.getElementById('mp-cr-name').value || '').trim() || '未命名房間';
+    const password = (document.getElementById('mp-cr-password').value || '').trim();
+    if (!password) { alert('請設定密碼'); return; }
+    let maxPlayers = parseInt(document.getElementById('mp-cr-maxplayers').value, 10) || 4;
+    maxPlayers = Math.min(MP_MAX_PLAYERS_CAP, Math.max(MP_MIN_PLAYERS, maxPlayers));
+    const roomId = generateMpRoomId();
+    try {
+      const oldRoomsSnap = await mpDb.collection('navalBattleRooms').where('hostUid', '==', mpCurrentUser.uid).get();
+      for (const oldDoc of oldRoomsSnap.docs) await oldDoc.ref.delete();
+      await mpDb.collection('navalBattleRooms').doc(roomId).set({
+        hostUid: mpCurrentUser.uid, roomName, password, maxPlayers,
+        members: [{ uid: mpCurrentUser.uid, name: mpDisplayName, direction: null, shipSelected: false, ready: false }],
+        memberUids: [mpCurrentUser.uid],
+        status: 'waiting',
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      mpEnterRoom(roomId);
+    } catch (err) { alert('建立房間失敗：' + err.message); }
+  }
+  function promptMpJoin(roomId) {
+    const password = prompt('請輸入房間密碼');
+    if (password === null) return;
+    mpJoinRoom(roomId, password);
+  }
+  async function mpJoinRoom(roomId, password) {
+    try {
+      const ref = mpDb.collection('navalBattleRooms').doc(roomId);
+      const doc = await ref.get();
+      if (!doc.exists) { alert('房間不存在'); renderMpLobby(); return; }
+      const data = doc.data();
+      if (data.password !== password) { alert('密碼錯誤'); return; }
+      if (data.status !== 'waiting') { alert('這場遊戲已經開始了'); return; }
+      if (data.members.length >= data.maxPlayers) { alert('房間已滿'); return; }
+      if (data.memberUids.includes(mpCurrentUser.uid)) { mpEnterRoom(roomId); return; }
+      await ref.update({
+        members: firebase.firestore.FieldValue.arrayUnion({ uid: mpCurrentUser.uid, name: mpDisplayName, direction: null, shipSelected: false, ready: false }),
+        memberUids: firebase.firestore.FieldValue.arrayUnion(mpCurrentUser.uid),
+      });
+      mpEnterRoom(roomId);
+    } catch (err) { alert('加入房間失敗：' + err.message); }
+  }
+
+  function mpEnterRoom(roomId) {
+    mpRoomState.roomId = roomId;
+    mpRoomState.unsubscribe = mpDb.collection('navalBattleRooms').doc(roomId).onSnapshot(doc => {
+      if (!doc.exists) { alert('房間已經被關閉'); mpCleanupRoom(); renderMpLobby(); return; }
+      const data = doc.data();
+      if (data.status === 'waiting') renderMpWaitingRoom(data);
+      else renderMpBattlePlaceholder(data);
+    }, err => console.warn('房間同步失敗', err));
+  }
+
+  // ---------- 等待室：成員列表 + 選方位 + 選船型(私有) + 準備 ----------
+  function renderMpWaitingRoom(data) {
+    const isHost = data.hostUid === mpCurrentUser.uid;
+    const me = data.members.find(m => m.uid === mpCurrentUser.uid);
+    const takenDirections = new Set(data.members.filter(m => m.uid !== mpCurrentUser.uid && m.direction).map(m => m.direction));
+    const allReady = data.members.length >= MP_MIN_PLAYERS && data.members.every(m => m.direction && m.shipSelected && m.ready);
+
+    const memberCards = Array.from({ length: data.maxPlayers }, (_, i) => {
+      const m = data.members[i];
+      if (!m) return `<div class="mp-member-card empty">空位</div>`;
+      return `<div class="mp-member-card ${m.ready ? 'ready' : ''}">
+        <div class="mp-mname">${m.uid === data.hostUid ? '👑' : ''}${escapeHtmlMp(m.name)}</div>
+        <div>${m.direction ? DIRECTION_LABEL[m.direction] : '未選方位'}</div>
+        <div>${m.shipSelected ? '🚢 已選船（保密）' : '⏳ 未選船'}</div>
+        <div>${m.ready ? '✅ 已準備' : '⏳ 準備中'}</div>
+      </div>`;
+    }).join('');
+
+    const directionBtns = Object.keys(DIRECTION_LABEL).map(dir => {
+      const isMine = me.direction === dir;
+      const takenByOther = takenDirections.has(dir);
+      return `<button class="mp-direction-btn ${isMine ? 'selected' : ''}" ${takenByOther ? 'disabled' : ''} onclick="pickMpDirection('${dir}')">${DIRECTION_LABEL[dir]}${takenByOther ? '（已被選走）' : ''}</button>`;
+    }).join('');
+
+    const shipBtns = Object.entries(SHIP_TYPES).map(([key, spec]) => {
+      // 自己選過的船型，本地state會記住(見mpMySelectedShip)，用來畫面呈現「你選的是哪一艘」；
+      // 但這個資訊完全不會寫進公開的房間文件，只有自己這個瀏覽器session知道
+      const isMine = mpMySelectedShip === key;
+      return `<button class="mp-ship-btn ${isMine ? 'selected' : ''}" ${me.shipSelected ? 'disabled' : ''} onclick="pickMpShip('${key}')">
+        <b>${spec.name}</b>血量${spec.maxHealth}・${spec.length}x${spec.width}
+      </button>`;
+    }).join('');
+
+    document.getElementById('mp-root').innerHTML = `
+      <div class="mp-panel" style="text-align:left; max-width:600px;">
+        <p style="font-size:11px; color:var(--muted);">房間代碼</p>
+        <p style="font-size:20px; font-weight:900; letter-spacing:2px;">${mpRoomState.roomId}</p>
+        <p style="font-weight:800; font-size:13px; margin:10px 0 4px;">👥 房間成員（${data.members.length}/${data.maxPlayers}）</p>
+        <div class="mp-members-grid">${memberCards}</div>
+
+        <p style="font-weight:800; font-size:13px; margin:14px 0 4px;">🧭 選擇你的方位（東南西北海，每人限選一個）</p>
+        <div class="mp-direction-grid">${directionBtns}</div>
+
+        <p style="font-weight:800; font-size:13px; margin:14px 0 4px;">🚢 選擇你的船隻（選定後鎖定，其他玩家看不到你選了什麼）</p>
+        <div class="mp-ship-grid">${shipBtns}</div>
+        ${me.shipSelected ? `<p class="mp-locked-note">✅ 船型已鎖定，不能更改</p>` : ''}
+
+        <button class="mp-btn primary" style="margin-top:14px;" onclick="toggleMpReady(${!me.ready})" ${(!me.direction || !me.shipSelected) ? 'disabled' : ''}>${me.ready ? '取消準備' : '✅ 我準備好了'}</button>
+        ${isHost ? `<button class="mp-btn" onclick="confirmMpStartGame()" ${allReady ? '' : 'disabled'}>${allReady ? '⚓ 開始遊戲' : '等待全部人準備好...'}</button>` : `<p style="text-align:center; color:var(--muted); font-size:12px; margin-top:8px;">${allReady ? '⏳ 等待房主開始遊戲...' : '⏳ 等待全部人準備好...'}</p>`}
+        <button class="mp-btn" onclick="leaveMpRoom()">離開房間</button>
+      </div>
+    `;
+  }
+
+  async function pickMpDirection(direction) {
+    try {
+      const ref = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        const data = doc.data();
+        // 交易內重新確認這個方位還沒被「別人」搶走，避免兩人幾乎同時點選同一個方位的race condition
+        const takenByOther = data.members.some(m => m.uid !== mpCurrentUser.uid && m.direction === direction);
+        if (takenByOther) return;
+        const members = data.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, direction } : m);
+        tx.update(ref, { members });
+      });
+    } catch (err) { alert('選擇方位失敗：' + err.message); }
+  }
+
+  // 本地記住自己選的船型(只是為了畫面呈現「你選的是這艘」，不會寫進公開資料)；
+  // 真正寫入的是navalBattleRooms/{roomId}/privateShips/{myUid}這個子集合，
+  // Firestore安全規則會限制只有uid等於自己的人才能讀取——這是在伺服器端judge的，
+  // 不是前端不顯示而已，其他玩家用開發者工具檢查網路封包也讀不到這筆資料
+  let mpMySelectedShip = null;
+  async function pickMpShip(shipType) {
+    try {
+      const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+      const doc = await roomRef.get();
+      const data = doc.data();
+      const me = data.members.find(m => m.uid === mpCurrentUser.uid);
+      if (me.shipSelected) { alert('船型已經鎖定，不能更改'); return; } // 保險檢查，介面按鈕理論上已經disabled
+
+      await mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId)
+        .collection('privateShips').doc(mpCurrentUser.uid).set({ shipType });
+
+      const members = data.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, shipSelected: true } : m);
+      await roomRef.update({ members });
+      mpMySelectedShip = shipType;
+    } catch (err) { alert('選擇船型失敗：' + err.message); }
+  }
+
+  async function toggleMpReady(ready) {
+    try {
+      const ref = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+      const doc = await ref.get();
+      const data = doc.data();
+      const members = data.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, ready } : m);
+      await ref.update({ members });
+    } catch (err) { console.warn('切換準備狀態失敗', err); }
+  }
+
+  async function confirmMpStartGame() {
+    try {
+      const ref = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+      const claimed = await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        const data = doc.data();
+        if (data.hostUid !== mpCurrentUser.uid) return false; // 只有房主能開始遊戲
+        if (data.status !== 'waiting') return false;
+        if (data.members.length < MP_MIN_PLAYERS) return false;
+        if (!data.members.every(m => m.direction && m.shipSelected && m.ready)) return false;
+        tx.update(ref, { status: 'playing' });
+        return true;
+      });
+      if (!claimed) alert('還沒全部人準備好，或已經開始了');
+    } catch (err) { alert('開始遊戲失敗：' + err.message); }
+  }
+
+  // 遊戲真正開始後的畫面：這一版先顯示大家選的方位(公開資訊)確認連線架構沒問題，
+  // 真正的回合戰鬥畫面(各自20x20地圖、盲打對方海域)下一輪再實作
+  function renderMpBattlePlaceholder(data) {
+    const list = data.members.map(m => `<li>${DIRECTION_LABEL[m.direction]}：${escapeHtmlMp(m.name)}</li>`).join('');
+    document.getElementById('mp-root').innerHTML = `
+      <div class="mp-panel">
+        <p style="font-size:16px; font-weight:900; margin-bottom:10px;">⚓ 艦隊已就位</p>
+        <ul style="text-align:left; font-size:13px; line-height:2;">${list}</ul>
+        <p style="color:var(--muted); font-size:12px; margin-top:12px;">真正的回合戰鬥畫面（各自的20x20海域、盲打對方座標）下一輪實作，這裡先確認連線架構跟方位/船型選擇沒問題</p>
+        <button class="mp-btn" onclick="leaveMpRoom()">離開房間</button>
+      </div>
+    `;
+  }
+
+  async function leaveMpRoom() {
+    try {
+      const ref = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+      const doc = await ref.get();
+      if (doc.exists) {
+        const data = doc.data();
+        const members = data.members.filter(m => m.uid !== mpCurrentUser.uid);
+        if (!members.length || data.hostUid === mpCurrentUser.uid) {
+          await ref.delete();
+        } else {
+          await ref.update({ members, memberUids: members.map(m => m.uid) });
+        }
+      }
+    } catch (err) { console.warn(err); }
+    mpMySelectedShip = null;
+    mpCleanupRoom();
+    renderMpLobby();
+  }
+</script>
+</body>
+</html>
