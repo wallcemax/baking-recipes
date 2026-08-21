@@ -347,7 +347,9 @@
       </div>
       <div class="card">
         <button class="btn primary" style="margin-bottom:8px;" onclick="toggleReady(${!iAmReady})">${iAmReady ? '取消準備' : '✅ 我準備好了'}</button>
-        <button class="btn" onclick="confirmStartGame()" ${allReady ? '' : 'disabled'}>${allReady ? '🎲 開始遊戲（自動擲骰決定順序）' : '等待全部人準備好...'}</button>
+        ${isHost
+          ? `<button class="btn" onclick="confirmStartGame()" ${allReady ? '' : 'disabled'}>${allReady ? '🎲 開始遊戲（自動擲骰決定順序）' : '等待全部人準備好...'}</button>`
+          : `<p style="text-align:center; color:var(--muted); font-size:13px; padding:12px;">${allReady ? '⏳ 等待房主開始遊戲...' : '⏳ 等待全部人準備好...'}</p>`}
       </div>
       <button class="btn" onclick="leaveRoom()">離開房間</button>
     `;
@@ -366,6 +368,7 @@
       const ref = db.collection('bingoGameRooms').doc(roomState.roomId);
       const doc = await ref.get();
       const data = doc.data();
+      if (data.hostUid !== currentUser.uid) return; // 只有房主能踢人，不只靠前端隱藏按鈕擋
       const members = data.members.filter(m => m.uid !== uid);
       await ref.update({
         members, memberUids: members.map(m => m.uid),
@@ -401,19 +404,28 @@
         const freshDoc = await tx.get(ref);
         if (!freshDoc.exists || freshDoc.data().status !== 'waiting') return false;
         const d = freshDoc.data();
+        if (d.hostUid !== currentUser.uid) return false; // 只有房主能開始遊戲，不只靠前端隱藏按鈕擋
         const readyUids = d.readyUids || [];
         if (d.members.length < MIN_PLAYERS) return false;
         if (!d.members.every(m => readyUids.includes(m.uid))) return false;
 
         const playerBoards = {};
         const diceResults = {};
+        const tiebreakers = {}; // 同分時要用的固定隨機值，排序開始前先算好、之後排序過程都用同一個值
         d.memberUids.forEach(uid => {
           playerBoards[uid] = shuffledBoard();
           diceResults[uid] = 1 + Math.floor(Math.random() * 6);
+          tiebreakers[uid] = Math.random();
         });
+        // 這裡刻意不寫成「同分時直接return Math.random()-0.5」——那是JavaScript公認的錯誤寫法，
+        // 排序演算法要求比較函式的結果要「一致、可傳遞」(A比B優先、B比C優先，A就一定要比C優先)，
+        // 但每次呼叫都重新取一個新亂數會違反這個假設(同一組A、B比較兩次可能得到不同結果)，
+        // 不同瀏覽器的排序演算法實作面對這種不一致的比較函式，可能產生不保證公平、甚至偏向
+        // 特定位置(例如陣列順序在前/在後的人)的結果。改成排序前就先幫每個人固定好一個隨機值，
+        // 排序過程中全程使用同一批固定值比較，才符合排序演算法對比較函式的正確要求
         const turnOrder = [...d.memberUids].sort((a, b) => {
           if (diceResults[b] !== diceResults[a]) return diceResults[b] - diceResults[a];
-          return Math.random() - 0.5;
+          return tiebreakers[a] - tiebreakers[b];
         });
         const orderNames = turnOrder.map(uid => d.members.find(m => m.uid === uid).name).join(' → ');
 
@@ -558,7 +570,10 @@
   async function backToWaitingRoom() {
     lastAnnouncedDiceReveal = null;
     try {
-      await db.collection('bingoGameRooms').doc(roomState.roomId).update({
+      const ref = db.collection('bingoGameRooms').doc(roomState.roomId);
+      const doc = await ref.get();
+      if (!doc.exists || doc.data().hostUid !== currentUser.uid) return; // 只有房主能重設房間，不只靠前端隱藏按鈕擋
+      await ref.update({
         status: 'waiting', readyUids: [],
         playerBoards: null, diceResults: null, turnOrder: null, currentTurnIndex: 0,
         calledItems: [], winnerUid: null, winLines: null, eventLog: [],
