@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>食材賓果｜Just Do Eat</title>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+<style>
+  :root {
+    --bg: #f3ecdd;
+    --paper: #fffbf3;
+    --ink: #3a2c22;
+    --muted: #8a7562;
+    --jam: #c1512f;
+    --jam-deep: #9c3f24;
+    --sage: #6f8f5f;
+    --line: #e3d4bb;
+    --shadow: 0 18px 40px -18px rgba(58, 44, 34, 0.35);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background:
+      radial-gradient(circle at 12% -10%, #fff6e2 0%, transparent 40%),
+      radial-gradient(circle at 100% 110%, #ecdcc3 0%, transparent 45%),
+      var(--bg);
+    font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    color: var(--ink);
+  }
+  .stage { width: min(560px, 100%); margin: auto; padding: 28px 16px 60px; }
+  header { text-align: center; margin-bottom: 22px; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.22em; color: var(--jam-deep); font-weight: 700; margin-bottom: 6px; }
+  h1 { font-family: Georgia, "Noto Serif TC", serif; font-size: clamp(26px, 6vw, 36px); font-weight: 900; margin: 0 0 6px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0; }
+  a.back-link { display: inline-block; margin-top: 10px; color: var(--jam-deep); font-size: 12px; font-weight: 700; text-decoration: none; }
+
+  .card { background: var(--paper); border: 1px solid var(--line); border-radius: 20px; padding: 18px; box-shadow: var(--shadow); margin-bottom: 14px; }
+  input, select { width: 100%; border: 1px solid var(--line); background: #fffefb; border-radius: 12px; padding: 10px 12px; font-size: 14px; font-family: inherit; color: var(--ink); }
+  label.field-label { font-size: 12px; color: var(--muted); display: block; margin: 10px 0 5px; font-weight: 700; }
+  label.field-label:first-child { margin-top: 0; }
+
+  button { font: inherit; border: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .btn { width: 100%; border: 1px solid var(--line); background: var(--paper); color: var(--ink); font-weight: 800; font-size: 14px; padding: 12px; border-radius: 14px; transition: transform .15s, box-shadow .15s; }
+  .btn:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; box-shadow: none; }
+  .btn.primary { background: linear-gradient(135deg, var(--jam), var(--jam-deep)); color: #fff6ea; border-color: transparent; }
+  .btn.small { width: auto; padding: 7px 14px; font-size: 12px; border-radius: 999px; }
+
+  .room-list-item { width: 100%; text-align: left; background: #fffefb; border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; transition: box-shadow .15s; }
+  .room-list-item:hover { box-shadow: var(--shadow); }
+  .room-list-item b { font-size: 14px; }
+  .room-list-item small { display: block; color: var(--muted); margin-top: 3px; font-size: 11px; }
+
+  .players-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 8px; }
+  .player-slot { background: #fffefb; border: 2px solid var(--line); border-radius: 14px; padding: 10px; text-align: center; font-size: 12px; }
+  .player-slot.ready { background: #eef4e9; border-color: var(--sage); }
+  .player-slot.empty { opacity: .4; }
+  .player-slot .pname { font-weight: 800; font-size: 13px; }
+
+  .board { background: linear-gradient(155deg, #8a5a3a, #5c3a24); border-radius: 26px; padding: 12px; box-shadow: var(--shadow); }
+  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+  .tile { position: relative; aspect-ratio: 1 / 1; border-radius: 14px; border: none; cursor: pointer; background: var(--paper); display: flex; align-items: center; justify-content: center; padding: 0; perspective: 600px; }
+  .tile:disabled { cursor: default; }
+  .tile-inner { position: absolute; inset: 0; border-radius: 14px; transition: transform 0.45s cubic-bezier(.32,1.4,.5,1); transform-style: preserve-3d; box-shadow: inset 0 0 0 1px var(--line); }
+  .tile.marked .tile-inner { transform: rotateY(180deg); }
+  .tile.win .tile-inner { box-shadow: inset 0 0 0 3px var(--sage); }
+  .face { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; backface-visibility: hidden; border-radius: 14px; }
+  .face-emoji { font-size: clamp(19px, 5.6vw, 30px); line-height: 1; }
+  .face-name { transform: rotateY(180deg); background: linear-gradient(155deg, var(--jam), var(--jam-deep)); color: #fff6ea; font-weight: 800; font-size: clamp(9px, 2.3vw, 12px); text-align: center; padding: 3px 5px; }
+  .tile:not(:disabled):hover .tile-inner { box-shadow: inset 0 0 0 2px var(--jam); }
+
+  .turn-banner { background: linear-gradient(135deg, var(--jam), var(--jam-deep)); color: #fff6ea; border-radius: 16px; padding: 12px 16px; text-align: center; font-weight: 900; font-size: 15px; margin-bottom: 12px; }
+  .turn-banner.waiting { background: #efe4d0; color: var(--muted); }
+
+  .players-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 12px; }
+  .player-chip { flex-shrink: 0; background: var(--paper); border: 2px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .player-chip.active { border-color: var(--jam); background: #fdece4; }
+  .player-chip.winner { border-color: var(--sage); background: #eef4e9; }
+
+  .log-box { margin-top: 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 10px 13px; font-size: 12px; color: var(--muted); max-height: 110px; overflow-y: auto; }
+  .log-box div { padding: 2px 0; }
+
+  .dice-reveal { text-align: center; }
+  .dice-row { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin: 16px 0; }
+  .dice-item { background: var(--paper); border: 2px solid var(--line); border-radius: 14px; padding: 10px 14px; text-align: center; min-width: 74px; }
+  .dice-item .dv { font-size: 22px; font-weight: 900; color: var(--jam-deep); }
+  .dice-item .dn { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 20px); background: var(--ink); color: #fff6ea; padding: 10px 18px; border-radius: 999px; font-weight: 700; font-size: 13px; opacity: 0; transition: .25s; z-index: 100; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <header>
+    <p class="eyebrow">JUST DO EAT · 小遊戲</p>
+    <h1>🎯 食材賓果</h1>
+    <p class="sub" id="header-sub">輪流叫牌，全房間同步翻牌，先連成一線贏</p>
+    <a href="index.html" class="back-link">← 回到 JUST DO EAT</a>
+  </header>
+
+  <div id="login-gate" class="card hidden" style="text-align:center;">
+    <p style="margin-bottom:12px;">請先登入才能玩食材賓果</p>
+    <button class="btn primary" onclick="googleLogin()">使用 Google 登入</button>
+  </div>
+
+  <div id="app-root"></div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+  const FOODS = [
+    { emoji: '🍔', name: '漢堡' }, { emoji: '🍕', name: '披薩' }, { emoji: '🍜', name: '拉麵' },
+    { emoji: '🍣', name: '壽司' }, { emoji: '🍱', name: '便當' }, { emoji: '🥟', name: '餃子' },
+    { emoji: '🍤', name: '蝦子' }, { emoji: '🍗', name: '雞腿' }, { emoji: '🥩', name: '牛排' },
+    { emoji: '🍖', name: '排骨' }, { emoji: '🍟', name: '薯條' }, { emoji: '🌮', name: '塔可' },
+    { emoji: '🥗', name: '沙拉' }, { emoji: '🍰', name: '蛋糕' }, { emoji: '🍩', name: '甜甜圈' },
+    { emoji: '🍦', name: '冰淇淋' }, { emoji: '🍮', name: '布丁' }, { emoji: '🥤', name: '手搖飲' },
+    { emoji: '🍹', name: '調酒' }, { emoji: '🍺', name: '啤酒' }, { emoji: '🍎', name: '蘋果' },
+    { emoji: '🍌', name: '香蕉' }, { emoji: '🍇', name: '葡萄' }, { emoji: '🍓', name: '草莓' },
+    { emoji: '🥑', name: '酪梨' },
+  ];
+  const MIN_PLAYERS = 2;
+  const MAX_PLAYERS_CAP = 8;
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
+    authDomain: "recipe-synchronization.firebaseapp.com",
+    projectId: "recipe-synchronization",
+    storageBucket: "recipe-synchronization.firebasestorage.app",
+    messagingSenderId: "559668909743",
+    appId: "1:559668909743:web:63dc34572b98839479265a"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+
+  let currentUser = null;
+  let myDisplayName = null;
+
+  function googleLogin() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(err => showToast('登入失敗：' + err.message));
+  }
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => t.classList.remove('show'), 2400);
+  }
+  function escapeHtml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  auth.onAuthStateChanged(async user => {
+    currentUser = user;
+    document.getElementById('login-gate').classList.toggle('hidden', !!user);
+    if (!user) { document.getElementById('app-root').innerHTML = ''; return; }
+    try {
+      const doc = await db.collection('userProgress').doc(user.uid).get();
+      myDisplayName = (doc.exists && doc.data().nickname) || user.displayName || '玩家';
+    } catch (e) { myDisplayName = user.displayName || '玩家'; }
+    renderLobby();
+  });
+
+  function checkBingoWin(board, calledSet) {
+    const lines = [];
+    for (let r = 0; r < 5; r++) lines.push([0, 1, 2, 3, 4].map(c => r * 5 + c));
+    for (let c = 0; c < 5; c++) lines.push([0, 1, 2, 3, 4].map(r => r * 5 + c));
+    lines.push([0, 6, 12, 18, 24]);
+    lines.push([4, 8, 12, 16, 20]);
+    for (const line of lines) {
+      if (line.every(idx => calledSet.has(board[idx]))) return line;
+    }
+    return null;
+  }
+  function shuffledBoard() {
+    const arr = Array.from({ length: 25 }, (_, i) => i);
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  let roomState = { roomId: null, unsubscribe: null };
+  let lobbyUnsubscribe = null;
+  function cleanupRoom() {
+    if (roomState.unsubscribe) { roomState.unsubscribe(); roomState.unsubscribe = null; }
+    if (lobbyUnsubscribe) { lobbyUnsubscribe(); lobbyUnsubscribe = null; }
+    roomState = { roomId: null, unsubscribe: null };
+  }
+
+  function renderLobby() {
+    cleanupRoom();
+    document.getElementById('app-root').innerHTML = `
+      <div class="card">
+        <button class="btn primary" style="margin-bottom:10px;" onclick="openCreateRoomForm()">➕ 建立新房間</button>
+        <p style="font-weight:800; font-size:13px; margin-bottom:8px;">🚪 目前開放的房間</p>
+        <div id="room-list"><p style="text-align:center; color:var(--muted); font-size:13px;">載入中...</p></div>
+      </div>
+    `;
+    lobbyUnsubscribe = db.collection('bingoGameRooms').where('status', '==', 'waiting').limit(20)
+      .onSnapshot(snap => {
+        const listEl = document.getElementById('room-list');
+        if (!listEl) return;
+        const staleMs = 30 * 60 * 1000;
+        const now = Date.now();
+        const activeRooms = snap.docs.filter(doc => {
+          const c = doc.data().createdAt;
+          if (!c || typeof c.toMillis !== 'function') return true;
+          return (now - c.toMillis()) < staleMs;
+        });
+        if (!activeRooms.length) { listEl.innerHTML = `<p style="text-align:center; color:var(--muted); font-size:13px;">目前沒有開放中的房間，建立一個新的吧！</p>`; return; }
+        listEl.innerHTML = activeRooms.map(doc => {
+          const d = doc.data();
+          return `<button class="room-list-item" onclick="promptJoinRoom('${doc.id}')">
+            <b>${escapeHtml(d.roomName || '未命名房間')}</b>
+            <small>👑${escapeHtml((d.members[0] && d.members[0].name) || '?')} · ${d.members.length}/${d.maxPlayers}人</small>
+          </button>`;
+        }).join('');
+      }, err => {
+        const listEl = document.getElementById('room-list');
+        if (listEl) listEl.innerHTML = `<p style="text-align:center; color:var(--jam-deep); font-size:13px;">載入失敗：${err.message}</p>`;
+      });
+  }
+
+  function openCreateRoomForm() {
+    document.getElementById('app-root').innerHTML = `
+      <div class="card">
+        <label class="field-label">房間名稱</label>
+        <input id="cr-name" placeholder="例如：週末食材賓果">
+        <label class="field-label">密碼（給朋友加入用）</label>
+        <input id="cr-password" placeholder="設定一個密碼">
+        <label class="field-label">最多幾人（2~${MAX_PLAYERS_CAP}人）</label>
+        <input id="cr-maxplayers" type="number" min="${MIN_PLAYERS}" max="${MAX_PLAYERS_CAP}" value="4">
+        <button class="btn primary" style="margin-top:14px;" onclick="createRoom()">建立房間</button>
+        <button class="btn" style="margin-top:8px;" onclick="renderLobby()">返回</button>
+      </div>
+    `;
+  }
+
+  function generateRoomId() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    return code;
+  }
+
+  async function createRoom() {
+    const roomName = (document.getElementById('cr-name').value || '').trim() || '未命名房間';
+    const password = (document.getElementById('cr-password').value || '').trim();
+    if (!password) { showToast('請設定密碼'); return; }
+    let maxPlayers = parseInt(document.getElementById('cr-maxplayers').value, 10) || 4;
+    maxPlayers = Math.min(MAX_PLAYERS_CAP, Math.max(MIN_PLAYERS, maxPlayers));
+    const roomId = generateRoomId();
+    try {
+      const oldRoomsSnap = await db.collection('bingoGameRooms').where('hostUid', '==', currentUser.uid).get();
+      for (const oldDoc of oldRoomsSnap.docs) await oldDoc.ref.delete();
+
+      await db.collection('bingoGameRooms').doc(roomId).set({
+        hostUid: currentUser.uid, roomName, password, maxPlayers,
+        members: [{ uid: currentUser.uid, name: myDisplayName }],
+        memberUids: [currentUser.uid], readyUids: [],
+        status: 'waiting',
+        playerBoards: null, diceResults: null, turnOrder: null, currentTurnIndex: 0,
+        calledItems: [], winnerUid: null, winLine: null,
+        eventLog: [], createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      enterRoom(roomId);
+    } catch (err) { showToast('建立房間失敗：' + err.message); }
+  }
+
+  function promptJoinRoom(roomId) {
+    const password = prompt('請輸入房間密碼');
+    if (password === null) return;
+    joinRoom(roomId, password);
+  }
+  async function joinRoom(roomId, password) {
+    try {
+      const ref = db.collection('bingoGameRooms').doc(roomId);
+      const doc = await ref.get();
+      if (!doc.exists) { showToast('房間不存在，可能剛好被關閉了'); renderLobby(); return; }
+      const data = doc.data();
+      if (data.password !== password) { showToast('密碼錯誤'); return; }
+      if (data.status !== 'waiting') { showToast('這場遊戲已經開始了，沒辦法中途加入'); return; }
+      if (data.members.length >= data.maxPlayers) { showToast('房間已滿'); return; }
+      if (data.memberUids.includes(currentUser.uid)) { enterRoom(roomId); return; }
+      await ref.update({
+        members: firebase.firestore.FieldValue.arrayUnion({ uid: currentUser.uid, name: myDisplayName }),
+        memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+      });
+      enterRoom(roomId);
+    } catch (err) { showToast('加入房間失敗：' + err.message); }
+  }
+
+  let lastAnnouncedDiceReveal = null;
+  function enterRoom(roomId) {
+    roomState.roomId = roomId;
+    roomState.unsubscribe = db.collection('bingoGameRooms').doc(roomId).onSnapshot(doc => {
+      if (!doc.exists) { showToast('房間已經被關閉'); cleanupRoom(); renderLobby(); return; }
+      const data = doc.data();
+      if (data.status === 'waiting') renderWaitingRoom(data);
+      else if (data.status === 'playing' || data.status === 'gameover') renderGameBoard(data);
+    }, err => console.warn('房間同步失敗', err));
+  }
+
+  function renderWaitingRoom(data) {
+    const isHost = data.hostUid === currentUser.uid;
+    const readyUids = data.readyUids || [];
+    const iAmReady = readyUids.includes(currentUser.uid);
+    const allReady = data.members.length >= MIN_PLAYERS && data.members.every(m => readyUids.includes(m.uid));
+
+    const slots = Array.from({ length: data.maxPlayers }, (_, i) => {
+      const m = data.members[i];
+      if (!m) return `<div class="player-slot empty">空位</div>`;
+      const ready = readyUids.includes(m.uid);
+      const kickBtn = (isHost && m.uid !== currentUser.uid)
+        ? `<br><button class="btn small" style="margin-top:5px; color:var(--jam-deep);" onclick="event.stopPropagation(); kickMember('${m.uid}','${escapeHtml(m.name).replace(/'/g, "\\'")}')">✕踢除</button>` : '';
+      return `<div class="player-slot ${ready ? 'ready' : ''}">${m.uid === data.hostUid ? '👑 ' : ''}<span class="pname">${escapeHtml(m.name)}</span><br>${ready ? '✅已準備' : '⏳準備中'}${kickBtn}</div>`;
+    }).join('');
+
+    document.getElementById('app-root').innerHTML = `
+      <div class="card">
+        <p style="font-size:12px; color:var(--muted);">房間代碼</p>
+        <p style="font-size:22px; font-weight:900; letter-spacing:2px;">${roomState.roomId}</p>
+        <p style="font-weight:800; font-size:13px; margin:10px 0 6px;">👥 房間成員（${data.members.length}/${data.maxPlayers}）・至少${MIN_PLAYERS}人才能開始</p>
+        <div class="players-grid">${slots}</div>
+      </div>
+      <div class="card">
+        <button class="btn primary" style="margin-bottom:8px;" onclick="toggleReady(${!iAmReady})">${iAmReady ? '取消準備' : '✅ 我準備好了'}</button>
+        <button class="btn" onclick="confirmStartGame()" ${allReady ? '' : 'disabled'}>${allReady ? '🎲 開始遊戲（自動擲骰決定順序）' : '等待全部人準備好...'}</button>
+      </div>
+      <button class="btn" onclick="leaveRoom()">離開房間</button>
+    `;
+  }
+
+  async function toggleReady(ready) {
+    try {
+      await db.collection('bingoGameRooms').doc(roomState.roomId).update({
+        readyUids: ready ? firebase.firestore.FieldValue.arrayUnion(currentUser.uid) : firebase.firestore.FieldValue.arrayRemove(currentUser.uid),
+      });
+    } catch (err) { console.warn('切換準備狀態失敗', err); }
+  }
+  async function kickMember(uid, name) {
+    if (!confirm(`確定要把「${name}」踢出房間嗎？`)) return;
+    try {
+      const ref = db.collection('bingoGameRooms').doc(roomState.roomId);
+      const doc = await ref.get();
+      const data = doc.data();
+      const members = data.members.filter(m => m.uid !== uid);
+      await ref.update({
+        members, memberUids: members.map(m => m.uid),
+        readyUids: (data.readyUids || []).filter(u => u !== uid),
+      });
+    } catch (err) { showToast('踢除失敗：' + err.message); }
+  }
+  async function leaveRoom() {
+    try {
+      const ref = db.collection('bingoGameRooms').doc(roomState.roomId);
+      const doc = await ref.get();
+      if (doc.exists) {
+        const data = doc.data();
+        const members = data.members.filter(m => m.uid !== currentUser.uid);
+        if (!members.length || data.hostUid === currentUser.uid) {
+          await ref.delete();
+        } else {
+          await ref.update({
+            members, memberUids: members.map(m => m.uid),
+            readyUids: (data.readyUids || []).filter(u => u !== currentUser.uid),
+          });
+        }
+      }
+    } catch (err) { console.warn(err); }
+    cleanupRoom();
+    renderLobby();
+  }
+
+  async function confirmStartGame() {
+    const ref = db.collection('bingoGameRooms').doc(roomState.roomId);
+    try {
+      const claimed = await db.runTransaction(async (tx) => {
+        const freshDoc = await tx.get(ref);
+        if (!freshDoc.exists || freshDoc.data().status !== 'waiting') return false;
+        const d = freshDoc.data();
+        const readyUids = d.readyUids || [];
+        if (d.members.length < MIN_PLAYERS) return false;
+        if (!d.members.every(m => readyUids.includes(m.uid))) return false;
+
+        const playerBoards = {};
+        const diceResults = {};
+        d.memberUids.forEach(uid => {
+          playerBoards[uid] = shuffledBoard();
+          diceResults[uid] = 1 + Math.floor(Math.random() * 6);
+        });
+        const turnOrder = [...d.memberUids].sort((a, b) => {
+          if (diceResults[b] !== diceResults[a]) return diceResults[b] - diceResults[a];
+          return Math.random() - 0.5;
+        });
+        const orderNames = turnOrder.map(uid => d.members.find(m => m.uid === uid).name).join(' → ');
+
+        tx.update(ref, {
+          status: 'playing', playerBoards, diceResults, turnOrder, currentTurnIndex: 0,
+          calledItems: [], winnerUid: null, winLine: null,
+          eventLog: firebase.firestore.FieldValue.arrayUnion(`🎲 遊戲開始！順序：${orderNames}`),
+        });
+        return true;
+      });
+      if (!claimed) showToast('還沒全部人準備好，或已經被其他成員開始了');
+    } catch (err) { showToast('開始遊戲失敗：' + err.message); }
+  }
+
+  function renderGameBoard(data) {
+    const myUid = currentUser.uid;
+    const myBoard = data.playerBoards[myUid];
+    const calledSet = new Set(data.calledItems || []);
+    const isGameOver = data.status === 'gameover';
+    const isMyTurn = !isGameOver && data.turnOrder[data.currentTurnIndex] === myUid;
+
+    const diceKey = JSON.stringify(data.diceResults);
+    if (!isGameOver && lastAnnouncedDiceReveal !== diceKey && data.calledItems.length === 0) {
+      lastAnnouncedDiceReveal = diceKey;
+      renderDiceReveal(data);
+      return;
+    }
+
+    const playersStripHtml = data.turnOrder.map(uid => {
+      const m = data.members.find(x => x.uid === uid);
+      const isActive = !isGameOver && uid === data.turnOrder[data.currentTurnIndex];
+      const isWinner = isGameOver && uid === data.winnerUid;
+      return `<div class="player-chip ${isActive ? 'active' : ''} ${isWinner ? 'winner' : ''}">${isWinner ? '🏆' : ''}${escapeHtml(m ? m.name : '?')}</div>`;
+    }).join('');
+
+    const winLineSet = new Set(isGameOver && data.winLine ? data.winLine : []);
+    const gridHtml = myBoard.map((foodIdx, i) => {
+      const food = FOODS[foodIdx];
+      const marked = calledSet.has(foodIdx);
+      const canClick = isMyTurn && !marked;
+      const isWinTile = isGameOver && data.winnerUid === myUid && winLineSet.has(i);
+      return `<button class="tile ${marked ? 'marked' : ''} ${isWinTile ? 'win' : ''}" ${canClick ? '' : 'disabled'} onclick="callFoodItem(${i})" aria-label="${food.name}">
+        <div class="tile-inner">
+          <div class="face face-emoji">${food.emoji}</div>
+          <div class="face face-name">${food.name}</div>
+        </div>
+      </button>`;
+    }).join('');
+
+    let bannerHtml;
+    if (isGameOver) {
+      const winnerName = (data.members.find(m => m.uid === data.winnerUid) || {}).name || '?';
+      bannerHtml = `<div class="turn-banner">🏆 ${escapeHtml(winnerName)} 連成一線，獲勝！</div>`;
+    } else if (isMyTurn) {
+      bannerHtml = `<div class="turn-banner">👉 輪到你了！點一個你卡上還沒翻開的食材</div>`;
+    } else {
+      const turnName = (data.members.find(m => m.uid === data.turnOrder[data.currentTurnIndex]) || {}).name || '?';
+      bannerHtml = `<div class="turn-banner waiting">⏳ 等待 ${escapeHtml(turnName)} 選擇食材...</div>`;
+    }
+
+    document.getElementById('app-root').innerHTML = `
+      <div class="players-strip">${playersStripHtml}</div>
+      ${bannerHtml}
+      <div class="board"><div class="grid">${gridHtml}</div></div>
+      <div class="log-box">${(data.eventLog || []).slice(-8).reverse().map(e => `<div>${escapeHtml(e)}</div>`).join('')}</div>
+      ${isGameOver ? `
+        <div style="display:flex; gap:8px; margin-top:14px;">
+          ${data.hostUid === myUid ? `<button class="btn primary" style="flex:1;" onclick="backToWaitingRoom()">🔄 再玩一場</button>` : ''}
+          <button class="btn" style="flex:1;" onclick="leaveRoom()">離開房間</button>
+        </div>
+      ` : `<button class="btn" style="margin-top:14px;" onclick="leaveRoom()">離開房間</button>`}
+    `;
+  }
+
+  function renderDiceReveal(data) {
+    const rows = data.turnOrder.map(uid => {
+      const m = data.members.find(x => x.uid === uid);
+      return `<div class="dice-item"><div class="dv">🎲${data.diceResults[uid]}</div><div class="dn">${escapeHtml(m ? m.name : '?')}</div></div>`;
+    }).join('');
+    document.getElementById('app-root').innerHTML = `
+      <div class="card dice-reveal">
+        <p style="font-weight:900; font-size:16px; margin-bottom:6px;">擲骰決定順序！</p>
+        <div class="dice-row">${rows}</div>
+        <p style="color:var(--muted); font-size:12px;">3 秒後自動開始...</p>
+      </div>
+    `;
+    setTimeout(() => { db.collection('bingoGameRooms').doc(roomState.roomId).get().then(doc => { if (doc.exists) renderGameBoard(doc.data()); }); }, 3000);
+  }
+
+  async function callFoodItem(tileIndex) {
+    const ref = db.collection('bingoGameRooms').doc(roomState.roomId);
+    try {
+      await db.runTransaction(async (tx) => {
+        const freshDoc = await tx.get(ref);
+        const data = freshDoc.data();
+        if (data.status !== 'playing') return;
+        if (data.turnOrder[data.currentTurnIndex] !== currentUser.uid) return;
+        const myBoard = data.playerBoards[currentUser.uid];
+        const foodIdx = myBoard[tileIndex];
+        if ((data.calledItems || []).includes(foodIdx)) return;
+
+        const newCalledItems = [...(data.calledItems || []), foodIdx];
+        const calledSet = new Set(newCalledItems);
+        const me = data.members.find(m => m.uid === currentUser.uid);
+        const logs = [`🍽️ ${me ? me.name : '有人'} 叫了「${FOODS[foodIdx].name}」`];
+
+        let winnerUid = null, winLine = null;
+        for (const uid of data.turnOrder) {
+          const pBoard = data.playerBoards[uid];
+          const line = checkBingoWin(pBoard, calledSet);
+          if (line) { winnerUid = uid; winLine = line; break; }
+        }
+
+        const updates = { calledItems: newCalledItems, eventLog: firebase.firestore.FieldValue.arrayUnion(...logs) };
+        if (winnerUid) {
+          updates.status = 'gameover';
+          updates.winnerUid = winnerUid;
+          updates.winLine = winLine;
+          const winnerName = (data.members.find(m => m.uid === winnerUid) || {}).name || '?';
+          updates.eventLog = firebase.firestore.FieldValue.arrayUnion(...logs, `🏆 ${winnerName} 連成一線，獲勝！`);
+        } else {
+          updates.currentTurnIndex = (data.currentTurnIndex + 1) % data.turnOrder.length;
+        }
+        tx.update(ref, updates);
+      });
+    } catch (err) { showToast('叫牌失敗：' + err.message); }
+  }
+
+  async function backToWaitingRoom() {
+    lastAnnouncedDiceReveal = null;
+    try {
+      await db.collection('bingoGameRooms').doc(roomState.roomId).update({
+        status: 'waiting', readyUids: [],
+        playerBoards: null, diceResults: null, turnOrder: null, currentTurnIndex: 0,
+        calledItems: [], winnerUid: null, winLine: null, eventLog: [],
+      });
+    } catch (err) { showToast('重設房間失敗：' + err.message); }
+  }
+</script>
+</body>
+</html>
