@@ -462,9 +462,11 @@
       return `<div class="player-chip ${isActive ? 'active' : ''} ${isWinner ? 'winner' : ''}">${isWinner ? '🏆' : ''}${escapeHtml(m ? m.name : '?')}</div>`;
     }).join('');
 
-    // 把所有已完成連線的格子索引攤平成一個集合，遊戲結束時要標示的可能不只一條線
+    // 把所有已完成連線的格子索引攤平成一個集合，遊戲結束時要標示的可能不只一條線。
+    // winLines存進Firestore時被包成[{cells:[...]}]的格式(繞開Firestore不支援巢狀陣列的限制)，
+    // 這裡要對應解開，取每個物件的cells欄位
     const winLineSet = new Set();
-    if (isGameOver && data.winLines) data.winLines.forEach(line => line.forEach(idx => winLineSet.add(idx)));
+    if (isGameOver && data.winLines) data.winLines.forEach(lineObj => (lineObj.cells || []).forEach(idx => winLineSet.add(idx)));
     // 遊戲進行中，額外算一下自己目前已經連成幾條線，讓玩家知道還差幾條
     const myCompletedLines = !isGameOver ? getCompletedLines(myBoard, calledSet) : [];
 
@@ -555,7 +557,10 @@
         if (winnerUid) {
           updates.status = 'gameover';
           updates.winnerUid = winnerUid;
-          updates.winLines = winLines;
+          // Firestore不支援「陣列裡直接放陣列」這種巢狀結構，winLines本身是陣列(可能不只一條線)、
+          // 裡面每一條線又是陣列(5個格子索引)，直接寫入會被拒絕。改成陣列裡放物件、物件的
+          // cells欄位才是陣列，繞開這個限制——讀取端要記得對應解開這層包裝
+          updates.winLines = winLines.map(line => ({ cells: line }));
           const winnerName = (data.members.find(m => m.uid === winnerUid) || {}).name || '?';
           const winMsg = linesNeeded === 1 ? `🏆 ${winnerName} 連成一線，獲勝！` : `🏆 ${winnerName} 連成${winLines.length}條線，獲勝！`;
           updates.eventLog = firebase.firestore.FieldValue.arrayUnion(...logs, winMsg);
