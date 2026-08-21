@@ -93,6 +93,16 @@
   .toast { position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 20px); background: var(--ink); color: #fff6ea; padding: 10px 18px; border-radius: 999px; font-weight: 700; font-size: 13px; opacity: 0; transition: .25s; z-index: 100; pointer-events: none; }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
   .hidden { display: none !important; }
+
+  /* -------- 連線特效：外層負責定位+旋轉角度(固定不變)，內層負責從0展開到滿長度的
+     動畫(這樣兩種transform不會互相打架) -------- */
+  .bingo-line-effect { position: fixed; height: 5px; transform-origin: left center; z-index: 400; pointer-events: none; }
+  .bingo-line-bar { width: 100%; height: 100%; border-radius: 3px; transform-origin: left center; transform: scaleX(0); background: linear-gradient(90deg, #ffd75e, var(--jam), #ffd75e); box-shadow: 0 0 14px 3px rgba(255, 215, 94, .75); }
+  .bingo-line-bar.draw { transition: transform .5s cubic-bezier(.22, .85, .3, 1), opacity .45s ease .65s; transform: scaleX(1); opacity: 0; }
+
+  /* 星星粒子：從連線上隨機一點噴出，往CSS變數指定的隨機方向飛散並淡出 */
+  .bingo-star { position: fixed; font-size: 15px; z-index: 401; pointer-events: none; transform: translate(-50%, -50%) scale(.4); opacity: 1; }
+  .bingo-star.burst { transition: transform .85s cubic-bezier(.18, .75, .3, 1), opacity .85s ease; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.25) rotate(200deg); opacity: 0; }
 </style>
 </head>
 <body>
@@ -165,6 +175,75 @@
   }
   function escapeHtml(str) {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // ============================================================
+  // 音效：用Web Audio API即時合成，不依賴外部音效檔案
+  // ============================================================
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+  // 翻牌音效：短促清脆的一聲，模擬卡片翻面的觸感
+  function playFlipSound() {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(680, now);
+    osc.frequency.exponentialRampToValueAtTime(340, now + 0.09);
+    gain.gain.setValueAtTime(0.22, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  }
+  // 連成一線音效：4個音符快速上升的琶音，營造慶祝感
+  function playLineCompleteSound() {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6
+    notes.forEach((freq, i) => {
+      const startAt = now + i * 0.085;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, startAt);
+      gain.gain.setValueAtTime(0.001, startAt);
+      gain.gain.linearRampToValueAtTime(0.28, startAt + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, startAt + 0.35);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(startAt);
+      osc.stop(startAt + 0.35);
+    });
+  }
+  // 勝利號角：整場遊戲結束時播放，比遊戲進行中單純連成一線的音效更長、更盛大——
+  // 主旋律6個音符的上升琶音，每個音符額外疊加一個高八度的音強化明亮感，最後停在
+  // 拉長的和弦上收尾，明顯區隔於中途連線的短促提示音
+  function playVictoryFanfare() {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    const melody = [523.25, 659.25, 783.99, 1046.5, 783.99, 1318.5]; // C5 E5 G5 C6 G5 E6
+    melody.forEach((freq, i) => {
+      const startAt = now + i * 0.11;
+      const dur = i === melody.length - 1 ? 0.6 : 0.22;
+      [freq, freq * 2].forEach((f, layer) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = layer === 0 ? 'triangle' : 'sine';
+        osc.frequency.setValueAtTime(f, startAt);
+        const peak = layer === 0 ? 0.3 : 0.1;
+        gain.gain.setValueAtTime(0.001, startAt);
+        gain.gain.linearRampToValueAtTime(peak, startAt + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, startAt + dur);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(startAt);
+        osc.stop(startAt + dur);
+      });
+    });
   }
 
   auth.onAuthStateChanged(async user => {
@@ -313,8 +392,14 @@
   }
 
   let lastAnnouncedDiceReveal = null;
+  let previousMyCompletedLines = null; // null代表還沒渲染過，第一次渲染不觸發特效(避免重新整理頁面時，把之前已經連成的線當成新完成)
+  let previousCalledCount = null; // 同樣用來偵測「這次渲染是不是有新叫牌」，第一次渲染不播放翻牌音效
+  let gameEndCelebrated = false; // 避免遊戲結束畫面重複渲染時，獲勝特效跟著重複播放好幾次
   function enterRoom(roomId) {
     roomState.roomId = roomId;
+    previousMyCompletedLines = null;
+    previousCalledCount = null;
+    gameEndCelebrated = false;
     roomState.unsubscribe = db.collection('bingoGameRooms').doc(roomId).onSnapshot(doc => {
       if (!doc.exists) { showToast('房間已經被關閉'); cleanupRoom(); renderLobby(); return; }
       const data = doc.data();
@@ -470,12 +555,50 @@
     // 遊戲進行中，額外算一下自己目前已經連成幾條線，讓玩家知道還差幾條
     const myCompletedLines = !isGameOver ? getCompletedLines(myBoard, calledSet) : [];
 
+    // 翻牌音效：比較這次跟上次渲染的叫牌數量，有變化才播放(避免像是交易完成、開啟道具視窗這種
+    // 不牽涉叫牌的渲染也誤觸發音效)；第一次渲染(previousCalledCount===null，例如剛整理頁面)不播放
+    const calledCount = (data.calledItems || []).length;
+    if (previousCalledCount !== null && calledCount > previousCalledCount) playFlipSound();
+    previousCalledCount = calledCount;
+
+    // 連線特效偵測：用「線的實際內容」互相比對(不是單純比數量)，找出這次新完成、之前沒有的線——
+    // 這樣就算之後線的完成順序不是單純遞增(例如兩條線幾乎同時完成，順序跟預期不同)也不會誤判
+    if (!isGameOver && previousMyCompletedLines !== null) {
+      const prevKeys = new Set(previousMyCompletedLines.map(l => l.join(',')));
+      const newLines = myCompletedLines.filter(l => !prevKeys.has(l.join(',')));
+      if (newLines.length > 0) {
+        // 用requestAnimationFrame延遲到innerHTML真正渲染完成、格子DOM元素都存在之後才觸發，
+        // 不然這時候呼叫getBoundingClientRect()會抓到還沒更新的舊畫面
+        requestAnimationFrame(() => newLines.forEach(line => triggerLineEffect(line)));
+      }
+    }
+    previousMyCompletedLines = myCompletedLines;
+
+    // 遊戲真正結束(分出勝負)時的專屬慶祝效果：跟遊戲進行中單純連成一條線不同，這裡要把
+    // winLines裡「所有」獲勝的線都畫出來(可能不只一條)，並播放比較盛大的勝利號角，
+    // 用gameEndCelebrated旗標確保這個效果只在剛結束的那一刻播一次，不會因為畫面重複渲染
+    // (例如其他玩家操作觸發的重繪)就跟著重複播放。
+    // 注意：winLines的格子索引是根據「贏家自己的棋盤排列」算出來的，每個玩家拿到的棋盤
+    // 排列都不一樣，所以連接線這個視覺特效只能在贏家自己的畫面上顯示才有意義——
+    // 其他觀戰的玩家如果也套用同一組索引去連自己畫面上的格子，會連到完全不相關的位置。
+    // 非贏家的其他玩家只播放號角音效、不顯示連接線
+    if (isGameOver && !gameEndCelebrated && data.winLines) {
+      gameEndCelebrated = true;
+      requestAnimationFrame(() => {
+        playVictoryFanfare();
+        if (data.winnerUid === myUid) {
+          const linesToShow = data.winLines.map(lineObj => lineObj.cells).filter(Boolean);
+          linesToShow.forEach((line, i) => setTimeout(() => triggerLineEffect(line, true), i * 180));
+        }
+      });
+    }
+
     const gridHtml = myBoard.map((foodIdx, i) => {
       const food = FOODS[foodIdx];
       const marked = calledSet.has(foodIdx);
       const canClick = isMyTurn && !marked;
       const isWinTile = isGameOver && data.winnerUid === myUid && winLineSet.has(i);
-      return `<button class="tile ${marked ? 'marked' : ''} ${isWinTile ? 'win' : ''}" ${canClick ? '' : 'disabled'} onclick="callFoodItem(${i})" aria-label="${food.name}">
+      return `<button class="tile ${marked ? 'marked' : ''} ${isWinTile ? 'win' : ''}" ${canClick ? '' : 'disabled'} onclick="callFoodItem(${i})" data-tile-index="${i}" aria-label="${food.name}">
         <div class="tile-inner">
           <div class="face face-emoji">${food.emoji}</div>
           <div class="face face-name">${food.name}</div>
@@ -572,8 +695,69 @@
     } catch (err) { showToast('叫牌失敗：' + err.message); }
   }
 
+  // ============================================================
+  // 連線特效：畫一條發光連接線(從線的第一格連到最後一格)+沿線爆發星星粒子。
+  // 這兩個都用position:fixed的獨立元素、動畫播完用setTimeout自己移除，刻意不放進
+  // app-root的innerHTML樣板裡——因為app-root每次渲染都會整個重寫，放在裡面的話動畫
+  // 播到一半就會被砍掉重建，這是之前在美食大富翁的棋子動畫踩過的同一種坑
+  // ============================================================
+  function triggerLineEffect(line, isVictory) {
+    if (!isVictory) playLineCompleteSound(); // 獲勝時的音效統一由playVictoryFanfare處理，這裡不用重複播放
+    const firstEl = document.querySelector(`.tile[data-tile-index="${line[0]}"]`);
+    const lastEl = document.querySelector(`.tile[data-tile-index="${line[4]}"]`);
+    if (!firstEl || !lastEl) return;
+    const r1 = firstEl.getBoundingClientRect();
+    const r2 = lastEl.getBoundingClientRect();
+    const x1 = r1.left + r1.width / 2, y1 = r1.top + r1.height / 2;
+    const x2 = r2.left + r2.width / 2, y2 = r2.top + r2.height / 2;
+    drawConnectLine(x1, y1, x2, y2);
+    spawnStarBurst(x1, y1, x2, y2, isVictory ? 22 : 12); // 獲勝時星星數量加倍，畫面更盛大
+  }
+
+  function drawConnectLine(x1, y1, x2, y2) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'bingo-line-effect';
+    wrap.style.left = x1 + 'px';
+    wrap.style.top = y1 + 'px';
+    wrap.style.width = length + 'px';
+    wrap.style.transform = `rotate(${angle}deg)`;
+    wrap.innerHTML = '<div class="bingo-line-bar"></div>';
+    document.body.appendChild(wrap);
+    const bar = wrap.querySelector('.bingo-line-bar');
+    requestAnimationFrame(() => bar.classList.add('draw'));
+    setTimeout(() => wrap.remove(), 1300);
+  }
+
+  function spawnStarBurst(x1, y1, x2, y2, starCount = 12) {
+    for (let i = 0; i < starCount; i++) {
+      const star = document.createElement('div');
+      star.className = 'bingo-star';
+      star.textContent = Math.random() < 0.5 ? '✨' : '⭐';
+      // 沿著整條線隨機分佈起始點，不是全部從中點噴出，看起來比較像整條線在發光爆開
+      const t = Math.random();
+      const startX = x1 + (x2 - x1) * t;
+      const startY = y1 + (y2 - y1) * t;
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 30 + Math.random() * 55;
+      star.style.left = startX + 'px';
+      star.style.top = startY + 'px';
+      star.style.setProperty('--dx', (Math.cos(angle) * dist) + 'px');
+      star.style.setProperty('--dy', (Math.sin(angle) * dist) + 'px');
+      document.body.appendChild(star);
+      requestAnimationFrame(() => star.classList.add('burst'));
+      setTimeout(() => star.remove(), 950);
+    }
+  }
+
   async function backToWaitingRoom() {
     lastAnnouncedDiceReveal = null;
+    previousMyCompletedLines = null;
+    previousCalledCount = null;
+    gameEndCelebrated = false;
     try {
       const ref = db.collection('bingoGameRooms').doc(roomState.roomId);
       const doc = await ref.get();
