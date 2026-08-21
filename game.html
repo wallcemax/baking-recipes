@@ -11535,14 +11535,21 @@
         // 一起判定——一場遊戲最多只需要「3回合×題數」這麼多次AI呼叫。
         // ============================================================
         const SHEFU_MAX_MEMBERS = 6;
-        const SHEFU_ROUND_TIME_LIMIT = 30; // 每回合限時秒數，要跟worker.js那邊的SHEFU_ROUND_TIME_LIMIT保持一致
+        const SHEFU_ROUND_TIME_LIMIT = 60; // 每回合限時秒數，要跟worker.js那邊的SHEFU_ROUND_TIME_LIMIT保持一致
         const SHEFU_REVEAL_TIMEOUT = 20; // 題目揭曉畫面「大家都準備好」的等待上限，超過自動繼續
         const SHEFU_MAX_ATTEMPTS_PER_ROUND = 2; // 每人每回合最多送出幾次答案
         const SHEFU_HIT_LOTTIE_URL = 'https://res.cloudinary.com/bumzwp9g/raw/upload/v1787281096/target_16677874_vduz1o.json';
+        // 回合限時拉長到60秒以後，秒數會剛好等於60，不能再硬寫死"00:"當分鐘——要真的算分鐘數，
+        // 不然60秒會顯示成錯誤的"00:60"而不是"01:00"
+        function shefuFormatMmSs(totalSeconds) {
+            const m = Math.floor(totalSeconds / 60);
+            const s = totalSeconds % 60;
+            return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
         let shefuGameState = {
             roomId: null, unsubscribe: null, timerInterval: null,
             isHost: false, lastRenderedKey: null, advanceTriggered: false,
-            lastSeenCorrectKey: null, lastSeenCorrectCount: 0,
+            lastSeenCorrectKey: null, lastSeenCorrectCount: 0, loadingMessage: null,
         };
         let shefuLobbyUnsubscribe = null;
         function shefuGameCleanup() {
@@ -11551,7 +11558,7 @@
             if (shefuLobbyUnsubscribe) { shefuLobbyUnsubscribe(); shefuLobbyUnsubscribe = null; }
             const overlay = document.getElementById('shefu-hit-overlay');
             if (overlay) overlay.remove();
-            shefuGameState = { roomId: null, unsubscribe: null, timerInterval: null, isHost: false, lastRenderedKey: null, advanceTriggered: false, lastSeenCorrectKey: null, lastSeenCorrectCount: 0 };
+            shefuGameState = { roomId: null, unsubscribe: null, timerInterval: null, isHost: false, lastRenderedKey: null, advanceTriggered: false, lastSeenCorrectKey: null, lastSeenCorrectCount: 0, loadingMessage: null };
         }
 
         // ---------- 大廳：直接瀏覽現有房間，比照靈魂畫手 ----------
@@ -11681,33 +11688,69 @@
             currentGameScreen = 'shefu-room';
             shefuGameState.unsubscribe = db.collection('shefuGameRooms').doc(roomId).onSnapshot(doc => {
                 if (!doc.exists) { alert('房間已經被關閉'); shefuGameCleanup(); renderGameMenu(); return; }
-                const data = doc.data();
-                shefuGameState.isHost = data.hostUid === currentUser.uid;
-
-                // 偵測「這次同步比上次多出來的猜中者」，播放命中動畫+顯示是誰猜中拿了幾分——
-                // 不管是回合推進(還有下一回合)還是這一題結束(進入揭曉畫面)，只要correctGuessers
-                // 比上次看到的多，就代表這次批次判定又有新的人射中了。用currentQuestionIndex
-                // 當key，換題目的時候自然歸零重算，不用另外處理重設
-                const correctGuessers = data.correctGuessers || [];
-                const seenKey = String(data.currentQuestionIndex);
-                if (shefuGameState.lastSeenCorrectKey !== seenKey) {
-                    shefuGameState.lastSeenCorrectKey = seenKey;
-                    shefuGameState.lastSeenCorrectCount = 0;
-                }
-                if (correctGuessers.length > shefuGameState.lastSeenCorrectCount) {
-                    const newHits = correctGuessers.slice(shefuGameState.lastSeenCorrectCount);
-                    shefuGameState.lastSeenCorrectCount = correctGuessers.length;
-                    playShefuHitAnimation(newHits);
-                }
-
-                document.getElementById('game-modal-title').textContent = `🎯 ${data.roomName || roomId}`;
-                if (data.status === 'waiting') renderShefuWaitingRoom(data);
-                else if (data.status === 'active') renderShefuActiveRound(data);
-                else if (data.status === 'question-reveal') renderShefuQuestionReveal(data);
-                else if (data.status === 'gameover') renderShefuGameOver(data);
+                dispatchShefuRender(doc.data());
             }, err => {
                 console.warn('房間同步失敗', err);
             });
+        }
+        // 依房間文件目前的狀態決定要渲染哪個畫面。抽成獨立函式是因為除了onSnapshot自動觸發，
+        // 「出題失敗，重新同步一次畫面」這種錯誤復原情境也需要手動呼叫同一套判斷邏輯
+        function dispatchShefuRender(data) {
+            shefuGameState.isHost = data.hostUid === currentUser.uid;
+
+            // 偵測「這次同步比上次多出來的猜中者」，播放命中動畫+顯示是誰猜中拿了幾分——
+            // 不管是回合推進(還有下一回合)還是這一題結束(進入揭曉畫面)，只要correctGuessers
+            // 比上次看到的多，就代表這次批次判定又有新的人射中了。用currentQuestionIndex
+            // 當key，換題目的時候自然歸零重算，不用另外處理重設
+            const correctGuessers = data.correctGuessers || [];
+            const seenKey = String(data.currentQuestionIndex);
+            if (shefuGameState.lastSeenCorrectKey !== seenKey) {
+                shefuGameState.lastSeenCorrectKey = seenKey;
+                shefuGameState.lastSeenCorrectCount = 0;
+            }
+            if (correctGuessers.length > shefuGameState.lastSeenCorrectCount) {
+                const newHits = correctGuessers.slice(shefuGameState.lastSeenCorrectCount);
+                shefuGameState.lastSeenCorrectCount = correctGuessers.length;
+                playShefuHitAnimation(newHits);
+            }
+
+            document.getElementById('game-modal-title').textContent = `🎯 ${data.roomName || shefuGameState.roomId}`;
+
+            // 「AI出題中，請稍後...」的鎖定畫面：按下「開始遊戲」或揭曉畫面「準備好進下一題」
+            // 的當下就先鎖住、顯示這個畫面，直到房間狀態真的變成active(新題目已經準備好、
+            // 第一句線索已經公開)或gameover(全部題目出完了)才解除——不能一收到Firestore
+            // 同步就解除，因為Worker還在呼叫Gemini生成線索的這段期間，status實際上仍然
+            // 停留在原本的waiting/question-reveal，這裡要主動攔下來，不能照平常的狀態機走
+            if (shefuGameState.loadingMessage) {
+                if (data.status === 'active' || data.status === 'gameover') {
+                    shefuGameState.loadingMessage = null;
+                } else {
+                    renderShefuLoading(shefuGameState.loadingMessage);
+                    return;
+                }
+            }
+
+            if (data.status === 'waiting') renderShefuWaitingRoom(data);
+            else if (data.status === 'active') renderShefuActiveRound(data);
+            else if (data.status === 'question-reveal') renderShefuQuestionReveal(data);
+            else if (data.status === 'gameover') renderShefuGameOver(data);
+        }
+        function renderShefuLoading(message) {
+            document.getElementById('game-modal-body').innerHTML = `
+                <div class="text-center py-16">
+                    <p class="text-4xl mb-3">🔮</p>
+                    <p class="font-semibold">${escapeHtml(message)}</p>
+                </div>
+            `;
+        }
+        // 出題請求失敗時的復原：清掉鎖定訊息、重新讀一次房間現況、依現況重新渲染正確的畫面——
+        // 不能只是alert完就放著不管，不然畫面會一直卡在loading，玩家會以為遊戲當掉了
+        async function resyncShefuRoom() {
+            if (!shefuGameState.roomId) return;
+            try {
+                const doc = await db.collection('shefuGameRooms').doc(shefuGameState.roomId).get();
+                if (doc.exists) dispatchShefuRender(doc.data());
+            } catch (err) { console.warn('重新同步房間失敗', err); }
         }
 
         // ---------- 猜中時的命中動畫：Lottie動畫疊在畫面最上層，附上是誰猜中拿了幾分的字幕 ----------
@@ -11817,6 +11860,11 @@
         }
         async function startShefuGame() {
             if (!shefuGameState.isHost) return;
+            // 按下去的當下就先鎖住畫面、顯示「AI出題中」——不用等Worker回應才鎖，
+            // 因為Gemini出題這段期間房間狀態暫時還是原本的waiting，如果不主動鎖住，
+            // 使用者會看到按鈕還可以按、以為沒反應而重複點擊
+            shefuGameState.loadingMessage = 'AI出題中，請稍後...';
+            renderShefuLoading(shefuGameState.loadingMessage);
             const ref = db.collection('shefuGameRooms').doc(shefuGameState.roomId);
             const doc = await ref.get();
             if (!doc.exists) return;
@@ -11837,9 +11885,15 @@
                 const result = await res.json();
                 if (!res.ok && !result.alreadyAdvanced) {
                     alert('出題失敗：' + (result.error || `伺服器回應(${res.status})`));
+                    // 失敗的話不能讓畫面一直卡在「AI出題中」——清掉鎖定狀態、重新讀一次
+                    // 房間現況，依現況畫面正確的畫面（例如回到等待室或揭曉畫面）
+                    shefuGameState.loadingMessage = null;
+                    await resyncShefuRoom();
                 }
             } catch (err) {
                 alert('出題失敗：' + err.message);
+                shefuGameState.loadingMessage = null;
+                await resyncShefuRoom();
             }
         }
 
@@ -11881,7 +11935,7 @@
             document.getElementById('game-modal-body').innerHTML = `
                 <p class="text-xs text-center mb-2" style="color:var(--muted)">第 ${data.currentQuestionIndex + 1}／${data.totalQuestions} 題・第 ${data.currentRound}／3 回合${data.category ? `・${escapeHtml(data.category)}` : ''}</p>
                 <div class="mb-3">${hintsHtml}</div>
-                <p id="shefu-round-timer" class="text-center text-2xl font-bold mb-2">00:${String(SHEFU_ROUND_TIME_LIMIT).padStart(2, '0')}</p>
+                <p id="shefu-round-timer" class="text-center text-2xl font-bold mb-2">${shefuFormatMmSs(SHEFU_ROUND_TIME_LIMIT)}</p>
                 ${correctListHtml ? `<div class="mb-2">${correctListHtml}</div>` : ''}
                 ${canGuess ? `
                 <div class="flex gap-2 mb-1">
@@ -11904,11 +11958,13 @@
             `;
             startShefuRoundTimer(data);
 
-            // 全部人這回合都已經沒有機會再送出了(猜中過、或次數用完)，不用等時間到，
-            // 直接提前觸發批次判定——跟靈魂畫手「全部人都送出畫作就提前評分」是同一個精神
+            // 使用者反應「大家答案都送出了就不用等時間到，不需要乾等」——原本要「用完兩次
+            // 機會或猜中過」才算這個人done，但玩家其實常常只想送一次就停手看結果，不代表他
+            // 放棄了剩下的機會。改成只要這個人這回合「送出過至少一次」就算done，跟靈魂畫手
+            // 「全部人都送出畫作就提前評分」同一個精神，避免大家明明都答完了還要乾等到倒數結束
             const allDone = data.members.every(m => {
                 if (correctGuessers.some(c => c.uid === m.uid)) return true;
-                return (roundSubmissions[m.uid] || []).length >= SHEFU_MAX_ATTEMPTS_PER_ROUND;
+                return (roundSubmissions[m.uid] || []).length >= 1;
             });
             if (allDone && !shefuGameState.advanceTriggered) {
                 shefuGameState.advanceTriggered = true;
@@ -11953,7 +12009,7 @@
                 const remain = Math.max(0, Math.round((deadline - Date.now()) / 1000));
                 const el = document.getElementById('shefu-round-timer');
                 if (el) {
-                    el.textContent = `00:${String(remain).padStart(2, '0')}`;
+                    el.textContent = shefuFormatMmSs(remain);
                     el.style.color = remain <= 10 ? 'var(--danger)' : '';
                 }
                 if (remain <= 0) {
@@ -12050,6 +12106,9 @@
             if (shefuGameState.advanceTriggered) return;
             shefuGameState.advanceTriggered = true;
             if (shefuGameState.timerInterval) { clearInterval(shefuGameState.timerInterval); shefuGameState.timerInterval = null; }
+            // 跟startShefuGame()一樣，觸發的當下就先鎖畫面顯示「AI出題中」，不用等Worker回應
+            shefuGameState.loadingMessage = 'AI出題中，請稍後...';
+            renderShefuLoading(shefuGameState.loadingMessage);
             await requestShefuNewQuestion(data.currentQuestionIndex + 1, data.totalQuestions, data.usedAnswers || []);
         }
 
