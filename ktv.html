@@ -455,6 +455,7 @@
                 <h2 style="margin-bottom:0.6rem;">🎉 建立新房間</h2>
                 <input id="create-room-name" type="text" placeholder="房間名稱（選填）">
                 <input id="create-room-passcode" type="text" placeholder="房間代碼（選填，留空任何人都能加入）">
+                <input id="create-room-maxmembers" type="number" min="2" max="100" placeholder="最多幾人（選填，留空不限制）">
                 <button class="btn" onclick="createRoom()">建立房間</button>
             </div>
         </div>
@@ -830,7 +831,7 @@
                     ${icon}
                     <div class="info">
                         <div class="name">${escapeHtmlKtv(room.name || room.id)}</div>
-                        <div class="sub">房主：${escapeHtmlKtv(hostNames[i])} · 👥 ${counts[i]}人</div>
+                        <div class="sub">房主：${escapeHtmlKtv(hostNames[i])} · 👥 ${counts[i]}${room.maxMembers ? `/${room.maxMembers}` : ''}人</div>
                     </div>
                     ${room.passcode ? '<span class="lock-icon">🔒</span>' : ''}
                 </div>`;
@@ -856,9 +857,16 @@
                 return;
             }
             const room = doc.data();
+            const isMeHost = room.hostUid === currentUser.uid;
+            // 人數上限檢查：只對非房主的一般成員生效，房主重新加入自己的房間不受這個限制——
+            // 這是房主自己的房間，不該因為額滿就連自己都進不去
+            if (!isMeHost && room.maxMembers) {
+                const full = await isRoomFull(roomId, room.maxMembers);
+                if (full) { alert(`這個房間已經滿了（最多 ${room.maxMembers} 人）`); return; }
+            }
             // 房主重新加入自己的房間，不用再輸入密碼——不然萬一忘記自己設的密碼，
             // 會連自己的房間都進不去，變成刪不掉、也管理不了
-            if (room.passcode && room.hostUid !== currentUser.uid) {
+            if (room.passcode && !isMeHost) {
                 pendingJoinRoomId = roomId;
                 document.getElementById('passcode-modal-input').value = '';
                 document.getElementById('passcode-modal-backdrop').classList.remove('hidden');
@@ -867,12 +875,21 @@
                 // 這裡中間已經跑過幾次await查詢，使用者剛才點擊的「授權」可能已經過期而被瀏覽器
                 // 拒絕全螢幕請求——但嘗試一次無傷大雅(失敗會被.catch安靜忽略)，就算被拒絕，
                 // 畫面切換到房主視圖的部分還是會生效，使用者能看到「全螢幕開始使用」按鈕手動點一次
-                const isMeHost = room.hostUid === currentUser.uid;
                 if (isMeHost) prepareHostViewForFullscreen();
                 enterRoom(roomId, isMeHost, room.name);
             }
         } catch (err) {
             alert('加入房間失敗：' + err.message);
+        }
+    }
+    // 檢查房間目前的真實成員人數(直接查子集合筆數，跟房間列表用同一套邏輯)是不是已經達到上限
+    async function isRoomFull(roomId, maxMembers) {
+        try {
+            const memberSnap = await db.collection('ktvRooms').doc(roomId).collection('members').get();
+            return memberSnap.size >= maxMembers;
+        } catch (err) {
+            console.warn('檢查房間人數失敗，先放行避免誤擋', err);
+            return false; // 查詢失敗的話選擇放行，不要因為檢查本身出錯而讓正常使用者進不去房間
         }
     }
     async function confirmJoinWithPasscode() {
@@ -888,6 +905,10 @@
             }
             const room = doc.data();
             if (room.passcode !== input) { alert('房間代碼不正確'); return; }
+            if (room.maxMembers) {
+                const full = await isRoomFull(roomId, room.maxMembers);
+                if (full) { alert(`這個房間已經滿了（最多 ${room.maxMembers} 人）`); closePasscodeModal(); return; }
+            }
             closePasscodeModal();
             enterRoom(roomId, room.hostUid === currentUser.uid, room.name);
         } catch (err) {
@@ -928,10 +949,15 @@
         const myName = await resolveMyDisplayName();
         const name = document.getElementById('create-room-name').value.trim() || `${myName}的房間`;
         const passcode = document.getElementById('create-room-passcode').value.trim();
+        const maxMembersRaw = document.getElementById('create-room-maxmembers').value.trim();
+        let maxMembers = null; // null代表不限制人數(維持原本的行為，房主沒特別設定就不設上限)
+        if (maxMembersRaw) {
+            maxMembers = Math.min(100, Math.max(2, parseInt(maxMembersRaw, 10) || 2));
+        }
         const roomId = generateRoomCode();
         try {
             await db.collection('ktvRooms').doc(roomId).set({
-                name, passcode: passcode || null,
+                name, passcode: passcode || null, maxMembers,
                 hostUid: currentUser.uid, hostName: myName,
                 queue: [], roomIcon: null,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
