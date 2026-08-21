@@ -11644,7 +11644,7 @@
                     status: 'waiting', // waiting / active / question-reveal / gameover
                     totalQuestions, currentQuestionIndex: -1, currentRound: 0,
                     hints: [], category: null, roundStartAtMs: null, questionRevealStartMs: null,
-                    roundSubmissions: {}, correctGuessers: [], revealedAnswer: null,
+                    roundSubmissions: {}, roundDoneUids: [], correctGuessers: [], revealedAnswer: null,
                     cumulativeScores: {}, usedAnswers: [], scoresSaved: false,
                     readyUids: [], nextQuestionReadyUids: [],
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -11910,7 +11910,14 @@
             const roundSubmissions = data.roundSubmissions || {};
             const mySubs = roundSubmissions[myUid] || [];
             const remaining = Math.max(0, SHEFU_MAX_ATTEMPTS_PER_ROUND - mySubs.length);
-            const canGuess = !iAlreadyCorrect && remaining > 0;
+            const hasAttemptsLeft = !iAlreadyCorrect && remaining > 0;
+            // roundDoneUids：玩家自己按「不用等我」主動放棄剩下的機會（通常是送出過一次、
+            // 覺得沒把握再猜也是浪費，想讓回合早點結束）。這是純粹的Firestore欄位切換，
+            // 不會多打任何一次Gemini——跟「每人最多猜2次」的設計不衝突：想用第2次機會的人
+            // 就不用按這顆按鈕，回合不會因為別人按了就跳過你還沒送出的機會
+            const roundDoneUids = data.roundDoneUids || [];
+            const iAmDone = roundDoneUids.includes(myUid);
+            const canGuess = hasAttemptsLeft && !iAmDone;
 
             const hintsHtml = (data.hints || []).map((h, i) => `
                 <div class="px-3 py-2 rounded-xl mb-1.5" style="background:${i === data.currentRound - 1 ? 'var(--jam)' : 'var(--cream)'}; color:${i === data.currentRound - 1 ? 'white' : ''};">
@@ -11942,13 +11949,15 @@
                     <input id="shefu-guess-input" placeholder="輸入你的猜測，按Enter或按鈕送出" class="form-input flex-1" onkeydown="if(event.key==='Enter') submitShefuGuess()">
                     <button id="shefu-guess-submit-btn" onclick="submitShefuGuess()" class="btn-amber whitespace-nowrap">送出(${remaining})</button>
                 </div>
-                <p class="text-xs text-center mb-3" style="color:var(--muted)">送出後還不知道對不對，這回合結束時AI會一次公布結果</p>
+                <p class="text-xs text-center mb-2" style="color:var(--muted)">送出後還不知道對不對，這回合結束時AI會一次公布結果</p>
+                ${mySubs.length > 0 ? `<button onclick="toggleShefuRoundDone(true)" class="btn-secondary w-full mb-3 text-xs">🙋 不用等我了，我這回合猜完了</button>` : ''}
                 ` : `
                 <div class="flex gap-2 mb-1">
-                    <input placeholder="這回合沒有機會了" class="form-input flex-1" disabled style="opacity:.5;">
-                    <button class="btn-amber whitespace-nowrap" disabled style="opacity:.4;">送出(0)</button>
+                    <input placeholder="${iAmDone ? '你標記了不用等你' : '這回合沒有機會了'}" class="form-input flex-1" disabled style="opacity:.5;">
+                    <button class="btn-amber whitespace-nowrap" disabled style="opacity:.4;">送出(${iAmDone ? remaining : 0})</button>
                 </div>
-                <p class="text-center text-xs mb-3" style="color:var(--muted)">${iAlreadyCorrect ? '🎉 你已經猜中了，等其他人或下一回合吧' : '這回合的次數用完了，等結果公布吧'}</p>
+                <p class="text-center text-xs mb-2" style="color:var(--muted)">${iAlreadyCorrect ? '🎉 你已經猜中了，等其他人或下一回合吧' : iAmDone ? '你標記了不用等你，這回合結束時AI會公布結果' : '這回合的次數用完了，等結果公布吧'}</p>
+                ${(iAmDone && hasAttemptsLeft) ? `<button onclick="toggleShefuRoundDone(false)" class="btn-secondary w-full mb-3 text-xs">↩️ 取消標記，我還想再猜一次</button>` : ''}
                 `}
                 <div class="rounded-2xl px-3 py-3" style="background:var(--cream)">
                     <p class="text-xs font-semibold mb-1.5">💬 即時搶答動態</p>
@@ -11958,13 +11967,15 @@
             `;
             startShefuRoundTimer(data);
 
-            // 使用者反應「大家答案都送出了就不用等時間到，不需要乾等」——原本要「用完兩次
-            // 機會或猜中過」才算這個人done，但玩家其實常常只想送一次就停手看結果，不代表他
-            // 放棄了剩下的機會。改成只要這個人這回合「送出過至少一次」就算done，跟靈魂畫手
-            // 「全部人都送出畫作就提前評分」同一個精神，避免大家明明都答完了還要乾等到倒數結束
+            // 使用者反應「大家答案都送出了就不用等時間到，不需要乾等」——但「送出過一次就算done」
+            // 跟「每人最多猜2次」互相打架：房間裡最後一人一送出，回合立刻結束，沒人來得及用
+            // 第2次機會。改成看roundDoneUids：這個人已經猜中、次數用完、或自己主動按了
+            // 「不用等我」才算done；單純送出過一次但沒按這顆按鈕，不算——保留真的想用第2次
+            // 機會的人繼續等，同時讓已經有把握的人可以自己選擇提早讓出，不用被迫乾等到時間到
             const allDone = data.members.every(m => {
                 if (correctGuessers.some(c => c.uid === m.uid)) return true;
-                return (roundSubmissions[m.uid] || []).length >= 1;
+                if ((roundSubmissions[m.uid] || []).length >= SHEFU_MAX_ATTEMPTS_PER_ROUND) return true;
+                return roundDoneUids.includes(m.uid);
             });
             if (allDone && !shefuGameState.advanceTriggered) {
                 shefuGameState.advanceTriggered = true;
@@ -12000,6 +12011,18 @@
                 alert('送出失敗：' + err.message);
                 if (btn) btn.disabled = false;
             }
+        }
+        // 玩家自己標記「這回合不用等我了」（或反悔取消）——純粹切換一個公開欄位，
+        // 不會呼叫Worker、不會多花一次AI額度，只是讓allDone的判斷提早把這個人算進去
+        async function toggleShefuRoundDone(done) {
+            const ref = db.collection('shefuGameRooms').doc(shefuGameState.roomId);
+            try {
+                await ref.update({
+                    roundDoneUids: done
+                        ? firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+                        : firebase.firestore.FieldValue.arrayRemove(currentUser.uid),
+                });
+            } catch (err) { console.warn('切換「不用等我」狀態失敗', err); }
         }
         function startShefuRoundTimer(data) {
             if (shefuGameState.timerInterval) clearInterval(shefuGameState.timerInterval);
@@ -12157,7 +12180,7 @@
                 await db.collection('shefuGameRooms').doc(shefuGameState.roomId).update({
                     status: 'waiting', currentQuestionIndex: -1, currentRound: 0,
                     hints: [], category: null, roundStartAtMs: null, questionRevealStartMs: null,
-                    roundSubmissions: {}, correctGuessers: [], revealedAnswer: null,
+                    roundSubmissions: {}, roundDoneUids: [], correctGuessers: [], revealedAnswer: null,
                     cumulativeScores: {}, usedAnswers: [], scoresSaved: false,
                     readyUids: [], nextQuestionReadyUids: [],
                 });
