@@ -324,11 +324,10 @@
 
   /* 目標地圖(敵方海域)：紅色調強調「這裡是敵對區域」，加上格子hover發光效果，
      維持扁平呈現放在側邊欄(不像自己的地圖占主畫面3D空間，避免版面太擠) */
-  .mp-target-stage { padding: 8px 0; }
-  .mp-target-frame { position: relative; background: linear-gradient(155deg, #2a0e0e, #1a0808); border: 1px solid var(--critical); border-radius: 4px; padding: 3px; box-shadow: 0 0 24px -6px rgba(214,69,69,.4), inset 0 0 0 1px rgba(214,69,69,.15); }
-  .mp-target-grid { display: grid; grid-template-columns: repeat(20,1fr); grid-template-rows: repeat(20,1fr); gap: 1px; background: #4a2020; aspect-ratio: 1/1; border-radius: 3px; overflow: hidden; }
-  .mp-target-cell { background: #1a0e0e; cursor: crosshair; transition: background .12s; }
-  .mp-target-cell:hover { background: #4a1a1a; box-shadow: inset 0 0 8px rgba(255,90,90,.5); }
+  /* 自己地圖可以開火時的視覺提示：格子邊框帶紅色微光、滑鼠變準心，明確提示「這裡可以點擊開火」 */
+  .mp-fireable { cursor: crosshair; box-shadow: inset 0 0 0 1px rgba(214,69,69,.35); }
+  .mp-fireable:hover { background: #2a1414 !important; box-shadow: inset 0 0 8px rgba(255,90,90,.6); }
+  .mp-fire-hint { font-size: 11px; color: var(--critical); font-weight: 700; margin-top: 8px; text-align: center; }
 
 
   @media (max-width: 500px) {
@@ -1434,6 +1433,7 @@
     mpBattleUnsubscribe = roomRef.collection('privateCombatState').doc(mpCurrentUser.uid).onSnapshot(doc => {
       if (!doc.exists) return; // 房主可能還在初始化中，稍等它建立
       mpMyCombatState = doc.data();
+      checkIncomingAttack(mpMyCombatState); // 偵測有沒有新的攻擊打過來，觸發砲彈落下動畫
       if (window.__mpLastRoomData) renderMpBattleView(window.__mpLastRoomData);
     });
   }
@@ -1691,20 +1691,16 @@
       return `<button class="mp-ship-btn ${mpBattleSelectedWeapon === key ? 'selected' : ''}" ${depleted ? 'disabled' : ''} onclick="mpBattleSelectedWeapon='${key}'; renderMpBattleView(window.__mpLastRoomData);"><b>${w.name}</b>威力${w.power}・剩餘${left}</button>`;
     }).join('');
 
-    let targetGridHtml = '';
-    if (mpTargetDirection) {
-      let cellsHtml = '';
-      for (let r = 1; r <= MAP_SIZE; r++) for (let c = 1; c <= MAP_SIZE; c++) {
-        cellsHtml += `<div class="mp-target-cell" onclick="mpFireAt(${r},${c})" title="${colLetter(c)}${r}"></div>`;
-      }
-      targetGridHtml = `<div class="mp-target-stage"><div class="mp-target-frame"><div class="mp-target-grid">${cellsHtml}</div></div></div>`;
-    }
+    // 開火提示：選好目標方位後，直接在下方「自己的地圖」上點座標開火(不是另外一張要點擊的
+    // 敵方網格——那是之前理解錯誤做的東西，已經拿掉)。點擊自己地圖座標時，自己畫面會看到
+    // 砲彈往上發射，對方會在他自己的地圖同一個座標看到砲彈落下
+    const canFireNow = isMyTurn && !!mpTargetDirection;
 
     document.getElementById('mp-root').innerHTML = `
       <div class="mp-battle-layout">
         <div class="mp-battle-main">
           <p class="mp-turn-banner ${isMyTurn ? 'active' : ''}">${isMyTurn ? '👉 輪到你了！' : `⏳ 等待 ${escapeHtmlMp(roomData.members.find(m => m.uid === roomData.turnOrder[roomData.currentTurnIndex]).name)} 行動...`}</p>
-          <p style="font-size:12px; color:var(--muted);">你是 <b style="color:var(--scan);">${DIRECTION_LABEL[myDirection]}</b>（${spec.name}）</p>
+          <p style="font-size:12px; color:var(--muted);">你是 <b style="color:var(--scan);">${DIRECTION_LABEL[myDirection]}</b>（${spec.name}）${canFireNow ? `　<b style="color:var(--critical);">🎯 點地圖座標對${DIRECTION_LABEL[mpTargetDirection]}開火</b>` : ''}</p>
           <div class="mp-own-board">
             <div class="map-stage" id="mp-own-map-stage">
               <div class="map-tilt" id="mp-own-map-tilt">
@@ -1731,7 +1727,7 @@
           <div class="turn-panel">
             <p class="weapon-title">🎯 選擇要攻擊的海域</p>
             <div class="mp-direction-grid">${targetBtns || '<p style="font-size:11px; color:var(--muted);">沒有可攻擊的對手</p>'}</div>
-            ${mpTargetDirection ? `<p class="weapon-title">選擇武器</p><div class="mp-ship-grid">${weaponBtns}</div><p class="weapon-title">在下方點座標開火（盲打）</p>${targetGridHtml}` : ''}
+            ${mpTargetDirection ? `<p class="weapon-title">選擇武器</p><div class="mp-ship-grid">${weaponBtns}</div><p class="mp-fire-hint">👈 選好武器後，回到左邊點自己地圖上的座標開火</p>` : ''}
           </div>
           <div class="log-panel mono" id="mp-combat-log">${(roomData.combatLog || []).slice(-14).reverse().map(t => `<p style="margin:0;">${escapeHtmlMp(t)}</p>`).join('')}</div>
         </div>
@@ -1739,10 +1735,13 @@
     `;
     window.__mpLastRoomData = roomData;
 
-    // 自己的船用跟單機demo一樣的渲染方式畫在自己的20x20格上
+    // 自己的船用跟單機demo一樣的渲染方式畫在自己的20x20格上；格子本身現在要能點擊開火
+    // (選好目標方位才會真的生效，mpFireAt內部會檢查)
     const ownGridEl = document.getElementById('mp-own-grid');
     let cellsHtml = '';
-    for (let r = 1; r <= MAP_SIZE; r++) for (let c = 1; c <= MAP_SIZE; c++) cellsHtml += `<div class="cell"></div>`;
+    for (let r = 1; r <= MAP_SIZE; r++) for (let c = 1; c <= MAP_SIZE; c++) {
+      cellsHtml += `<div class="cell ${canFireNow ? 'mp-fireable' : ''}" data-row="${r}" data-col="${c}" onclick="mpFireAt(${r},${c})"></div>`;
+    }
     ownGridEl.innerHTML = cellsHtml;
     const shipEl = document.createElement('div');
     shipEl.className = `ship-block type-${mpMyCombatState.shipType} state-${stateClass} heading-${mpMyCombatState.heading}`;
@@ -1851,10 +1850,10 @@
     } catch (err) { console.warn('結束回合失敗', err); }
   }
 
-  // ---------- 開火：盲打，讀取目標玩家的私有戰鬥狀態判定命中，寫回雙方看得到的公開戰報 ----------
-  // 開火：呼叫Worker的naval_battle_fire動作，由Worker用service account的權限同時讀寫
-  // 攻擊方跟防守方的私有戰鬥資料，判定命中/套用傷害/寫入模糊戰報，前端這裡只會拿到
-  // 「有沒有命中」這個布林值，不會讀到任何精確的座標或血量數字——真正的伺服器端隔離
+  // ---------- 開火：選定目標方位後，點擊「自己」地圖上的座標——自己畫面看到砲彈往上發射，
+  // 對方會在他自己的地圖同一個座標看到砲彈落下(見下面的incomingAttack監聽處理)。
+  // 開火判定本身透過Worker伺服器端處理，前端只會拿到「有沒有命中」，不會讀到任何精確的
+  // 座標或血量數字——真正的伺服器端隔離 ----------
   async function mpFireAt(row, col) {
     if (mpFiringLock) return;
     if (!mpTargetDirection) { console.warn('[開火] 沒有選擇目標方位，取消'); return; }
@@ -1867,6 +1866,24 @@
     }
     mpFiringLock = true;
     playFireSound();
+
+    // 從自己地圖上被點擊的座標，往上發射砲彈的視覺(跟單機demo的落下動畫方向相反)——
+    // 代表「我方砲彈射向對方」，不是對方砲彈打過來
+    const cellEl = document.querySelector(`#mp-own-grid .cell[data-row="${row}"][data-col="${col}"]`);
+    if (cellEl) {
+      const rect = cellEl.getBoundingClientRect();
+      const startX = rect.left + rect.width / 2, startY = rect.top + rect.height / 2;
+      const shell = document.createElement('div');
+      shell.className = 'shell';
+      shell.style.left = startX + 'px';
+      shell.style.top = startY + 'px';
+      document.body.appendChild(shell);
+      requestAnimationFrame(() => {
+        shell.style.transition = 'top .55s cubic-bezier(.35,0,.7,1)';
+        shell.style.top = '-30px'; // 往上飛出畫面外
+      });
+      setTimeout(() => shell.remove(), 600);
+    }
 
     try {
       const idToken = await mpCurrentUser.getIdToken();
@@ -1895,20 +1912,44 @@
         mpFiringLock = false;
         return;
       }
-      // 不管命中與否，畫面上的視覺回饋(爆炸特效/落空水花)直接在這裡播放——命中與否
-      // Worker已經回傳了(data.hit)，但實際的血量/座標更動是Worker寫進Firestore的，
-      // 會透過onSnapshot監聽自動反映到畫面上，這裡不用自己再算一次
-      const cellEl = document.querySelector(`.mp-target-cell:nth-child(${(row - 1) * MAP_SIZE + col})`);
-      if (cellEl) {
-        const rect = cellEl.getBoundingClientRect();
-        spawnBlast(rect.left + rect.width / 2, rect.top + rect.height / 2, !!data.hit, 1);
-      }
-      mpTargetDirection = null;
+      // 命中/落空的結果已經寫進公開戰報(combatLog)，會透過房間監聽自動顯示在戰報欄，
+      // 這裡不需要額外顯示——真正的爆炸/水花視覺效果發生在「對方」的畫面上(見incomingAttack監聽)
     } catch (err) {
       console.error('[開火] 發生例外錯誤(可能是網路問題、CORS、或Worker網址設定錯誤)', err);
       alert('開火失敗（網路或連線問題）：' + err.message + '\n請打開瀏覽器主控台(F12)查看詳細錯誤');
     }
     mpFiringLock = false;
+  }
+
+  // 接收攻擊：偵測自己的privateCombatState裡有沒有出現「新的」incomingAttack(用nonce比對，
+  // 避免同一次攻擊因為畫面重新渲染就重複播放動畫)。有的話，在「自己」的地圖上對應座標
+  // 播放砲彈落下的動畫+命中或落空的爆炸/水花特效——這就是對方在他畫面點座標開火時，
+  // 我方畫面應該看到的效果
+  let mpLastProcessedAttackNonce = null;
+  function checkIncomingAttack(state) {
+    const atk = state.incomingAttack;
+    if (!atk || atk.nonce === mpLastProcessedAttackNonce) return;
+    mpLastProcessedAttackNonce = atk.nonce;
+    const cellEl = document.querySelector(`#mp-own-grid .cell[data-row="${atk.row}"][data-col="${atk.col}"]`);
+    if (!cellEl) return;
+    const rect = cellEl.getBoundingClientRect();
+    const targetX = rect.left + rect.width / 2, targetY = rect.top + rect.height / 2;
+    const shell = document.createElement('div');
+    shell.className = 'shell';
+    shell.style.left = targetX + 'px';
+    shell.style.top = '-30px';
+    document.body.appendChild(shell);
+    requestAnimationFrame(() => {
+      shell.style.transition = 'top .65s cubic-bezier(.45,0,.85,1)';
+      shell.style.top = targetY + 'px';
+    });
+    setTimeout(() => {
+      shell.remove();
+      playExplosionSound(atk.isHit, atk.isHit ? { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } : null);
+      spawnBlast(targetX, targetY, atk.isHit, 1);
+      cellEl.classList.add(atk.isHit ? 'flash-hit' : 'flash-miss');
+      setTimeout(() => cellEl.classList.remove(atk.isHit ? 'flash-hit' : 'flash-miss'), 500);
+    }, 650);
   }
 
   async function leaveMpRoom() {
