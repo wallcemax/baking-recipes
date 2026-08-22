@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>海戰指揮室｜Just Do Eat</title>
+<script>
+  // 越早設定越好：在CSS載入、任何內容渲染之前，就先算出瀏覽器實際可視高度設成CSS變數，
+  // 避免第一次繪製時用到不準確的vh/dvh單位、渲染出錯誤版面後才被JS修正過來的閃爍畫面。
+  // 這個變數之後在<style>裡的html,body會用到
+  document.documentElement.style.setProperty('--real-vh', window.innerHeight + 'px');
+</script>
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
@@ -23,7 +29,7 @@
     --wreck: #3a2e2e;
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; height: 100dvh; margin: 0; overflow: hidden; } /* 頁面本身完全不捲動，內部個別區塊按需要自己捲動；100dvh修正行動裝置瀏覽器(尤其是應用程式內嵌瀏覽器)網址列動態顯示/隱藏造成的高度計算誤差 */
+  html, body { height: 100%; height: var(--real-vh, 100dvh); margin: 0; overflow-y: auto; overflow-x: hidden; } /* 用JS動態量測的實際可視高度(--real-vh)取代不可靠的vh/dvh單位計算，相容性比純CSS dvh更好；overflow-y改成auto當安全網，萬一高度計算還有誤差，至少能捲動看到全部內容，不會被完全鎖死看不到 */
   body {
     background:
       radial-gradient(ellipse at 50% -10%, #0e2f42 0%, transparent 55%),
@@ -388,6 +394,17 @@
     .move-btn { padding: 6px 4px; font-size: 14px; min-width: 40px; }
     .move-btn .btn-label { font-size: 9px; }
     .log-panel { height: 90px; }
+  }
+
+  /* 手機安全網：涵蓋所有窄螢幕或矮螢幕的情況(不管直向橫向)。移除.stage跟.game-layout的
+     min-height:0強制縮小行為——那個寫法會讓內容乖乖壓縮塞進可用空間，就算body本身設定
+     可以捲動，也沒有東西會真的超出邊界觸發捲動。改成min-height:auto讓內容用自然高度撐開，
+     如果真的比螢幕還高，就會確實超出body邊界，這樣才能捲動到被藏起來的部分。這是最後一道
+     防線：桌面版跟正常情況下的手機，因為--real-vh計算通常是準確的，內容剛好貼合可視空間，
+     min-height:auto幾乎不會造成視覺差異；只有計算真的出現誤差時，這個安全網才會真正發揮作用 */
+  @media (max-width: 780px), (max-height: 500px) {
+    .stage { min-height: auto; }
+    .game-layout { min-height: auto; }
   }
 </style>
 </head>
@@ -1315,6 +1332,21 @@
         <span class="wmeta">威力${w.power}・剩餘${left}</span>
       </button>`;
     }).join('');
+  }
+
+  // 動態量測瀏覽器實際可視高度，設成CSS變數給html/body用——比CSS的vh/dvh單位可靠，
+  // 因為直接用window.innerHeight(瀏覽器實際回報的可視區域)，不依賴瀏覽器對新版CSS單位
+  // (dvh在部分應用程式內嵌瀏覽器，例如Messenger的內嵌瀏覽器，可能不支援)的支援程度。
+  // resize事件處理手機網址列顯示/隱藏、螢幕旋轉；visualViewport(如果瀏覽器支援)更精確
+  // 處理行動裝置鍵盤彈出等場景
+  function setRealViewportHeight() {
+    document.documentElement.style.setProperty('--real-vh', window.innerHeight + 'px');
+  }
+  setRealViewportHeight();
+  window.addEventListener('resize', setRealViewportHeight);
+  window.addEventListener('orientationchange', () => setTimeout(setRealViewportHeight, 100));
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', setRealViewportHeight);
   }
 
   renderGrid();
