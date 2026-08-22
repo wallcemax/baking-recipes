@@ -23,7 +23,7 @@
     --wreck: #3a2e2e;
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; overflow: hidden; } /* 頁面本身完全不捲動，內部個別區塊按需要自己捲動 */
+  html, body { height: 100%; height: 100dvh; margin: 0; overflow: hidden; } /* 頁面本身完全不捲動，內部個別區塊按需要自己捲動；100dvh修正行動裝置瀏覽器(尤其是應用程式內嵌瀏覽器)網址列動態顯示/隱藏造成的高度計算誤差 */
   body {
     background:
       radial-gradient(ellipse at 50% -10%, #0e2f42 0%, transparent 55%),
@@ -74,7 +74,7 @@
   }
   /* 座標標籤：字母標在頂端、數字標在左側，故意放在.map-tilt外面(不受3D傾斜影響)，
      保持文字清晰好讀。用JS動態產生內容、對齊.map-tilt的實際尺寸位置 */
-  .map-coord-labels { position: absolute; pointer-events: none; z-index: 5; font-family: monospace; font-size: 9px; color: var(--scan); opacity: .7; }
+  .map-coord-labels { position: absolute; pointer-events: none; z-index: 5; font-family: monospace; font-size: 13px; font-weight: 700; color: var(--scan); opacity: .85; }
   .map-coord-col-labels { display: flex; }
   .map-coord-col-labels span, .map-coord-row-labels span { display: flex; align-items: center; justify-content: center; }
   .map-coord-row-labels { display: flex; flex-direction: column; }
@@ -368,6 +368,26 @@
 
   @media (max-width: 500px) {
     .coord-mark::before { display: none; }
+  }
+
+  /* 橫向手機(矮螢幕)：用max-height判斷(不是max-width)，因為橫向手機的特徵是「矮」不是「窄」。
+     維持左右並排(不像直向那樣切成上下疊放，橫向寬度通常還夠用)，但壓縮標頭高度跟間距，
+     確保有限的垂直空間盡量留給地圇。這段刻意放在樣式表最後面，因為CSS特異度相同時
+     後面的規則才會生效，放在前面會被後面同特異度的基礎定義覆蓋掉、完全不會生效 */
+  @media (max-height: 480px) and (orientation: landscape) {
+    header { padding: 4px 10px 3px; }
+    .header-row { gap: 6px; }
+    h1 { font-size: 14px; }
+    .eyebrow { font-size: 7px; margin-bottom: 0; }
+    .back-links { padding-top: 0; gap: 6px; }
+    a.back-link, .legend-toggle-btn { font-size: 10px; padding: 3px 8px; }
+    .game-layout { gap: 6px; }
+    .game-sidebar { width: 220px; }
+    .turn-panel .turn-title { font-size: 12px; }
+    .turn-panel .health-readout { font-size: 12px; }
+    .move-btn { padding: 6px 4px; font-size: 14px; min-width: 40px; }
+    .move-btn .btn-label { font-size: 9px; }
+    .log-panel { height: 90px; }
   }
 </style>
 </head>
@@ -1759,9 +1779,10 @@
   // 選位置階段：所有人都確認位置後(members裡每個人的positioned都是true)，任何一個
   // 客戶端偵測到都可以觸發Worker做真正的開戰初始化——跟之前一樣用battleInitialized
   // 這個旗標防止重複執行，不需要限定只有房主觸發(反正Worker內部本身也有防重複的判斷)
+  let mpFinalizeRetryCount = 0;
   async function finalizeMpBattleIfReady(data) {
     if (data.battleInitialized) return;
-    if (!data.members.every(m => m.positioned)) return; // 還沒全部人選好位置
+    if (!data.members.every(m => m.positioned)) { mpFinalizeRetryCount = 0; return; } // 還沒全部人選好位置
     try {
       const idToken = await mpCurrentUser.getIdToken();
       const res = await fetch(NAVAL_WORKER_URL, {
@@ -1770,8 +1791,33 @@
         body: JSON.stringify({ action: 'naval_battle_init', idToken, roomId: mpRoomState.roomId }),
       });
       const result = await res.json();
-      if (!res.ok || result.error) console.warn('開戰初始化失敗', result.error);
-    } catch (err) { console.warn('開戰初始化失敗', err); }
+      if (!res.ok || result.error) {
+        console.warn('開戰初始化失敗', result.error);
+        // 自動重試最多3次(間隔1.5秒)：全部人都選好位置了卻失敗，很可能是短暫的資料同步延遲
+        // (例如Worker讀到的房間資料還沒反映最後一個人剛寫入的positioned:true)，重試通常會成功
+        if (mpFinalizeRetryCount < 3) {
+          mpFinalizeRetryCount++;
+          setTimeout(() => { if (window.__mpLastRoomData) finalizeMpBattleIfReady(window.__mpLastRoomData); }, 1500);
+        } else {
+          // 重試3次都還失敗，才真的把錯誤攤開給使用者看，並提供重新整理頁面的建議
+          const rootEl = document.getElementById('mp-root');
+          if (rootEl) {
+            const warnEl = document.createElement('p');
+            warnEl.style.cssText = 'color:var(--critical); font-size:12px; text-align:center; margin-top:10px;';
+            warnEl.textContent = `⚠️ 開戰初始化失敗：${result.error || '未知錯誤'}（已重試3次），請重新整理頁面再試一次`;
+            rootEl.appendChild(warnEl);
+          }
+        }
+      } else {
+        mpFinalizeRetryCount = 0;
+      }
+    } catch (err) {
+      console.warn('開戰初始化失敗', err);
+      if (mpFinalizeRetryCount < 3) {
+        mpFinalizeRetryCount++;
+        setTimeout(() => { if (window.__mpLastRoomData) finalizeMpBattleIfReady(window.__mpLastRoomData); }, 1500);
+      }
+    }
   }
 
   // 選位置畫面：玩家在自己的地圖上點一格當作船隻起始位置(可以點好幾次重選)，用旋轉按鈕
