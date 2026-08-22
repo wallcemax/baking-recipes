@@ -315,13 +315,20 @@
   .mp-battle-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .mp-turn-banner { background: var(--panel); border: 1px solid var(--grid-line-bright); border-radius: 8px; padding: 8px; text-align: center; font-weight: 800; font-size: 13px; margin: 0 0 6px; }
   .mp-turn-banner.active { background: linear-gradient(135deg, var(--scan), #2d9d90); color: #04211d; }
-  .mp-own-board { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 6px; }
-  .mp-own-grid { position: relative; display: grid; grid-template-columns: repeat(20,1fr); grid-template-rows: repeat(20,1fr); gap: 1px; background: var(--grid-line); border: 1px solid var(--grid-line-bright); border-radius: 4px; container-type: inline-size; }
+  /* 自己的地圖套用跟單機模式完全一致的3D傾斜雷達桌樣式(共用.map-stage/.map-tilt/.map-frame
+     這幾個class)，不再是陽春的平面格子 */
+  .mp-own-board { flex: 1; min-height: 0; }
+  .mp-own-grid { position: relative; width: 100%; height: 100%; display: grid; grid-template-columns: repeat(20,1fr); grid-template-rows: repeat(20,1fr); gap: 1px; background: var(--grid-line); container-type: inline-size; }
   .mp-own-grid .cell { background: #0a1c2c; }
   .mp-health-readout { text-align: center; font-size: 11px; color: var(--muted); font-family: monospace; margin: 4px 0 8px; }
-  .mp-target-grid { display: grid; grid-template-columns: repeat(20,1fr); grid-template-rows: repeat(20,1fr); gap: 1px; background: var(--grid-line); border: 1px solid var(--critical); border-radius: 4px; aspect-ratio: 1/1; margin-top: 6px; }
-  .mp-target-cell { background: #1a0e0e; cursor: crosshair; transition: background .1s; }
-  .mp-target-cell:hover { background: #3a1414; }
+
+  /* 目標地圖(敵方海域)：紅色調強調「這裡是敵對區域」，加上格子hover發光效果，
+     維持扁平呈現放在側邊欄(不像自己的地圖占主畫面3D空間，避免版面太擠) */
+  .mp-target-stage { padding: 8px 0; }
+  .mp-target-frame { position: relative; background: linear-gradient(155deg, #2a0e0e, #1a0808); border: 1px solid var(--critical); border-radius: 4px; padding: 3px; box-shadow: 0 0 24px -6px rgba(214,69,69,.4), inset 0 0 0 1px rgba(214,69,69,.15); }
+  .mp-target-grid { display: grid; grid-template-columns: repeat(20,1fr); grid-template-rows: repeat(20,1fr); gap: 1px; background: #4a2020; aspect-ratio: 1/1; border-radius: 3px; overflow: hidden; }
+  .mp-target-cell { background: #1a0e0e; cursor: crosshair; transition: background .12s; }
+  .mp-target-cell:hover { background: #4a1a1a; box-shadow: inset 0 0 8px rgba(255,90,90,.5); }
 
 
   @media (max-width: 500px) {
@@ -597,18 +604,18 @@
   // 因為側邊欄內容變化而跟著跑掉
   let mpOwnGridResizeObserver = null;
   function resizeMpOwnGridToFit() {
-    const board = document.querySelector('.mp-own-board');
-    const grid = document.getElementById('mp-own-grid');
-    if (!board || !grid) return;
-    const availW = board.clientWidth;
-    const availH = board.clientHeight;
+    const stage = document.getElementById('mp-own-map-stage');
+    const tilt = document.getElementById('mp-own-map-tilt');
+    if (!stage || !tilt) return;
+    const availW = stage.clientWidth;
+    const availH = stage.clientHeight;
     const size = Math.max(60, Math.min(availW, availH));
-    grid.style.width = size + 'px';
-    grid.style.height = size + 'px';
+    tilt.style.width = size + 'px';
+    tilt.style.height = size + 'px';
     // 只在第一次設定ResizeObserver，避免每次重新渲染都重複建立新的observer疊加
     if (!mpOwnGridResizeObserver && window.ResizeObserver) {
       mpOwnGridResizeObserver = new ResizeObserver(() => resizeMpOwnGridToFit());
-      mpOwnGridResizeObserver.observe(board);
+      mpOwnGridResizeObserver.observe(stage);
     }
   }
 
@@ -1690,7 +1697,7 @@
       for (let r = 1; r <= MAP_SIZE; r++) for (let c = 1; c <= MAP_SIZE; c++) {
         cellsHtml += `<div class="mp-target-cell" onclick="mpFireAt(${r},${c})" title="${colLetter(c)}${r}"></div>`;
       }
-      targetGridHtml = `<div class="mp-target-grid">${cellsHtml}</div>`;
+      targetGridHtml = `<div class="mp-target-stage"><div class="mp-target-frame"><div class="mp-target-grid">${cellsHtml}</div></div></div>`;
     }
 
     document.getElementById('mp-root').innerHTML = `
@@ -1699,7 +1706,13 @@
           <p class="mp-turn-banner ${isMyTurn ? 'active' : ''}">${isMyTurn ? '👉 輪到你了！' : `⏳ 等待 ${escapeHtmlMp(roomData.members.find(m => m.uid === roomData.turnOrder[roomData.currentTurnIndex]).name)} 行動...`}</p>
           <p style="font-size:12px; color:var(--muted);">你是 <b style="color:var(--scan);">${DIRECTION_LABEL[myDirection]}</b>（${spec.name}）</p>
           <div class="mp-own-board">
-            <div class="mp-own-grid" id="mp-own-grid"></div>
+            <div class="map-stage" id="mp-own-map-stage">
+              <div class="map-tilt" id="mp-own-map-tilt">
+                <div class="map-frame">
+                  <div class="mp-own-grid" id="mp-own-grid"></div>
+                </div>
+              </div>
+            </div>
           </div>
           <p class="mp-health-readout">血量 ${Math.max(0, mpMyCombatState.health)}/${spec.maxHealth}　操作次數 ${mpMyCombatState.actionsLeftThisTurn}/${maxActions}${mpMyCombatState.onFire ? '　🔥著火中' : ''}${mpMyCombatState.submarineSurfaced ? '　⚓浮出水面(無法下潛)' : ''}</p>
           <div class="move-btns">
@@ -1843,14 +1856,21 @@
   // 攻擊方跟防守方的私有戰鬥資料，判定命中/套用傷害/寫入模糊戰報，前端這裡只會拿到
   // 「有沒有命中」這個布林值，不會讀到任何精確的座標或血量數字——真正的伺服器端隔離
   async function mpFireAt(row, col) {
-    if (mpFiringLock || !mpTargetDirection) return;
+    if (mpFiringLock) return;
+    if (!mpTargetDirection) { console.warn('[開火] 沒有選擇目標方位，取消'); return; }
     const roomData = window.__mpLastRoomData;
-    if (!roomData || roomData.turnOrder[roomData.currentTurnIndex] !== mpCurrentUser.uid) return;
+    if (!roomData) { alert('房間資料還沒載入完成，稍等一下再試'); return; }
+    if (!roomData.turnOrder || roomData.turnOrder[roomData.currentTurnIndex] !== mpCurrentUser.uid) {
+      console.warn('[開火] 判定不是自己的回合', { turnOrder: roomData.turnOrder, currentTurnIndex: roomData.currentTurnIndex, myUid: mpCurrentUser.uid });
+      alert('還沒輪到你的回合');
+      return;
+    }
     mpFiringLock = true;
     playFireSound();
 
     try {
       const idToken = await mpCurrentUser.getIdToken();
+      console.log('[開火] 送出請求', { roomId: mpRoomState.roomId, targetDirection: mpTargetDirection, row, col, weaponKey: mpBattleSelectedWeapon, workerUrl: NAVAL_WORKER_URL });
       const res = await fetch(NAVAL_WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1860,9 +1880,20 @@
           row, col, weaponKey: mpBattleSelectedWeapon,
         }),
       });
-      const data = await res.json();
+      let data;
+      try { data = await res.json(); }
+      catch (parseErr) {
+        const rawText = await res.text().catch(() => '(無法讀取回應內容)');
+        console.error('[開火] Worker回應不是合法JSON，HTTP狀態:', res.status, '原始內容:', rawText);
+        alert(`開火失敗：伺服器回應格式異常(HTTP ${res.status})，請確認Worker有正確部署`);
+        mpFiringLock = false;
+        return;
+      }
+      console.log('[開火] Worker回應', { status: res.status, data });
       if (!res.ok || data.error) {
-        alert('開火失敗：' + (data.error || '未知錯誤'));
+        alert(`開火失敗（HTTP ${res.status}）：${data.error || '未知錯誤'}`);
+        mpFiringLock = false;
+        return;
       }
       // 不管命中與否，畫面上的視覺回饋(爆炸特效/落空水花)直接在這裡播放——命中與否
       // Worker已經回傳了(data.hit)，但實際的血量/座標更動是Worker寫進Firestore的，
@@ -1874,7 +1905,8 @@
       }
       mpTargetDirection = null;
     } catch (err) {
-      alert('開火失敗：' + err.message);
+      console.error('[開火] 發生例外錯誤(可能是網路問題、CORS、或Worker網址設定錯誤)', err);
+      alert('開火失敗（網路或連線問題）：' + err.message + '\n請打開瀏覽器主控台(F12)查看詳細錯誤');
     }
     mpFiringLock = false;
   }
