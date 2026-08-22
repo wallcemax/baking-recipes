@@ -70,8 +70,16 @@
     perspective-origin: 50% 25%;
     flex: 1; min-height: 0; width: 100%;
     display: flex; align-items: center; justify-content: center;
+    position: relative;
   }
+  /* 座標標籤：字母標在頂端、數字標在左側，故意放在.map-tilt外面(不受3D傾斜影響)，
+     保持文字清晰好讀。用JS動態產生內容、對齊.map-tilt的實際尺寸位置 */
+  .map-coord-labels { position: absolute; pointer-events: none; z-index: 5; font-family: monospace; font-size: 9px; color: var(--scan); opacity: .7; }
+  .map-coord-col-labels { display: flex; }
+  .map-coord-col-labels span, .map-coord-row-labels span { display: flex; align-items: center; justify-content: center; }
+  .map-coord-row-labels { display: flex; flex-direction: column; }
   .map-tilt {
+    position: relative;
     transform: rotateX(46deg) rotateZ(0deg);
     transform-style: preserve-3d;
     /* 寬高不在這裡用CSS aspect-ratio自動計算(在巢狀flexbox+3D變形的環境下不夠可靠)，
@@ -89,17 +97,39 @@
       0 0 60px -10px rgba(79,209,197,.15);
     padding: 3px;
   }
-  /* 掃描動畫：一條亮線緩慢掃過整張地圖，強化雷達感 */
+  /* 4象限分隔線：淡藍色橫線+直線貫穿地圇中心，把地圇視覺上切成4塊 */
+  .map-frame::before {
+    content: '';
+    position: absolute; inset: 3px;
+    background:
+      linear-gradient(90deg, transparent calc(50% - 1px), rgba(120,190,230,.5) calc(50% - 1px), rgba(120,190,230,.5) calc(50% + 1px), transparent calc(50% + 1px)),
+      linear-gradient(180deg, transparent calc(50% - 1px), rgba(120,190,230,.5) calc(50% - 1px), rgba(120,190,230,.5) calc(50% + 1px), transparent calc(50% + 1px));
+    pointer-events: none;
+    z-index: 2;
+    border-radius: 3px;
+  }
+  /* 小光球沿著象限分隔線跑動、忽暗忽亮：兩層radial-gradient疊加，一顆沿橫線移動、
+     一顆沿直線移動，透明度同步做出忽暗忽亮的脈動感 */
   .map-frame::after {
     content: '';
-    position: absolute; inset: 0;
-    background: linear-gradient(180deg, transparent 0%, rgba(79,209,197,.09) 48%, transparent 100%);
-    background-size: 100% 300%;
-    animation: scan-sweep 5.5s linear infinite;
+    position: absolute; inset: 3px;
+    background-image:
+      radial-gradient(circle 3px, rgba(160,220,255,1), rgba(160,220,255,.4) 60%, transparent 75%),
+      radial-gradient(circle 3px, rgba(160,220,255,1), rgba(160,220,255,.4) 60%, transparent 75%);
+    background-repeat: no-repeat, no-repeat;
+    background-size: 10px 10px, 10px 10px;
+    animation: radar-dots-travel 3.5s ease-in-out infinite;
     pointer-events: none;
-    border-radius: 4px;
+    border-radius: 3px;
+    z-index: 1;
   }
-  @keyframes scan-sweep { 0% { background-position: 0 -200%; } 100% { background-position: 0 100%; } }
+  @keyframes radar-dots-travel {
+    0%   { background-position: 50% 50%, 50% 50%; opacity: .25; }
+    25%  { background-position: 92% 50%, 50% 8%;  opacity: 1; }
+    50%  { background-position: 50% 50%, 50% 50%; opacity: .25; }
+    75%  { background-position: 8% 50%,  50% 92%; opacity: 1; }
+    100% { background-position: 50% 50%, 50% 50%; opacity: .25; }
+  }
 
   .grid20 {
     position: relative;
@@ -285,6 +315,7 @@
   .mp-btn.primary { background: linear-gradient(135deg, var(--scan), #2d9d90); color: #04211d; border-color: transparent; }
   .mp-btn.small { width: auto; padding: 6px 12px; font-size: 11px; }
   .mp-input { width: 100%; background: var(--deep); border: 1px solid var(--grid-line-bright); border-radius: 8px; padding: 9px 12px; color: var(--ink); font-size: 13px; margin-top: 6px; font-family: inherit; }
+  .mp-input-large { font-size: 17px; padding: 14px 16px; letter-spacing: 2px; text-align: center; }
   .mp-label { font-size: 11px; color: var(--muted); text-align: left; display: block; margin: 10px 0 2px; }
   .mp-room-list-item { width: 100%; text-align: left; background: var(--deep); border: 1px solid var(--grid-line); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; cursor: pointer; color: var(--ink); }
   .mp-room-list-item:hover { border-color: var(--grid-line-bright); }
@@ -317,6 +348,22 @@
   .mp-fireable { cursor: crosshair; box-shadow: inset 0 0 0 1px rgba(214,69,69,.35); }
   .mp-fireable:hover { background: #2a1414 !important; box-shadow: inset 0 0 8px rgba(255,90,90,.6); }
   .mp-fire-hint { font-size: 11px; color: var(--critical); font-weight: 700; margin-top: 8px; text-align: center; }
+  /* 已選定的瞄準座標：紅色脈動外框，明確標示「等等要打這裡」 */
+  .mp-pending-fire { background: #4a1616 !important; box-shadow: inset 0 0 0 2px #ff5b5b, inset 0 0 12px rgba(255,90,90,.7) !important; animation: pending-fire-pulse 1s ease-in-out infinite; }
+  @keyframes pending-fire-pulse { 0%, 100% { box-shadow: inset 0 0 0 2px #ff5b5b, inset 0 0 12px rgba(255,90,90,.7); } 50% { box-shadow: inset 0 0 0 2px #ff8a8a, inset 0 0 20px rgba(255,90,90,.9); } }
+  /* 紅色個性化發射按鈕：比一般按鈕更搶眼，強化「按下去就真的開火了」的儀式感 */
+  .mp-fire-btn {
+    width: 100%; margin-top: 10px; padding: 14px 8px;
+    background: linear-gradient(135deg, #d64545, #a82f2f);
+    border: 2px solid #ff5b5b;
+    color: #fff; font-size: 15px; font-weight: 900; letter-spacing: .05em;
+    border-radius: 10px; cursor: pointer;
+    box-shadow: 0 0 20px -4px rgba(255,90,90,.6), inset 0 1px 0 rgba(255,255,255,.25);
+    transition: transform .1s, box-shadow .2s;
+  }
+  .mp-fire-btn:hover:not(:disabled) { box-shadow: 0 0 28px -2px rgba(255,90,90,.85), inset 0 1px 0 rgba(255,255,255,.25); }
+  .mp-fire-btn:active:not(:disabled) { transform: scale(.96); }
+  .mp-fire-btn:disabled { background: var(--deep); border-color: var(--grid-line); color: var(--muted); box-shadow: none; cursor: not-allowed; }
 
 
   @media (max-width: 500px) {
@@ -356,6 +403,15 @@
     </div>
   </div>
 
+  <div id="mp-join-modal" class="legend-popup hidden" onclick="closeMpJoinModal()">
+    <div class="mp-panel" style="width:min(90vw, 340px); max-width:340px;" onclick="event.stopPropagation()">
+      <p style="font-weight:800; font-size:17px; margin-bottom:14px;">🔑 輸入房間密碼</p>
+      <input class="mp-input mp-input-large" id="mp-join-password-input" type="password" placeholder="密碼" onkeydown="if(event.key==='Enter')confirmMpJoinModal()">
+      <button class="mp-btn primary" style="margin-top:16px; font-size:15px; padding:13px 16px;" onclick="confirmMpJoinModal()">加入房間</button>
+      <button class="mp-btn" style="font-size:14px; padding:11px 16px;" onclick="closeMpJoinModal()">取消</button>
+    </div>
+  </div>
+
   <div id="demo-view">
   <div class="game-layout">
     <div class="game-main">
@@ -366,7 +422,7 @@
           </div>
         </div>
       </div>
-      <p class="coord-readout mono" id="coord-readout">將滑鼠移到格子上查看座標</p>
+      <p class="coord-readout mono" id="coord-readout">點格子開火</p>
     </div>
 
     <div class="game-sidebar">
@@ -446,18 +502,15 @@
       },
     },
     destroyer: {
-      name: '驅逐艦', length: 3, width: 2, baseActions: 5, maxHealth: 700,
+      name: '驅逐艦', length: 3, width: 2, baseActions: 6, maxHealth: 700,
       fireChance: { mid: 0.5 },
       weapons: {
         normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } },
-        rocket: { name: '多管火箭彈', power: 50, uses: 3, aoe: { w: 3, h: 2 }, multiShell: true, fallMs: 550, shellSize: 7, explosionProfile: { lowpassFreq: 2000, volume: 0.22, durationSec: 0.22, bassFreq: null } }, // 多管=6管齊發，範圍內每格各一顆，單發火箭威力較小、聲音輕快清脆
+        rocket: { name: '多管火箭彈', power: 50, uses: 5, aoe: { w: 3, h: 2 }, multiShell: true, fallMs: 550, shellSize: 7, explosionProfile: { lowpassFreq: 2000, volume: 0.22, durationSec: 0.22, bassFreq: null } }, // 多管=6管齊發，範圍內每格各一顆，單發火箭威力較小、聲音輕快清脆
       },
     },
     frigate: {
-      // ⚠️ 超音速反艦飛彈的每場遊戲限用次數，你給的描述裡數字沒接到(「每場遊戲只能用)」
-      // 中間斷掉了)，這裡先暫定4次頂著(比照同樣威力150的重砲射擊)，等你確認實際數字
-      // 再改，不要把這個暫定值誤會成正式數字
-      name: '巡防艦', length: 2, width: 1, baseActions: 7, maxHealth: 300,
+      name: '巡防艦', length: 2, width: 1, baseActions: 7, maxHealth: 500,
       fireChance: { bow: 0.5 },
       weapons: {
         normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } },
@@ -465,7 +518,7 @@
       },
     },
     submarine: {
-      name: '潛水艇', length: 4, width: 1, baseActions: 4, maxHealth: 300,
+      name: '潛水艇', length: 4, width: 1, baseActions: 4, maxHealth: 500,
       fireChance: { frontmid: 1.0 },
       weapons: {
         normal: { name: '普通魚雷', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 600, volume: 0.4, durationSec: 0.55, bassFreq: 55 } }, // 水下爆炸悶重感
@@ -583,6 +636,42 @@
     const size = Math.max(60, Math.min(availW, availH)); // 至少60px，避免容器還沒佈局完成時量到0
     tilt.style.width = size + 'px';
     tilt.style.height = size + 'px';
+    renderMapCoordLabels(tilt, size);
+  }
+
+  // 座標標籤：字母(A~T)標在地圇頂端、數字(1~20)標在左側。這次改成放進.map-tilt「內部」，
+  // 也就是會跟著3D傾斜一起變形的容器——之前放在.map-tilt外面(平面、不變形)，結果跟
+  // 3D透視下「近大遠小」的格子間距完全對不上，永遠是歪的。現在標籤本身也套用同一個
+  // rotateX變形，用跟格子一樣的百分比定位邏輯，兩者自然會對齊(因為承受同一組變形矩陣)
+  function renderMapCoordLabels(tilt, size) {
+    let colLabels = tilt.querySelector('.map-coord-col-labels');
+    let rowLabels = tilt.querySelector('.map-coord-row-labels');
+    if (!colLabels) {
+      colLabels = document.createElement('div');
+      colLabels.className = 'map-coord-labels map-coord-col-labels';
+      colLabels.innerHTML = Array.from({ length: MAP_SIZE }, (_, i) => `<span>${colLetter(i + 1)}</span>`).join('');
+      tilt.appendChild(colLabels);
+    }
+    if (!rowLabels) {
+      rowLabels = document.createElement('div');
+      rowLabels.className = 'map-coord-labels map-coord-row-labels';
+      rowLabels.innerHTML = Array.from({ length: MAP_SIZE }, (_, i) => `<span>${i + 1}</span>`).join('');
+      tilt.appendChild(rowLabels);
+    }
+    // 定位基準改成.map-tilt本身(top/left直接用px相對於.map-tilt，不再用「calc(50% - ...)」
+    // 去猜外層置中位置)——字母列貼齊地圇頂端正上方，數字列貼齊地圇左側正左邊，寬高剛好
+    // 跟地圇同寬/同高，每個字母數字的格子寬度對應到地圇上的一格
+    const cellSize = size / MAP_SIZE;
+    colLabels.style.width = size + 'px';
+    colLabels.style.height = '16px';
+    colLabels.style.top = '-18px';
+    colLabels.style.left = '0';
+    Array.from(colLabels.children).forEach(el => { el.style.width = cellSize + 'px'; el.style.height = '16px'; });
+    rowLabels.style.width = '16px';
+    rowLabels.style.height = size + 'px';
+    rowLabels.style.top = '0';
+    rowLabels.style.left = '-20px';
+    Array.from(rowLabels.children).forEach(el => { el.style.width = '16px'; el.style.height = cellSize + 'px'; });
   }
 
   // 多人戰鬥畫面專用的地圖尺寸量測：跟單機模式同樣的做法，不依賴CSS min()自動計算
@@ -600,6 +689,7 @@
     const size = Math.max(60, Math.min(availW, availH));
     tilt.style.width = size + 'px';
     tilt.style.height = size + 'px';
+    renderMapCoordLabels(tilt, size);
     // 只在第一次設定ResizeObserver，避免每次重新渲染都重複建立新的observer疊加
     if (!mpOwnGridResizeObserver && window.ResizeObserver) {
       mpOwnGridResizeObserver = new ResizeObserver(() => resizeMpOwnGridToFit());
@@ -613,7 +703,7 @@
     for (let r = 1; r <= MAP_SIZE; r++) {
       for (let c = 1; c <= MAP_SIZE; c++) {
         const colLetter = String.fromCharCode(64 + c); // 1=A, 2=B...20=T，仿照海戰棋常見的座標表示法
-        cellsHtml += `<div class="cell" data-row="${r}" data-col="${c}" data-coord="${colLetter}${r}" onmouseenter="showCoord(${r},${c})" onclick="fireAt(${r},${c})"></div>`;
+        cellsHtml += `<div class="cell" data-row="${r}" data-col="${c}" data-coord="${colLetter}${r}" onclick="fireAt(${r},${c})"></div>`;
       }
     }
     gridEl.innerHTML = cellsHtml;
@@ -647,11 +737,6 @@
     // 船身上的血量顯示改用百分比(比較不會在窄船身上被文字擠壓)，實際數字留給右側資訊欄顯示；
     // 著火中額外疊加一個跳動的火焰emoji，一眼就能看出這艘船正在燒
     el.innerHTML = `<span class="bow-arrow">${BOW_ARROW[ship.heading]}</span><span class="ship-pct">${healthPct}%</span>${ship.onFire ? '<span class="fire-emoji">🔥</span>' : ''}`;
-  }
-
-  function showCoord(r, c) {
-    const colLetter = String.fromCharCode(64 + c);
-    document.getElementById('coord-readout').textContent = `座標 ${colLetter}${r}（第${r}列・第${c}欄）`;
   }
 
   // ============================================================
@@ -1328,13 +1413,24 @@
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  // 解析戰報文字：依照「我」的uid，判斷這則戰報該顯示哪個版本——perUid裡有明確指定我的話
+  // 用那個版本(可能是客製化文字，也可能是null代表對我隱藏)，沒有特別指定就用default(旁觀者
+  // 看到的公開版本，同樣可能是null代表旁觀者看不到這則)
+  function resolveMpLogText(entry) {
+    if (typeof entry === 'string') return entry; // 相容極早期可能殘留的純文字格式
+    if (entry.perUid && Object.prototype.hasOwnProperty.call(entry.perUid, mpCurrentUser.uid)) {
+      return entry.perUid[mpCurrentUser.uid];
+    }
+    return entry.default;
+  }
+
   function openMpCreateForm() {
     document.getElementById('mp-root').innerHTML = `
       <div class="mp-panel" style="text-align:left;">
         <label class="mp-label">房間名稱</label>
         <input class="mp-input" id="mp-cr-name" placeholder="例如：週末海戰">
         <label class="mp-label">密碼</label>
-        <input class="mp-input" id="mp-cr-password" placeholder="設定一個密碼">
+        <input class="mp-input mp-input-large" id="mp-cr-password" placeholder="設定一個密碼">
         <label class="mp-label">最多幾人（2~4人）</label>
         <input class="mp-input" id="mp-cr-maxplayers" type="number" min="2" max="4" value="4">
         <button class="mp-btn primary" style="margin-top:14px;" onclick="createMpRoom()">建立房間</button>
@@ -1368,10 +1464,22 @@
       mpEnterRoom(roomId);
     } catch (err) { alert('建立房間失敗：' + err.message); }
   }
+  let mpJoinModalRoomId = null;
   function promptMpJoin(roomId) {
-    const password = prompt('請輸入房間密碼');
-    if (password === null) return;
-    mpJoinRoom(roomId, password);
+    mpJoinModalRoomId = roomId;
+    document.getElementById('mp-join-password-input').value = '';
+    document.getElementById('mp-join-modal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('mp-join-password-input').focus(), 50);
+  }
+  function closeMpJoinModal() {
+    document.getElementById('mp-join-modal').classList.add('hidden');
+    mpJoinModalRoomId = null;
+  }
+  function confirmMpJoinModal() {
+    const password = document.getElementById('mp-join-password-input').value;
+    const roomId = mpJoinModalRoomId;
+    closeMpJoinModal();
+    if (roomId) mpJoinRoom(roomId, password);
   }
   async function mpJoinRoom(roomId, password) {
     try {
@@ -1404,17 +1512,21 @@
       const data = doc.data();
       window.__mpLastRoomData = data; // 隨時保持最新，戰鬥畫面重新渲染要用這份而不是舊的closure
       if (data.status === 'waiting') { renderMpWaitingRoom(data); return; }
-      // 進入戰鬥狀態：初始化(房主觸發、內部自己防止重複執行)、確保私有戰鬥狀態監聽器只設定一次，
-      // 然後不管是房間資料變化(這裡)還是自己的戰鬥狀態變化(下面那個監聽器)，都要用「最新」的
-      // 房間資料重新渲染——之前的bug是渲染只在第一次進入戰鬥時執行，之後房間資料再怎麼更新
-      // (包含Worker初始化完成、戰報更新等)畫面都不會跟著動，卡在舊資料上
-      initMpBattleIfNeeded(data);
+      if (data.status === 'positioning') {
+        renderMpPositioningView(data);
+        finalizeMpBattleIfReady(data); // 每個人都選好位置後，任何一個客戶端偵測到都可以觸發真正開戰
+        return;
+      }
+      // 進入戰鬥狀態：確保私有戰鬥狀態監聽器只設定一次，然後不管是房間資料變化(這裡)還是
+      // 自己的戰鬥狀態變化(下面那個監聽器)，都要用「最新」的房間資料重新渲染——之前的bug是
+      // 渲染只在第一次進入戰鬥時執行，之後房間資料再怎麼更新(包含戰報更新等)畫面都不會跟著動
       setupMpBattleListenerIfNeeded();
       renderMpBattleView(data);
     }, err => console.warn('房間同步失敗', err));
   }
 
   let mpBattleListenerSetup = false;
+  let mpAutoEndTurnLock = false;
   function setupMpBattleListenerIfNeeded() {
     if (mpBattleListenerSetup) return; // 只需要設定一次這個監聽器本身，但它觸發時一律用最新房間資料渲染
     mpBattleListenerSetup = true;
@@ -1424,6 +1536,15 @@
       mpMyCombatState = doc.data();
       checkIncomingAttack(mpMyCombatState); // 偵測有沒有新的攻擊打過來，觸發砲彈落下動畫
       if (window.__mpLastRoomData) renderMpBattleView(window.__mpLastRoomData);
+
+      // 移動次數用完+已經開過火(每回合限一次)，不用手動按「結束回合」，自動觸發——
+      // 用mpAutoEndTurnLock避免這個監聽器短時間內重複觸發好幾次結束回合請求
+      const roomD = window.__mpLastRoomData;
+      const isMyTurnNow = roomD && roomD.turnOrder && roomD.turnOrder[roomD.currentTurnIndex] === mpCurrentUser.uid;
+      if (isMyTurnNow && !mpAutoEndTurnLock && mpMyCombatState.actionsLeftThisTurn <= 0 && mpMyCombatState.hasFiredThisTurn) {
+        mpAutoEndTurnLock = true;
+        setTimeout(() => { mpEndTurn(); mpAutoEndTurnLock = false; }, 800); // 稍微延遲一下，讓玩家看得到最後一個動作的畫面回饋才切換回合
+      }
     });
   }
 
@@ -1508,6 +1629,16 @@
   }
 
   async function pickMpDirection(direction) {
+    // 樂觀更新：立刻用本地修改過的資料重新渲染，不等Firestore寫入完成才等onSnapshot觸發
+    // 重新渲染——畫面會立刻反映剛剛的點擊，不會有「看起來沒反應」的延遲感。實際寫入
+    // 還是照常進行，最終onSnapshot回來的真實資料會自動校正(例如方位其實被別人搶走了)
+    if (window.__mpLastRoomData) {
+      const optimisticData = {
+        ...window.__mpLastRoomData,
+        members: window.__mpLastRoomData.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, direction } : m),
+      };
+      renderMpWaitingRoom(optimisticData);
+    }
     try {
       const ref = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
       await mpDb.runTransaction(async (tx) => {
@@ -1534,6 +1665,14 @@
     // 重新渲染畫面，如果本地變數的更新排在寫入後面，重新渲染當下讀到的還是舊值，
     // 畫面就會顯示成「沒選中」，要等到之後某個別的動作再次觸發重新渲染才會看到正確結果
     mpMySelectedShip = shipType;
+    // 樂觀更新：跟pickMpDirection同樣的做法，立刻用本地修改過的資料重新渲染
+    if (window.__mpLastRoomData) {
+      const optimisticData = {
+        ...window.__mpLastRoomData,
+        members: window.__mpLastRoomData.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, shipSelected: true } : m),
+      };
+      renderMpWaitingRoom(optimisticData);
+    }
     try {
       const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
       await mpDb.runTransaction(async (tx) => {
@@ -1553,6 +1692,13 @@
 
   // 切換準備狀態：改用交易保護，避免跟選方位/選船型幾乎同時發生時，用舊資料覆蓋掉對方的修改
   async function toggleMpReady(ready) {
+    if (window.__mpLastRoomData) {
+      const optimisticData = {
+        ...window.__mpLastRoomData,
+        members: window.__mpLastRoomData.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, ready } : m),
+      };
+      renderMpWaitingRoom(optimisticData);
+    }
     try {
       const ref = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
       await mpDb.runTransaction(async (tx) => {
@@ -1574,7 +1720,10 @@
         if (data.status !== 'waiting') return false;
         if (data.members.length < MP_MIN_PLAYERS) return false;
         if (!data.members.every(m => m.direction && m.shipSelected && m.ready)) return false;
-        tx.update(ref, { status: 'playing' });
+        // 先進入「選位置」階段，不直接開戰——每個人要先在自己的地圇上選好船隻起始位置，
+        // 全部人都選好之後才會真正進入戰鬥(見finalizeMpBattleIfReady)
+        const members = data.members.map(m => ({ ...m, positioned: false }));
+        tx.update(ref, { status: 'positioning', members });
         return true;
       });
       if (!claimed) alert('還沒全部人準備好，或已經開始了');
@@ -1600,15 +1749,19 @@
   let mpBattleUnsubscribe = null;
   let mpTargetDirection = null; // 目前選定要攻擊的方位
   let mpBattleSelectedWeapon = 'normal';
+  let mpPendingFireCell = null; // 已經點選但還沒按下發射鍵確認的瞄準座標{row,col}
   let mpFiringLock = false;
 
   // ---------- 開始遊戲：房主觸發，初始化每個人的戰鬥狀態(各自在自己的20x20地圖隨機起始位置) ----------
   // 開始戰鬥的初始化：改成呼叫Worker的naval_battle_init動作，由Worker用service account
   // 的權限幫每個人建立初始戰鬥狀態(隨機起始位置/滿血/武器次數)——房主的瀏覽器本身
   // 沒有權限直接寫入別人的私有資料(privateCombatState現在收緊成只有本人能讀寫)
-  async function initMpBattleIfNeeded(data) {
-    if (data.battleInitialized) return; // 已經初始化過，不要重複執行
-    if (data.hostUid !== mpCurrentUser.uid) return; // 只有房主負責初始化，避免大家搶著寫
+  // 選位置階段：所有人都確認位置後(members裡每個人的positioned都是true)，任何一個
+  // 客戶端偵測到都可以觸發Worker做真正的開戰初始化——跟之前一樣用battleInitialized
+  // 這個旗標防止重複執行，不需要限定只有房主觸發(反正Worker內部本身也有防重複的判斷)
+  async function finalizeMpBattleIfReady(data) {
+    if (data.battleInitialized) return;
+    if (!data.members.every(m => m.positioned)) return; // 還沒全部人選好位置
     try {
       const idToken = await mpCurrentUser.getIdToken();
       const res = await fetch(NAVAL_WORKER_URL, {
@@ -1617,9 +1770,112 @@
         body: JSON.stringify({ action: 'naval_battle_init', idToken, roomId: mpRoomState.roomId }),
       });
       const result = await res.json();
-      if (!res.ok || result.error) console.warn('初始化戰鬥狀態失敗', result.error);
-    } catch (err) { console.warn('初始化戰鬥狀態失敗', err); }
+      if (!res.ok || result.error) console.warn('開戰初始化失敗', result.error);
+    } catch (err) { console.warn('開戰初始化失敗', err); }
   }
+
+  // 選位置畫面：玩家在自己的地圖上點一格當作船隻起始位置(可以點好幾次重選)，用旋轉按鈕
+  // 決定朝向，確認後才真正寫入資料。這個階段直接寫進自己的privateCombatState(只有本人能讀寫，
+  // 不需要透過Worker)，因為只是設定「自己的」船隻資料，不涉及讀到別人的隱私資料
+  let mpPendingPosition = null; // {row, col, heading}，還沒確認前的本地預覽狀態
+  function renderMpPositioningView(data) {
+    const me = data.members.find(m => m.uid === mpCurrentUser.uid);
+    if (me.positioned) {
+      document.getElementById('mp-root').innerHTML = `
+        <div class="mp-panel">
+          <p>✅ 位置已確認</p>
+          <p style="font-size:12px; color:var(--muted); margin-top:8px;">等待其他玩家選擇位置中...</p>
+        </div>
+      `;
+      return;
+    }
+    if (!mpMySelectedShip) return; // 理論上不會發生(等待室已經檢查過shipSelected)，防呆
+    const spec = SHIP_TYPES[mpMySelectedShip];
+    if (!mpPendingPosition) mpPendingPosition = { row: 10, col: 10, heading: 'N' };
+    const previewShip = { ...mpPendingPosition };
+    const inBounds = shipWithinBoundsGeneric(previewShip, spec);
+
+    document.getElementById('mp-root').innerHTML = `
+      <div class="game-layout">
+        <div class="game-main">
+          <div class="map-stage" id="mp-own-map-stage">
+            <div class="map-tilt" id="mp-own-map-tilt">
+              <div class="map-frame">
+                <div class="grid20" id="mp-own-grid"></div>
+              </div>
+            </div>
+          </div>
+          <p class="coord-readout mono">🚢 點地圖選擇「${spec.name}」的起始位置${!inBounds ? '（超出地圖範圍，請重新選擇）' : ''}</p>
+        </div>
+        <div class="game-sidebar">
+          <div class="turn-panel">
+            <p class="turn-title">選擇起始位置</p>
+            <div class="move-btns">
+              <button class="move-btn" onclick="mpRotatePending('left')">↺<span class="btn-label">左轉</span></button>
+              <button class="move-btn" onclick="mpRotatePending('right')">↻<span class="btn-label">右轉</span></button>
+            </div>
+            <button class="mp-btn primary" style="margin-top:14px;" ${inBounds ? '' : 'disabled'} onclick="mpConfirmPosition()">✅ 確認位置</button>
+          </div>
+        </div>
+      </div>
+    `;
+    window.__mpLastRoomData = data;
+
+    const ownGridEl = document.getElementById('mp-own-grid');
+    let cellsHtml = '';
+    for (let r = 1; r <= MAP_SIZE; r++) for (let c = 1; c <= MAP_SIZE; c++) {
+      cellsHtml += `<div class="cell mp-fireable" data-row="${r}" data-col="${c}" onclick="mpPickPendingPosition(${r},${c})"></div>`;
+    }
+    ownGridEl.innerHTML = cellsHtml;
+    if (inBounds) {
+      const cells = getShipCellsGeneric(previewShip, spec);
+      const rows = cells.map(c => c.row), cols = cells.map(c => c.col);
+      const minRow = Math.min(...rows), maxRow = Math.max(...rows), minCol = Math.min(...cols), maxCol = Math.max(...cols);
+      const cellPct = 100 / MAP_SIZE;
+      const shipEl = document.createElement('div');
+      shipEl.className = `ship-block type-${mpMySelectedShip} state-intact heading-${previewShip.heading}`;
+      shipEl.style.position = 'absolute';
+      shipEl.style.top = `${(minRow - 1) * cellPct}%`;
+      shipEl.style.left = `${(minCol - 1) * cellPct}%`;
+      shipEl.style.width = `${(maxCol - minCol + 1) * cellPct}%`;
+      shipEl.style.height = `${(maxRow - minRow + 1) * cellPct}%`;
+      shipEl.innerHTML = `<span class="bow-arrow">${BOW_ARROW[previewShip.heading]}</span>`;
+      ownGridEl.style.position = 'relative';
+      ownGridEl.appendChild(shipEl);
+    }
+    resizeMpOwnGridToFit();
+  }
+  function mpPickPendingPosition(row, col) {
+    mpPendingPosition = { row, col, heading: (mpPendingPosition && mpPendingPosition.heading) || 'N' };
+    renderMpPositioningView(window.__mpLastRoomData);
+  }
+  function mpRotatePending(dir) {
+    if (!mpPendingPosition) return;
+    mpPendingPosition.heading = dir === 'left' ? TURN_LEFT[mpPendingPosition.heading] : TURN_RIGHT[mpPendingPosition.heading];
+    renderMpPositioningView(window.__mpLastRoomData);
+  }
+  async function mpConfirmPosition() {
+    if (!mpPendingPosition || !mpMySelectedShip) return;
+    const spec = SHIP_TYPES[mpMySelectedShip];
+    if (!shipWithinBoundsGeneric(mpPendingPosition, spec)) return;
+    try {
+      // 直接寫進自己的privateCombatState(只有本人能讀寫，不需要透過Worker)：先只存位置資料，
+      // 血量/武器次數等其餘欄位留給Worker在真正開戰時(finalizeMpBattleIfReady)一併補齊
+      await mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId)
+        .collection('privateCombatState').doc(mpCurrentUser.uid)
+        .set({ row: mpPendingPosition.row, col: mpPendingPosition.col, heading: mpPendingPosition.heading, positionConfirmed: true }, { merge: true });
+
+      const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(roomRef);
+        const data = doc.data();
+        const members = data.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, positioned: true } : m);
+        tx.update(roomRef, { members });
+      });
+      mpPendingPosition = null;
+    } catch (err) { alert('確認位置失敗：' + err.message); }
+  }
+
   function shipWithinBoundsGeneric(ship, spec) {
     return getShipCellsGeneric(ship, spec).every(c => c.row >= 1 && c.row <= MAP_SIZE && c.col >= 1 && c.col <= MAP_SIZE);
   }
@@ -1686,10 +1942,9 @@
       return `<button class="mp-ship-btn ${mpBattleSelectedWeapon === key ? 'selected' : ''}" ${depleted ? 'disabled' : ''} onclick="mpBattleSelectedWeapon='${key}'; renderMpBattleView(window.__mpLastRoomData);"><b>${w.name}</b>威力${w.power}・剩餘${left}</button>`;
     }).join('');
 
-    // 開火提示：選好目標方位後，直接在下方「自己的地圖」上點座標開火(不是另外一張要點擊的
-    // 敵方網格——那是之前理解錯誤做的東西，已經拿掉)。點擊自己地圖座標時，自己畫面會看到
-    // 砲彈往上發射，對方會在他自己的地圖同一個座標看到砲彈落下
-    const canFireNow = isMyTurn && !!mpTargetDirection;
+    // 開火條件：選好目標方位、還沒開過火(每回合限一次)、輪到自己——符合才能選座標+按發射鍵
+    const canSelectFireCell = isMyTurn && !!mpTargetDirection && !mpMyCombatState.hasFiredThisTurn;
+    const readyToFire = canSelectFireCell && !!mpPendingFireCell;
 
     document.getElementById('mp-root').innerHTML = `
       <div class="game-layout">
@@ -1701,7 +1956,7 @@
               </div>
             </div>
           </div>
-          <p class="coord-readout mono">${isMyTurn ? '👉 輪到你了！' : `⏳ 等待 ${escapeHtmlMp(roomData.members.find(m => m.uid === roomData.turnOrder[roomData.currentTurnIndex]).name)} 行動...`}　你是 ${DIRECTION_LABEL[myDirection]}（${spec.name}）${canFireNow ? `　🎯 點地圖座標對${DIRECTION_LABEL[mpTargetDirection]}開火` : ''}</p>
+          <p class="coord-readout mono">${isMyTurn ? '👉 輪到你了！' : `⏳ 等待 ${escapeHtmlMp(roomData.members.find(m => m.uid === roomData.turnOrder[roomData.currentTurnIndex]).name)} 行動...`}　你是 ${DIRECTION_LABEL[myDirection]}（${spec.name}）${mpMyCombatState.hasFiredThisTurn ? '　✅ 這回合已經開過火了' : canSelectFireCell ? `　🎯 點座標瞄準${DIRECTION_LABEL[mpTargetDirection]}` : ''}</p>
         </div>
 
         <div class="game-sidebar">
@@ -1725,24 +1980,30 @@
             </div>
             <p class="weapon-title">🎯 選擇要攻擊的海域</p>
             <div class="mp-direction-grid">${targetBtns || '<p style="font-size:11px; color:var(--muted);">沒有可攻擊的對手</p>'}</div>
-            ${mpTargetDirection ? `<p class="weapon-title">選擇武器</p><div class="weapon-panel">${weaponBtns}</div><p class="mp-fire-hint">👈 選好武器後，回到左邊點自己地圖上的座標開火</p>` : ''}
+            ${mpTargetDirection && !mpMyCombatState.hasFiredThisTurn ? `
+              <p class="weapon-title">選擇武器</p><div class="weapon-panel">${weaponBtns}</div>
+              <p class="mp-fire-hint">👈 點左邊地圇上的座標瞄準，瞄準的座標會映射到「${DIRECTION_LABEL[mpTargetDirection]}」同一個座標</p>
+              <button class="mp-fire-btn" ${readyToFire ? '' : 'disabled'} onclick="mpConfirmFire()">🔥 發射！${mpPendingFireCell ? `（瞄準 ${colLetter(mpPendingFireCell.col)}${mpPendingFireCell.row}）` : ''}</button>
+            ` : ''}
           </div>
 
-          <div class="log-panel mono">${(roomData.combatLog || []).slice(-14).reverse().map(t => `<p style="margin:0;">${escapeHtmlMp(t)}</p>`).join('')}</div>
+          <div class="log-panel mono">${(roomData.combatLog || []).map(e => resolveMpLogText(e)).filter(t => t !== null && t !== undefined).slice(-14).reverse().map(t => `<p style="margin:0;">${escapeHtmlMp(t)}</p>`).join('')}</div>
         </div>
       </div>
     `;
     window.__mpLastRoomData = roomData;
 
-    // 自己的船用跟單機demo一樣的渲染方式畫在自己的20x20格上；格子本身現在要能點擊開火
-    // (選好目標方位才會真的生效，mpFireAt內部會檢查)
+    // 自己的船用跟單機demo一樣的渲染方式畫在自己的20x20格上；格子點擊只是「選定瞄準座標」，
+    // 不會立刻開火(要另外按紅色發射鍵才會真的開火，見第9點需求)
     const ownGridEl = document.getElementById('mp-own-grid');
     let cellsHtml = '';
     for (let r = 1; r <= MAP_SIZE; r++) for (let c = 1; c <= MAP_SIZE; c++) {
-      cellsHtml += `<div class="cell ${canFireNow ? 'mp-fireable' : ''}" data-row="${r}" data-col="${c}" onclick="mpFireAt(${r},${c})"></div>`;
+      const isPending = mpPendingFireCell && mpPendingFireCell.row === r && mpPendingFireCell.col === c;
+      cellsHtml += `<div class="cell ${canSelectFireCell ? 'mp-fireable' : ''} ${isPending ? 'mp-pending-fire' : ''}" data-row="${r}" data-col="${c}" onclick="mpSelectFireCell(${r},${c})"></div>`;
     }
     ownGridEl.innerHTML = cellsHtml;
     const shipEl = document.createElement('div');
+    shipEl.id = 'mp-own-ship';
     shipEl.className = `ship-block type-${mpMyCombatState.shipType} state-${stateClass} heading-${mpMyCombatState.heading}`;
     shipEl.style.position = 'absolute';
     shipEl.style.top = `${(minRow - 1) * cellPct}%`;
@@ -1758,6 +2019,14 @@
   function mpSelectTarget(direction) {
     mpTargetDirection = direction;
     mpBattleSelectedWeapon = 'normal';
+    mpPendingFireCell = null; // 換目標時清掉之前選的瞄準座標，避免對錯的目標開火
+    renderMpBattleView(window.__mpLastRoomData);
+  }
+  // 點地圇座標：只是「選定」瞄準座標(用紅框標示)，還不會真的開火——要另外按下方的紅色
+  // 發射鍵才會真的送出攻擊(第9點需求：更有儀式感，也避免手滑點錯格子就直接開火)
+  function mpSelectFireCell(row, col) {
+    if (!mpTargetDirection || mpFiringLock) return;
+    mpPendingFireCell = { row, col };
     renderMpBattleView(window.__mpLastRoomData);
   }
 
@@ -1831,7 +2100,7 @@
         const activeOrder = roomD.turnOrder.filter(uid => !(roomD.eliminatedUids || []).includes(uid));
         const curIdx = activeOrder.indexOf(mpCurrentUser.uid);
         const nextUid = activeOrder[(curIdx + 1) % activeOrder.length];
-        tx.update(roomRef, { currentTurnIndex: roomD.turnOrder.indexOf(nextUid), hasFiredThisTurn: false });
+        tx.update(roomRef, { currentTurnIndex: roomD.turnOrder.indexOf(nextUid) });
       });
       // 回合真正輪到自己時才補回操作次數(在下一次輪到自己、監聽到currentTurnIndex變化時處理，
       // 這裡簡化成結束回合的當下就先重設好自己的次數，反正輪到自己前這個欄位不會被用到)
@@ -1853,8 +2122,11 @@
   // 對方會在他自己的地圖同一個座標看到砲彈落下(見下面的incomingAttack監聽處理)。
   // 開火判定本身透過Worker伺服器端處理，前端只會拿到「有沒有命中」，不會讀到任何精確的
   // 座標或血量數字——真正的伺服器端隔離 ----------
-  async function mpFireAt(row, col) {
-    if (mpFiringLock) return;
+  // 確認發射：從mpPendingFireCell(已經點選的瞄準座標)送出攻擊。砲彈動畫改成從「自己船隻」
+  // 的實際畫面位置發射(不是從點擊的格子發射)，比較符合直覺——瞄準座標只是決定要打到
+  // 對方哪裡，砲彈本體是從自己的船射出去的
+  async function mpConfirmFire() {
+    if (mpFiringLock || !mpPendingFireCell) return;
     if (!mpTargetDirection) { console.warn('[開火] 沒有選擇目標方位，取消'); return; }
     const roomData = window.__mpLastRoomData;
     if (!roomData) { alert('房間資料還沒載入完成，稍等一下再試'); return; }
@@ -1863,14 +2135,15 @@
       alert('還沒輪到你的回合');
       return;
     }
+    if (mpMyCombatState.hasFiredThisTurn) { alert('這回合已經開過火了'); return; }
+    const { row, col } = mpPendingFireCell;
     mpFiringLock = true;
     playFireSound();
 
-    // 從自己地圖上被點擊的座標，往上發射砲彈的視覺(跟單機demo的落下動畫方向相反)——
-    // 代表「我方砲彈射向對方」，不是對方砲彈打過來
-    const cellEl = document.querySelector(`#mp-own-grid .cell[data-row="${row}"][data-col="${col}"]`);
-    if (cellEl) {
-      const rect = cellEl.getBoundingClientRect();
+    // 砲彈從自己船隻的實際畫面位置發射，往上飛出畫面外——代表「我方砲彈射向對方」
+    const shipEl = document.getElementById('mp-own-ship');
+    if (shipEl) {
+      const rect = shipEl.getBoundingClientRect();
       const startX = rect.left + rect.width / 2, startY = rect.top + rect.height / 2;
       const shell = document.createElement('div');
       shell.className = 'shell';
@@ -1912,7 +2185,11 @@
         return;
       }
       // 命中/落空的結果已經寫進公開戰報(combatLog)，會透過房間監聽自動顯示在戰報欄，
-      // 這裡不需要額外顯示——真正的爆炸/水花視覺效果發生在「對方」的畫面上(見incomingAttack監聽)
+      // 這裡不需要額外顯示——真正的爆炸/水花視覺效果發生在「對方」的畫面上(見incomingAttack監聽)。
+      // 開火成功後，這回合已經用掉唯一的一次開火機會，清掉瞄準狀態、目標方位也一併清掉，
+      // 避免畫面留著誤導的瞄準提示
+      mpPendingFireCell = null;
+      mpTargetDirection = null;
     } catch (err) {
       console.error('[開火] 發生例外錯誤(可能是網路問題、CORS、或Worker網址設定錯誤)', err);
       alert('開火失敗（網路或連線問題）：' + err.message + '\n請打開瀏覽器主控台(F12)查看詳細錯誤');
@@ -1929,26 +2206,34 @@
     const atk = state.incomingAttack;
     if (!atk || atk.nonce === mpLastProcessedAttackNonce) return;
     mpLastProcessedAttackNonce = atk.nonce;
+    // 用攻擊方傳來的船型+武器key，精確查出這次攻擊實際用的武器參數(墜落速度/砲彈尺寸/
+    // 爆炸音色)，不是寫死的一般砲彈規格——例如潛水艇的「一般武器」其實是魚雷，音效
+    // 應該是水下悶重感，不是一般爆炸聲
+    const attackerSpec = SHIP_TYPES[atk.attackerShipType];
+    const weaponSpec = (attackerSpec && attackerSpec.weapons[atk.weaponKey]) || SHIP_TYPES.amphibious.weapons.normal;
     const cellEl = document.querySelector(`#mp-own-grid .cell[data-row="${atk.row}"][data-col="${atk.col}"]`);
     if (!cellEl) return;
     const rect = cellEl.getBoundingClientRect();
     const targetX = rect.left + rect.width / 2, targetY = rect.top + rect.height / 2;
     const shell = document.createElement('div');
     shell.className = 'shell';
+    shell.style.width = weaponSpec.shellSize + 'px';
+    shell.style.height = weaponSpec.shellSize + 'px';
     shell.style.left = targetX + 'px';
     shell.style.top = '-30px';
     document.body.appendChild(shell);
+    if (weaponSpec.whistle) playWhistleSound(weaponSpec.fallMs);
     requestAnimationFrame(() => {
-      shell.style.transition = 'top .65s cubic-bezier(.45,0,.85,1)';
+      shell.style.transition = `top ${weaponSpec.fallMs}ms cubic-bezier(.45,0,.85,1)`;
       shell.style.top = targetY + 'px';
     });
     setTimeout(() => {
       shell.remove();
-      playExplosionSound(atk.isHit, atk.isHit ? { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } : null);
-      spawnBlast(targetX, targetY, atk.isHit, 1);
+      playExplosionSound(atk.isHit, weaponSpec.explosionProfile);
+      spawnBlast(targetX, targetY, atk.isHit, weaponSpec.aoe ? Math.max(weaponSpec.aoe.w, weaponSpec.aoe.h) : 1);
       cellEl.classList.add(atk.isHit ? 'flash-hit' : 'flash-miss');
       setTimeout(() => cellEl.classList.remove(atk.isHit ? 'flash-hit' : 'flash-miss'), 500);
-    }, 650);
+    }, weaponSpec.fallMs);
   }
 
   async function leaveMpRoom() {
