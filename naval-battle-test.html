@@ -310,6 +310,20 @@
   .mp-ship-btn b { display: block; font-size: 13px; margin-bottom: 2px; }
   .mp-locked-note { font-size: 11px; color: var(--critical); margin-top: 6px; }
 
+  /* -------- 多人戰鬥畫面 -------- */
+  .mp-battle-layout { display: flex; gap: 10px; height: 100%; }
+  .mp-battle-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .mp-turn-banner { background: var(--panel); border: 1px solid var(--grid-line-bright); border-radius: 8px; padding: 8px; text-align: center; font-weight: 800; font-size: 13px; margin: 0 0 6px; }
+  .mp-turn-banner.active { background: linear-gradient(135deg, var(--scan), #2d9d90); color: #04211d; }
+  .mp-own-board { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 6px; }
+  .mp-own-grid { position: relative; width: min(100%, 60vh); aspect-ratio: 1/1; display: grid; grid-template-columns: repeat(20,1fr); grid-template-rows: repeat(20,1fr); gap: 1px; background: var(--grid-line); border: 1px solid var(--grid-line-bright); border-radius: 4px; container-type: inline-size; }
+  .mp-own-grid .cell { background: #0a1c2c; }
+  .mp-health-readout { text-align: center; font-size: 11px; color: var(--muted); font-family: monospace; margin: 4px 0 8px; }
+  .mp-target-grid { display: grid; grid-template-columns: repeat(20,1fr); grid-template-rows: repeat(20,1fr); gap: 1px; background: var(--grid-line); border: 1px solid var(--critical); border-radius: 4px; aspect-ratio: 1/1; margin-top: 6px; }
+  .mp-target-cell { background: #1a0e0e; cursor: crosshair; transition: background .1s; }
+  .mp-target-cell:hover { background: #3a1414; }
+
+
   @media (max-width: 500px) {
     .coord-mark::before { display: none; }
   }
@@ -1204,6 +1218,9 @@
   // 不會洩漏選了什麼
   // ============================================================
   const DIRECTION_LABEL = { north: '🧭 北海', east: '🌅 東海', south: '☀️ 南海', west: '🌇 西海' };
+  // ⚠️ 這裡需要填入你的Cloudflare Worker網址(跟index.html裡CLOUDFLARE_AI_PROXY_URL用同一個
+  // 網址即可，海戰的開火判定/戰鬥初始化是新加的action，同一支Worker就能處理)
+  const NAVAL_WORKER_URL = 'https://baking-recipes-ai.wallcemax.workers.dev/';
   const MP_MIN_PLAYERS = 2;
   const MP_MAX_PLAYERS_CAP = 4;
 
@@ -1360,7 +1377,7 @@
       if (!doc.exists) { alert('房間已經被關閉'); mpCleanupRoom(); renderMpLobby(); return; }
       const data = doc.data();
       if (data.status === 'waiting') renderMpWaitingRoom(data);
-      else renderMpBattlePlaceholder(data);
+      else mpEnterBattle(data);
     }, err => console.warn('房間同步失敗', err));
   }
 
@@ -1482,21 +1499,304 @@
     } catch (err) { alert('開始遊戲失敗：' + err.message); }
   }
 
-  // 遊戲真正開始後的畫面：這一版先顯示大家選的方位(公開資訊)確認連線架構沒問題，
-  // 真正的回合戰鬥畫面(各自20x20地圖、盲打對方海域)下一輪再實作
-  function renderMpBattlePlaceholder(data) {
-    const list = data.members.map(m => `<li>${DIRECTION_LABEL[m.direction]}：${escapeHtmlMp(m.name)}</li>`).join('');
+  // ============================================================
+  // 真正的戰鬥系統：每個玩家在自己的20x20地圖上有一艘船，開火是「盲打」——
+  // 選定要攻擊的方位、在對方海域範圍內任選座標開火，看不到對方船隻實際位置。
+  //
+  // 資料結構：navalBattleRooms/{roomId}/privateCombatState/{uid} 存放每個人的
+  // 即時戰鬥狀態(位置/血量/著火/移動上限扣減/武器次數/潛水艇下潛狀態等)。
+  //
+  // ✅ 開火判定(座標模糊化、傷害計算、命中/落空、傷害敘述分級)已經改成透過Cloudflare
+  // Worker在伺服器端處理(呼叫naval_battle_fire這個action)，Worker用service account
+  // 的權限同時讀寫攻擊方跟防守方的私有資料，前端這裡完全不會讀到對方的精確座標/血量——
+  // 這是真正的伺服器端隔離，不是介面不顯示而已。相關演算法(模糊座標、傷害敘述分級)的
+  // 實作現在都在worker.js的handleNavalBattleFire函式裡，不在這個檔案。
+  // ============================================================
+  function colLetter(c) { return String.fromCharCode(64 + c); }
+
+  let mpMyCombatState = null;
+  let mpBattleUnsubscribe = null;
+  let mpTargetDirection = null; // 目前選定要攻擊的方位
+  let mpBattleSelectedWeapon = 'normal';
+  let mpFiringLock = false;
+
+  // ---------- 開始遊戲：房主觸發，初始化每個人的戰鬥狀態(各自在自己的20x20地圖隨機起始位置) ----------
+  // 開始戰鬥的初始化：改成呼叫Worker的naval_battle_init動作，由Worker用service account
+  // 的權限幫每個人建立初始戰鬥狀態(隨機起始位置/滿血/武器次數)——房主的瀏覽器本身
+  // 沒有權限直接寫入別人的私有資料(privateCombatState現在收緊成只有本人能讀寫)
+  async function initMpBattleIfNeeded(data) {
+    if (data.battleInitialized) return; // 已經初始化過，不要重複執行
+    if (data.hostUid !== mpCurrentUser.uid) return; // 只有房主負責初始化，避免大家搶著寫
+    try {
+      const idToken = await mpCurrentUser.getIdToken();
+      const res = await fetch(NAVAL_WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'naval_battle_init', idToken, roomId: mpRoomState.roomId }),
+      });
+      const result = await res.json();
+      if (!res.ok || result.error) console.warn('初始化戰鬥狀態失敗', result.error);
+    } catch (err) { console.warn('初始化戰鬥狀態失敗', err); }
+  }
+  function shipWithinBoundsGeneric(ship, spec) {
+    return getShipCellsGeneric(ship, spec).every(c => c.row >= 1 && c.row <= MAP_SIZE && c.col >= 1 && c.col <= MAP_SIZE);
+  }
+  // 跟單機demo版本的getShipCells邏輯完全一樣，但吃明確傳入的spec參數(不依賴全域的myShip)，
+  // 因為連線模式要同時處理「自己的船」計算，跟spec本身無關myShip變數
+  function getShipCellsGeneric(ship, spec) {
+    const { row, col, heading } = ship;
+    const cells = [];
+    const centerIdx = spec.length === 2 ? 0 : 1;
+    const cells2 = [];
+    for (let len = 0; len < spec.length; len++) {
+      for (let wid = 0; wid < spec.width; wid++) {
+        const lenOffset = len - centerIdx;
+        const widOffset = wid;
+        let r, c;
+        if (heading === 'N') { r = row - lenOffset; c = col + widOffset; }
+        else if (heading === 'S') { r = row + lenOffset; c = col + widOffset; }
+        else if (heading === 'E') { r = row + widOffset; c = col + lenOffset; }
+        else if (heading === 'W') { r = row + widOffset; c = col - lenOffset; }
+        const zone = ZONE_MAP_BY_LENGTH[spec.length][len];
+        cells2.push({ row: r, col: c, isBow: len === spec.length - 1, zone });
+      }
+    }
+    return cells2;
+  }
+
+  function mpEnterBattle(data) {
+    initMpBattleIfNeeded(data);
+    if (mpBattleUnsubscribe) return; // 已經在監聽自己的私有戰鬥狀態了
+    const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+    mpBattleUnsubscribe = roomRef.collection('privateCombatState').doc(mpCurrentUser.uid).onSnapshot(doc => {
+      if (!doc.exists) return; // 房主可能還在初始化中，稍等它建立
+      mpMyCombatState = doc.data();
+      renderMpBattleView(data);
+    });
+  }
+
+  function renderMpBattleView(roomData) {
+    if (!mpMyCombatState) {
+      document.getElementById('mp-root').innerHTML = `<div class="mp-panel"><p>正在準備戰場...</p></div>`;
+      return;
+    }
+    const spec = SHIP_TYPES[mpMyCombatState.shipType];
+    const isMyTurn = roomData.turnOrder && roomData.turnOrder[roomData.currentTurnIndex] === mpCurrentUser.uid;
+    const myDirection = roomData.members.find(m => m.uid === mpCurrentUser.uid).direction;
+    const opponents = roomData.members.filter(m => m.uid !== mpCurrentUser.uid && !(roomData.eliminatedUids || []).includes(m.uid));
+    const maxActions = Math.max(0, spec.baseActions - mpMyCombatState.actionPenalty);
+    const healthPct = Math.max(0, mpMyCombatState.health / spec.maxHealth);
+
+    const myCells = getShipCellsGeneric(mpMyCombatState, spec);
+    const rows = myCells.map(c => c.row), cols = myCells.map(c => c.col);
+    const minRow = Math.min(...rows), maxRow = Math.max(...rows), minCol = Math.min(...cols), maxCol = Math.max(...cols);
+    const cellPct = 100 / MAP_SIZE;
+    const stateClass = mpMyCombatState.health <= 0 ? 'wrecked' : healthPct <= .25 ? 'critical' : healthPct <= .75 ? 'damaged' : 'intact';
+
+    const targetBtns = opponents.map(m => `<button class="mp-direction-btn ${mpTargetDirection === m.direction ? 'selected' : ''}" onclick="mpSelectTarget('${m.direction}')">${DIRECTION_LABEL[m.direction]}<br><small>${escapeHtmlMp(m.name)}</small></button>`).join('');
+
+    const weaponBtns = Object.entries(spec.weapons).map(([key, w]) => {
+      const left = w.uses === null ? '無限' : `${mpMyCombatState.weaponUsesLeft[key] ?? 0}/${w.uses}`;
+      const depleted = w.uses !== null && (mpMyCombatState.weaponUsesLeft[key] ?? 0) <= 0;
+      return `<button class="mp-ship-btn ${mpBattleSelectedWeapon === key ? 'selected' : ''}" ${depleted ? 'disabled' : ''} onclick="mpBattleSelectedWeapon='${key}'; renderMpBattleView(window.__mpLastRoomData);"><b>${w.name}</b>威力${w.power}・剩餘${left}</button>`;
+    }).join('');
+
+    let targetGridHtml = '';
+    if (mpTargetDirection) {
+      let cellsHtml = '';
+      for (let r = 1; r <= MAP_SIZE; r++) for (let c = 1; c <= MAP_SIZE; c++) {
+        cellsHtml += `<div class="mp-target-cell" onclick="mpFireAt(${r},${c})" title="${colLetter(c)}${r}"></div>`;
+      }
+      targetGridHtml = `<div class="mp-target-grid">${cellsHtml}</div>`;
+    }
+
     document.getElementById('mp-root').innerHTML = `
-      <div class="mp-panel">
-        <p style="font-size:16px; font-weight:900; margin-bottom:10px;">⚓ 艦隊已就位</p>
-        <ul style="text-align:left; font-size:13px; line-height:2;">${list}</ul>
-        <p style="color:var(--muted); font-size:12px; margin-top:12px;">真正的回合戰鬥畫面（各自的20x20海域、盲打對方座標）下一輪實作，這裡先確認連線架構跟方位/船型選擇沒問題</p>
-        <button class="mp-btn" onclick="leaveMpRoom()">離開房間</button>
+      <div class="mp-battle-layout">
+        <div class="mp-battle-main">
+          <p class="mp-turn-banner ${isMyTurn ? 'active' : ''}">${isMyTurn ? '👉 輪到你了！' : `⏳ 等待 ${escapeHtmlMp(roomData.members.find(m => m.uid === roomData.turnOrder[roomData.currentTurnIndex]).name)} 行動...`}</p>
+          <p style="font-size:12px; color:var(--muted);">你是 <b style="color:var(--scan);">${DIRECTION_LABEL[myDirection]}</b>（${spec.name}）</p>
+          <div class="mp-own-board">
+            <div class="mp-own-grid" id="mp-own-grid"></div>
+          </div>
+          <p class="mp-health-readout">血量 ${Math.max(0, mpMyCombatState.health)}/${spec.maxHealth}　操作次數 ${mpMyCombatState.actionsLeftThisTurn}/${maxActions}${mpMyCombatState.onFire ? '　🔥著火中' : ''}${mpMyCombatState.submarineSurfaced ? '　⚓浮出水面(無法下潛)' : ''}</p>
+          <div class="move-btns">
+            <button class="move-btn" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn <= 0) ? 'disabled' : ''} onclick="mpDoShipAction('left')">↺<span class="btn-label">左轉</span></button>
+            <button class="move-btn" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn <= 0) ? 'disabled' : ''} onclick="mpDoShipAction('forward')">↑<span class="btn-label">前進</span></button>
+            <button class="move-btn" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn <= 0) ? 'disabled' : ''} onclick="mpDoShipAction('right')">↻<span class="btn-label">右轉</span></button>
+          </div>
+          <div class="move-btns" style="margin-top:6px;">
+            <button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn <= 0 || mpMyCombatState.actionPenalty <= 0) ? 'disabled' : ''} onclick="mpRepairMovement()">🔧<span class="btn-label">修復(1)</span></button>
+            <button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn < 2 || !mpMyCombatState.onFire) ? 'disabled' : ''} onclick="mpExtinguishFire()">🧯<span class="btn-label">滅火(2)</span></button>
+            ${mpMyCombatState.shipType === 'submarine' && mpMyCombatState.submarineSurfaced ? `<button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn < 2) ? 'disabled' : ''} onclick="mpRepairDive()">⚓<span class="btn-label">修復下潛(2)</span></button>` : ''}
+            <button class="move-btn small" ${!isMyTurn ? 'disabled' : ''} onclick="mpEndTurn()">🔄<span class="btn-label">結束回合</span></button>
+          </div>
+        </div>
+        <div class="game-sidebar">
+          <div class="turn-panel">
+            <p class="weapon-title">🎯 選擇要攻擊的海域</p>
+            <div class="mp-direction-grid">${targetBtns || '<p style="font-size:11px; color:var(--muted);">沒有可攻擊的對手</p>'}</div>
+            ${mpTargetDirection ? `<p class="weapon-title">選擇武器</p><div class="mp-ship-grid">${weaponBtns}</div><p class="weapon-title">在下方點座標開火（盲打）</p>${targetGridHtml}` : ''}
+          </div>
+          <div class="log-panel mono" id="mp-combat-log">${(roomData.combatLog || []).slice(-14).reverse().map(t => `<p style="margin:0;">${escapeHtmlMp(t)}</p>`).join('')}</div>
+        </div>
       </div>
     `;
+    window.__mpLastRoomData = roomData;
+
+    // 自己的船用跟單機demo一樣的渲染方式畫在自己的20x20格上
+    const ownGridEl = document.getElementById('mp-own-grid');
+    let cellsHtml = '';
+    for (let r = 1; r <= MAP_SIZE; r++) for (let c = 1; c <= MAP_SIZE; c++) cellsHtml += `<div class="cell"></div>`;
+    ownGridEl.innerHTML = cellsHtml;
+    const shipEl = document.createElement('div');
+    shipEl.className = `ship-block type-${mpMyCombatState.shipType} state-${stateClass} heading-${mpMyCombatState.heading}`;
+    shipEl.style.position = 'absolute';
+    shipEl.style.top = `${(minRow - 1) * cellPct}%`;
+    shipEl.style.left = `${(minCol - 1) * cellPct}%`;
+    shipEl.style.width = `${(maxCol - minCol + 1) * cellPct}%`;
+    shipEl.style.height = `${(maxRow - minRow + 1) * cellPct}%`;
+    shipEl.innerHTML = `<span class="bow-arrow">${BOW_ARROW[mpMyCombatState.heading]}</span><span class="ship-pct">${Math.round(healthPct * 100)}%</span>${mpMyCombatState.onFire ? '<span class="fire-emoji">🔥</span>' : ''}`;
+    ownGridEl.style.position = 'relative';
+    ownGridEl.appendChild(shipEl);
+  }
+
+  function mpSelectTarget(direction) {
+    mpTargetDirection = direction;
+    mpBattleSelectedWeapon = 'normal';
+    renderMpBattleView(window.__mpLastRoomData);
+  }
+
+  // ---------- 我方船隻操作(移動/轉向/修復)：都直接寫進自己的privateCombatState ----------
+  async function mpDoShipAction(action) {
+    const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+    const stateRef = roomRef.collection('privateCombatState').doc(mpCurrentUser.uid);
+    try {
+      await mpDb.runTransaction(async (tx) => {
+        const roomDoc = await tx.get(roomRef);
+        const roomD = roomDoc.data();
+        if (roomD.turnOrder[roomD.currentTurnIndex] !== mpCurrentUser.uid) return;
+        const stateDoc = await tx.get(stateRef);
+        const s = stateDoc.data();
+        if (s.actionsLeftThisTurn <= 0) return;
+        const spec = SHIP_TYPES[s.shipType];
+        let candidate = { row: s.row, col: s.col, heading: s.heading };
+        if (action === 'forward') {
+          if (s.heading === 'N') candidate.row--;
+          else if (s.heading === 'S') candidate.row++;
+          else if (s.heading === 'E') candidate.col++;
+          else if (s.heading === 'W') candidate.col--;
+        } else if (action === 'left') candidate.heading = TURN_LEFT[s.heading];
+        else if (action === 'right') candidate.heading = TURN_RIGHT[s.heading];
+        if (!shipWithinBoundsGeneric(candidate, spec)) return; // 超出邊界，不消耗次數
+        tx.update(stateRef, { row: candidate.row, col: candidate.col, heading: candidate.heading, actionsLeftThisTurn: s.actionsLeftThisTurn - 1 });
+      });
+    } catch (err) { console.warn('移動失敗', err); }
+  }
+  async function mpRepairMovement() {
+    const stateRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId).collection('privateCombatState').doc(mpCurrentUser.uid);
+    try {
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(stateRef);
+        const s = doc.data();
+        if (s.actionsLeftThisTurn <= 0 || s.actionPenalty <= 0) return;
+        tx.update(stateRef, { actionsLeftThisTurn: s.actionsLeftThisTurn - 1, actionPenalty: s.actionPenalty - 1 });
+      });
+    } catch (err) { console.warn('修復失敗', err); }
+  }
+  async function mpExtinguishFire() {
+    const stateRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId).collection('privateCombatState').doc(mpCurrentUser.uid);
+    try {
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(stateRef);
+        const s = doc.data();
+        if (s.actionsLeftThisTurn < 2 || !s.onFire) return;
+        tx.update(stateRef, { actionsLeftThisTurn: s.actionsLeftThisTurn - 2, onFire: false });
+      });
+    } catch (err) { console.warn('滅火失敗', err); }
+  }
+  // 潛水艇專屬：修復下潛功能，花2次移動次數，恢復隱蔽(submarineSurfaced=false)
+  async function mpRepairDive() {
+    const stateRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId).collection('privateCombatState').doc(mpCurrentUser.uid);
+    try {
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(stateRef);
+        const s = doc.data();
+        if (s.actionsLeftThisTurn < 2 || !s.submarineSurfaced) return;
+        tx.update(stateRef, { actionsLeftThisTurn: s.actionsLeftThisTurn - 2, submarineSurfaced: false });
+      });
+    } catch (err) { console.warn('修復下潛失敗', err); }
+  }
+  async function mpEndTurn() {
+    const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+    try {
+      await mpDb.runTransaction(async (tx) => {
+        const roomDoc = await tx.get(roomRef);
+        const roomD = roomDoc.data();
+        if (roomD.turnOrder[roomD.currentTurnIndex] !== mpCurrentUser.uid) return;
+        const activeOrder = roomD.turnOrder.filter(uid => !(roomD.eliminatedUids || []).includes(uid));
+        const curIdx = activeOrder.indexOf(mpCurrentUser.uid);
+        const nextUid = activeOrder[(curIdx + 1) % activeOrder.length];
+        tx.update(roomRef, { currentTurnIndex: roomD.turnOrder.indexOf(nextUid), hasFiredThisTurn: false });
+      });
+      // 回合真正輪到自己時才補回操作次數(在下一次輪到自己、監聽到currentTurnIndex變化時處理，
+      // 這裡簡化成結束回合的當下就先重設好自己的次數，反正輪到自己前這個欄位不會被用到)
+      const stateRef = roomRef.collection('privateCombatState').doc(mpCurrentUser.uid);
+      const doc = await stateRef.get();
+      const s = doc.data();
+      const spec = SHIP_TYPES[s.shipType];
+      const maxActions = Math.max(0, spec.baseActions - s.actionPenalty);
+      const updates = { actionsLeftThisTurn: maxActions, hasFiredThisTurn: false };
+      if (s.onFire) {
+        const fireDmg = Math.round(spec.maxHealth * 0.1);
+        updates.health = Math.max(0, s.health - fireDmg);
+      }
+      await stateRef.update(updates);
+    } catch (err) { console.warn('結束回合失敗', err); }
+  }
+
+  // ---------- 開火：盲打，讀取目標玩家的私有戰鬥狀態判定命中，寫回雙方看得到的公開戰報 ----------
+  // 開火：呼叫Worker的naval_battle_fire動作，由Worker用service account的權限同時讀寫
+  // 攻擊方跟防守方的私有戰鬥資料，判定命中/套用傷害/寫入模糊戰報，前端這裡只會拿到
+  // 「有沒有命中」這個布林值，不會讀到任何精確的座標或血量數字——真正的伺服器端隔離
+  async function mpFireAt(row, col) {
+    if (mpFiringLock || !mpTargetDirection) return;
+    const roomData = window.__mpLastRoomData;
+    if (!roomData || roomData.turnOrder[roomData.currentTurnIndex] !== mpCurrentUser.uid) return;
+    mpFiringLock = true;
+    playFireSound();
+
+    try {
+      const idToken = await mpCurrentUser.getIdToken();
+      const res = await fetch(NAVAL_WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'naval_battle_fire', idToken,
+          roomId: mpRoomState.roomId, targetDirection: mpTargetDirection,
+          row, col, weaponKey: mpBattleSelectedWeapon,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert('開火失敗：' + (data.error || '未知錯誤'));
+      }
+      // 不管命中與否，畫面上的視覺回饋(爆炸特效/落空水花)直接在這裡播放——命中與否
+      // Worker已經回傳了(data.hit)，但實際的血量/座標更動是Worker寫進Firestore的，
+      // 會透過onSnapshot監聽自動反映到畫面上，這裡不用自己再算一次
+      const cellEl = document.querySelector(`.mp-target-cell:nth-child(${(row - 1) * MAP_SIZE + col})`);
+      if (cellEl) {
+        const rect = cellEl.getBoundingClientRect();
+        spawnBlast(rect.left + rect.width / 2, rect.top + rect.height / 2, !!data.hit, 1);
+      }
+      mpTargetDirection = null;
+    } catch (err) {
+      alert('開火失敗：' + err.message);
+    }
+    mpFiringLock = false;
   }
 
   async function leaveMpRoom() {
+
     try {
       const ref = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
       const doc = await ref.get();
