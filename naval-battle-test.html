@@ -405,6 +405,39 @@
     .stage { min-height: auto; }
     .game-layout { min-height: auto; }
   }
+
+  /* 手機直向專用的緊湊版面：地圇尺寸維持不變(由JS直接計算，不受這裡影響)，其餘所有UI
+     元素通通壓縮間距跟字體，目標是整個畫面盡量塞在一屏內、不需要捲動就能看到全部資訊。
+     放在樣式表最尾端，確保特異度相同時能正確覆蓋掉前面的基礎定義 */
+  @media (max-width: 780px) and (min-width: 0) {
+    header { padding: 4px 10px 3px; }
+    .header-row { gap: 6px; }
+    h1 { font-size: 14px; }
+    .eyebrow { font-size: 7px; margin-bottom: 0; }
+    .back-links { padding-top: 0; gap: 6px; }
+    a.back-link, .legend-toggle-btn { font-size: 10px; padding: 3px 8px; }
+    .coord-readout { margin-top: 6px; font-size: 11px; min-height: auto; }
+    .ship-switcher { margin: 4px 0 6px; font-size: 11px; }
+    .ship-switcher select { font-size: 11px; padding: 2px 6px; }
+    .game-layout { gap: 4px; }
+    .turn-panel { padding: 8px 10px; margin-top: 6px; }
+    .turn-panel .turn-title { font-size: 12px; margin-bottom: 2px; }
+    .turn-panel .health-readout { font-size: 11px; margin: 0 0 2px; }
+    .health-bar { height: 6px; margin-bottom: 5px; }
+    .actions-left { font-size: 11px; margin: 0 0 5px; }
+    .fire-status { font-size: 10px; margin: 3px 0; }
+    .move-btns { gap: 5px; margin-top: 5px; }
+    .move-btn { padding: 6px 8px; font-size: 15px; min-width: 40px; }
+    .move-btn .btn-label { font-size: 8px; margin-top: 1px; }
+    .weapon-title { font-size: 11px; margin: 6px 0 3px; }
+    .weapon-panel, .mp-ship-grid { gap: 4px; }
+    .weapon-btn, .mp-ship-btn { padding: 5px 6px; font-size: 10px; }
+    .wmeta { font-size: 9px; }
+    .mp-direction-grid { gap: 5px; margin: 5px 0; }
+    .mp-direction-btn { padding: 8px 6px; font-size: 11px; }
+    .mp-fire-hint { font-size: 10px; margin-top: 5px; }
+    .log-panel { height: 70px; margin-top: 6px; padding: 6px 10px; font-size: 11px; }
+  }
 </style>
 </head>
 <body>
@@ -1043,6 +1076,12 @@
     shell.style.left = startX + 'px';
     shell.style.top = '-30px';
     document.body.appendChild(shell);
+    // 強制觸發一次reflow：讀取offsetHeight會強迫瀏覽器立刻計算並「認定」目前的樣式
+    // (包含top:-30px這個初始位置)，確保之後改成transition+新位置時，瀏覽器真的會比對出
+    // 「有變化」進而播放動畫。單靠requestAnimationFrame不夠可靠——它只保證是下一次繪製前
+    // 執行，不保證瀏覽器已經把初始狀態實際算過一次，部分行動裝置瀏覽器會把兩次改動
+    // 合併成一次直接跳到最終狀態，導致完全沒有動畫、只看到瞬間閃現
+    void shell.offsetHeight;
     return shell;
   }
 
@@ -2251,6 +2290,7 @@
       shell.style.left = startX + 'px';
       shell.style.top = startY + 'px';
       document.body.appendChild(shell);
+      void shell.offsetHeight; // 強制reflow，確保初始位置被瀏覽器真正認定，動畫才會確實播放
       requestAnimationFrame(() => {
         shell.style.transition = 'top .55s cubic-bezier(.35,0,.7,1)';
         shell.style.top = '-30px'; // 往上飛出畫面外
@@ -2323,6 +2363,7 @@
     shell.style.left = targetX + 'px';
     shell.style.top = '-30px';
     document.body.appendChild(shell);
+    void shell.offsetHeight; // 強制reflow，確保初始位置被瀏覽器真正認定，動畫才會確實播放
     if (weaponSpec.whistle) playWhistleSound(weaponSpec.fallMs);
     requestAnimationFrame(() => {
       shell.style.transition = `top ${weaponSpec.fallMs}ms cubic-bezier(.45,0,.85,1)`;
