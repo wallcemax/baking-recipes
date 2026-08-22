@@ -316,7 +316,7 @@
   .mp-turn-banner { background: var(--panel); border: 1px solid var(--grid-line-bright); border-radius: 8px; padding: 8px; text-align: center; font-weight: 800; font-size: 13px; margin: 0 0 6px; }
   .mp-turn-banner.active { background: linear-gradient(135deg, var(--scan), #2d9d90); color: #04211d; }
   .mp-own-board { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 6px; }
-  .mp-own-grid { position: relative; width: min(100%, 60vh); aspect-ratio: 1/1; display: grid; grid-template-columns: repeat(20,1fr); grid-template-rows: repeat(20,1fr); gap: 1px; background: var(--grid-line); border: 1px solid var(--grid-line-bright); border-radius: 4px; container-type: inline-size; }
+  .mp-own-grid { position: relative; display: grid; grid-template-columns: repeat(20,1fr); grid-template-rows: repeat(20,1fr); gap: 1px; background: var(--grid-line); border: 1px solid var(--grid-line-bright); border-radius: 4px; container-type: inline-size; }
   .mp-own-grid .cell { background: #0a1c2c; }
   .mp-health-readout { text-align: center; font-size: 11px; color: var(--muted); font-family: monospace; margin: 4px 0 8px; }
   .mp-target-grid { display: grid; grid-template-columns: repeat(20,1fr); grid-template-rows: repeat(20,1fr); gap: 1px; background: var(--grid-line); border: 1px solid var(--critical); border-radius: 4px; aspect-ratio: 1/1; margin-top: 6px; }
@@ -588,6 +588,28 @@
     const size = Math.max(60, Math.min(availW, availH)); // 至少60px，避免容器還沒佈局完成時量到0
     tilt.style.width = size + 'px';
     tilt.style.height = size + 'px';
+  }
+
+  // 多人戰鬥畫面專用的地圖尺寸量測：跟單機模式同樣的做法，不依賴CSS min()自動計算
+  // (那個做法在這個巢狀flexbox環境下不可靠，之前地圖會被拉伸變形就是這個原因)，
+  // 改成JS直接量測.mp-own-board的實際可用空間，取寬高較小值當正方形邊長強制設定。
+  // 每次renderMpBattleView重新渲染(例如戰報有新內容)都要重新呼叫，確保尺寸不會
+  // 因為側邊欄內容變化而跟著跑掉
+  let mpOwnGridResizeObserver = null;
+  function resizeMpOwnGridToFit() {
+    const board = document.querySelector('.mp-own-board');
+    const grid = document.getElementById('mp-own-grid');
+    if (!board || !grid) return;
+    const availW = board.clientWidth;
+    const availH = board.clientHeight;
+    const size = Math.max(60, Math.min(availW, availH));
+    grid.style.width = size + 'px';
+    grid.style.height = size + 'px';
+    // 只在第一次設定ResizeObserver，避免每次重新渲染都重複建立新的observer疊加
+    if (!mpOwnGridResizeObserver && window.ResizeObserver) {
+      mpOwnGridResizeObserver = new ResizeObserver(() => resizeMpOwnGridToFit());
+      mpOwnGridResizeObserver.observe(board);
+    }
   }
 
   function renderGrid() {
@@ -1274,6 +1296,9 @@
   function mpCleanupRoom() {
     if (mpRoomState.unsubscribe) { mpRoomState.unsubscribe(); mpRoomState.unsubscribe = null; }
     if (mpLobbyUnsubscribe) { mpLobbyUnsubscribe(); mpLobbyUnsubscribe = null; }
+    if (mpBattleUnsubscribe) { mpBattleUnsubscribe(); mpBattleUnsubscribe = null; }
+    mpBattleListenerSetup = false;
+    mpMyCombatState = null;
     mpRoomState = { roomId: null, unsubscribe: null };
   }
 
@@ -1382,9 +1407,48 @@
     mpRoomState.unsubscribe = mpDb.collection('navalBattleRooms').doc(roomId).onSnapshot(doc => {
       if (!doc.exists) { alert('房間已經被關閉'); mpCleanupRoom(); renderMpLobby(); return; }
       const data = doc.data();
-      if (data.status === 'waiting') renderMpWaitingRoom(data);
-      else mpEnterBattle(data);
+      window.__mpLastRoomData = data; // 隨時保持最新，戰鬥畫面重新渲染要用這份而不是舊的closure
+      if (data.status === 'waiting') { renderMpWaitingRoom(data); return; }
+      // 進入戰鬥狀態：初始化(房主觸發、內部自己防止重複執行)、確保私有戰鬥狀態監聽器只設定一次，
+      // 然後不管是房間資料變化(這裡)還是自己的戰鬥狀態變化(下面那個監聽器)，都要用「最新」的
+      // 房間資料重新渲染——之前的bug是渲染只在第一次進入戰鬥時執行，之後房間資料再怎麼更新
+      // (包含Worker初始化完成、戰報更新等)畫面都不會跟著動，卡在舊資料上
+      initMpBattleIfNeeded(data);
+      setupMpBattleListenerIfNeeded();
+      renderMpBattleView(data);
     }, err => console.warn('房間同步失敗', err));
+  }
+
+  let mpBattleListenerSetup = false;
+  function setupMpBattleListenerIfNeeded() {
+    if (mpBattleListenerSetup) return; // 只需要設定一次這個監聽器本身，但它觸發時一律用最新房間資料渲染
+    mpBattleListenerSetup = true;
+    const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+    mpBattleUnsubscribe = roomRef.collection('privateCombatState').doc(mpCurrentUser.uid).onSnapshot(doc => {
+      if (!doc.exists) return; // 房主可能還在初始化中，稍等它建立
+      mpMyCombatState = doc.data();
+      if (window.__mpLastRoomData) renderMpBattleView(window.__mpLastRoomData);
+    });
+  }
+
+  // 復原機制：如果房間狀態已經變成playing、但戰鬥初始化一直沒有真正完成(turnOrder遲遲沒出現，
+  // 可能是Worker呼叫失敗、網路問題等)，房主可以按這個按鈕把房間重設回等待室重新開始，
+  // 不然房間會永遠卡在playing狀態、沒辦法再按「開始遊戲」
+  async function mpResetStuckRoom() {
+    if (!confirm('確定要把房間重設回等待室嗎？大家的準備狀態會被清空，需要重新準備一次。')) return;
+    try {
+      const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(roomRef);
+        const data = doc.data();
+        if (data.hostUid !== mpCurrentUser.uid) return;
+        const members = data.members.map(m => ({ ...m, ready: false }));
+        tx.update(roomRef, {
+          status: 'waiting', members, battleInitialized: false,
+          turnOrder: null, currentTurnIndex: 0, combatLog: [], eliminatedUids: [], winnerUid: null,
+        });
+      });
+    } catch (err) { alert('重設失敗：' + err.message); }
   }
 
   // ---------- 等待室：成員列表 + 選方位 + 選船型(私有) + 準備 ----------
@@ -1464,6 +1528,10 @@
   // (切換準備/選方位)不會互相覆蓋掉彼此的修改
   let mpMySelectedShip = null;
   async function pickMpShip(shipType) {
+    // 先更新本地變數，再做任何Firestore寫入——因為寫入members陣列會立刻觸發onSnapshot
+    // 重新渲染畫面，如果本地變數的更新排在寫入後面，重新渲染當下讀到的還是舊值，
+    // 畫面就會顯示成「沒選中」，要等到之後某個別的動作再次觸發重新渲染才會看到正確結果
+    mpMySelectedShip = shipType;
     try {
       const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
       await mpDb.runTransaction(async (tx) => {
@@ -1478,7 +1546,6 @@
       // 交易可以跨集合，但這裡分開寫沒有race condition風險，因為只有自己會寫自己的privateShips)
       await mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId)
         .collection('privateShips').doc(mpCurrentUser.uid).set({ shipType });
-      mpMySelectedShip = shipType;
     } catch (err) { alert('選擇船型失敗：' + err.message); }
   }
 
@@ -1577,20 +1644,23 @@
     return cells2;
   }
 
-  function mpEnterBattle(data) {
-    initMpBattleIfNeeded(data);
-    if (mpBattleUnsubscribe) return; // 已經在監聽自己的私有戰鬥狀態了
-    const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
-    mpBattleUnsubscribe = roomRef.collection('privateCombatState').doc(mpCurrentUser.uid).onSnapshot(doc => {
-      if (!doc.exists) return; // 房主可能還在初始化中，稍等它建立
-      mpMyCombatState = doc.data();
-      renderMpBattleView(data);
-    });
-  }
-
   function renderMpBattleView(roomData) {
     if (!mpMyCombatState) {
       document.getElementById('mp-root').innerHTML = `<div class="mp-panel"><p>正在準備戰場...</p></div>`;
+      return;
+    }
+    // 防呆：turnOrder還沒設定好，代表Worker的戰鬥初始化還在進行中或失敗了，先顯示等待畫面，
+    // 不要繼續往下執行(下面的邏輯會用到turnOrder，沒防呆的話會直接當機)。房主額外看得到
+    // 復原按鈕，避免初始化真的失敗時房間永遠卡住
+    if (!roomData.turnOrder) {
+      const isHost = roomData.hostUid === mpCurrentUser.uid;
+      document.getElementById('mp-root').innerHTML = `
+        <div class="mp-panel">
+          <p>⏳ 戰鬥初始化中，請稍候...</p>
+          <p style="font-size:11px; color:var(--muted); margin-top:8px;">如果這個畫面卡住超過幾秒鐘，可能是初始化過程中發生問題</p>
+          ${isHost ? `<button class="mp-btn" style="margin-top:10px;" onclick="mpResetStuckRoom()">🔄 重設回等待室</button>` : ''}
+        </div>
+      `;
       return;
     }
     const spec = SHIP_TYPES[mpMyCombatState.shipType];
@@ -1671,6 +1741,7 @@
     shipEl.innerHTML = `<span class="bow-arrow">${BOW_ARROW[mpMyCombatState.heading]}</span><span class="ship-pct">${Math.round(healthPct * 100)}%</span>${mpMyCombatState.onFire ? '<span class="fire-emoji">🔥</span>' : ''}`;
     ownGridEl.style.position = 'relative';
     ownGridEl.appendChild(shipEl);
+    resizeMpOwnGridToFit();
   }
 
   function mpSelectTarget(direction) {
