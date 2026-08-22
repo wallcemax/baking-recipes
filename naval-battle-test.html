@@ -1371,8 +1371,14 @@
     } catch (err) { alert('加入房間失敗：' + err.message); }
   }
 
-  function mpEnterRoom(roomId) {
+  async function mpEnterRoom(roomId) {
     mpRoomState.roomId = roomId;
+    // 讀回自己之前選過的船型(如果有)，避免重新整理頁面後本地的mpMySelectedShip變數
+    // 被重置成空，導致畫面誤以為還沒選過船——這份資料只有本人能讀，不影響隱私隔離
+    try {
+      const shipDoc = await mpDb.collection('navalBattleRooms').doc(roomId).collection('privateShips').doc(mpCurrentUser.uid).get();
+      if (shipDoc.exists) mpMySelectedShip = shipDoc.data().shipType;
+    } catch (err) { console.warn('讀取先前選過的船型失敗', err); }
     mpRoomState.unsubscribe = mpDb.collection('navalBattleRooms').doc(roomId).onSnapshot(doc => {
       if (!doc.exists) { alert('房間已經被關閉'); mpCleanupRoom(); renderMpLobby(); return; }
       const data = doc.data();
@@ -1409,7 +1415,7 @@
       // 自己選過的船型，本地state會記住(見mpMySelectedShip)，用來畫面呈現「你選的是哪一艘」；
       // 但這個資訊完全不會寫進公開的房間文件，只有自己這個瀏覽器session知道
       const isMine = mpMySelectedShip === key;
-      return `<button class="mp-ship-btn ${isMine ? 'selected' : ''}" ${me.shipSelected ? 'disabled' : ''} onclick="pickMpShip('${key}')">
+      return `<button class="mp-ship-btn ${isMine ? 'selected' : ''}" ${me.ready ? 'disabled' : ''} onclick="pickMpShip('${key}')">
         <b>${spec.name}</b>血量${spec.maxHealth}・${spec.length}x${spec.width}
       </button>`;
     }).join('');
@@ -1424,9 +1430,9 @@
         <p style="font-weight:800; font-size:13px; margin:14px 0 4px;">🧭 選擇你的方位（東南西北海，每人限選一個）</p>
         <div class="mp-direction-grid">${directionBtns}</div>
 
-        <p style="font-weight:800; font-size:13px; margin:14px 0 4px;">🚢 選擇你的船隻（選定後鎖定，其他玩家看不到你選了什麼）</p>
+        <p style="font-weight:800; font-size:13px; margin:14px 0 4px;">🚢 選擇你的船隻（其他玩家看不到你選了什麼，取消準備後可以重選）</p>
         <div class="mp-ship-grid">${shipBtns}</div>
-        ${me.shipSelected ? `<p class="mp-locked-note">✅ 船型已鎖定，不能更改</p>` : ''}
+        ${me.ready ? `<p class="mp-locked-note">✅ 已準備，取消準備才能重新選船</p>` : ''}
 
         <button class="mp-btn primary" style="margin-top:14px;" onclick="toggleMpReady(${!me.ready})" ${(!me.direction || !me.shipSelected) ? 'disabled' : ''}>${me.ready ? '取消準備' : '✅ 我準備好了'}</button>
         ${isHost ? `<button class="mp-btn" onclick="confirmMpStartGame()" ${allReady ? '' : 'disabled'}>${allReady ? '⚓ 開始遊戲' : '等待全部人準備好...'}</button>` : `<p style="text-align:center; color:var(--muted); font-size:12px; margin-top:8px;">${allReady ? '⏳ 等待房主開始遊戲...' : '⏳ 等待全部人準備好...'}</p>`}
@@ -1453,32 +1459,39 @@
   // 本地記住自己選的船型(只是為了畫面呈現「你選的是這艘」，不會寫進公開資料)；
   // 真正寫入的是navalBattleRooms/{roomId}/privateShips/{myUid}這個子集合，
   // Firestore安全規則會限制只有uid等於自己的人才能讀取——這是在伺服器端judge的，
-  // 不是前端不顯示而已，其他玩家用開發者工具檢查網路封包也讀不到這筆資料
+  // 不是前端不顯示而已，其他玩家用開發者工具檢查網路封包也讀不到這筆資料。
+  // 已經準備好的狀態下不能重選(要先取消準備)，用交易確保跟其他同時發生的操作
+  // (切換準備/選方位)不會互相覆蓋掉彼此的修改
   let mpMySelectedShip = null;
   async function pickMpShip(shipType) {
     try {
       const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
-      const doc = await roomRef.get();
-      const data = doc.data();
-      const me = data.members.find(m => m.uid === mpCurrentUser.uid);
-      if (me.shipSelected) { alert('船型已經鎖定，不能更改'); return; } // 保險檢查，介面按鈕理論上已經disabled
-
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(roomRef);
+        const data = doc.data();
+        const me = data.members.find(m => m.uid === mpCurrentUser.uid);
+        if (me.ready) return; // 已經準備好了，要先取消準備才能重選，保險檢查(介面按鈕理論上已經disabled)
+        const members = data.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, shipSelected: true } : m);
+        tx.update(roomRef, { members });
+      });
+      // privateShips這份寫入本身不需要跟members陣列包在同一個交易裡(不同集合，Firestore
+      // 交易可以跨集合，但這裡分開寫沒有race condition風險，因為只有自己會寫自己的privateShips)
       await mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId)
         .collection('privateShips').doc(mpCurrentUser.uid).set({ shipType });
-
-      const members = data.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, shipSelected: true } : m);
-      await roomRef.update({ members });
       mpMySelectedShip = shipType;
     } catch (err) { alert('選擇船型失敗：' + err.message); }
   }
 
+  // 切換準備狀態：改用交易保護，避免跟選方位/選船型幾乎同時發生時，用舊資料覆蓋掉對方的修改
   async function toggleMpReady(ready) {
     try {
       const ref = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
-      const doc = await ref.get();
-      const data = doc.data();
-      const members = data.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, ready } : m);
-      await ref.update({ members });
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        const data = doc.data();
+        const members = data.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, ready } : m);
+        tx.update(ref, { members });
+      });
     } catch (err) { console.warn('切換準備狀態失敗', err); }
   }
 
@@ -1796,19 +1809,19 @@
   }
 
   async function leaveMpRoom() {
-
     try {
       const ref = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
-      const doc = await ref.get();
-      if (doc.exists) {
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        if (!doc.exists) return;
         const data = doc.data();
         const members = data.members.filter(m => m.uid !== mpCurrentUser.uid);
         if (!members.length || data.hostUid === mpCurrentUser.uid) {
-          await ref.delete();
+          tx.delete(ref);
         } else {
-          await ref.update({ members, memberUids: members.map(m => m.uid) });
+          tx.update(ref, { members, memberUids: members.map(m => m.uid) });
         }
-      }
+      });
     } catch (err) { console.warn(err); }
     mpMySelectedShip = null;
     mpCleanupRoom();
