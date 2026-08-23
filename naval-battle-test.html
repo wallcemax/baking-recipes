@@ -66,6 +66,9 @@
     .game-sidebar { width: 100%; flex: 1; min-height: 0; }
     h1 { font-size: 16px; }
     .eyebrow { font-size: 8px; }
+    /* 地圇左側數字座標標籤需要往左延伸28px的空間，原本12px的留白不夠，會被overflow-x:hidden
+       裁掉——這是造成數字被壓成只剩最後一碼的根本原因，加大留白徹底解決 */
+    .stage { padding-left: 34px; }
   }
 
   /* -------- 戰術資訊列 -------- */
@@ -294,6 +297,19 @@
   .blast.miss { background: radial-gradient(circle, #eafbff 0%, #7fd4e8 32%, #2d7d9a 55%, rgba(45,125,154,0) 72%); }
   .blast.animate { transition: transform .45s cubic-bezier(.15,.8,.3,1), opacity .5s ease .1s; transform: translate(-50%, -50%) scale(var(--blast-scale, 9)); opacity: 0; }
 
+  /* 潛水艇專屬水花特效：淡藍色圈圈往外擴散再淡出，表現水下發射的視覺，不像其他船的
+     砲彈會飛出畫面外 */
+  .splash {
+    position: fixed;
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(180,225,255,.9) 0%, rgba(120,195,255,.5) 45%, rgba(80,170,255,0) 75%);
+    border: 2px solid rgba(180,225,255,.6);
+    transform: translate(-50%, -50%) scale(0);
+    z-index: 250; pointer-events: none; opacity: 1;
+  }
+  .splash.animate { transition: transform .5s cubic-bezier(.15,.8,.3,1), opacity .55s ease .05s; transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
+
   /* RPG風格傷害飄字：命中時跳出紅色數字往上飄、淡出 */
   .dmg-float { position: fixed; font-weight: 900; font-family: "Arial Black", sans-serif; color: #ff5b5b; text-shadow: 0 0 6px rgba(0,0,0,.8), 0 2px 2px rgba(0,0,0,.6); z-index: 350; pointer-events: none; transform: translate(-50%, -50%); font-size: 15px; }
   .dmg-float.animate { transition: transform 1s cubic-bezier(.15,.7,.3,1), opacity 1s ease .2s; transform: translate(-50%, -160%) scale(1.15); opacity: 0; }
@@ -362,6 +378,8 @@
   .mp-fire-hint { font-size: 11px; color: var(--critical); font-weight: 700; margin-top: 8px; text-align: center; }
   /* 已選定的瞄準座標：紅色脈動外框，明確標示「等等要打這裡」 */
   .mp-pending-fire { background: #4a1616 !important; box-shadow: inset 0 0 0 2px #ff5b5b, inset 0 0 12px rgba(255,90,90,.7) !important; animation: pending-fire-pulse 1s ease-in-out infinite; }
+  /* 攻擊範圍預覽：淡紅色半透明標示，跟已選定的瞄準座標(較深、脈動)區隔開來 */
+  .mp-range-preview { background: rgba(214,69,69,.35) !important; box-shadow: inset 0 0 0 1px rgba(255,120,120,.5) !important; }
   @keyframes pending-fire-pulse { 0%, 100% { box-shadow: inset 0 0 0 2px #ff5b5b, inset 0 0 12px rgba(255,90,90,.7); } 50% { box-shadow: inset 0 0 0 2px #ff8a8a, inset 0 0 20px rgba(255,90,90,.9); } }
   /* 紅色個性化發射按鈕：比一般按鈕更搶眼，強化「按下去就真的開火了」的儀式感 */
   .mp-fire-btn {
@@ -390,6 +408,12 @@
   }
   .mp-fire-overlay > * { pointer-events: auto; } /* 但按鈕本身還是要能點擊 */
   @keyframes fire-overlay-in { from { transform: translateY(16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  .mp-fire-overlay-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 12px; font-weight: 800; color: var(--scan); }
+  .mp-cancel-target-btn { background: var(--deep); border: 1px solid var(--grid-line-bright); color: var(--muted); border-radius: 6px; padding: 4px 10px; font-size: 11px; cursor: pointer; }
+  .mp-cancel-target-btn:hover { color: var(--critical); border-color: var(--critical); }
+  .mp-orientation-toggle { display: flex; gap: 6px; margin: 6px 0; }
+  .mp-orientation-toggle button { flex: 1; background: var(--deep); border: 1px solid var(--grid-line-bright); color: var(--muted); border-radius: 6px; padding: 6px; font-size: 12px; cursor: pointer; }
+  .mp-orientation-toggle button.active { background: var(--scan); border-color: var(--scan); color: #04211d; font-weight: 800; }
 
 
   @media (max-width: 500px) {
@@ -590,39 +614,39 @@
   // ============================================================
   const SHIP_TYPES = {
     amphibious: {
-      name: '兩棲突擊艦', shipName: '阿爾法', length: 4, width: 2, baseActions: 4, maxHealth: 1000,
+      name: '兩棲突擊艦', shipName: '阿爾法', length: 4, width: 2, baseActions: 5, maxHealth: 1000,
       fireChance: { frontmid: 1.0 }, // 前中區塊打中必失火(100%)
       weapons: {
         normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } }, // uses:null代表不限次數
-        saturation: { name: '飽和攻擊', power: 100, shots: 3, sameTarget: true, uses: 5, fallMs: 480, shellSize: 7, explosionProfile: { lowpassFreq: 1300, volume: 0.35, durationSec: 0.3, bassFreq: 80 } }, // 連續快速齊射，每發音色比單發一般砲彈稍微輕快
+        saturation: { name: '精準飽和攻擊', power: 100, shots: 4, sameTarget: true, uses: 5, fallMs: 480, shellSize: 7, explosionProfile: { lowpassFreq: 1300, volume: 0.35, durationSec: 0.3, bassFreq: 80 } }, // 4發同點齊射，每發音色比單發一般砲彈稍微輕快
       },
     },
     cruiser: {
-      name: '巡洋艦', shipName: '布拉沃', length: 3, width: 2, baseActions: 5, maxHealth: 800,
+      name: '巡洋艦', shipName: '布拉沃', length: 3, width: 2, baseActions: 6, maxHealth: 800,
       fireChance: { mid: 0.5 }, // 中段區塊打中50%機率失火
       weapons: {
         normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } },
-        heavy: { name: '重砲射擊', power: 150, uses: 4, aoe: { w: 2, h: 2 }, fallMs: 900, shellSize: 13, explosionProfile: { lowpassFreq: 450, volume: 0.65, durationSec: 0.85, bassFreq: 45 } }, // 較重、彈道較慢，爆炸聲低沉厚重
+        heavy: { name: '重砲射擊', power: 125, uses: 4, aoe: { w: 3, h: 3 }, vsAmphibiousMultiplier: 0.9, fallMs: 900, shellSize: 13, explosionProfile: { lowpassFreq: 450, volume: 0.65, durationSec: 0.85, bassFreq: 45 } }, // 較重、彈道較慢，爆炸聲低沉厚重；對兩棲突擊艦裝甲較厚的目標傷害打9折
       },
     },
     destroyer: {
-      name: '驅逐艦', shipName: '查理', length: 3, width: 2, baseActions: 6, maxHealth: 700,
+      name: '驅逐艦', shipName: '查理', length: 3, width: 2, baseActions: 7, maxHealth: 700,
       fireChance: { mid: 0.5 },
       weapons: {
         normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } },
-        rocket: { name: '多管火箭彈', power: 70, uses: 5, aoe: { w: 3, h: 2 }, multiShell: true, fallMs: 550, shellSize: 7, explosionProfile: { lowpassFreq: 2000, volume: 0.22, durationSec: 0.22, bassFreq: null } }, // 多管=6管齊發，範圍內每格各一顆，單發火箭威力較小、聲音輕快清脆
+        rocket: { name: '多管火箭彈', power: 100, uses: 5, pattern: 'cross', vsAmphibiousMultiplier: 0.9, fallMs: 550, shellSize: 7, explosionProfile: { lowpassFreq: 2000, volume: 0.22, durationSec: 0.22, bassFreq: null } }, // 十字5格齊發；對兩棲突擊艦裝甲較厚的目標傷害打9折
       },
     },
     frigate: {
-      name: '巡防艦', shipName: '德爾塔', length: 2, width: 1, baseActions: 7, maxHealth: 500,
+      name: '巡防艦', shipName: '德爾塔', length: 2, width: 1, baseActions: 8, maxHealth: 500,
       fireChance: { bow: 0.5 },
       weapons: {
         normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } },
-        missile: { name: '超音速反艦飛彈', power: 150, uses: 5, aoe: { w: 2, h: 1 }, fallMs: 280, shellSize: 10, whistle: true, explosionProfile: { lowpassFreq: 800, volume: 0.55, durationSec: 0.5, bassFreq: 70, crackFreq: 2800 } }, // 名符其實，墜落速度明顯加快，尖銳撞擊聲+深沉衝擊音
+        missile: { name: '超音速反艦飛彈', power: 150, uses: 5, aoe: { w: 2, h: 1 }, orientable: true, healthThresholdMultiplier: { threshold: 500, multiplier: 2 }, fallMs: 280, shellSize: 10, whistle: true, explosionProfile: { lowpassFreq: 800, volume: 0.55, durationSec: 0.5, bassFreq: 70, crackFreq: 2800 } }, // 名符其實，墜落速度明顯加快，尖銳撞擊聲+深沉衝擊音；對血量>500的大型目標傷害2倍；orientable代表可以選橫向2x1或直向1x2
       },
     },
     submarine: {
-      name: '潛水艇', shipName: '艾可', length: 4, width: 1, baseActions: 4, maxHealth: 500,
+      name: '潛水艇', shipName: '艾可', length: 4, width: 1, baseActions: 5, maxHealth: 500,
       fireChance: { frontmid: 1.0 },
       weapons: {
         normal: { name: '普通魚雷', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 600, volume: 0.4, durationSec: 0.55, bassFreq: 55 } }, // 水下爆炸悶重感
@@ -969,6 +993,7 @@
   // 飽和攻擊是同一個座標打3次，多管魚雷是「魚雷-空格-魚雷-空格-魚雷」橫向間隔陣型。
   // 這幾種座標計算方式都已經用Node.js單獨驗證過
   let selectedWeapon = 'normal'; // 目前選擇要用的武器key，預設一般砲彈(不限次數)
+  let selectedOrientation = 'horizontal'; // 給orientable武器(例如反艦飛彈)用，橫向或直向
 
   function fireAt(row, col) {
     if (firingInProgress) return;
@@ -984,24 +1009,13 @@
     if (weaponSpec.uses !== null) myShip.weaponUsesLeft[selectedWeapon]--;
     updateWeaponPanel();
 
-    if (weaponSpec.aoe && weaponSpec.multiShell) {
-      // 多管火箭這種「本來就是多管齊發」的範圍武器：範圍內每一格各發射一顆獨立砲彈，
-      // 不是單發+放大爆炸(那是重砲/飛彈這種單一大型彈藥的表現方式)
-      const targets = getAoeCells(weaponSpec, row, col);
-      let completedCount = 0;
-      targets.forEach((target, i) => {
-        setTimeout(() => fireSingleShell(target.row, target.col, weaponSpec, () => {
-          completedCount++;
-          if (completedCount === targets.length) firingInProgress = false;
-        }), i * 90); // 多管齊發的間隔比其他多發武器更緊湊，強調「一波打出去」的感覺
-      });
-    } else if (weaponSpec.aoe) {
+    if (weaponSpec.aoe) {
       // 單一大型彈藥的範圍武器(重砲/飛彈)：只發射「一枚」砲彈，落地後用一個放大版的
       // 爆炸視覺涵蓋整個範圍
-      fireAoeShell(row, col, weaponSpec, () => { firingInProgress = false; });
+      fireAoeShell(row, col, weaponSpec, () => { firingInProgress = false; }, selectedOrientation);
     } else {
-      // 一般單發武器、或本質上就是「連續多發」的武器(飽和攻擊同點連射、多管魚雷間隔陣型)：
-      // 各自獨立的砲彈+爆炸+判定，用小間隔錯開看起來像連續齊射
+      // 一般單發武器、或本質上就是「連續多發」的武器(飽和攻擊同點連射、多管魚雷間隔陣型、
+      // 多管火箭十字5格)：各自獨立的砲彈+爆炸+判定，用小間隔錯開看起來像連續齊射
       const targets = getWeaponTargetCells(weaponSpec, row, col);
       let completedCount = 0;
       targets.forEach((target, i) => {
@@ -1021,14 +1035,26 @@
         { row: centerRow, col: centerCol + 2 },
       ];
     }
+    if (weaponSpec.pattern === 'cross') {
+      return [
+        { row: centerRow, col: centerCol },
+        { row: centerRow - 1, col: centerCol },
+        { row: centerRow + 1, col: centerCol },
+        { row: centerRow, col: centerCol - 1 },
+        { row: centerRow, col: centerCol + 1 },
+      ];
+    }
     if (weaponSpec.shots && weaponSpec.sameTarget) {
       return Array.from({ length: weaponSpec.shots }, () => ({ row: centerRow, col: centerCol }));
     }
     return [{ row: centerRow, col: centerCol }];
   }
-  // AOE武器專用：計算範圍內實際涵蓋的所有格子座標(重砲2x2、火箭3x2、飛彈2x1都用這個算)
-  function getAoeCells(weaponSpec, centerRow, centerCol) {
-    const { w, h } = weaponSpec.aoe;
+  // AOE武器專用：計算範圍內實際涵蓋的所有格子座標(重砲3x3、飛彈2x1/1x2都用這個算)。
+  // orientation參數給可選方向的武器(orientable:true，例如反艦飛彈)用，'vertical'的話
+  // 會把w/h對調，讓範圍從橫向變成直向
+  function getAoeCells(weaponSpec, centerRow, centerCol, orientation) {
+    let { w, h } = weaponSpec.aoe;
+    if (weaponSpec.orientable && orientation === 'vertical') { const tmp = w; w = h; h = tmp; }
     const halfW = Math.floor(w / 2), halfH = Math.floor(h / 2);
     const cells = [];
     for (let dr = -halfH; dr < h - halfH; dr++) {
@@ -1073,7 +1099,7 @@
 
   // AOE武器的發射流程：一枚砲彈掉到指定中心點，落地後爆炸視覺會放大到涵蓋整個範圍，
   // 但範圍內每一格還是要各自獨立判定命中/落空(可能同時打中船身好幾個不同區塊)
-  function fireAoeShell(centerRow, centerCol, weaponSpec, onDone) {
+  function fireAoeShell(centerRow, centerCol, weaponSpec, onDone, orientation) {
     if (centerRow < 1 || centerRow > MAP_SIZE || centerCol < 1 || centerCol > MAP_SIZE) {
       addLogEntry(`💦 目標超出地圖範圍`, 'miss');
       onDone();
@@ -1098,7 +1124,7 @@
 
     setTimeout(() => {
       shell.remove();
-      resolveAoeShot(centerRow, centerCol, targetX, targetY, weaponSpec);
+      resolveAoeShot(centerRow, centerCol, targetX, targetY, weaponSpec, orientation);
       onDone();
     }, weaponSpec.fallMs);
   }
@@ -1208,8 +1234,8 @@
 
   // AOE武器的命中判定：範圍內每一格各自獨立判定命中/落空(可能同時打中船身好幾個不同區塊)，
   // 但整個範圍只用「一次」放大版爆炸視覺+一次爆炸音效呈現，不是每格各放一次
-  function resolveAoeShot(centerRow, centerCol, screenX, screenY, weaponSpec) {
-    const cells = getAoeCells(weaponSpec, centerRow, centerCol);
+  function resolveAoeShot(centerRow, centerCol, screenX, screenY, weaponSpec, orientation) {
+    const cells = getAoeCells(weaponSpec, centerRow, centerCol, orientation);
     const validCells = cells.filter(c => c.row >= 1 && c.row <= MAP_SIZE && c.col >= 1 && c.col <= MAP_SIZE);
     // 爆炸視覺縮放倍率用範圍的最大邊長決定(已經用Node.js驗證過這個算法)：
     // 2x2->2倍、3x2->3倍、2x1->2倍，讓視覺涵蓋範圍大致對應實際命中範圍
@@ -1266,6 +1292,19 @@
     void blast.offsetHeight; // 強制reflow，確保初始的scale(0)狀態被瀏覽器真正認定，動畫才會確實播放
     requestAnimationFrame(() => blast.classList.add('animate'));
     setTimeout(() => blast.remove(), 600);
+  }
+
+  // 潛水艇專屬水花特效：魚雷是水下發射，船邊出現一圈水花往外擴散再淡出，
+  // 不像其他船的砲彈會飛出畫面外——強制reflow手法跟其他動畫一致，確保確實播放
+  function spawnSplash(x, y) {
+    const el = document.createElement('div');
+    el.className = 'splash';
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    document.body.appendChild(el);
+    void el.offsetHeight;
+    requestAnimationFrame(() => el.classList.add('animate'));
+    setTimeout(() => el.remove(), 550);
   }
 
   // RPG風格傷害飄字：在命中座標附近跳出紅色數字往上飄再淡出，讓傷害數字更直觀
@@ -1955,6 +1994,7 @@
   let mpBattleUnsubscribe = null;
   let mpTargetDirection = null; // 目前選定要攻擊的方位
   let mpBattleSelectedWeapon = 'normal';
+  let mpSelectedOrientation = 'horizontal'; // 給orientable武器(反艦飛彈)用，橫向或直向
   let mpPendingFireCell = null; // 已經點選但還沒按下發射鍵確認的瞄準座標{row,col}
   let mpFiringLock = false;
 
@@ -2207,6 +2247,7 @@
             <div class="move-btns" style="margin-top:6px;">
               <button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn <= 0 || mpMyCombatState.actionPenalty <= 0) ? 'disabled' : ''} onclick="mpRepairMovement()">🔧<span class="btn-label">修復(1)</span></button>
               <button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn < 2 || !mpMyCombatState.onFire) ? 'disabled' : ''} onclick="mpExtinguishFire()">🧯<span class="btn-label">滅火(2)</span></button>
+              <button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn < 1) ? 'disabled' : ''} onclick="mpUseSonar()">📡<span class="btn-label">聲納(1)</span></button>
               ${mpMyCombatState.shipType === 'submarine' && mpMyCombatState.submarineSurfaced ? `<button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn < 2) ? 'disabled' : ''} onclick="mpRepairDive()">⚓<span class="btn-label">修復下潛(2)</span></button>` : ''}
               <button class="move-btn small" ${!isMyTurn ? 'disabled' : ''} onclick="mpEndTurn()">🔄<span class="btn-label">結束回合</span></button>
             </div>
@@ -2219,12 +2260,34 @@
       </div>
       ${mpTargetDirection && !mpMyCombatState.hasFiredThisTurn ? `
         <div class="mp-fire-overlay">
+          <div class="mp-fire-overlay-header">
+            <span>🎯 攻擊 ${DIRECTION_LABEL[mpTargetDirection]}</span>
+            <button class="mp-cancel-target-btn" onclick="mpCancelTarget()">✕ 取消瞄準</button>
+          </div>
           <div class="weapon-panel compact">${weaponBtns}</div>
+          ${spec.weapons[mpBattleSelectedWeapon].orientable ? `
+            <div class="mp-orientation-toggle">
+              <button class="${mpSelectedOrientation === 'horizontal' ? 'active' : ''}" onclick="mpSelectedOrientation='horizontal'; renderMpBattleView(window.__mpLastRoomData);">↔ 橫向</button>
+              <button class="${mpSelectedOrientation === 'vertical' ? 'active' : ''}" onclick="mpSelectedOrientation='vertical'; renderMpBattleView(window.__mpLastRoomData);">↕ 直向</button>
+            </div>
+          ` : ''}
           <button class="mp-fire-btn" ${readyToFire ? '' : 'disabled'} onclick="mpConfirmFire()">🔥 發射！${mpPendingFireCell ? `（瞄準 ${colLetter(mpPendingFireCell.col)}${mpPendingFireCell.row}）` : '（先點左邊地圇座標瞄準）'}</button>
         </div>
       ` : ''}
     `;
     window.__mpLastRoomData = roomData;
+
+    // 攻擊範圍預覽：選定瞄準座標後，依照目前選擇的武器計算會涵蓋的所有格子，
+    // 用淡紅色標示在地圇上——範圍武器(重砲3x3/火箭十字5格/飛彈2x1或1x2)跟多發武器
+    // (飽和攻擊/多管魚雷)都能提前看到實際會打到哪些格子，不用開火了才知道範圍多大
+    let previewCellKeys = new Set();
+    if (mpPendingFireCell && mpMyCombatState) {
+      const previewSpec = spec.weapons[mpBattleSelectedWeapon];
+      const previewCells = previewSpec.aoe
+        ? getAoeCells(previewSpec, mpPendingFireCell.row, mpPendingFireCell.col, mpSelectedOrientation)
+        : getWeaponTargetCells(previewSpec, mpPendingFireCell.row, mpPendingFireCell.col);
+      previewCellKeys = new Set(previewCells.map(c => `${c.row},${c.col}`));
+    }
 
     // 自己的船用跟單機demo一樣的渲染方式畫在自己的20x20格上；格子點擊只是「選定瞄準座標」，
     // 不會立刻開火(要另外按紅色發射鍵才會真的開火，見第9點需求)
@@ -2232,7 +2295,8 @@
     let cellsHtml = '';
     for (let r = 1; r <= MAP_SIZE; r++) for (let c = 1; c <= MAP_SIZE; c++) {
       const isPending = mpPendingFireCell && mpPendingFireCell.row === r && mpPendingFireCell.col === c;
-      cellsHtml += `<div class="cell ${canSelectFireCell ? 'mp-fireable' : ''} ${isPending ? 'mp-pending-fire' : ''}" data-row="${r}" data-col="${c}" onclick="mpSelectFireCell(${r},${c})"></div>`;
+      const isPreview = !isPending && previewCellKeys.has(`${r},${c}`);
+      cellsHtml += `<div class="cell ${canSelectFireCell ? 'mp-fireable' : ''} ${isPending ? 'mp-pending-fire' : ''} ${isPreview ? 'mp-range-preview' : ''}" data-row="${r}" data-col="${c}" onclick="mpSelectFireCell(${r},${c})"></div>`;
     }
     ownGridEl.innerHTML = cellsHtml;
     const shipEl = document.createElement('div');
@@ -2252,7 +2316,15 @@
   function mpSelectTarget(direction) {
     mpTargetDirection = direction;
     mpBattleSelectedWeapon = 'normal';
+    mpSelectedOrientation = 'horizontal';
     mpPendingFireCell = null; // 換目標時清掉之前選的瞄準座標，避免對錯的目標開火
+    renderMpBattleView(window.__mpLastRoomData);
+  }
+  // 取消瞄準：清空目標方位，讓浮動的武器選單/發射鍵消失，回到可以重新選擇攻擊海域的狀態——
+  // 直接放在浮動區塊裡，不用去點被浮動區塊蓋住的海域選擇按鈕
+  function mpCancelTarget() {
+    mpTargetDirection = null;
+    mpPendingFireCell = null;
     renderMpBattleView(window.__mpLastRoomData);
   }
   // 點地圇座標：只是「選定」瞄準座標(用紅框標示)，還不會真的開火——要另外按下方的紅色
@@ -2323,6 +2395,23 @@
       });
     } catch (err) { console.warn('修復下潛失敗', err); }
   }
+  // 聲納偵測：需要伺服器端讀取「其他玩家」的私有位置資料才能判斷附近有沒有潛水艇，
+  // 前端自己沒有這個權限，所以要透過Worker處理(用service account)，不是直接寫Firestore
+  async function mpUseSonar() {
+    try {
+      const idToken = await mpCurrentUser.getIdToken();
+      const res = await fetch(NAVAL_WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'naval_battle_sonar', idToken, roomId: mpRoomState.roomId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) { alert('聲納偵測失敗：' + (data.error || '未知錯誤')); return; }
+      alert(data.message);
+    } catch (err) {
+      alert('聲納偵測失敗（網路或連線問題）：' + err.message);
+    }
+  }
   async function mpEndTurn() {
     try {
       const idToken = await mpCurrentUser.getIdToken();
@@ -2365,14 +2454,19 @@
     playFireSound();
 
     // 砲彈從自己船隻的實際畫面位置發射，往上飛出畫面外——代表「我方砲彈射向對方」，
-    // 套用實際選擇武器的專屬視覺參數(大小/墜落速度/呼嘯音效)。多發武器(飽和攻擊3發同點、
-    // 多管火箭6發、多管魚雷3發間隔陣型)會發射對應數量的砲彈、用小間隔錯開，不再是所有
-    // 武器都只有一顆砲彈——重用跟單機模式一致的getWeaponTargetCells/getAoeCells計算數量
+    // 套用實際選擇武器的專屬視覺參數(大小/墜落速度/呼嘯音效)。多發武器(飽和攻擊4發同點、
+    // 多管火箭十字5格、多管魚雷3發間隔陣型)會發射對應數量的砲彈、用小間隔錯開，不再是所有
+    // 武器都只有一顆砲彈——重用跟單機模式一致的getWeaponTargetCells/getAoeCells計算數量。
+    // 潛水艇是水下發射，不會有砲彈往上飛出畫面的動畫，改成船邊出現水花效果
     const myWeaponSpec = SHIP_TYPES[mpMyCombatState.shipType].weapons[mpBattleSelectedWeapon];
-    const shotCells = myWeaponSpec.aoe ? getAoeCells(myWeaponSpec, row, col) : getWeaponTargetCells(myWeaponSpec, row, col);
-    const staggerMs = (myWeaponSpec.aoe && myWeaponSpec.multiShell) ? 90 : 160; // 多管齊發間隔更緊湊
+    const isSubmarineAttacker = mpMyCombatState.shipType === 'submarine';
     const shipEl = document.getElementById('mp-own-ship');
-    if (shipEl) {
+    if (shipEl && isSubmarineAttacker) {
+      const rect = shipEl.getBoundingClientRect();
+      spawnSplash(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    } else if (shipEl) {
+      const shotCells = myWeaponSpec.aoe ? getAoeCells(myWeaponSpec, row, col, mpSelectedOrientation) : getWeaponTargetCells(myWeaponSpec, row, col);
+      const staggerMs = 160;
       const rect = shipEl.getBoundingClientRect();
       const startX = rect.left + rect.width / 2, startY = rect.top + rect.height / 2;
       shotCells.forEach((_, i) => {
@@ -2404,7 +2498,7 @@
         body: JSON.stringify({
           action: 'naval_battle_fire', idToken,
           roomId: mpRoomState.roomId, targetDirection: mpTargetDirection,
-          row, col, weaponKey: mpBattleSelectedWeapon,
+          row, col, weaponKey: mpBattleSelectedWeapon, orientation: mpSelectedOrientation,
         }),
       });
       let data;
@@ -2452,14 +2546,26 @@
     // 多發武器(飽和攻擊/多管火箭/多管魚雷)會有多個落點，每個各自獨立播放砲彈落下+爆炸，
     // 用小間隔錯開，呈現「多發依序命中」的感覺，跟攻擊方發射時的間隔規則一致
     const hits = atk.hits || [];
-    const staggerMs = (weaponSpec.aoe && weaponSpec.multiShell) ? 90 : 160;
+    const staggerMs = 160;
     const blastScale = weaponSpec.aoe ? Math.max(weaponSpec.aoe.w, weaponSpec.aoe.h) : 1;
+    // 潛水艇的攻擊(魚雷)是水下命中，不會有從天而降的砲彈動畫——直接在座標上原地爆炸
+    const isSubmarineAttack = atk.attackerShipType === 'submarine';
     hits.forEach((hit, i) => {
       setTimeout(() => {
         const cellEl = document.querySelector(`#mp-own-grid .cell[data-row="${hit.row}"][data-col="${hit.col}"]`);
         if (!cellEl) return; // 落點超出地圇範圍(例如多管魚雷陣型的邊緣座標)，沒有對應格子可以顯示，直接跳過
         const rect = cellEl.getBoundingClientRect();
         const targetX = rect.left + rect.width / 2, targetY = rect.top + rect.height / 2;
+
+        if (isSubmarineAttack) {
+          // 潛水艇魚雷：跳過掉落動畫，直接原地爆炸
+          playExplosionSound(hit.isHit, weaponSpec.explosionProfile);
+          spawnBlast(targetX, targetY, hit.isHit, blastScale);
+          cellEl.classList.add(hit.isHit ? 'flash-hit' : 'flash-miss');
+          setTimeout(() => cellEl.classList.remove(hit.isHit ? 'flash-hit' : 'flash-miss'), 500);
+          return;
+        }
+
         const shell = document.createElement('div');
         shell.className = 'shell';
         shell.style.width = weaponSpec.shellSize + 'px';
