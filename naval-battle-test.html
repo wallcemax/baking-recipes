@@ -519,7 +519,6 @@
         <h1>⚓ 海戰指揮室</h1>
       </div>
       <div class="back-links">
-        <button class="legend-toggle-btn" id="mode-toggle-btn" onclick="toggleMode()">🌐 連線對戰</button>
         <a href="game.html" class="back-link">🎮 遊戲場</a>
         <a href="index.html" class="back-link">← 主站</a>
         <button class="legend-toggle-btn" onclick="toggleLegend()">📖 圖例</button>
@@ -552,7 +551,7 @@
     </div>
   </div>
 
-  <div id="demo-view">
+  <div id="demo-view" class="hidden">
   <div class="game-layout">
     <div class="game-main">
       <div class="map-stage">
@@ -604,7 +603,7 @@
   </div>
   </div>
 
-  <div id="multiplayer-view" class="hidden">
+  <div id="multiplayer-view">
     <div id="mp-login-gate" class="mp-panel hidden">
       <p>連線對戰需要先登入</p>
       <button class="mp-btn primary" onclick="googleLogin()">使用 Google 登入</button>
@@ -1630,6 +1629,9 @@
     const stageEl = document.querySelector('.map-stage');
     if (stageEl) ro.observe(stageEl);
   }
+  // 進頁面直接是連線對戰模式，不再需要玩家自己手動切換——上面這幾行單機demo的初始化
+  // 呼叫維持不動(渲染到隱藏的div裡，不會顯示出來，也不影響效能)，避免不小心動到共用邏輯
+  initMultiplayer();
 
   // ============================================================
   // 多人連線模式：房間 + 選方位 + 選船型(私有、鎖定不能換)。
@@ -1688,6 +1690,20 @@
         const doc = await mpDb.collection('userProgress').doc(user.uid).get();
         mpDisplayName = (doc.exists && doc.data().nickname) || user.displayName || '艦長';
       } catch (e) { mpDisplayName = user.displayName || '艦長'; }
+      // 斷線重連：檢查localStorage有沒有記錄「上次在哪個房間」，如果有且自己還是該房間成員
+      // (代表只是重新整理頁面/暫時斷線，不是真的離開了)，自動重新加入該房間繼續遊戲，
+      // 不用手動從房間列表找回去——這樣即使不小心關閉分頁也不會真的被踢出戰局
+      const savedRoomId = localStorage.getItem('navalBattleLastRoomId');
+      if (savedRoomId) {
+        try {
+          const roomDoc = await mpDb.collection('navalBattleRooms').doc(savedRoomId).get();
+          if (roomDoc.exists && (roomDoc.data().memberUids || []).includes(user.uid)) {
+            mpEnterRoom(savedRoomId);
+            return;
+          }
+        } catch (err) { console.warn('自動重新加入房間失敗', err); }
+        localStorage.removeItem('navalBattleLastRoomId'); // 房間不存在或自己已經不是成員了，清掉這筆過期紀錄
+      }
       renderMpLobby();
     });
   }
@@ -1823,6 +1839,7 @@
 
   async function mpEnterRoom(roomId) {
     mpRoomState.roomId = roomId;
+    localStorage.setItem('navalBattleLastRoomId', roomId); // 記錄目前所在房間，供重新整理頁面後自動重新加入
     // 讀回自己之前選過的船型(如果有)，避免重新整理頁面後本地的mpMySelectedShip變數
     // 被重置成空，導致畫面誤以為還沒選過船——這份資料只有本人能讀，不影響隱私隔離
     try {
@@ -1879,19 +1896,33 @@
   const MP_TURN_TIME_LIMIT_MS = 60000;
   let mpTurnTimerIntervalId = null;
   let mpTimerAutoEndLock = false;
+  let mpAiTurnLock = false;
   function setupMpTurnTimer() {
     if (mpTurnTimerIntervalId) return; // 只需要設定一次這個interval，每次tick時都用最新資料判斷
     mpTurnTimerIntervalId = setInterval(() => {
       const roomD = window.__mpLastRoomData;
       const timerEl = document.getElementById('mp-turn-timer');
-      if (!roomD || !roomD.turnOrder || !roomD.turnStartedAt || !timerEl) return;
+      if (!roomD || !roomD.turnOrder) return;
+
+      // AI回合偵測：發現輪到AI時，不用等60秒逾時，短暫延遲後就自動代為觸發——任何一位
+      // 還在線上的真人玩家的client都可能觸發，用mpAiTurnLock避免同一個client短時間內
+      // 重複觸發；多個client同時觸發也沒關係，Worker端會驗證「真的還輪到這個AI」，
+      // 只有第一個成功，其他的會收到「現在輪到的不是AI」而優雅地失敗
+      const currentTurnUid = roomD.turnOrder[roomD.currentTurnIndex];
+      const currentTurnMember = roomD.members.find(m => m.uid === currentTurnUid);
+      if (currentTurnMember && currentTurnMember.isAI && !mpAiTurnLock) {
+        mpAiTurnLock = true;
+        setTimeout(() => { mpTriggerAiTurn().finally(() => { mpAiTurnLock = false; }); }, 1500);
+      }
+
+      if (!roomD.turnStartedAt || !timerEl) return;
       const elapsedMs = Date.now() - roomD.turnStartedAt;
       const remainingSec = Math.max(0, Math.ceil((MP_TURN_TIME_LIMIT_MS - elapsedMs) / 1000));
-      const isMyTurnNow = roomD.turnOrder[roomD.currentTurnIndex] === mpCurrentUser.uid;
+      const isMyTurnNow = currentTurnUid === mpCurrentUser.uid;
       timerEl.textContent = `⏱️ ${isMyTurnNow ? '你的' : '對方'}回合剩餘時間：${remainingSec}秒`;
       timerEl.classList.toggle('urgent', remainingSec <= 15);
 
-      if (mpTimerAutoEndLock) return;
+      if (mpTimerAutoEndLock || (currentTurnMember && currentTurnMember.isAI)) return; // AI回合不用計時器結束，上面已經處理
       if (isMyTurnNow && elapsedMs >= MP_TURN_TIME_LIMIT_MS) {
         mpTimerAutoEndLock = true;
         mpEndTurn().finally(() => { mpTimerAutoEndLock = false; });
@@ -1902,6 +1933,21 @@
         mpEndTurn(true).finally(() => { mpTimerAutoEndLock = false; });
       }
     }, 1000);
+  }
+  // 代為觸發AI回合：呼叫Worker，讓AI隨機選對手開火、處理火傷、輪替下一位
+  async function mpTriggerAiTurn() {
+    try {
+      const idToken = await mpCurrentUser.getIdToken();
+      const res = await fetch(NAVAL_WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'naval_battle_ai_turn', idToken, roomId: mpRoomState.roomId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) console.warn('AI回合觸發失敗(可能是其他client搶先觸發了，這是正常的)', data.error);
+    } catch (err) {
+      console.warn('AI回合觸發失敗', err);
+    }
   }
 
   // 復原機制：如果房間狀態已經變成playing、但戰鬥初始化一直沒有真正完成(turnOrder遲遲沒出現，
@@ -1983,15 +2029,17 @@
     const me = data.members.find(m => m.uid === mpCurrentUser.uid);
     const takenDirections = new Set(data.members.filter(m => m.uid !== mpCurrentUser.uid && m.direction).map(m => m.direction));
     const allReady = data.members.length >= MP_MIN_PLAYERS && data.members.every(m => m.direction && m.shipSelected && m.ready);
+    const teamModeOn = !!data.teamMode;
 
     const memberCards = Array.from({ length: data.maxPlayers }, (_, i) => {
       const m = data.members[i];
       if (!m) return `<div class="mp-member-card empty">空位</div>`;
       return `<div class="mp-member-card ${m.ready ? 'ready' : ''}">
-        <div class="mp-mname">${m.uid === data.hostUid ? '👑' : ''}${escapeHtmlMp(m.name)}</div>
-        <div>${m.direction ? DIRECTION_LABEL[m.direction] : '未選方位'}</div>
+        <div class="mp-mname">${m.uid === data.hostUid ? '👑' : ''}${m.isAI ? '🤖' : ''}${escapeHtmlMp(m.name)}</div>
+        <div>${m.direction ? DIRECTION_LABEL[m.direction] : '未選方位'}${teamModeOn && m.team ? `・隊伍${m.team}` : ''}</div>
         <div>${m.shipSelected ? '🚢 已選船（保密）' : '⏳ 未選船'}</div>
         <div>${m.ready ? '✅ 已準備' : '⏳ 準備中'}</div>
+        ${isHost && m.isAI ? `<button class="mp-btn" style="padding:4px 8px; font-size:10px; margin-top:4px;" onclick="removeMpAiPlayer('${m.uid}')">移除</button>` : ''}
       </div>`;
     }).join('');
 
@@ -2022,6 +2070,8 @@
         <p style="font-size:20px; font-weight:900; letter-spacing:2px;">${mpRoomState.roomId}</p>
         <p style="font-weight:800; font-size:13px; margin:10px 0 4px;">👥 房間成員（${data.members.length}/${data.maxPlayers}）</p>
         <div class="mp-members-grid">${memberCards}</div>
+        ${isHost && data.members.length < data.maxPlayers ? `<button class="mp-btn" style="margin-top:8px;" onclick="addMpAiPlayer()">🤖 加入電腦玩家</button>` : ''}
+        ${isHost && data.maxPlayers === 4 ? `<label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:12px; color:var(--muted); cursor:pointer;"><input type="checkbox" ${teamModeOn ? 'checked' : ''} onchange="toggleMpTeamMode(this.checked)">2v2團隊模式（北+南 一隊、東+西 一隊）</label>` : ''}
 
         <p style="font-weight:800; font-size:13px; margin:14px 0 4px;">🧭 選擇你的方位（東南西北海，每人限選一個）</p>
         <div class="mp-direction-grid">${directionBtns}</div>
@@ -2035,6 +2085,59 @@
         <button class="mp-btn" onclick="leaveMpRoom()">離開房間</button>
       </div>
     `;
+  }
+
+  // 加入電腦玩家：房主專用，隨機挑一個還沒被選走的方位，用假的uid(ai-開頭，不是真正的
+  // Firebase auth帳號)加進members陣列。標記ready/shipSelected/positioned都是true，因為
+  // AI沒有真正的client會去互動選擇這些——實際的船型/起始位置改成在開戰初始化(Worker端)
+  // 時才隨機生成
+  async function addMpAiPlayer() {
+    const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+    try {
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(roomRef);
+        const data = doc.data();
+        if (data.hostUid !== mpCurrentUser.uid || data.members.length >= data.maxPlayers) return;
+        const takenDirections = new Set(data.members.map(m => m.direction));
+        const availableDirections = Object.keys(DIRECTION_LABEL).filter(d => !takenDirections.has(d));
+        if (!availableDirections.length) return;
+        const direction = availableDirections[Math.floor(Math.random() * availableDirections.length)];
+        const aiNames = ['阿爾法教官', '布拉沃教官', '查理教官', '德爾塔教官'];
+        const aiUid = 'ai-' + Math.random().toString(36).slice(2, 10);
+        const team = (direction === 'north' || direction === 'south') ? 'A' : 'B'; // 只在2v2模式下有意義，其他模式忽略這個欄位
+        const aiMember = {
+          uid: aiUid, name: '電腦-' + aiNames[Math.floor(Math.random() * aiNames.length)], direction,
+          ready: true, shipSelected: true, positioned: true, isAI: true, team,
+        };
+        tx.update(roomRef, { members: [...data.members, aiMember], memberUids: [...data.memberUids, aiUid] });
+      });
+    } catch (err) { alert('加入電腦玩家失敗：' + err.message); }
+  }
+  async function removeMpAiPlayer(aiUid) {
+    const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+    try {
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(roomRef);
+        const data = doc.data();
+        if (data.hostUid !== mpCurrentUser.uid) return;
+        const members = data.members.filter(m => m.uid !== aiUid);
+        tx.update(roomRef, { members, memberUids: members.map(m => m.uid) });
+      });
+    } catch (err) { alert('移除電腦玩家失敗：' + err.message); }
+  }
+  // 2v2團隊模式開關：只有4人房才會顯示這個選項。開啟後north+south算一隊、east+west算一隊，
+  // 勝負判定改成「整隊都被淘汰才算輸」，不是傳統的最後一人存活才算贏
+  async function toggleMpTeamMode(enabled) {
+    const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
+    try {
+      await mpDb.runTransaction(async (tx) => {
+        const doc = await tx.get(roomRef);
+        const data = doc.data();
+        if (data.hostUid !== mpCurrentUser.uid) return;
+        const members = data.members.map(m => ({ ...m, team: (m.direction === 'north' || m.direction === 'south') ? 'A' : (m.direction === 'east' || m.direction === 'west') ? 'B' : m.team }));
+        tx.update(roomRef, { teamMode: enabled, members });
+      });
+    } catch (err) { alert('切換團隊模式失敗：' + err.message); }
   }
 
   async function pickMpDirection(direction) {
@@ -2172,7 +2275,7 @@
   let mpFinalizeRetryCount = 0;
   async function finalizeMpBattleIfReady(data) {
     if (data.battleInitialized) return;
-    if (!data.members.every(m => m.positioned)) { mpFinalizeRetryCount = 0; return; } // 還沒全部人選好位置
+    if (!data.members.every(m => m.isAI || m.positioned)) { mpFinalizeRetryCount = 0; return; } // 還沒全部人選好位置
     try {
       const idToken = await mpCurrentUser.getIdToken();
       const res = await fetch(NAVAL_WORKER_URL, {
@@ -2796,6 +2899,7 @@
   }
 
   async function leaveMpRoom() {
+    localStorage.removeItem('navalBattleLastRoomId'); // 主動離開，清掉自動重新加入的記錄
     try {
       const ref = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
       await mpDb.runTransaction(async (tx) => {
