@@ -630,7 +630,7 @@
   const SHIP_TYPES = {
     amphibious: {
       name: '兩棲突擊艦', shipName: '阿爾法', length: 4, width: 2, baseActions: 5, maxHealth: 1000,
-      fireChance: { frontmid: 1.0 }, // 前中區塊打中必失火(100%)
+      fireChance: { frontmid: 0.3 }, // 前中區塊打中30%機率起火
       weapons: {
         normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.567, durationSec: 0.45, bassFreq: 90 } }, // uses:null代表不限次數
         saturation: { name: '精準飽和攻擊', power: 100, shots: 4, sameTarget: true, uses: 10, vsFrigateMultiplier: 1.5, fallMs: 480, shellSize: 7, explosionProfile: { lowpassFreq: 1300, volume: 0.472, durationSec: 0.3, bassFreq: 80 } }, // 4發同點齊射，每發音色比單發一般砲彈稍微輕快；對巡防艦這種裝甲薄的目標傷害+50%
@@ -672,12 +672,12 @@
   // 船隻詳細介紹文字：每艘船一段完整說明，供UI上的資訊按鈕彈窗使用
   const SHIP_DESCRIPTIONS = {
     amphibious: {
-      summary: '重裝甲兩棲主力艦，血量最高、體積最大，前中段區塊中彈必定起火，正面硬碰硬能力最強。',
+      summary: '重裝甲兩棲主力艦，血量最高、體積最大，前中段區塊中彈有30%機率起火，正面硬碰硬能力最強。',
       details: [
         '💥 一般砲彈：標準威力100，不限次數',
         '🎯 精準飽和攻擊：同一個座標連續4發，對巡防艦這種裝甲薄的目標傷害+50%',
         '🛰️ 雷達掃描（專屬能力）：花費1次移動，精準度比照特殊武器造成的動靜，但掃不到潛水艇跟巡防艦',
-        '🔥 前中段區塊中彈必定100%起火(fireChance最高)',
+        '🔥 前中段區塊中彈30%機率起火，滅火需要花費2次移動次數',
       ],
     },
     cruiser: {
@@ -686,7 +686,7 @@
         '💥 一般砲彈：標準威力100，不限次數',
         '💣 重砲射擊：3x3大範圍轟炸，威力125，對兩棲突擊艦這種裝甲厚的目標傷害打9折',
         '🔧 修理（專屬能力）：修理移動能力的同時，額外隨機回復5%~10%最大血量',
-        '🔥 中段區塊中彈50%機率起火',
+        '🔥 中段區塊中彈50%機率起火，滅火需要花費2次移動次數',
       ],
     },
     destroyer: {
@@ -711,9 +711,10 @@
       summary: '隱蔽性潛水艇，潛航中發射一般魚雷完全不會被偵測到，但被打中就會被迫浮出水面。',
       details: [
         '🐟 普通魚雷／多管魚雷：專剋水下目標，對潛水艇傷害+100%，對其他所有船隻傷害+50%',
-        '🙈 潛航中(submarineSurfaced=false)發射一般魚雷完全不洩漏位置；發射多管魚雷(動靜較大)還是會洩漏模糊位置',
+        '🙈 潛航狀態下發射一般魚雷完全不洩漏位置；發射多管魚雷(動靜較大)還是會洩漏模糊位置',
         '⚓ 只要被炸到(不管哪個部位)就會失去下潛能力、被迫浮出水面，浮出水面後發射任何武器都會洩漏位置，直到花2次移動修復下潛為止',
         '📡 聲納偵測（所有船型都能用）：花費1次移動，大範圍模糊偵測場上是否有潛水艇',
+        '🔥 前中段區塊中彈必定起火，滅火需要花費2次移動次數',
       ],
     },
   };
@@ -2748,32 +2749,31 @@
     closeShipInfoModal();
     if (window.__mpRadarPickResolve) { window.__mpRadarPickResolve(direction); window.__mpRadarPickResolve = null; }
   }
-  // 在自己的地圇上用金色閃爍格子標示雷達掃描到的6x6模糊區域，2.5秒後自動消失
+  // 在自己的地圇上用金色閃爍格子標示雷達掃描到的6x6模糊區域，3秒後自動消失
   let mpRadarOverlayEl = null;
   let mpRadarBlinkIntervalId = null;
   let mpRadarClearTimeoutId = null;
-  // 雷達高亮改用獨立浮動元素疊加在地圇上方，跟砲彈/爆炸特效(spawnBlast/createShellEl)同樣
-  // 可靠的做法：position:fixed+getBoundingClientRect算實際像素座標、用行內樣式控制閃爍——
-  // 完全獨立於地圇格子的DOM結構之外，不會被地圇innerHTML重建洗掉，也沒有CSS keyframes裡
-  // !important會被瀏覽器忽略、或被其他格子class(mp-fireable等)的!important背景蓋掉的問題
+  // 雷達高亮改成放進.map-tilt內部(id=mp-own-map-tilt)，用百分比座標定位——這樣它會跟
+  // 格子承受同一組3D變形矩陣(rotateX傾斜)，自然而然就會對齊傾斜角度。之前用position:fixed
+  // +getBoundingClientRect算螢幕座標的做法，元素本身是平面的、完全不會跟著3D傾斜，
+  // 疊在傾斜的地圇上看起來就像浮空的平面方框，跟座標標籤先前犯過的錯誤一模一樣
   function renderRadarHighlight(area) {
     if (mpRadarOverlayEl) { mpRadarOverlayEl.remove(); mpRadarOverlayEl = null; }
     if (mpRadarBlinkIntervalId) { clearInterval(mpRadarBlinkIntervalId); mpRadarBlinkIntervalId = null; }
     if (mpRadarClearTimeoutId) { clearTimeout(mpRadarClearTimeoutId); mpRadarClearTimeoutId = null; }
 
-    const topLeftCell = document.querySelector(`#mp-own-grid .cell[data-row="${area.minRow}"][data-col="${area.minCol}"]`);
-    const bottomRightCell = document.querySelector(`#mp-own-grid .cell[data-row="${area.maxRow}"][data-col="${area.maxCol}"]`);
-    if (!topLeftCell || !bottomRightCell) { console.warn('[雷達] 找不到對應的格子元素，無法顯示高亮框'); return; }
-    const r1 = topLeftCell.getBoundingClientRect();
-    const r2 = bottomRightCell.getBoundingClientRect();
-    const left = Math.min(r1.left, r2.left);
-    const top = Math.min(r1.top, r2.top);
-    const width = Math.max(r1.right, r2.right) - left;
-    const height = Math.max(r1.bottom, r2.bottom) - top;
+    const mapTiltEl = document.getElementById('mp-own-map-tilt');
+    if (!mapTiltEl) { console.warn('[雷達] 找不到地圇傾斜容器，無法顯示高亮框'); return; }
+
+    const cellPct = 100 / MAP_SIZE; // 每格佔20x20地圇的5%
+    const leftPct = (area.minCol - 1) * cellPct;
+    const topPct = (area.minRow - 1) * cellPct;
+    const widthPct = (area.maxCol - area.minCol + 1) * cellPct;
+    const heightPct = (area.maxRow - area.minRow + 1) * cellPct;
 
     const el = document.createElement('div');
-    el.style.cssText = `position:fixed; left:${left}px; top:${top}px; width:${width}px; height:${height}px; border:3px solid rgba(255,220,120,.95); background:rgba(240,196,80,.4); pointer-events:none; z-index:260; border-radius:4px; box-sizing:border-box; transition:opacity .25s;`;
-    document.body.appendChild(el);
+    el.style.cssText = `position:absolute; left:${leftPct}%; top:${topPct}%; width:${widthPct}%; height:${heightPct}%; border:3px solid rgba(255,220,120,.95); background:rgba(240,196,80,.4); pointer-events:none; z-index:6; box-sizing:border-box; transition:opacity .25s;`;
+    mapTiltEl.appendChild(el);
     mpRadarOverlayEl = el;
 
     let bright = true;
