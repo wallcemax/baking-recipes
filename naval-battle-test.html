@@ -57,12 +57,12 @@
 
   /* -------- 左右版面：地圖主視覺(自動填滿剩餘空間) + 側邊欄(固定寬度、內部自行捲動) -------- */
   .game-layout { flex: 1; min-height: 0; display: flex; gap: 10px; }
-  .game-main { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+  .game-main { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
   .game-sidebar { width: 260px; flex-shrink: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
 
   @media (max-width: 900px) {
     .game-layout { flex-direction: column; }
-    .game-main { flex: 0 1 44vh; }
+    .game-main { flex: 0 1 40vh; justify-content: flex-start; }
     .game-sidebar { width: 100%; flex: 1; min-height: 0; }
     h1 { font-size: 16px; }
     .eyebrow { font-size: 8px; }
@@ -844,7 +844,7 @@
       // 手機版疊加了好幾層響應式規則(直向/橫向/安全網)，那條鏈路很容易在某個環節算錯，
       // 直接用視窗尺寸算更穩定、更好預測。同時限制不超過視窗高度的42%，確保橫向手機
       // (螢幕很矮)也不會算出過大、超出容器範圍的尺寸
-      size = Math.max(200, Math.min(window.innerWidth * 0.76, window.innerHeight * 0.38, 400));
+      size = Math.max(190, Math.min(window.innerWidth * 0.7, window.innerHeight * 0.34, 370));
     } else {
       const availW = stage.clientWidth;
       const availH = stage.clientHeight;
@@ -902,7 +902,7 @@
     if (!stage || !tilt) return;
     let size;
     if (window.innerWidth <= 900) {
-      size = Math.max(200, Math.min(window.innerWidth * 0.76, window.innerHeight * 0.38, 400));
+      size = Math.max(190, Math.min(window.innerWidth * 0.7, window.innerHeight * 0.34, 370));
     } else {
       const availW = stage.clientWidth;
       const availH = stage.clientHeight;
@@ -2140,7 +2140,10 @@
         const doc = await tx.get(roomRef);
         const data = doc.data();
         if (data.hostUid !== mpCurrentUser.uid) return;
-        const members = data.members.map(m => ({ ...m, team: (m.direction === 'north' || m.direction === 'south') ? 'A' : (m.direction === 'east' || m.direction === 'west') ? 'B' : m.team }));
+        // 備援值改成m.team||null(不是直接m.team)：如果玩家還沒選方位、也從來沒被設定過
+        // 隊伍，m.team會是undefined——Firestore不允許把undefined寫進欄位(即使是巢狀在
+        // 陣列裡的物件)，會讓整個交易失敗，這正是「切換團隊模式失敗」錯誤的根本原因
+        const members = data.members.map(m => ({ ...m, team: (m.direction === 'north' || m.direction === 'south') ? 'A' : (m.direction === 'east' || m.direction === 'west') ? 'B' : (m.team || null) }));
         tx.update(roomRef, { teamMode: enabled, members });
       });
     } catch (err) { alert('切換團隊模式失敗：' + err.message); }
@@ -2165,7 +2168,9 @@
         // 交易內重新確認這個方位還沒被「別人」搶走，避免兩人幾乎同時點選同一個方位的race condition
         const takenByOther = data.members.some(m => m.uid !== mpCurrentUser.uid && m.direction === direction);
         if (takenByOther) return;
-        const members = data.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, direction } : m);
+        // 如果團隊模式已經開啟，改變方位時要同步重新計算隊伍，避免方位跟隊伍對不起來
+        const newTeam = data.teamMode ? ((direction === 'north' || direction === 'south') ? 'A' : 'B') : undefined;
+        const members = data.members.map(m => m.uid === mpCurrentUser.uid ? { ...m, direction, ...(newTeam ? { team: newTeam } : {}) } : m);
         tx.update(ref, { members });
       });
     } catch (err) { alert('選擇方位失敗：' + err.message); }
