@@ -2266,6 +2266,8 @@
   let mpBattleSelectedWeapon = 'normal';
   let mpSelectedOrientation = 'horizontal'; // 給orientable武器(反艦飛彈)用，橫向或直向
   let mpPendingFireCell = null; // 已經點選但還沒按下發射鍵確認的瞄準座標{row,col}
+  let mpRadarHighlightArea = null; // 雷達掃描結果{minRow,maxRow,minCol,maxCol}，加上到期時間戳記
+  let mpRadarHighlightExpiresAt = 0;
   let mpFiringLock = false;
 
   // ---------- 開始遊戲：房主觸發，初始化每個人的戰鬥狀態(各自在自己的20x20地圖隨機起始位置) ----------
@@ -2452,7 +2454,7 @@
     // 防呆：turnOrder還沒設定好，代表Worker的戰鬥初始化還在進行中或失敗了，先顯示等待畫面，
     // 不要繼續往下執行(下面的邏輯會用到turnOrder，沒防呆的話會直接當機)。房主額外看得到
     // 復原按鈕，避免初始化真的失敗時房間永遠卡住
-    if (!roomData.turnOrder) {
+    if (!roomData.turnOrder || !mpMyCombatState.shipType) {
       const isHost = roomData.hostUid === mpCurrentUser.uid;
       document.getElementById('mp-root').innerHTML = `
         <div class="mp-panel">
@@ -2563,6 +2565,13 @@
       previewCellKeys = new Set(previewCells.map(c => `${c.row},${c.col}`));
     }
 
+    // 雷達掃描結果：如果還沒過期，每次重新渲染格子時都要一併套用高亮——避免用setTimeout
+    // 直接操作DOM的做法，被innerHTML整個重建洗掉(這正是之前「雷達偵測到東西沒有顯示」的
+    // 根本原因：雷達呼叫Worker扣AP會觸發自己的即時監聽器重新渲染整個畫面，重新渲染用
+    // innerHTML整個重建格子，直接把剛加上的高亮class洗掉了)
+    const radarStillActive = mpRadarHighlightArea && Date.now() < mpRadarHighlightExpiresAt;
+    if (!radarStillActive) mpRadarHighlightArea = null;
+
     // 自己的船用跟單機demo一樣的渲染方式畫在自己的20x20格上；格子點擊只是「選定瞄準座標」，
     // 不會立刻開火(要另外按紅色發射鍵才會真的開火，見第9點需求)
     const ownGridEl = document.getElementById('mp-own-grid');
@@ -2570,9 +2579,15 @@
     for (let r = 1; r <= MAP_SIZE; r++) for (let c = 1; c <= MAP_SIZE; c++) {
       const isPending = mpPendingFireCell && mpPendingFireCell.row === r && mpPendingFireCell.col === c;
       const isPreview = !isPending && previewCellKeys.has(`${r},${c}`);
-      cellsHtml += `<div class="cell ${canSelectFireCell ? 'mp-fireable' : ''} ${isPending ? 'mp-pending-fire' : ''} ${isPreview ? 'mp-range-preview' : ''}" data-row="${r}" data-col="${c}" onclick="mpSelectFireCell(${r},${c})"></div>`;
+      const isRadarHighlight = radarStillActive && r >= mpRadarHighlightArea.minRow && r <= mpRadarHighlightArea.maxRow && c >= mpRadarHighlightArea.minCol && c <= mpRadarHighlightArea.maxCol;
+      cellsHtml += `<div class="cell ${canSelectFireCell ? 'mp-fireable' : ''} ${isPending ? 'mp-pending-fire' : ''} ${isPreview ? 'mp-range-preview' : ''} ${isRadarHighlight ? 'mp-radar-highlight' : ''}" data-row="${r}" data-col="${c}" onclick="mpSelectFireCell(${r},${c})"></div>`;
     }
     ownGridEl.innerHTML = cellsHtml;
+
+    // 雷達高亮還在顯示期間內，設定一個計時器在到期後強制重新渲染一次，把高亮清掉
+    if (radarStillActive) {
+      setTimeout(() => { if (window.__mpLastRoomData) renderMpBattleView(window.__mpLastRoomData); }, mpRadarHighlightExpiresAt - Date.now() + 50);
+    }
     const shipEl = document.createElement('div');
     shipEl.id = 'mp-own-ship';
     shipEl.className = `ship-block type-${mpMyCombatState.shipType} state-${stateClass} heading-${mpMyCombatState.heading}`;
@@ -2747,15 +2762,9 @@
   }
   // 在自己的地圇上用金色閃爍格子標示雷達掃描到的6x6模糊區域，2.5秒後自動消失
   function renderRadarHighlight(area) {
-    for (let r = area.minRow; r <= area.maxRow; r++) {
-      for (let c = area.minCol; c <= area.maxCol; c++) {
-        const cellEl = document.querySelector(`#mp-own-grid .cell[data-row="${r}"][data-col="${c}"]`);
-        if (cellEl) cellEl.classList.add('mp-radar-highlight');
-      }
-    }
-    setTimeout(() => {
-      document.querySelectorAll('.mp-radar-highlight').forEach(el => el.classList.remove('mp-radar-highlight'));
-    }, 2500);
+    mpRadarHighlightArea = area;
+    mpRadarHighlightExpiresAt = Date.now() + 3000; // 顯示3秒
+    if (window.__mpLastRoomData) renderMpBattleView(window.__mpLastRoomData);
   }
   async function mpEndTurn(forceTimeout) {
     try {
