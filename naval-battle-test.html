@@ -68,7 +68,7 @@
     .eyebrow { font-size: 8px; }
     /* 地圇左側數字座標標籤需要往左延伸28px的空間，原本12px的留白不夠，會被overflow-x:hidden
        裁掉——這是造成數字被壓成只剩最後一碼的根本原因，加大留白徹底解決 */
-    .stage { padding-left: 34px; }
+    .stage { padding-left: 42px; }
   }
 
   /* -------- 戰術資訊列 -------- */
@@ -618,7 +618,7 @@
       fireChance: { frontmid: 1.0 }, // 前中區塊打中必失火(100%)
       weapons: {
         normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.42, durationSec: 0.45, bassFreq: 90 } }, // uses:null代表不限次數
-        saturation: { name: '精準飽和攻擊', power: 100, shots: 4, sameTarget: true, uses: 5, fallMs: 480, shellSize: 7, explosionProfile: { lowpassFreq: 1300, volume: 0.35, durationSec: 0.3, bassFreq: 80 } }, // 4發同點齊射，每發音色比單發一般砲彈稍微輕快
+        saturation: { name: '精準飽和攻擊', power: 100, shots: 4, sameTarget: true, uses: 5, vsFrigateMultiplier: 1.5, fallMs: 480, shellSize: 7, explosionProfile: { lowpassFreq: 1300, volume: 0.35, durationSec: 0.3, bassFreq: 80 } }, // 4發同點齊射，每發音色比單發一般砲彈稍微輕快；對巡防艦這種裝甲薄的目標傷害+50%
       },
     },
     cruiser: {
@@ -650,7 +650,7 @@
       fireChance: { frontmid: 1.0 },
       weapons: {
         normal: { name: '普通魚雷', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 600, volume: 0.4, durationSec: 0.55, bassFreq: 55 } }, // 水下爆炸悶重感
-        multitorpedo: { name: '多管魚雷', power: 100, uses: 5, pattern: 'triple-gap', fallMs: 600, shellSize: 8, explosionProfile: { lowpassFreq: 650, volume: 0.35, durationSec: 0.4, bassFreq: 55 } }, // 魚雷-空格-魚雷-空格-魚雷，同樣是水下悶重感
+        multitorpedo: { name: '多管魚雷', power: 100, uses: 5, pattern: 'triple-gap', orientable: true, fallMs: 600, shellSize: 8, explosionProfile: { lowpassFreq: 650, volume: 0.35, durationSec: 0.4, bassFreq: 55 } }, // 魚雷-空格-魚雷-空格-魚雷，同樣是水下悶重感；可選橫向或直向間隔陣型
       },
     },
   };
@@ -1016,7 +1016,7 @@
     } else {
       // 一般單發武器、或本質上就是「連續多發」的武器(飽和攻擊同點連射、多管魚雷間隔陣型、
       // 多管火箭十字5格)：各自獨立的砲彈+爆炸+判定，用小間隔錯開看起來像連續齊射
-      const targets = getWeaponTargetCells(weaponSpec, row, col);
+      const targets = getWeaponTargetCells(weaponSpec, row, col, selectedOrientation);
       let completedCount = 0;
       targets.forEach((target, i) => {
         setTimeout(() => fireSingleShell(target.row, target.col, weaponSpec, () => {
@@ -1027,8 +1027,15 @@
     }
   }
 
-  function getWeaponTargetCells(weaponSpec, centerRow, centerCol) {
+  function getWeaponTargetCells(weaponSpec, centerRow, centerCol, orientation) {
     if (weaponSpec.pattern === 'triple-gap') {
+      if (weaponSpec.orientable && orientation === 'vertical') {
+        return [
+          { row: centerRow - 2, col: centerCol },
+          { row: centerRow, col: centerCol },
+          { row: centerRow + 2, col: centerCol },
+        ];
+      }
       return [
         { row: centerRow, col: centerCol - 2 },
         { row: centerRow, col: centerCol },
@@ -1036,6 +1043,7 @@
       ];
     }
     if (weaponSpec.pattern === 'cross') {
+      // 十字型上下左右對稱，旋轉90度結果不變，不需要處理方向
       return [
         { row: centerRow, col: centerCol },
         { row: centerRow - 1, col: centerCol },
@@ -2285,7 +2293,7 @@
       const previewSpec = spec.weapons[mpBattleSelectedWeapon];
       const previewCells = previewSpec.aoe
         ? getAoeCells(previewSpec, mpPendingFireCell.row, mpPendingFireCell.col, mpSelectedOrientation)
-        : getWeaponTargetCells(previewSpec, mpPendingFireCell.row, mpPendingFireCell.col);
+        : getWeaponTargetCells(previewSpec, mpPendingFireCell.row, mpPendingFireCell.col, mpSelectedOrientation);
       previewCellKeys = new Set(previewCells.map(c => `${c.row},${c.col}`));
     }
 
@@ -2465,7 +2473,7 @@
       const rect = shipEl.getBoundingClientRect();
       spawnSplash(rect.left + rect.width / 2, rect.top + rect.height / 2);
     } else if (shipEl) {
-      const shotCells = myWeaponSpec.aoe ? getAoeCells(myWeaponSpec, row, col, mpSelectedOrientation) : getWeaponTargetCells(myWeaponSpec, row, col);
+      const shotCells = myWeaponSpec.aoe ? getAoeCells(myWeaponSpec, row, col, mpSelectedOrientation) : getWeaponTargetCells(myWeaponSpec, row, col, mpSelectedOrientation);
       const staggerMs = 160;
       const rect = shipEl.getBoundingClientRect();
       const startX = rect.left + rect.width / 2, startY = rect.top + rect.height / 2;
