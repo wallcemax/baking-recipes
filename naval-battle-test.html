@@ -223,6 +223,9 @@
   .health-bar.mid i { background: linear-gradient(90deg, var(--damaged), #f2c169); }
   .health-bar.low i { background: linear-gradient(90deg, var(--critical), #f07a7a); }
   .turn-panel .actions-left { font-family: monospace; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .turn-timer { font-size: 12px; color: var(--scan); margin: -6px 0 10px; font-weight: 700; }
+  .turn-timer.urgent { color: var(--critical); animation: turn-timer-urgent-pulse .8s ease-in-out infinite; }
+  @keyframes turn-timer-urgent-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
   .turn-panel .actions-left b { color: var(--scan); font-size: 15px; }
   .move-btns { display: flex; justify-content: center; gap: 10px; }
   .move-btn { background: var(--deep); border: 1px solid var(--grid-line-bright); color: var(--ink); border-radius: 8px; padding: 10px 16px; font-size: 18px; cursor: pointer; transition: background .15s, transform .1s; min-width: 54px; }
@@ -411,6 +414,8 @@
   .mp-fire-overlay-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 12px; font-weight: 800; color: var(--scan); }
   .mp-cancel-target-btn { background: var(--deep); border: 1px solid var(--grid-line-bright); color: var(--muted); border-radius: 6px; padding: 4px 10px; font-size: 11px; cursor: pointer; }
   .mp-cancel-target-btn:hover { color: var(--critical); border-color: var(--critical); }
+  .ship-info-icon { cursor: pointer; opacity: .65; margin-left: 4px; font-size: 12px; }
+  .ship-info-icon:hover { opacity: 1; }
   .mp-orientation-toggle { display: flex; gap: 6px; margin: 6px 0; }
   .mp-orientation-toggle button { flex: 1; background: var(--deep); border: 1px solid var(--grid-line-bright); color: var(--muted); border-radius: 6px; padding: 6px; font-size: 12px; cursor: pointer; }
   .mp-orientation-toggle button.active { background: var(--scan); border-color: var(--scan); color: #04211d; font-weight: 800; }
@@ -540,6 +545,13 @@
     </div>
   </div>
 
+  <div id="ship-info-modal" class="legend-popup hidden" onclick="closeShipInfoModal()">
+    <div class="mp-panel" style="width:min(90vw, 420px); max-width:420px; text-align:center;" onclick="event.stopPropagation()">
+      <div id="ship-info-modal-body"></div>
+      <button class="mp-btn" style="margin-top:14px;" onclick="closeShipInfoModal()">關閉</button>
+    </div>
+  </div>
+
   <div id="demo-view">
   <div class="game-layout">
     <div class="game-main">
@@ -634,7 +646,7 @@
       fireChance: { mid: 0.5 },
       weapons: {
         normal: { name: '一般砲彈', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 1100, volume: 0.567, durationSec: 0.45, bassFreq: 90 } },
-        rocket: { name: '多管火箭彈', power: 100, uses: 10, pattern: 'cross', vsAmphibiousMultiplier: 0.9, fallMs: 550, shellSize: 7, explosionProfile: { lowpassFreq: 2000, volume: 0.297, durationSec: 0.22, bassFreq: null } }, // 十字5格齊發；對兩棲突擊艦裝甲較厚的目標傷害打9折
+        rocket: { name: '多管火箭彈', power: 70, uses: 10, pattern: 'square-plus', vsAmphibiousMultiplier: 0.9, fallMs: 550, shellSize: 7, explosionProfile: { lowpassFreq: 2000, volume: 0.297, durationSec: 0.22, bassFreq: null } }, // 3x3範圍再加四邊各延伸一格，共13管齊發；對兩棲突擊艦裝甲較厚的目標傷害打9折
       },
     },
     frigate: {
@@ -649,11 +661,74 @@
       name: '潛水艇', shipName: '艾可', length: 4, width: 1, baseActions: 5, maxHealth: 500,
       fireChance: { frontmid: 1.0 },
       weapons: {
-        normal: { name: '普通魚雷', power: 100, uses: null, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 600, volume: 0.54, durationSec: 0.55, bassFreq: 55 } }, // 水下爆炸悶重感
-        multitorpedo: { name: '多管魚雷', power: 100, uses: 10, pattern: 'triple-gap', orientable: true, fallMs: 600, shellSize: 8, explosionProfile: { lowpassFreq: 650, volume: 0.472, durationSec: 0.4, bassFreq: 55 } }, // 魚雷-空格-魚雷-空格-魚雷，同樣是水下悶重感；可選橫向或直向間隔陣型
+        normal: { name: '普通魚雷', power: 100, uses: null, vsSubmarineMultiplier: 2.0, vsOthersMultiplier: 1.5, fallMs: 650, shellSize: 8, explosionProfile: { lowpassFreq: 600, volume: 0.54, durationSec: 0.55, bassFreq: 55 } }, // 水下爆炸悶重感；魚雷專剋水下目標，對潛水艇傷害+100%，對其他船隻+50%
+        multitorpedo: { name: '多管魚雷', power: 100, uses: 10, pattern: 'triple-gap', orientable: true, vsSubmarineMultiplier: 2.0, vsOthersMultiplier: 1.5, fallMs: 600, shellSize: 8, explosionProfile: { lowpassFreq: 650, volume: 0.472, durationSec: 0.4, bassFreq: 55 } }, // 魚雷-空格-魚雷-空格-魚雷，同樣是水下悶重感；可選橫向或直向間隔陣型；同樣對潛水艇+100%、對其他船隻+50%
       },
     },
   };
+  // 船隻詳細介紹文字：每艘船一段完整說明，供UI上的資訊按鈕彈窗使用
+  const SHIP_DESCRIPTIONS = {
+    amphibious: {
+      summary: '重裝甲兩棲主力艦，血量最高、體積最大，前中段區塊中彈必定起火，正面硬碰硬能力最強。',
+      details: [
+        '💥 一般砲彈：標準威力100，不限次數',
+        '🎯 精準飽和攻擊：同一個座標連續4發，對巡防艦這種裝甲薄的目標傷害+50%',
+        '🛰️ 雷達掃描（專屬能力）：花費1次移動，精準度比照特殊武器造成的動靜，但掃不到潛水艇跟巡防艦',
+        '🔥 前中段區塊中彈必定100%起火(fireChance最高)',
+      ],
+    },
+    cruiser: {
+      summary: '均衡型巡洋艦，重砲能大範圍轟炸，修理時還能順便回血。',
+      details: [
+        '💥 一般砲彈：標準威力100，不限次數',
+        '💣 重砲射擊：3x3大範圍轟炸，威力125，對兩棲突擊艦這種裝甲厚的目標傷害打9折',
+        '🔧 修理（專屬能力）：修理移動能力的同時，額外隨機回復5%~10%最大血量',
+        '🔥 中段區塊中彈50%機率起火',
+      ],
+    },
+    destroyer: {
+      summary: '高機動性驅逐艦，移動次數最多，滅火系統也比較先進。',
+      details: [
+        '💥 一般砲彈：標準威力100，不限次數',
+        '🚀 多管火箭彈：3x3範圍再加四邊各延伸一格，共13管齊發，威力70，對兩棲突擊艦傷害打9折',
+        '🧯 滅火（專屬能力）：滅火只需要花費1次移動次數(其他船型要2次)',
+        '🔥 中段區塊中彈50%機率起火',
+      ],
+    },
+    frigate: {
+      summary: '輕型巡防艦，體積最小最難命中，但裝甲也最薄，任何攻擊命中都會起火。',
+      details: [
+        '💥 一般砲彈：標準威力100，不限次數',
+        '🚀 超音速反艦飛彈：可選橫向2x1或直向1x2的範圍，威力150，對血量>500的大型目標傷害2倍',
+        '🔥 裝甲太薄油箱容易暴露，不管打中哪個區塊都100%起火',
+        '🧯 滅火需要花費3次移動次數(比其他船型都更多，起火代價高)',
+      ],
+    },
+    submarine: {
+      summary: '隱蔽性潛水艇，潛航中發射一般魚雷完全不會被偵測到，但被打中就會被迫浮出水面。',
+      details: [
+        '🐟 普通魚雷／多管魚雷：專剋水下目標，對潛水艇傷害+100%，對其他所有船隻傷害+50%',
+        '🙈 潛航中(submarineSurfaced=false)發射一般魚雷完全不洩漏位置；發射多管魚雷(動靜較大)還是會洩漏模糊位置',
+        '⚓ 只要被炸到(不管哪個部位)就會失去下潛能力、被迫浮出水面，浮出水面後發射任何武器都會洩漏位置，直到花2次移動修復下潛為止',
+        '📡 聲納偵測（所有船型都能用）：花費1次移動，大範圍模糊偵測場上是否有潛水艇',
+      ],
+    },
+  };
+  function showShipInfo(shipType, event) {
+    if (event) event.stopPropagation(); // 避免觸發外層按鈕的選船onclick
+    const spec = SHIP_TYPES[shipType];
+    const desc = SHIP_DESCRIPTIONS[shipType];
+    document.getElementById('ship-info-modal-body').innerHTML = `
+      <p style="font-weight:900; font-size:16px; margin-bottom:4px;">「${spec.shipName}」號・${spec.name}</p>
+      <p style="font-size:12px; color:var(--muted); margin-bottom:10px;">血量${spec.maxHealth}・體積${spec.length}x${spec.width}・基礎移動${spec.baseActions}</p>
+      <p style="font-size:13px; margin-bottom:10px; line-height:1.5;">${desc.summary}</p>
+      <div style="text-align:left; font-size:12px; line-height:1.8;">${desc.details.map(d => `<p style="margin:0 0 4px;">${d}</p>`).join('')}</div>
+    `;
+    document.getElementById('ship-info-modal').classList.remove('hidden');
+  }
+  function closeShipInfoModal() {
+    document.getElementById('ship-info-modal').classList.add('hidden');
+  }
   // 不同船長對應不同數量的區塊：長度4分四塊(頭/前中/中後/尾)，長度3分三塊(頭/中/尾)，
   // 長度2分兩塊(頭/尾)——這套對應表已經用Node.js驗證過3種長度都恰好對應正確格數、
   // 頭尾方向正確
@@ -1042,15 +1117,20 @@
         { row: centerRow, col: centerCol + 2 },
       ];
     }
-    if (weaponSpec.pattern === 'cross') {
-      // 十字型上下左右對稱，旋轉90度結果不變，不需要處理方向
-      return [
-        { row: centerRow, col: centerCol },
-        { row: centerRow - 1, col: centerCol },
-        { row: centerRow + 1, col: centerCol },
-        { row: centerRow, col: centerCol - 1 },
-        { row: centerRow, col: centerCol + 1 },
-      ];
+    if (weaponSpec.pattern === 'square-plus') {
+      // 3x3範圍(9格)再加上四邊各延伸一格(4格)，共13格。上下左右對稱，旋轉90度結果不變，
+      // 不需要處理方向
+      const cells = [];
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          cells.push({ row: centerRow + dr, col: centerCol + dc });
+        }
+      }
+      cells.push({ row: centerRow - 2, col: centerCol });
+      cells.push({ row: centerRow + 2, col: centerCol });
+      cells.push({ row: centerRow, col: centerCol - 2 });
+      cells.push({ row: centerRow, col: centerCol + 2 });
+      return cells;
     }
     if (weaponSpec.shots && weaponSpec.sameTarget) {
       return Array.from({ length: weaponSpec.shots }, () => ({ row: centerRow, col: centerCol }));
@@ -1790,6 +1870,38 @@
         setTimeout(() => { mpEndTurn(); mpAutoEndTurnLock = false; }, 800); // 稍微延遲一下，讓玩家看得到最後一個動作的畫面回饋才切換回合
       }
     });
+    setupMpTurnTimer();
+  }
+
+  // 回合計時器：每回合限時60秒，時間到自動結束(不管次數用完了沒)。這同時也是斷線保護機制——
+  // 如果輪到的那個人已經離線(關網頁/斷線)，60秒後其他還在線上的玩家會偵測到逾時，
+  // 代為觸發強制結束對方回合，讓遊戲能繼續進行、不會因為一個人不見了就全部卡死
+  const MP_TURN_TIME_LIMIT_MS = 60000;
+  let mpTurnTimerIntervalId = null;
+  let mpTimerAutoEndLock = false;
+  function setupMpTurnTimer() {
+    if (mpTurnTimerIntervalId) return; // 只需要設定一次這個interval，每次tick時都用最新資料判斷
+    mpTurnTimerIntervalId = setInterval(() => {
+      const roomD = window.__mpLastRoomData;
+      const timerEl = document.getElementById('mp-turn-timer');
+      if (!roomD || !roomD.turnOrder || !roomD.turnStartedAt || !timerEl) return;
+      const elapsedMs = Date.now() - roomD.turnStartedAt;
+      const remainingSec = Math.max(0, Math.ceil((MP_TURN_TIME_LIMIT_MS - elapsedMs) / 1000));
+      const isMyTurnNow = roomD.turnOrder[roomD.currentTurnIndex] === mpCurrentUser.uid;
+      timerEl.textContent = `⏱️ ${isMyTurnNow ? '你的' : '對方'}回合剩餘時間：${remainingSec}秒`;
+      timerEl.classList.toggle('urgent', remainingSec <= 15);
+
+      if (mpTimerAutoEndLock) return;
+      if (isMyTurnNow && elapsedMs >= MP_TURN_TIME_LIMIT_MS) {
+        mpTimerAutoEndLock = true;
+        mpEndTurn().finally(() => { mpTimerAutoEndLock = false; });
+      } else if (!isMyTurnNow && elapsedMs >= MP_TURN_TIME_LIMIT_MS + 5000) {
+        // 多給5秒緩衝，優先讓逾時的那個人自己的畫面觸發；5秒後還沒動靜，可能真的斷線了，
+        // 代為強制結束——伺服器會驗證真的逾時才允許，不用擔心誤觸發
+        mpTimerAutoEndLock = true;
+        mpEndTurn(true).finally(() => { mpTimerAutoEndLock = false; });
+      }
+    }, 1000);
   }
 
   // 復原機制：如果房間狀態已經變成playing、但戰鬥初始化一直沒有真正完成(turnOrder遲遲沒出現，
@@ -1899,7 +2011,7 @@
       const sw = spec.weapons[specialWeaponKey];
       const swExtra = sw.aoe ? `範圍${sw.aoe.w}x${sw.aoe.h}` : sw.shots ? `${sw.shots}連發` : sw.pattern ? '間隔陣型' : '';
       return `<button class="mp-ship-btn ${isMine ? 'selected' : ''}" ${me.ready ? 'disabled' : ''} onclick="pickMpShip('${key}')">
-        <b>「${spec.shipName}」號・${spec.name}</b>血量${spec.maxHealth}・體積${spec.length}x${spec.width}・移動${spec.baseActions}
+        <b>「${spec.shipName}」號・${spec.name}</b><span class="ship-info-icon" onclick="showShipInfo('${key}', event)">ℹ️</span>血量${spec.maxHealth}・體積${spec.length}x${spec.width}・移動${spec.baseActions}
         <br><span style="color:var(--muted);">特殊武器威力${sw.power}${swExtra ? '・' + swExtra : ''}（限${sw.uses}次）</span>
       </button>`;
     }).join('');
@@ -2254,6 +2366,7 @@
 
     const myCells = getShipCellsGeneric(mpMyCombatState, spec);
     const rows = myCells.map(c => c.row), cols = myCells.map(c => c.col);
+
     const minRow = Math.min(...rows), maxRow = Math.max(...rows), minCol = Math.min(...cols), maxCol = Math.max(...cols);
     const cellPct = 100 / MAP_SIZE;
     const stateClass = mpMyCombatState.health <= 0 ? 'wrecked' : healthPct <= .25 ? 'critical' : healthPct <= .75 ? 'damaged' : 'intact';
@@ -2285,11 +2398,12 @@
 
         <div class="game-sidebar">
           <div class="turn-panel">
-            <p class="turn-title">🚢 操作「${spec.shipName}」號（${spec.name}）</p>
+            <p class="turn-title">🚢 操作「${spec.shipName}」號（${spec.name}）<span class="ship-info-icon" onclick="showShipInfo('${mpMyCombatState.shipType}', event)">ℹ️</span></p>
             <p class="health-readout mono">血量：<b>${Math.max(0, mpMyCombatState.health)}</b> / ${spec.maxHealth}</p>
             <div class="health-bar${healthPct <= .25 ? ' low' : healthPct <= .75 ? ' mid' : ''}"><i style="width:${Math.round(healthPct * 100)}%;"></i></div>
             <p class="actions-left">本回合剩餘操作次數：<b>${mpMyCombatState.actionsLeftThisTurn}</b> / ${maxActions}</p>
-            <p class="fire-status" style="visibility:${mpMyCombatState.onFire ? 'visible' : 'hidden'};">🔥 著火中，每回合開始損失最大血量10%，撲滅需花費2次移動次數</p>
+            <p class="turn-timer mono" id="mp-turn-timer"></p>
+            <p class="fire-status" style="visibility:${mpMyCombatState.onFire ? 'visible' : 'hidden'};">🔥 著火中，每回合開始損失最大血量10%，撲滅需花費${spec.name === '驅逐艦' ? 1 : spec.name === '巡防艦' ? 3 : 2}次移動次數</p>
             ${mpMyCombatState.submarineSurfaced ? `<p class="fire-status" style="visibility:visible;">⚓ 浮出水面，無法下潛</p>` : ''}
             <div class="move-btns">
               <button class="move-btn" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn <= 0) ? 'disabled' : ''} onclick="mpDoShipAction('left')">↺<span class="btn-label">左轉</span></button>
@@ -2298,7 +2412,7 @@
             </div>
             <div class="move-btns" style="margin-top:6px;">
               <button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn <= 0 || mpMyCombatState.actionPenalty <= 0) ? 'disabled' : ''} onclick="mpRepairMovement()">🔧<span class="btn-label">修復(1)</span></button>
-              <button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn < (mpMyCombatState.shipType === 'destroyer' ? 1 : 2) || !mpMyCombatState.onFire) ? 'disabled' : ''} onclick="mpExtinguishFire()">🧯<span class="btn-label">滅火(${mpMyCombatState.shipType === 'destroyer' ? 1 : 2})</span></button>
+              <button class="move-btn small" ${(() => { const cost = mpMyCombatState.shipType === 'destroyer' ? 1 : mpMyCombatState.shipType === 'frigate' ? 3 : 2; return (!isMyTurn || mpMyCombatState.actionsLeftThisTurn < cost || !mpMyCombatState.onFire) ? 'disabled' : ''; })()} onclick="mpExtinguishFire()">🧯<span class="btn-label">滅火(${mpMyCombatState.shipType === 'destroyer' ? 1 : mpMyCombatState.shipType === 'frigate' ? 3 : 2})</span></button>
               <button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn < 1) ? 'disabled' : ''} onclick="mpUseSonar()">📡<span class="btn-label">聲納(1)</span></button>
               ${mpMyCombatState.shipType === 'amphibious' ? `<button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn < 1 || !mpTargetDirection) ? 'disabled' : ''} onclick="mpUseRadar()">🛰️<span class="btn-label">雷達(1)</span></button>` : ''}
               ${mpMyCombatState.shipType === 'submarine' && mpMyCombatState.submarineSurfaced ? `<button class="move-btn small" ${(!isMyTurn || mpMyCombatState.actionsLeftThisTurn < 2) ? 'disabled' : ''} onclick="mpRepairDive()">⚓<span class="btn-label">修復下潛(2)</span></button>` : ''}
@@ -2434,12 +2548,20 @@
     } catch (err) { console.warn('修復失敗', err); }
   }
   async function mpExtinguishFire() {
+    if (!mpMyCombatState) return;
+    const extinguishCost = mpMyCombatState.shipType === 'destroyer' ? 1
+      : mpMyCombatState.shipType === 'frigate' ? 3 // 巡防艦裝甲薄、油箱容易起火，滅火也格外困難
+      : 2;
+    if (mpMyCombatState.actionsLeftThisTurn < extinguishCost || !mpMyCombatState.onFire) return;
+    // 樂觀更新：點擊當下立刻本地更新狀態並重新渲染，火焰emoji馬上消失，不用等Firestore
+    // 往返完成才看到變化——之後Firestore的onSnapshot回來時會用真正的伺服器資料再確認一次
+    mpMyCombatState = { ...mpMyCombatState, onFire: false, actionsLeftThisTurn: mpMyCombatState.actionsLeftThisTurn - extinguishCost };
+    if (window.__mpLastRoomData) renderMpBattleView(window.__mpLastRoomData);
     const stateRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId).collection('privateCombatState').doc(mpCurrentUser.uid);
     try {
       await mpDb.runTransaction(async (tx) => {
         const doc = await tx.get(stateRef);
         const s = doc.data();
-        const extinguishCost = s.shipType === 'destroyer' ? 1 : 2; // 驅逐艦滅火系統比較先進，只需要1次移動次數
         if (s.actionsLeftThisTurn < extinguishCost || !s.onFire) return;
         tx.update(stateRef, { actionsLeftThisTurn: s.actionsLeftThisTurn - extinguishCost, onFire: false });
       });
@@ -2493,22 +2615,24 @@
       alert('雷達掃描失敗（網路或連線問題）：' + err.message);
     }
   }
-  async function mpEndTurn() {
+  async function mpEndTurn(forceTimeout) {
     try {
       const idToken = await mpCurrentUser.getIdToken();
       const res = await fetch(NAVAL_WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'naval_battle_end_turn', idToken, roomId: mpRoomState.roomId }),
+        body: JSON.stringify({ action: 'naval_battle_end_turn', idToken, roomId: mpRoomState.roomId, forceTimeout: !!forceTimeout }),
       });
       const data = await res.json();
       if (!res.ok || data.error) {
         console.warn('結束回合失敗', data.error);
-        alert('結束回合失敗：' + (data.error || '未知錯誤'));
+        if (!forceTimeout) alert('結束回合失敗：' + (data.error || '未知錯誤'));
+        // forceTimeout時不要跳alert打擾——常見情況是好幾個玩家的畫面同時偵測到逾時、
+        // 同時嘗試觸發，只有第一個成功，其他人失敗是正常的競速結果，不需要特別提醒
       }
     } catch (err) {
       console.warn('結束回合失敗', err);
-      alert('結束回合失敗（網路或連線問題）：' + err.message);
+      if (!forceTimeout) alert('結束回合失敗（網路或連線問題）：' + err.message);
     }
   }
 
