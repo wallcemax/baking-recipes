@@ -9,79 +9,187 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <style>
+    /* ============================================================
+       設計主題：星空營火（Night Campsite）
+       想像坐在營火旁，跟認識很久的車泊老朋友聊天——深夜星空是舞台，
+       營火的暖橘光是唯一的溫暖來源，山巒剪影是安靜的背景。
+       這不是食譜網站的暖色紙感，是屬於車泊、屬於夜晚公路的另一種調性。
+       ============================================================ */
     :root {
-        --cream: #FBF3E7; --paper: #FFFDF9; --espresso: #3A2A1E; --espresso-soft: #6B5847;
-        --jam: #A8324A; --jam-dark: #7A1F35; --sage: #6F8C6E; --honey: #C98A2C; --line: #EFEAE0;
-        --muted: #B3A492; --danger: #C4453F;
+        --night: #0B1526;        /* 最深的夜空 */
+        --night-mid: #16233D;    /* 夜空漸層中段 */
+        --panel: #1C2C4A;        /* 卡片/面板底色，比夜空稍亮一階 */
+        --panel-soft: #24365a;   /* 卡片內的次層元素 */
+        --ember: #F2994A;        /* 營火暖橘，主要強調色 */
+        --ember-hot: #EB5E28;    /* 熾焰橘紅，行動按鈕/重點 */
+        --starlight: #EAF2F5;    /* 星光白，主要文字 */
+        --dim: #8B9DB5;          /* 夜霧藍灰，次要文字 */
+        --moss: #52A37C;         /* 苔蘚綠，自然/成功狀態 */
+        --danger: #E8604C;
+        --line: rgba(234,242,245,0.1);
     }
     * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
     body {
-        margin: 0; min-height: 100vh; background: var(--cream); color: var(--espresso);
+        margin: 0; min-height: 100vh; color: var(--starlight);
         font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+        background: radial-gradient(ellipse 120% 60% at 50% 0%, var(--night-mid) 0%, var(--night) 55%);
+        position: relative; overflow-x: hidden;
     }
+    .display-font { font-family: 'Kalam', 'Noto Sans TC', cursive; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
     .hidden { display: none !important; }
+
+    /* ---------- 簽名視覺元素：滿版星空 ---------- */
+    #starfield {
+        position: fixed; inset: 0; z-index: 0; pointer-events: none;
+        background-image:
+            radial-gradient(1.5px 1.5px at 20px 30px, rgba(234,242,245,0.9), transparent),
+            radial-gradient(1px 1px at 90px 80px, rgba(234,242,245,0.7), transparent),
+            radial-gradient(1.5px 1.5px at 160px 40px, rgba(234,242,245,0.8), transparent),
+            radial-gradient(1px 1px at 210px 110px, rgba(234,242,245,0.6), transparent),
+            radial-gradient(1.5px 1.5px at 270px 20px, rgba(234,242,245,0.9), transparent),
+            radial-gradient(1px 1px at 320px 90px, rgba(234,242,245,0.5), transparent),
+            radial-gradient(1.5px 1.5px at 40px 150px, rgba(234,242,245,0.7), transparent),
+            radial-gradient(1px 1px at 130px 180px, rgba(234,242,245,0.6), transparent),
+            radial-gradient(1.5px 1.5px at 240px 160px, rgba(234,242,245,0.8), transparent),
+            radial-gradient(1px 1px at 350px 200px, rgba(234,242,245,0.5), transparent);
+        background-size: 400px 220px; background-repeat: repeat;
+        animation: twinkle 4s ease-in-out infinite alternate;
+        opacity: 0.65;
+    }
+    @keyframes twinkle { from { opacity: 0.45; } to { opacity: 0.85; } }
+    @media (prefers-reduced-motion: reduce) { #starfield { animation: none; opacity: 0.65; } }
+
+    /* ---------- 簽名視覺元素：底部山巒剪影(固定不動，安靜的地平線) ---------- */
+    #mountains {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 1; pointer-events: none;
+        height: 14vh; min-height: 90px;
+    }
+    #mountains svg { width: 100%; height: 100%; display: block; }
+
+    /* ---------- 簽名視覺元素：營火光暈(呼吸般的明滅，聊天輸入框旁的溫暖光源) ---------- */
+    #campfire-glow {
+        position: fixed; left: 50%; bottom: -6rem; transform: translateX(-50%); z-index: 1; pointer-events: none;
+        width: 32rem; height: 20rem; border-radius: 50%;
+        background: radial-gradient(circle, rgba(242,153,74,0.35) 0%, rgba(235,94,40,0.12) 40%, transparent 70%);
+        animation: flicker 3.2s ease-in-out infinite;
+    }
+    @keyframes flicker {
+        0%, 100% { opacity: 0.75; transform: translateX(-50%) scale(1); }
+        50% { opacity: 1; transform: translateX(-50%) scale(1.05); }
+    }
+    @media (prefers-reduced-motion: reduce) { #campfire-glow { animation: none; opacity: 0.85; } }
+
+    /* ---------- 內容層(在星空/山巒之上) ---------- */
+    .content-layer { position: relative; z-index: 2; }
+
     input[type="text"] {
         width: 100%; padding: 0.7rem 1rem; border-radius: 999px; border: 1px solid var(--line);
-        background: var(--paper); font-size: 0.9rem; color: var(--espresso);
+        background: var(--panel-soft); font-size: 0.9rem; color: var(--starlight);
     }
+    input[type="text"]::placeholder { color: var(--dim); }
+    input[type="text"]:focus { outline: none; border-color: var(--ember); }
     .btn {
-        padding: 0.7rem 1.2rem; border-radius: 999px; border: none; background: var(--jam); color: #fff;
-        font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+        padding: 0.7rem 1.2rem; border-radius: 999px; border: none;
+        background: linear-gradient(135deg, var(--ember), var(--ember-hot)); color: #1A0F08;
+        font-size: 0.85rem; font-weight: 700; cursor: pointer; white-space: nowrap;
+        box-shadow: 0 4px 14px -4px rgba(235,94,40,0.5);
     }
-    .btn-outline { background: var(--paper); color: var(--jam); border: 1px solid var(--jam); }
-    .btn:disabled { opacity: .5; cursor: default; }
+    .btn-outline { background: transparent; color: var(--ember); border: 1px solid var(--ember); box-shadow: none; }
+    .btn:disabled { opacity: .4; cursor: default; box-shadow: none; }
 
-    header { text-align: center; padding: 1.5rem 1.25rem 1rem; }
-    header h1 { font-size: 1.5rem; margin: 0 0 0.3rem; display: flex; align-items: center; justify-content: center; gap: 0.4rem; }
-    header h1 img { width: 1.4rem; height: 1.4rem; object-fit: contain; }
-    header a { color: var(--muted); font-size: 0.8rem; text-decoration: none; }
+    header { text-align: center; padding: 2rem 1.25rem 1rem; }
+    header .eyebrow { color: var(--dim); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 0.3rem; }
+    header h1 {
+        font-size: 2rem; margin: 0 0 0.4rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+        text-shadow: 0 0 20px rgba(242,153,74,0.4);
+    }
+    header h1 img { width: 1.8rem; height: 1.8rem; object-fit: contain; filter: drop-shadow(0 0 8px rgba(242,153,74,0.6)); }
+    header a { color: var(--dim); font-size: 0.8rem; text-decoration: none; }
+    header a:hover { color: var(--ember); }
 
-    #login-gate { max-width: 24rem; margin: 3rem auto; padding: 2rem 1.5rem; background: var(--paper); border-radius: 1.5rem; text-align: center; box-shadow: 0 10px 24px -8px rgba(58,42,30,0.12); }
-    #login-gate p { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.2rem; }
+    #login-gate {
+        max-width: 24rem; margin: 4rem auto; padding: 2.2rem 1.8rem; background: var(--panel);
+        border-radius: 1.5rem; text-align: center; border: 1px solid var(--line);
+        box-shadow: 0 20px 50px -12px rgba(0,0,0,0.5);
+    }
+    #login-gate p { color: var(--dim); font-size: 0.9rem; margin-bottom: 1.3rem; line-height: 1.6; }
 
-    #carcamp-root { max-width: 40rem; margin: 0 auto; padding: 0 1.25rem 2rem; }
+    #carcamp-root { max-width: 40rem; margin: 0 auto; padding: 0 1.25rem 8rem; }
 
-    /* ---------- 定位狀態列 ---------- */
-    #location-status { display: flex; align-items: center; gap: 0.5rem; background: var(--paper); border-radius: 1.1rem; padding: 0.7rem 1rem; margin-bottom: 1rem; font-size: 0.82rem; color: var(--muted); }
-    #location-status.ready { color: var(--sage); }
+    /* ---------- 定位狀態列：像GPS座標讀數 ---------- */
+    #location-status {
+        display: flex; align-items: center; gap: 0.5rem; background: var(--panel);
+        border: 1px solid var(--line); border-radius: 1.1rem; padding: 0.7rem 1rem; margin-bottom: 1rem;
+        font-size: 0.82rem; color: var(--dim);
+    }
+    #location-status.ready { color: var(--moss); border-color: rgba(82,163,124,0.3); }
     #location-status button { margin-left: auto; }
 
-    /* ---------- 地圖來源管理 ---------- */
-    #sources-panel { background: var(--paper); border-radius: 1.2rem; padding: 1.1rem 1.2rem; margin-bottom: 1rem; }
-    #sources-panel summary { cursor: pointer; font-weight: 600; font-size: 0.92rem; }
-    .source-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0; border-bottom: 1px solid var(--line); font-size: 0.82rem; }
+    /* ---------- 地圖來源管理：像裝備清單 ---------- */
+    #sources-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 1.2rem; padding: 1.1rem 1.2rem; margin-bottom: 1rem; }
+    #sources-panel summary { cursor: pointer; font-weight: 700; font-size: 0.95rem; color: var(--starlight); }
+    #sources-panel summary::marker { color: var(--ember); }
+    .source-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.7rem 0; border-bottom: 1px solid var(--line); font-size: 0.82rem; }
     .source-item:last-child { border-bottom: none; }
     .source-item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .source-item .status-badge { font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 999px; background: var(--cream); color: var(--muted); }
-    .source-item .status-badge.ready { background: rgba(111,140,110,0.15); color: var(--sage); }
-    .source-item .status-badge.error { background: rgba(196,69,63,0.12); color: var(--danger); }
+    .source-item .status-badge { font-size: 0.7rem; padding: 0.2rem 0.55rem; border-radius: 999px; background: var(--panel-soft); color: var(--dim); }
+    .source-item .status-badge.ready { background: rgba(82,163,124,0.15); color: var(--moss); }
+    .source-item .status-badge.error { background: rgba(232,96,76,0.15); color: var(--danger); }
     #add-source-form { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.8rem; }
 
-    /* ---------- 對話區 ---------- */
-    #chat-log { display: flex; flex-direction: column; gap: 0.8rem; margin-bottom: 1rem; min-height: 4rem; }
-    .chat-bubble { padding: 0.8rem 1rem; border-radius: 1.1rem; font-size: 0.88rem; line-height: 1.5; max-width: 88%; }
-    .chat-bubble.user { align-self: flex-end; background: var(--jam); color: #fff; border-bottom-right-radius: 0.3rem; }
-    .chat-bubble.ai { align-self: flex-start; background: var(--paper); border-bottom-left-radius: 0.3rem; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08); }
-    .chat-bubble.loading { align-self: flex-start; color: var(--muted); font-style: italic; }
+    /* ---------- 對話區：營火旁的閒聊 ---------- */
+    #chat-log { display: flex; flex-direction: column; gap: 0.9rem; margin-bottom: 1.2rem; min-height: 4rem; }
+    .chat-bubble { padding: 0.85rem 1.1rem; border-radius: 1.2rem; font-size: 0.9rem; line-height: 1.6; max-width: 88%; }
+    .chat-bubble.user {
+        align-self: flex-end; background: linear-gradient(135deg, var(--ember), var(--ember-hot));
+        color: #1A0F08; font-weight: 500; border-bottom-right-radius: 0.3rem;
+        box-shadow: 0 6px 18px -6px rgba(235,94,40,0.4);
+    }
+    .chat-bubble.ai {
+        align-self: flex-start; background: var(--panel); border: 1px solid var(--line);
+        border-bottom-left-radius: 0.3rem; box-shadow: 0 6px 18px -6px rgba(0,0,0,0.35);
+    }
+    .chat-bubble.loading { align-self: flex-start; color: var(--dim); font-style: italic; }
 
-    #question-form { display: flex; gap: 0.6rem; margin-bottom: 1.2rem; position: sticky; bottom: 0.8rem; }
+    #question-form { display: flex; gap: 0.6rem; margin-bottom: 1.4rem; position: sticky; bottom: 1rem; z-index: 3; }
     #question-form input { flex: 1; }
 
-    /* ---------- 地圖顯示 ---------- */
-    #map-container { width: 100%; height: 22rem; border-radius: 1.2rem; overflow: hidden; background: var(--paper); margin-bottom: 1rem; box-shadow: 0 10px 24px -8px rgba(58,42,30,0.12); }
+    /* ---------- 地圖顯示：像探險家的地圖 ---------- */
+    #map-container {
+        width: 100%; height: 22rem; border-radius: 1.2rem; overflow: hidden; background: var(--panel);
+        margin-bottom: 1rem; border: 1px solid var(--line); box-shadow: 0 20px 50px -12px rgba(0,0,0,0.5);
+    }
     #places-list { display: flex; flex-direction: column; gap: 0.6rem; }
-    .place-card { background: var(--paper); border-radius: 1rem; padding: 0.8rem 1rem; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08); cursor: pointer; }
-    .place-card .name { font-weight: 600; font-size: 0.92rem; margin-bottom: 0.2rem; }
-    .place-card .reason { font-size: 0.8rem; color: var(--muted); }
+    .place-card {
+        background: var(--panel); border: 1px solid var(--line); border-radius: 1rem; padding: 0.85rem 1.05rem;
+        box-shadow: 0 6px 18px -6px rgba(0,0,0,0.3); cursor: pointer; transition: border-color 0.15s;
+    }
+    .place-card:hover { border-color: var(--ember); }
+    .place-card .name { font-weight: 700; font-size: 0.92rem; margin-bottom: 0.25rem; color: var(--starlight); }
+    .place-card .reason { font-size: 0.8rem; color: var(--dim); }
 </style>
 </head>
 <body>
 
+<div id="starfield"></div>
+<div id="mountains">
+    <svg viewBox="0 0 1440 200" preserveAspectRatio="none">
+        <polygon points="0,200 0,130 180,50 340,110 520,30 700,100 860,45 1040,120 1220,60 1440,110 1440,200" fill="#111d33"/>
+        <polygon points="0,200 0,160 220,90 460,150 680,80 920,145 1160,95 1440,150 1440,200" fill="#0d1626"/>
+    </svg>
+</div>
+<div id="campfire-glow"></div>
+
+<div class="content-layer">
 <header>
-    <p style="color:var(--muted); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem;">JUST DO EAT</p>
-    <h1><img src="https://res.cloudinary.com/bumzwp9g/image/upload/v1787555200/caravan_430750_hwe5jm.png" alt="">車泊趣</h1>
+    <p class="eyebrow">JUST DO EAT</p>
+    <h1 class="display-font"><img src="https://res.cloudinary.com/bumzwp9g/image/upload/v1787555200/caravan_430750_hwe5jm.png" alt="">車泊趣</h1>
     <a href="index.html">← 回主站</a>
 </header>
 
@@ -117,6 +225,7 @@
     <div id="map-container"></div>
     <div id="places-list"></div>
 </div>
+</div>
 
 <script>
     // ---------------------------------------------------------------
@@ -136,7 +245,7 @@
 
     // TODO: 換成你自己申請的Google Maps JavaScript API金鑰(免信用卡的示範金鑰即可先測試)，
     // 申請方式請見交付文件裡的「Google Maps API金鑰申請步驟」
-    const GOOGLE_MAPS_API_KEY = '你的Google Maps API金鑰';
+    const GOOGLE_MAPS_API_KEY = 'AIzaSyAVrKwugAJB9-x46a98jXQV-R4yKpJQPAs';
 
     let carcampCurrentUser = null;
     let carcampUserLat = null;
@@ -222,7 +331,7 @@
     function initCarcampMap() {
         if (carcampMap || carcampMapsApiLoading) return;
         if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === '你的Google Maps API金鑰') {
-            document.getElementById('map-container').innerHTML = '<p style="padding:1rem; color:var(--muted); font-size:0.85rem;">尚未設定Google Maps API金鑰，地圖無法顯示。請參考交付文件申請金鑰後填入carcamp.html裡的GOOGLE_MAPS_API_KEY。</p>';
+            document.getElementById('map-container').innerHTML = '<p style="padding:1rem; color:var(--dim); font-size:0.85rem;">尚未設定Google Maps API金鑰，地圖無法顯示。請參考交付文件申請金鑰後填入carcamp.html裡的GOOGLE_MAPS_API_KEY。</p>';
             return;
         }
         carcampMapsApiLoading = true;
@@ -338,7 +447,7 @@
     // ---------------------------------------------------------------
     async function loadCarcampSources() {
         const listEl = document.getElementById('sources-list');
-        listEl.innerHTML = '<p style="font-size:0.8rem; color:var(--muted);">載入中...</p>';
+        listEl.innerHTML = '<p style="font-size:0.8rem; color:var(--dim);">載入中...</p>';
         try {
             const idToken = await carcampCurrentUser.getIdToken();
             const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
@@ -358,7 +467,7 @@
     function renderCarcampSourcesList() {
         const listEl = document.getElementById('sources-list');
         if (!carcampSourcesCache.length) {
-            listEl.innerHTML = '<p style="font-size:0.8rem; color:var(--muted);">還沒有任何地圖來源，在下方新增一個吧！</p>';
+            listEl.innerHTML = '<p style="font-size:0.8rem; color:var(--dim);">還沒有任何地圖來源，在下方新增一個吧！</p>';
             return;
         }
         const statusLabel = { pending: '準備中', ready: '就緒', error: '失敗' };
