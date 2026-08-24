@@ -10,17 +10,42 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Righteous&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
 <style>
+    /* ============================================================
+       設計主題：霓虹卡拉OK之夜（Neon Karaoke Night）
+       深夜的KTV包廂——霓虹桃紅、電光青、螢光金交錯閃爍，
+       邊緣有跳動的音波等化器，像真的走進包廂裡一樣。
+       ============================================================ */
     :root {
-        --cream: #FBF3E7; --paper: #FFFDF9; --espresso: #3A2A1E; --espresso-soft: #6B5847;
-        --jam: #A8324A; --jam-dark: #7A1F35; --sage: #6F8C6E; --honey: #C98A2C; --line: #EFEAE0;
-        --muted: #B3A492; --danger: #C4453F;
+        --cream: #150A24; --paper: #241436; --espresso: #F5EDFF; --espresso-soft: #C7B8E0;
+        --jam: #FF3D9A; --jam-dark: #D61D74; --sage: #2FE6FF; --honey: #FFD23F; --line: rgba(255,255,255,0.1);
+        --muted: #9683B8; --danger: #FF4757;
+        --panel-soft: #2E1B47;
     }
     * { box-sizing: border-box; }
     body {
-        margin: 0; min-height: 100vh; background: var(--cream); color: var(--espresso);
+        margin: 0; min-height: 100vh; color: var(--espresso);
         font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+        background: radial-gradient(ellipse 100% 50% at 50% 0%, #2A1648 0%, var(--cream) 60%);
+        position: relative;
     }
+    .display-font { font-family: 'Righteous', 'Noto Sans TC', cursive; }
+
+    /* ---------- 簽名視覺元素：底部跳動的等化器音波條 ---------- */
+    #equalizer-strip {
+        position: fixed; left: 0; right: 0; bottom: 0; height: 3.2rem; z-index: 0; pointer-events: none;
+        display: flex; align-items: flex-end; justify-content: center; gap: 3px; padding: 0 4px;
+        overflow: hidden; opacity: 0.55;
+    }
+    #equalizer-strip span {
+        flex: 1; max-width: 6px; border-radius: 2px 2px 0 0;
+        background: linear-gradient(180deg, var(--jam), var(--sage));
+        animation: eq-bounce 1.2s ease-in-out infinite;
+    }
+    @keyframes eq-bounce { 0%, 100% { height: 15%; } 50% { height: 90%; } }
+    @media (prefers-reduced-motion: reduce) { #equalizer-strip span { animation: none; height: 30%; } }
     .hidden { display: none !important; }
     input[type="text"], input[type="password"] {
         width: 100%; padding: 0.7rem 1rem; border-radius: 999px; border: 1px solid var(--line);
@@ -47,7 +72,7 @@
     .lobby-card input { margin-bottom: 0.7rem; }
     .lobby-card .btn { width: 100%; }
     #own-room-hint {
-        background: rgba(201,138,44,0.12); border-radius: 1.1rem; padding: 1rem 1.2rem; margin-bottom: 1.25rem;
+        background: rgba(255,210,63,0.12); border-radius: 1.1rem; padding: 1rem 1.2rem; margin-bottom: 1.25rem;
         font-size: 0.85rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;
     }
     .room-list-item {
@@ -107,8 +132,8 @@
     #fullscreen-wrapper:not(:fullscreen) #overlay-toggle-bar { display: none; }
     #overlay-toggle-bar {
         display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-        padding: 1.1rem 1.1rem; min-height: 3.6rem; background: rgba(20,14,10,0.8); backdrop-filter: blur(8px);
-        color: #F5EBDF; font-size: 1rem; font-weight: 600; cursor: pointer; box-shadow: 0 6px 14px -4px rgba(0,0,0,0.4);
+        padding: 1.1rem 1.1rem; min-height: 3.6rem; background: rgba(21,10,36,0.8); backdrop-filter: blur(8px);
+        color: var(--espresso); font-size: 1rem; font-weight: 600; cursor: pointer; box-shadow: 0 6px 14px -4px rgba(0,0,0,0.4);
     }
     #overlay-toggle-bar .room-code-badge { color: var(--honey); font-weight: 700; }
     #overlay-toggle-bar .disband-inline-btn {
@@ -122,11 +147,11 @@
         max-height: 42vh; display: flex;
     }
     #fullscreen-wrapper:fullscreen .overlay-panel {
-        background: rgba(20,14,10,0.6); backdrop-filter: blur(8px); color: #F5EBDF;
+        background: rgba(21,10,36,0.6); backdrop-filter: blur(8px); color: var(--espresso);
     }
-    #fullscreen-wrapper:fullscreen .overlay-tab { background: rgba(255,255,255,0.12); color: #F5EBDF; }
+    #fullscreen-wrapper:fullscreen .overlay-tab { background: rgba(255,255,255,0.12); color: var(--espresso); }
     #fullscreen-wrapper:fullscreen .overlay-tab.active { background: var(--jam); color: #fff; }
-    #fullscreen-wrapper:fullscreen .overlay-right h3 { color: #F5EBDF; }
+    #fullscreen-wrapper:fullscreen .overlay-right h3 { color: var(--espresso); }
     #fullscreen-wrapper:fullscreen #toast-stack { top: 3.2rem; }
     #fullscreen-wrapper:fullscreen input[type="text"] { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.25); }
     #fullscreen-wrapper:fullscreen input[type="text"]::placeholder { color: rgba(255,255,255,0.6); }
@@ -154,7 +179,7 @@
     .ktv-add-btn { background: var(--sage); }
     .ktv-insert-btn { background: var(--honey); }
     .ktv-fav-btn { background: var(--jam); }
-    .ktv-block-btn { background: #6b5847; }
+    .ktv-block-btn { background: #5A3D7A; }
     .ktv-rank-badge { font-size: 0.7rem; opacity: 0.6; width: 1.3rem; flex-shrink: 0; text-align: center; }
     /* 收藏按鈕按下去的跳動回饋，避免點了完全沒視覺反應 */
     @keyframes fav-pop { 0% { transform: scale(1); } 45% { transform: scale(1.6); } 100% { transform: scale(1); } }
@@ -175,7 +200,7 @@
         gap: 0.5rem; max-width: 14rem; pointer-events: none;
     }
     .ktv-toast {
-        background: rgba(20,14,10,0.85); color: #F5EBDF; padding: 0.7rem 1rem; border-radius: 0.85rem;
+        background: rgba(21,10,36,0.85); color: var(--espresso); padding: 0.7rem 1rem; border-radius: 0.85rem;
         font-size: 1rem; font-weight: 600; box-shadow: 0 10px 24px -6px rgba(0,0,0,0.35); animation: ktv-toast-in .25s ease;
     }
     @keyframes ktv-toast-in { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
@@ -249,7 +274,7 @@
 
     /* ---------- 輪盤整個遮罩 ---------- */
     #wheel-modal, #member-wheel-modal {
-        background: radial-gradient(circle at top, rgba(168, 50, 74, 0.22), rgba(20, 14, 10, 0.42)) !important;
+        background: radial-gradient(circle at top, rgba(255, 61, 154, 0.22), rgba(21, 10, 36, 0.42)) !important;
         backdrop-filter: blur(1.5px) !important;
         padding: 1.4rem !important;
         align-items: flex-start !important;
@@ -265,12 +290,12 @@
         max-height: calc(3.6rem + 48vh) !important;
         overflow: hidden !important;
         padding: 1.1rem 1.25rem 0.9rem !important;
-        color: #FFF9F2 !important;
+        color: var(--espresso) !important;
         text-align: center;
         border-radius: 1.8rem;
-        background: linear-gradient(145deg, rgba(62, 37, 29, 0.97), rgba(35, 22, 20, 0.97));
+        background: linear-gradient(145deg, rgba(42, 22, 71, 0.97), rgba(21, 10, 36, 0.97));
         border: 1px solid rgba(255,255,255,.16);
-        box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(201,138,44,.10), inset 0 1px rgba(255,255,255,.10);
+        box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(255,210,63,.10), inset 0 1px rgba(255,255,255,.10);
         position: relative;
         display: flex; flex-direction: column; align-items: center;
     }
@@ -287,7 +312,7 @@
     #wheel-modal-inner h3, #member-wheel-modal-inner h3 {
         position: relative; margin: .1rem 0 .45rem !important;
         font-size: 1.25rem !important; font-weight: 800 !important; letter-spacing: .04em;
-        color: #FFF7EA !important; text-shadow: 0 2px 10px rgba(0,0,0,.35);
+        color: var(--espresso) !important; text-shadow: 0 2px 10px rgba(0,0,0,.35);
     }
     #wheel-modal-inner h3::first-letter, #member-wheel-modal-inner h3::first-letter {
         text-shadow: 0 0 14px rgba(255,210,100,.8);
@@ -300,7 +325,7 @@
     }
     #wheel-modal-inner > p strong, #member-wheel-modal-inner > p strong {
         display: inline-block; margin-left: .25rem; padding: .22rem .65rem; border-radius: 999px;
-        color: #FFE3A0; background: rgba(201,138,44,.16); border: 1px solid rgba(201,138,44,.25);
+        color: #FFE3A0; background: rgba(255,210,63,.16); border: 1px solid rgba(255,210,63,.25);
     }
 
     /* 🎡 輪盤容器：改用min()做響應式，手機上會自動縮小，不會超出螢幕。
@@ -316,8 +341,8 @@
     .wheel-dial-wrap canvas {
         position: absolute !important; top: 2.85rem !important; left: 0 !important;
         border-radius: 50%; background: #fff; isolation: isolate;
-        box-shadow: 0 0 0 4px rgba(255,255,255,.95), 0 0 0 8px rgba(201,138,44,.28),
-            0 0 30px rgba(201,138,44,.28), 0 18px 40px rgba(0,0,0,.50);
+        box-shadow: 0 0 0 4px rgba(255,255,255,.95), 0 0 0 8px rgba(255,210,63,.28),
+            0 0 30px rgba(255,210,63,.28), 0 18px 40px rgba(0,0,0,.50);
         transition: filter .3s ease;
     }
     .wheel-dial-wrap canvas:hover {
@@ -337,7 +362,7 @@
         transition: transform 0.7s cubic-bezier(.34,1.56,.64,1), opacity 0.35s ease, transform 0.35s ease;
     }
     #wheel-pointer path, #member-wheel-pointer path {
-        fill: #FFFDF8 !important; stroke: #D6C6B1; stroke-width: .55;
+        fill: var(--espresso) !important; stroke: #8B7BA8; stroke-width: .55;
     }
 
     /* 🎯 結果文字 */
@@ -383,16 +408,16 @@
     }
     .wheel-input-row .btn {
         padding: .7rem 1rem !important; border: none; border-radius: 999px;
-        background: linear-gradient(135deg, #A8324A, #C95A70);
-        box-shadow: 0 6px 16px rgba(168,50,74,.35);
+        background: linear-gradient(135deg, #FF3D9A, #FF6FB5);
+        box-shadow: 0 6px 16px rgba(255,61,154,.35);
         font-size: .78rem; font-weight: 800; transition: all .2s ease;
     }
-    .wheel-input-row .btn:hover { transform: translateY(-2px); box-shadow: 0 9px 22px rgba(168,50,74,.45); }
+    .wheel-input-row .btn:hover { transform: translateY(-2px); box-shadow: 0 9px 22px rgba(255,61,154,.45); }
     .wheel-input-row .btn:active { transform: translateY(0) scale(.97); }
 
     /* 開放成員使用命運輪盤（開關那一列） */
     #wheel-modal-inner label, #member-wheel-modal-inner label {
-        box-shadow: 0 0 12px rgba(168,50,74,.15);
+        box-shadow: 0 0 12px rgba(255,61,154,.15);
     }
 
     /* ✨ 輪盤周圍裝飾光點 */
@@ -433,6 +458,21 @@
 </style>
 </head>
 <body>
+
+<div id="equalizer-strip"></div>
+<script>
+    // 動態產生等化器音波條(用JS產生比在CSS/HTML裡手動列出40個span乾淨)，每一條動畫延遲
+    // 隨機錯開，做出自然的高低起伏波浪效果，不會整排同步跳動看起來很假
+    (function () {
+        const strip = document.getElementById('equalizer-strip');
+        for (let i = 0; i < 40; i++) {
+            const bar = document.createElement('span');
+            bar.style.animationDelay = (Math.random() * 1.2).toFixed(2) + 's';
+            bar.style.animationDuration = (0.9 + Math.random() * 0.6).toFixed(2) + 's';
+            strip.appendChild(bar);
+        }
+    })();
+</script>
 
     <!-- ---------- 房間列表：建立新房間 / 目前存在的房間清單 ---------- -->
     <div id="room-list-view">
@@ -501,8 +541,8 @@
                 <!-- 命運輪盤視窗：一定要放在fullscreen-wrapper裡面，不能離開全螢幕看得到，
                      否則全螢幕狀態下這個視窗會直接消失不見（全螢幕API的規則：只有全螢幕元素
                      本身跟它的子孫節點才會顯示） -->
-                <div id="wheel-modal" class="hidden" style="position:absolute; inset:0; z-index:50; background:rgba(20,14,10,0.28); backdrop-filter:blur(1.5px); display:flex; align-items:flex-start; justify-content:center; padding:1.2rem 1.5rem; overflow-y:auto;">
-                    <div id="wheel-modal-inner" style="max-width:26rem; width:100%; color:#F5EBDF; text-align:center;"></div>
+                <div id="wheel-modal" class="hidden" style="position:absolute; inset:0; z-index:50; background:rgba(21,10,36,0.28); backdrop-filter:blur(1.5px); display:flex; align-items:flex-start; justify-content:center; padding:1.2rem 1.5rem; overflow-y:auto;">
+                    <div id="wheel-modal-inner" style="max-width:26rem; width:100%; color:var(--espresso); text-align:center;"></div>
                 </div>
                 <div id="host-overlay-ui">
                     <div id="overlay-toggle-bar">
@@ -512,20 +552,20 @@
                              之後兩者對不齊、還被蓋住看不到，現在都在同一個flex列裡，靠
                              align-items:center自動對齊，不會再有這個問題 -->
                         <button id="fullscreen-applause-btn" onclick="sendApplause()" class="disband-inline-btn" style="background:rgba(255,255,255,0.15); margin-right:0.4rem;">👏 掌聲鼓勵</button>
-                        <button onclick="openWheelModal()" class="disband-inline-btn" style="background:rgba(168,50,74,0.85); margin-right:0.4rem;">🎡 命運輪盤</button>
+                        <button onclick="openWheelModal()" class="disband-inline-btn" style="background:rgba(255,61,154,0.85); margin-right:0.4rem;">🎡 命運輪盤</button>
                         <div style="position:relative; display:inline-block;">
                             <button class="disband-inline-btn" style="background:rgba(90,122,156,0.85); margin-right:0.4rem;" onclick="toggleMemberListPicker()">👥 成員列表</button>
                             <div id="member-list-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.5rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.35); z-index:999; width:13rem; max-height:16rem; overflow-y:auto;"></div>
                         </div>
                         <div style="position:relative; display:inline-block;">
-                            <button class="disband-inline-btn" style="background:rgba(201,138,44,0.85); margin-right:0.4rem;" onclick="toggleRoomIconPicker()">🖼 房間圖案</button>
+                            <button class="disband-inline-btn" style="background:rgba(255,210,63,0.85); margin-right:0.4rem;" onclick="toggleRoomIconPicker()">🖼 房間圖案</button>
                             <div id="room-icon-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.6rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.35); display:grid; grid-template-columns:repeat(4,1fr); gap:0.4rem; z-index:999; width:11rem;"></div>
                         </div>
                         <button class="disband-inline-btn" onclick="leaveRoomAsHost()">解散房間</button>
                     </div>
                     <!-- 修改密碼小視窗：改成position:fixed，不會再受父層host-overlay-ui不正常的
                          高度影響，一定會相對整個螢幕置中，不會跑到畫面外面看不到輸入框 -->
-                    <div id="change-passcode-modal" class="hidden" style="position:fixed; inset:0; z-index:70; background:rgba(20,14,10,0.5); display:flex; align-items:center; justify-content:center; padding:1.5rem;">
+                    <div id="change-passcode-modal" class="hidden" style="position:fixed; inset:0; z-index:70; background:rgba(21,10,36,0.5); display:flex; align-items:center; justify-content:center; padding:1.5rem;">
                         <div style="background:var(--paper); border-radius:1rem; padding:1.2rem; width:100%; max-width:20rem; text-align:center;">
                             <h3 style="font-weight:800; margin-bottom:0.6rem;">🔒 修改房間密碼</h3>
                             <p style="font-size:0.8rem; color:var(--espresso-soft); margin-bottom:0.6rem;">直接輸入新密碼即可，不用輸入原本的密碼；留空代表拿掉密碼</p>
@@ -581,8 +621,8 @@
             <div id="member-reaction-layer" style="position:fixed; inset:0; z-index:40; pointer-events:none; overflow:hidden;"></div>
             <div id="member-reaction-banner" style="position:fixed; top:35%; left:50%; transform:translate(-50%,-50%) scale(0.7); z-index:41; font-size:1.9rem; font-weight:800; color:var(--jam); text-shadow:0 2px 10px rgba(0,0,0,0.15); opacity:0; pointer-events:none; text-align:center;"></div>
             <div id="member-toast-stack" style="position:fixed; top:1rem; right:1rem; left:1rem; z-index:60; display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; pointer-events:none;"></div>
-            <div id="member-wheel-modal" class="hidden" style="position:fixed; inset:0; z-index:50; background:rgba(20,14,10,0.32); backdrop-filter:blur(1.5px); display:flex; align-items:flex-start; justify-content:center; padding:1.2rem 1.5rem; overflow-y:auto;">
-                <div id="member-wheel-modal-inner" style="max-width:26rem; width:100%; color:#F5EBDF; text-align:center;"></div>
+            <div id="member-wheel-modal" class="hidden" style="position:fixed; inset:0; z-index:50; background:rgba(21,10,36,0.32); backdrop-filter:blur(1.5px); display:flex; align-items:flex-start; justify-content:center; padding:1.2rem 1.5rem; overflow-y:auto;">
+                <div id="member-wheel-modal-inner" style="max-width:26rem; width:100%; color:var(--espresso); text-align:center;"></div>
             </div>
             <div id="room-info-bar">
                 <span class="room-info-left">🎤 <span id="member-room-name"></span></span>
@@ -2428,7 +2468,7 @@
                 <div class="wheel-dial-wrap" id="wheel-dial-wrap">
                     <div id="${pointerId}">
                         <svg viewBox="0 0 24 46" width="100%" height="100%" style="display:block; overflow:visible;">
-                            <path d="M12,0 C18,14 24,24 24,34 A12,12 0 1,1 0,34 C0,24 6,14 12,0 Z" fill="#F5EBDF"/>
+                            <path d="M12,0 C18,14 24,24 24,34 A12,12 0 1,1 0,34 C0,24 6,14 12,0 Z" fill="var(--espresso)"/>
                         </svg>
                     </div>
                     <canvas id="${canvasId}" width="324" height="324"></canvas>
@@ -2519,7 +2559,7 @@
             ctx.closePath();
             ctx.fillStyle = WHEEL_COLORS[i % WHEEL_COLORS.length];
             ctx.fill();
-            ctx.lineWidth = 2; ctx.strokeStyle = '#1a120a'; ctx.stroke();
+            ctx.lineWidth = 2; ctx.strokeStyle = '#1F0F35'; ctx.stroke();
             ctx.save();
             ctx.translate(radius, radius);
             ctx.rotate(start + anglePerSeg / 2);
