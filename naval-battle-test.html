@@ -58,6 +58,10 @@
   .game-layout { flex: 1; min-height: 0; display: flex; gap: 10px; }
   .game-main { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
   .game-sidebar { width: 260px; flex-shrink: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+  /* 開火面板響應式顯示的基礎(桌面版預設)狀態，必須放在下面的media query「之前」，
+     media query裡的覆蓋規則才能生效(CSS特異度相同時，後面的規則會蓋掉前面的，
+     如果基礎規則放在media query後面，會反過來蓋掉media query的效果) */
+  .mp-fire-panel-mobile { display: none; }
 
   @media (max-width: 900px) {
     .game-layout { flex-direction: column; }
@@ -68,6 +72,10 @@
     /* 地圇左側數字座標標籤需要往左延伸28px的空間，原本12px的留白不夠，會被overflow-x:hidden
        裁掉——這是造成數字被壓成只剩最後一碼的根本原因，加大留白徹底解決 */
     .stage { padding-left: 42px; padding-right: 16px; }
+    /* 手機版切換成浮動版開火面板：地圇跟側邊欄不在同一個畫面內，浮動在畫面下方比較好操作，
+       不用捲動找到側邊欄才能選武器/發射 */
+    .mp-fire-panel-desktop { display: none; }
+    .mp-fire-panel-mobile { display: block; }
   }
 
   /* -------- 戰術資訊列 -------- */
@@ -395,6 +403,10 @@
   /* 浮動的武器選擇+發射鍵：position:fixed完全脫離文件排版流程，只在選定目標時才出現，
      出現/消失都不會影響底下版面的高度跟捲動需求——這是解決「選了目標後版面被推下去、
      手機還要往下滑才看得到發射鍵」問題的根本做法，不是靠壓縮字體去硬擠 */
+  /* 開火面板響應式顯示：桌面版用側邊欄內嵌版(本來就有空間，不會擋住地圇)；
+     手機版用浮動版(地圇跟側邊欄不在同一個畫面，浮動選單比較好操作)。
+     兩者預設狀態下只會有一個顯示，靠media query切換 */
+  .mp-fire-panel-desktop { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--grid-line-bright); }
   .mp-fire-overlay {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 400;
     max-width: 420px; margin: 0 auto;
@@ -2511,6 +2523,25 @@
     const canSelectFireCell = isMyTurn && !!mpTargetDirection && !mpMyCombatState.hasFiredThisTurn;
     const readyToFire = canSelectFireCell && !!mpPendingFireCell;
 
+    // 開火面板內容(武器選擇/方向切換/發射鍵)抽成共用變數，插入兩個地方：桌面版直接嵌在
+    // 側邊欄裡(側邊欄本來就有空間，不會擋住地圇)；手機版才用浮動在畫面下方的版本(手機版
+    // 地圇跟側邊欄不在同一個畫面，浮動選單比較好操作)。用CSS media query控制同時間只顯示
+    // 其中一種，不會兩個一起出現
+    const firePanelHtml = mpTargetDirection && !mpMyCombatState.hasFiredThisTurn ? `
+      <div class="mp-fire-overlay-header">
+        <span>🎯 攻擊 ${DIRECTION_LABEL[mpTargetDirection]}</span>
+        <button class="mp-cancel-target-btn" onclick="mpCancelTarget()">✕ 取消瞄準</button>
+      </div>
+      <div class="weapon-panel compact">${weaponBtns}</div>
+      ${spec.weapons[mpBattleSelectedWeapon].orientable ? `
+        <div class="mp-orientation-toggle">
+          <button class="${mpSelectedOrientation === 'horizontal' ? 'active' : ''}" onclick="mpSelectedOrientation='horizontal'; renderMpBattleView(window.__mpLastRoomData);">↔ 橫向</button>
+          <button class="${mpSelectedOrientation === 'vertical' ? 'active' : ''}" onclick="mpSelectedOrientation='vertical'; renderMpBattleView(window.__mpLastRoomData);">↕ 直向</button>
+        </div>
+      ` : ''}
+      <button class="mp-fire-btn" ${readyToFire ? '' : 'disabled'} onclick="mpConfirmFire()">🔥 發射！${mpPendingFireCell ? `（瞄準 ${colLetter(mpPendingFireCell.col)}${mpPendingFireCell.row}）` : '（先點左邊地圇座標瞄準）'}</button>
+    ` : '';
+
     document.getElementById('mp-root').innerHTML = `
       <div class="game-layout">
         <div class="game-main">
@@ -2548,28 +2579,14 @@
             </div>
             <p class="compact-label">🎯 攻擊海域</p>
             <div class="mp-direction-grid compact">${targetBtns || '<p style="font-size:11px; color:var(--muted);">沒有可攻擊的對手</p>'}</div>
+            ${firePanelHtml ? `<div class="mp-fire-panel-desktop">${firePanelHtml}</div>` : ''}
           </div>
 
           <div class="log-panel mono">${(roomData.combatLog || []).map(e => resolveMpLogText(e)).filter(t => t !== null && t !== undefined).slice(-14).reverse().map(t => `<p style="margin:0;">${escapeHtmlMp(t)}</p>`).join('')}</div>
           <button class="mp-btn" style="margin-top:8px; font-size:11px; padding:6px;" onclick="leaveMpBattleView()">🚪 離開遊戲</button>
         </div>
       </div>
-      ${mpTargetDirection && !mpMyCombatState.hasFiredThisTurn ? `
-        <div class="mp-fire-overlay">
-          <div class="mp-fire-overlay-header">
-            <span>🎯 攻擊 ${DIRECTION_LABEL[mpTargetDirection]}</span>
-            <button class="mp-cancel-target-btn" onclick="mpCancelTarget()">✕ 取消瞄準</button>
-          </div>
-          <div class="weapon-panel compact">${weaponBtns}</div>
-          ${spec.weapons[mpBattleSelectedWeapon].orientable ? `
-            <div class="mp-orientation-toggle">
-              <button class="${mpSelectedOrientation === 'horizontal' ? 'active' : ''}" onclick="mpSelectedOrientation='horizontal'; renderMpBattleView(window.__mpLastRoomData);">↔ 橫向</button>
-              <button class="${mpSelectedOrientation === 'vertical' ? 'active' : ''}" onclick="mpSelectedOrientation='vertical'; renderMpBattleView(window.__mpLastRoomData);">↕ 直向</button>
-            </div>
-          ` : ''}
-          <button class="mp-fire-btn" ${readyToFire ? '' : 'disabled'} onclick="mpConfirmFire()">🔥 發射！${mpPendingFireCell ? `（瞄準 ${colLetter(mpPendingFireCell.col)}${mpPendingFireCell.row}）` : '（先點左邊地圇座標瞄準）'}</button>
-        </div>
-      ` : ''}
+      ${firePanelHtml ? `<div class="mp-fire-overlay mp-fire-panel-mobile">${firePanelHtml}</div>` : ''}
     `;
     window.__mpLastRoomData = roomData;
 
