@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>車泊趣 - JUST DO EAT</title>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+
+<style>
+    :root {
+        --cream: #FBF3E7; --paper: #FFFDF9; --espresso: #3A2A1E; --espresso-soft: #6B5847;
+        --jam: #A8324A; --jam-dark: #7A1F35; --sage: #6F8C6E; --honey: #C98A2C; --line: #EFEAE0;
+        --muted: #B3A492; --danger: #C4453F;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; min-height: 100vh; background: var(--cream); color: var(--espresso);
+        font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    .hidden { display: none !important; }
+    input[type="text"] {
+        width: 100%; padding: 0.7rem 1rem; border-radius: 999px; border: 1px solid var(--line);
+        background: var(--paper); font-size: 0.9rem; color: var(--espresso);
+    }
+    .btn {
+        padding: 0.7rem 1.2rem; border-radius: 999px; border: none; background: var(--jam); color: #fff;
+        font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+    }
+    .btn-outline { background: var(--paper); color: var(--jam); border: 1px solid var(--jam); }
+    .btn:disabled { opacity: .5; cursor: default; }
+
+    header { text-align: center; padding: 1.5rem 1.25rem 1rem; }
+    header h1 { font-size: 1.5rem; margin: 0 0 0.3rem; display: flex; align-items: center; justify-content: center; gap: 0.4rem; }
+    header h1 img { width: 1.4rem; height: 1.4rem; object-fit: contain; }
+    header a { color: var(--muted); font-size: 0.8rem; text-decoration: none; }
+
+    #login-gate { max-width: 24rem; margin: 3rem auto; padding: 2rem 1.5rem; background: var(--paper); border-radius: 1.5rem; text-align: center; box-shadow: 0 10px 24px -8px rgba(58,42,30,0.12); }
+    #login-gate p { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.2rem; }
+
+    #carcamp-root { max-width: 40rem; margin: 0 auto; padding: 0 1.25rem 2rem; }
+
+    /* ---------- 定位狀態列 ---------- */
+    #location-status { display: flex; align-items: center; gap: 0.5rem; background: var(--paper); border-radius: 1.1rem; padding: 0.7rem 1rem; margin-bottom: 1rem; font-size: 0.82rem; color: var(--muted); }
+    #location-status.ready { color: var(--sage); }
+    #location-status button { margin-left: auto; }
+
+    /* ---------- 地圇來源管理 ---------- */
+    #sources-panel { background: var(--paper); border-radius: 1.2rem; padding: 1.1rem 1.2rem; margin-bottom: 1rem; }
+    #sources-panel summary { cursor: pointer; font-weight: 600; font-size: 0.92rem; }
+    .source-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0; border-bottom: 1px solid var(--line); font-size: 0.82rem; }
+    .source-item:last-child { border-bottom: none; }
+    .source-item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .source-item .status-badge { font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 999px; background: var(--cream); color: var(--muted); }
+    .source-item .status-badge.ready { background: rgba(111,140,110,0.15); color: var(--sage); }
+    .source-item .status-badge.error { background: rgba(196,69,63,0.12); color: var(--danger); }
+    #add-source-form { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.8rem; }
+
+    /* ---------- 對話區 ---------- */
+    #chat-log { display: flex; flex-direction: column; gap: 0.8rem; margin-bottom: 1rem; min-height: 4rem; }
+    .chat-bubble { padding: 0.8rem 1rem; border-radius: 1.1rem; font-size: 0.88rem; line-height: 1.5; max-width: 88%; }
+    .chat-bubble.user { align-self: flex-end; background: var(--jam); color: #fff; border-bottom-right-radius: 0.3rem; }
+    .chat-bubble.ai { align-self: flex-start; background: var(--paper); border-bottom-left-radius: 0.3rem; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08); }
+    .chat-bubble.loading { align-self: flex-start; color: var(--muted); font-style: italic; }
+
+    #question-form { display: flex; gap: 0.6rem; margin-bottom: 1.2rem; position: sticky; bottom: 0.8rem; }
+    #question-form input { flex: 1; }
+
+    /* ---------- 地圇顯示 ---------- */
+    #map-container { width: 100%; height: 22rem; border-radius: 1.2rem; overflow: hidden; background: var(--paper); margin-bottom: 1rem; box-shadow: 0 10px 24px -8px rgba(58,42,30,0.12); }
+    #places-list { display: flex; flex-direction: column; gap: 0.6rem; }
+    .place-card { background: var(--paper); border-radius: 1rem; padding: 0.8rem 1rem; box-shadow: 0 4px 12px -4px rgba(58,42,30,0.08); cursor: pointer; }
+    .place-card .name { font-weight: 600; font-size: 0.92rem; margin-bottom: 0.2rem; }
+    .place-card .reason { font-size: 0.8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+    <p style="color:var(--muted); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem;">JUST DO EAT</p>
+    <h1><img src="https://res.cloudinary.com/bumzwp9g/image/upload/v1787555200/caravan_430750_hwe5jm.png" alt="">車泊趣</h1>
+    <a href="index.html">← 回主站</a>
+</header>
+
+<div id="login-gate" class="hidden">
+    <p>登入後才能使用車泊趣，查詢你自己新增的地圇資料</p>
+    <button class="btn" onclick="carcampGoogleLogin()">使用 Google 帳號登入</button>
+</div>
+
+<div id="carcamp-root" class="hidden">
+    <div id="location-status">
+        <span id="location-status-text">📍 正在取得你的位置...</span>
+        <button class="btn btn-outline" style="display:none;" id="retry-location-btn" onclick="requestLocation()">重新定位</button>
+    </div>
+
+    <details id="sources-panel">
+        <summary>🗺️ 地圇來源管理</summary>
+        <div id="sources-list" style="margin-top:0.8rem;"></div>
+        <div id="add-source-form">
+            <input type="text" id="new-source-name" placeholder="幫這份地圇取個名字">
+            <input type="text" id="new-source-url" placeholder="貼上 Google 我的地圇分享連結">
+            <button class="btn" onclick="carcampAddSource()">新增我的私人地圇</button>
+        </div>
+    </details>
+
+    <div id="chat-log"></div>
+
+    <form id="question-form" onsubmit="carcampAskQuestion(event)">
+        <input type="text" id="question-input" placeholder="今晚可以車泊睡哪？" autocomplete="off">
+        <button class="btn" type="submit">送出</button>
+    </form>
+
+    <div id="map-container"></div>
+    <div id="places-list"></div>
+</div>
+
+<script>
+    // ---------------------------------------------------------------
+    // Firebase初始化：跟主站(index.html)用同一份設定，共用同一個登入狀態
+    // ---------------------------------------------------------------
+    const firebaseConfig = {
+        apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
+        authDomain: "recipe-synchronization.firebaseapp.com",
+        projectId: "recipe-synchronization",
+        storageBucket: "recipe-synchronization.firebasestorage.app",
+        messagingSenderId: "559668909743",
+        appId: "1:559668909743:web:63dc34572b98839479265a"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const carcampAuth = firebase.auth();
+    const CLOUDFLARE_AI_PROXY_URL = 'https://baking-recipes-ai.wallcemax.workers.dev/';
+
+    // TODO: 換成你自己申請的Google Maps JavaScript API金鑰(免信用卡的示範金鑰即可先測試)，
+    // 申請方式請見交付文件裡的「Google Maps API金鑰申請步驟」
+    const GOOGLE_MAPS_API_KEY = '你的Google Maps API金鑰';
+
+    let carcampCurrentUser = null;
+    let carcampUserLat = null;
+    let carcampUserLng = null;
+    let carcampMap = null;
+    let carcampMarkers = [];
+    let carcampSourcesCache = [];
+
+    carcampAuth.onAuthStateChanged(user => {
+        carcampCurrentUser = user;
+        document.getElementById('login-gate').classList.toggle('hidden', !!user);
+        document.getElementById('carcamp-root').classList.toggle('hidden', !user);
+        if (user) {
+            requestLocation();
+            loadCarcampSources();
+        }
+    });
+
+    function carcampGoogleLogin() {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        carcampAuth.signInWithPopup(provider).catch(err => {
+            if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
+                carcampAuth.signInWithRedirect(provider).catch(() => {});
+            } else {
+                alert('登入失敗：' + err.message);
+            }
+        });
+    }
+
+    // ---------------------------------------------------------------
+    // 定位：一進頁面就要求瀏覽器定位權限，讓AI一開始就知道使用者目前位置——
+    // 使用者拒絕權限或定位失敗時，改用文字輸入的縣市/地區名稱當退回方案(由AI從問題文字裡
+    // 自行判斷地點，不強制一定要有座標；但沒有座標就沒辦法做「依距離篩選候選地點」這一步，
+    // 查詢範圍會變成整份地圇，結果可能比較不精準)
+    // ---------------------------------------------------------------
+    function requestLocation() {
+        const statusEl = document.getElementById('location-status-text');
+        const retryBtn = document.getElementById('retry-location-btn');
+        statusEl.textContent = '📍 正在取得你的位置...';
+        retryBtn.style.display = 'none';
+        if (!navigator.geolocation) {
+            statusEl.textContent = '⚠️ 這個瀏覽器不支援定位，AI會用你問題裡提到的地名判斷';
+            return;
+        }
+        navigator.geolocation.getCurrentPosition(
+            pos => {
+                carcampUserLat = pos.coords.latitude;
+                carcampUserLng = pos.coords.longitude;
+                statusEl.textContent = '📍 已定位，AI會優先推薦你附近的地點';
+                document.getElementById('location-status').classList.add('ready');
+                initCarcampMap();
+            },
+            err => {
+                statusEl.textContent = '⚠️ 無法取得位置(' + err.message + ')，可以直接在問題裡描述地區';
+                retryBtn.style.display = 'inline-block';
+            },
+            { enableHighAccuracy: false, timeout: 10000 }
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Google Maps嵌入：動態載入Maps JavaScript API，初始化地圇置中在使用者位置
+    // ---------------------------------------------------------------
+    let carcampMapsApiLoading = false;
+    function initCarcampMap() {
+        if (carcampMap || carcampMapsApiLoading) return;
+        if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === '你的Google Maps API金鑰') {
+            document.getElementById('map-container').innerHTML = '<p style="padding:1rem; color:var(--muted); font-size:0.85rem;">尚未設定Google Maps API金鑰，地圇無法顯示。請參考交付文件申請金鑰後填入carcamp.html裡的GOOGLE_MAPS_API_KEY。</p>';
+            return;
+        }
+        carcampMapsApiLoading = true;
+        window.__carcampMapReady = () => {
+            carcampMap = new google.maps.Map(document.getElementById('map-container'), {
+                center: { lat: carcampUserLat || 23.9738, lng: carcampUserLng || 120.9820 }, // 沒有定位時退回台灣中心點
+                zoom: carcampUserLat ? 12 : 8,
+            });
+            if (carcampUserLat) {
+                new google.maps.Marker({
+                    position: { lat: carcampUserLat, lng: carcampUserLng }, map: carcampMap,
+                    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: '#4285F4', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+                    title: '你目前的位置',
+                });
+            }
+        };
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&callback=__carcampMapReady`;
+        script.async = true;
+        document.head.appendChild(script);
+    }
+
+    // 在地圇上標示AI推薦的地點清單，清掉舊的標記再畫新的
+    function renderCarcampMarkers(places) {
+        carcampMarkers.forEach(m => m.setMap(null));
+        carcampMarkers = [];
+        if (!carcampMap || !places.length) return;
+        const bounds = new google.maps.LatLngBounds();
+        places.forEach(p => {
+            const marker = new google.maps.Marker({
+                position: { lat: p.lat, lng: p.lng }, map: carcampMap, title: p.name,
+            });
+            const infoWindow = new google.maps.InfoWindow({ content: `<strong>${p.name}</strong><br>${p.reason || ''}` });
+            marker.addListener('click', () => infoWindow.open(carcampMap, marker));
+            carcampMarkers.push(marker);
+            bounds.extend({ lat: p.lat, lng: p.lng });
+        });
+        if (carcampUserLat) bounds.extend({ lat: carcampUserLat, lng: carcampUserLng });
+        carcampMap.fitBounds(bounds);
+    }
+
+    // ---------------------------------------------------------------
+    // 問答：送出問題給Worker的carcamp_query動作，把答案顯示成聊天泡泡、
+    // 推薦地點畫在地圇上+列成卡片清單
+    // ---------------------------------------------------------------
+    function escapeHtmlCarcamp(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    async function carcampAskQuestion(event) {
+        event.preventDefault();
+        const input = document.getElementById('question-input');
+        const question = input.value.trim();
+        if (!question) return;
+        input.value = '';
+
+        const chatLog = document.getElementById('chat-log');
+        chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble user">${escapeHtmlCarcamp(question)}</div>`);
+        const loadingId = 'loading-' + Date.now();
+        chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble loading" id="${loadingId}">思考中...</div>`);
+        chatLog.scrollIntoView({ behavior: 'smooth', block: 'end' });
+
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'carcamp_query', idToken, question,
+                    userLat: carcampUserLat, userLng: carcampUserLng,
+                }),
+            });
+            const data = await res.json();
+            document.getElementById(loadingId)?.remove();
+            if (!res.ok || data.error) {
+                chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">查詢失敗：${escapeHtmlCarcamp(data.error || '未知錯誤')}</div>`);
+                return;
+            }
+            chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">${escapeHtmlCarcamp(data.answer)}</div>`);
+            chatLog.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            renderCarcampMarkers(data.places || []);
+            renderCarcampPlacesList(data.places || []);
+        } catch (err) {
+            document.getElementById(loadingId)?.remove();
+            chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">查詢失敗（網路或連線問題）：${escapeHtmlCarcamp(err.message)}</div>`);
+        }
+    }
+
+    function renderCarcampPlacesList(places) {
+        const listEl = document.getElementById('places-list');
+        if (!places.length) { listEl.innerHTML = ''; return; }
+        listEl.innerHTML = places.map((p, i) => `
+            <div class="place-card" onclick="carcampFocusPlace(${i})">
+                <div class="name">📍 ${escapeHtmlCarcamp(p.name)}</div>
+                <div class="reason">${escapeHtmlCarcamp(p.reason || '')}</div>
+            </div>
+        `).join('');
+        window.__carcampLastPlaces = places;
+    }
+    function carcampFocusPlace(index) {
+        const p = window.__carcampLastPlaces?.[index];
+        if (!p || !carcampMap) return;
+        carcampMap.panTo({ lat: p.lat, lng: p.lng });
+        carcampMap.setZoom(15);
+        const marker = carcampMarkers[index];
+        if (marker) google.maps.event.trigger(marker, 'click');
+    }
+
+    // ---------------------------------------------------------------
+    // 地圇來源管理：列出目前可查詢的來源(公開+自己的)、新增私人地圇
+    // ---------------------------------------------------------------
+    async function loadCarcampSources() {
+        const listEl = document.getElementById('sources-list');
+        listEl.innerHTML = '<p style="font-size:0.8rem; color:var(--muted);">載入中...</p>';
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'carcamp_list_sources', idToken }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) { listEl.innerHTML = `<p style="font-size:0.8rem; color:var(--danger);">載入失敗：${escapeHtmlCarcamp(data.error || '未知錯誤')}</p>`; return; }
+            carcampSourcesCache = data.sources || [];
+            renderCarcampSourcesList();
+        } catch (err) {
+            listEl.innerHTML = `<p style="font-size:0.8rem; color:var(--danger);">載入失敗（網路或連線問題）：${escapeHtmlCarcamp(err.message)}</p>`;
+        }
+    }
+
+    function renderCarcampSourcesList() {
+        const listEl = document.getElementById('sources-list');
+        if (!carcampSourcesCache.length) {
+            listEl.innerHTML = '<p style="font-size:0.8rem; color:var(--muted);">還沒有任何地圇來源，在下方新增一個吧！</p>';
+            return;
+        }
+        const statusLabel = { pending: '準備中', ready: '就緒', error: '失敗' };
+        listEl.innerHTML = carcampSourcesCache.map(s => `
+            <div class="source-item">
+                <span class="name">${s.isPublic ? '🌐' : '🔒'} ${escapeHtmlCarcamp(s.name)}${s.status === 'ready' ? `（${s.placemarkCount}個地點）` : ''}</span>
+                <span class="status-badge ${s.status}">${statusLabel[s.status] || s.status}</span>
+                <button class="btn btn-outline" style="padding:0.35rem 0.7rem; font-size:0.75rem;" onclick="carcampRefreshSource('${s.id}')">🔄</button>
+            </div>
+        `).join('');
+    }
+
+    async function carcampRefreshSource(sourceId) {
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'carcamp_refresh_source', idToken, sourceId }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) { alert('重新整理失敗：' + (data.error || '未知錯誤')); return; }
+            alert(`重新整理完成，共 ${data.placemarkCount} 個地點。`);
+            loadCarcampSources();
+        } catch (err) {
+            alert('重新整理失敗（網路或連線問題）：' + err.message);
+        }
+    }
+
+    async function carcampAddSource() {
+        const name = document.getElementById('new-source-name').value.trim();
+        const mapUrlOrMid = document.getElementById('new-source-url').value.trim();
+        if (!name || !mapUrlOrMid) { alert('請填寫地圇名稱跟連結'); return; }
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'carcamp_add_source', idToken, name, mapUrlOrMid, isPublic: false }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) { alert('新增失敗：' + (data.error || '未知錯誤')); return; }
+            // 新增後立刻觸發重新整理，讓資料馬上可以查詢，不用使用者自己再多按一次
+            const refreshRes = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'carcamp_refresh_source', idToken, sourceId: data.sourceId }),
+            });
+            const refreshData = await refreshRes.json();
+            if (!refreshRes.ok || refreshData.error) {
+                alert('地圇已新增，但抓取資料時發生問題：' + (refreshData.error || '未知錯誤') + '\n請確認地圇分享設定是否為「知道連結的使用者均可查看」');
+            } else {
+                alert(`新增成功！共抓到 ${refreshData.placemarkCount} 個地點，現在可以直接問AI了。`);
+            }
+            document.getElementById('new-source-name').value = '';
+            document.getElementById('new-source-url').value = '';
+        } catch (err) {
+            alert('新增失敗（網路或連線問題）：' + err.message);
+        }
+    }
+</script>
+</body>
+</html>
