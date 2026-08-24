@@ -366,7 +366,7 @@
             });
             // InfoWindow背景固定是白色(不受頁面深色主題影響)，這裡一定要明確指定深色文字，
             // 不能讓它繼承頁面body設定的--starlight(近白色，是給深色背景配的文字顏色)，
-            // 不然白底配近白色字會幾乎看不清楚——這正是之前反映「地圇文字太淡」的原因
+            // 不然白底配近白色字會幾乎看不清楚——這正是之前反映「地圖文字太淡」的原因
             const infoWindow = new google.maps.InfoWindow({
                 content: `<div style="color:#1A2333; font-family:'Noto Sans TC',sans-serif; padding:2px;"><strong style="font-size:0.95rem;">${p.name}</strong><br><span style="color:#4A5568; font-size:0.85rem;">${p.reason || ''}</span></div>`,
             });
@@ -481,6 +481,7 @@
                 <span class="name">${s.isPublic ? '🌐' : '🔒'} ${escapeHtmlCarcamp(s.name)}${s.status === 'ready' ? `（${s.placemarkCount}個地點）` : ''}</span>
                 <span class="status-badge ${s.status}">${statusLabel[s.status] || s.status}</span>
                 <button class="btn btn-outline" style="padding:0.35rem 0.7rem; font-size:0.75rem;" onclick="carcampRefreshSource('${s.id}')">🔄</button>
+                <button class="btn btn-outline" style="padding:0.35rem 0.7rem; font-size:0.75rem; color:var(--danger); border-color:var(--danger);" onclick="carcampDeleteSource('${s.id}', '${escapeHtmlCarcamp(s.name).replace(/'/g, "\\'")}')">🗑️</button>
             </div>
         `).join('');
     }
@@ -499,6 +500,23 @@
             loadCarcampSources();
         } catch (err) {
             alert('重新整理失敗（網路或連線問題）：' + err.message);
+        }
+    }
+
+    async function carcampDeleteSource(sourceId, sourceName) {
+        if (!confirm(`確定要刪除「${sourceName}」嗎？這個動作無法復原，底下所有的地點資料都會一併清除。`)) return;
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'carcamp_delete_source', idToken, sourceId }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) { alert('刪除失敗：' + (data.error || '未知錯誤')); return; }
+            loadCarcampSources();
+        } catch (err) {
+            alert('刪除失敗（網路或連線問題）：' + err.message);
         }
     }
 
