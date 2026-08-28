@@ -157,18 +157,6 @@
     }
     .chat-bubble.loading { align-self: flex-start; color: var(--dim); font-style: italic; }
 
-    /* ---------- 目前對話錨點提示：像隨身指南針，讓使用者知道AI現在鎖定在哪 ---------- */
-    #anchor-chip {
-        display: inline-flex; align-items: center; gap: 0.5rem; background: var(--panel-soft, var(--panel));
-        border: 1px solid var(--line); border-radius: 999px; padding: 0.4rem 0.9rem; margin-bottom: 0.7rem;
-        font-size: 0.78rem; color: var(--dim); align-self: flex-start;
-    }
-    #anchor-chip button {
-        background: none; border: none; color: var(--dim); cursor: pointer; font-size: 0.85rem;
-        line-height: 1; padding: 0 0.15rem;
-    }
-    #anchor-chip button:hover { color: var(--ember); }
-
     #question-form { display: flex; gap: 0.6rem; margin-bottom: 1.4rem; position: sticky; bottom: 1rem; z-index: 3; }
     #question-form input { flex: 1; }
 
@@ -229,11 +217,6 @@
 
     <div id="chat-log"></div>
 
-    <div id="anchor-chip" class="hidden">
-        <span id="anchor-chip-text"></span>
-        <button type="button" onclick="carcampClearAnchor()" title="不是這裡？點掉讓我改用你目前的位置">✕</button>
-    </div>
-
     <form id="question-form" onsubmit="carcampAskQuestion(event)">
         <input type="text" id="question-input" placeholder="今晚可以車泊睡哪？" autocomplete="off">
         <button class="btn" type="submit">送出</button>
@@ -288,50 +271,18 @@
     // 的相關註解。只存最基本的lat/lng/locationName，不是完整物件，跟history一樣輕量。
     let carcampLastAnchor = null;
 
-    // 目前對話錨點提示：把carcampLastAnchor視覺化成一個小標籤，貼在輸入框上面，讓使用者
-    // 隨時知道AI現在心裡認定「你在講哪裡」，不用等答案文不對題才發現AI猜錯了地方。
-    // 只有在anchor有locationName(代表是靠地名解析出來的，不是單純GPS)時才顯示——
-    // 純GPS查詢本來就沒有「講到哪個地方」這件事，不需要特別標示。
-    function carcampUpdateAnchorChip() {
-        const chip = document.getElementById('anchor-chip');
-        const chipText = document.getElementById('anchor-chip-text');
-        if (carcampLastAnchor && carcampLastAnchor.locationName) {
-            chipText.textContent = `目前聊到：${carcampLastAnchor.locationName}`;
-            chip.classList.remove('hidden');
-        } else {
-            chip.classList.add('hidden');
-        }
-    }
-    // 使用者點掉標籤 = 「不是這裡」，清掉記住的錨點，下一句問題如果也沒提新地名，
-    // 就會照原本的規則退回使用者目前的GPS位置，不會再被上一輪的地方卡住
-    function carcampClearAnchor() {
-        carcampLastAnchor = null;
-        carcampUpdateAnchorChip();
-    }
-
     carcampAuth.onAuthStateChanged(user => {
         carcampCurrentUser = user;
         carcampHistory = []; // 換帳號/登出時清空對話記憶，避免把上一個使用者的對話內容誤帶給下一個人
         carcampLastAnchor = null; // 同理，地點錨點也要一起清空，避免帶到下一個使用者的對話裡
-        carcampUpdateAnchorChip();
         document.getElementById('login-gate').classList.toggle('hidden', !!user);
         document.getElementById('carcamp-root').classList.toggle('hidden', !user);
         if (user) {
             document.getElementById('seed-default-btn').classList.toggle('hidden', user.email !== 'wallcemax@gmail.com');
             requestLocation();
             loadCarcampSources();
-            carcampShowMemoryIntroOnce();
         }
     });
-
-    // 第一次進到對話區時，用輕鬆的口吻講一句「我會記得什麼、不會記得什麼」，讓使用者對這個
-    // 工具的記憶能力有合理預期，不用去看文件或猜——只在chat-log目前是空的時候顯示一次，
-    // 避免每次登入都重複洗版
-    function carcampShowMemoryIntroOnce() {
-        const chatLog = document.getElementById('chat-log');
-        if (!chatLog || chatLog.children.length) return;
-        chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">嗨～我是你的車泊老朋友🚐 這場對話裡聊過的東西我會記得（最近10輪），你重新整理頁面或登出就會忘光光重新開始，這樣才不會越聊越吃資源，你可以放心聊～</div>`);
-    }
 
     async function carcampSeedDefault() {
         try {
@@ -373,14 +324,14 @@
         statusEl.textContent = '📍 正在取得你的位置...';
         retryBtn.style.display = 'none';
         if (!navigator.geolocation) {
-            statusEl.textContent = '⚠️ 這個瀏覽器不支援定位，AI會用你問題裡提到的地名判斷';
+            statusEl.textContent = '⚠️ 這個瀏覽器不支援定位，可以直接在問題裡描述地區';
             return;
         }
         navigator.geolocation.getCurrentPosition(
             pos => {
                 carcampUserLat = pos.coords.latitude;
                 carcampUserLng = pos.coords.longitude;
-                statusEl.textContent = '📍 已定位，AI會優先推薦你附近的地點';
+                statusEl.textContent = '📍 已定位，會優先推薦你附近的地點';
                 document.getElementById('location-status').classList.add('ready');
                 initCarcampMap();
             },
@@ -511,7 +462,6 @@
             } else {
                 carcampLastAnchor = null;
             }
-            carcampUpdateAnchorChip();
         } catch (err) {
             document.getElementById(loadingId)?.remove();
             chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">查詢失敗（網路或連線問題）：${escapeHtmlCarcamp(err.message)}</div>`);
@@ -694,7 +644,7 @@
             if (!refreshRes.ok || refreshData.error) {
                 alert('地圖已新增，但抓取資料時發生問題：' + (refreshData.error || '未知錯誤') + '\n請確認地圖分享設定是否為「知道連結的使用者均可查看」');
             } else {
-                alert(`新增成功！共抓到 ${refreshData.placemarkCount} 個地點，現在可以直接問AI了。`);
+                alert(`新增成功！共抓到 ${refreshData.placemarkCount} 個地點，現在可以直接開始問了。`);
             }
             document.getElementById('new-source-name').value = '';
             document.getElementById('new-source-url').value = '';
