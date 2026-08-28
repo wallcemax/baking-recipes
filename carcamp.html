@@ -254,8 +254,20 @@
     let carcampMarkers = [];
     let carcampSourcesCache = [];
 
+    // ---------------------------------------------------------------
+    // 對話記憶：只存在瀏覽器記憶體裡（純前端陣列，不寫進Firestore、不佔任何資料庫成本），
+    // 頁面重新整理或登出就會自然清空——這本來就符合「記得這場對話最近聊過什麼」的需求，
+    // 不需要跨裝置/跨天保存。每筆只存「question(裁到60字)」+「answer摘要(裁到100字)+
+    // 推薦地點名稱」，不存完整的AI長篇回答內容，這樣即使聊到第10輪，附加在prompt裡的
+    // 歷史紀錄總長度還是控制在小範圍內，不會讓AI呼叫的token用量隨對話輪數線性爆增。
+    // 最多只保留最近10筆，超過就把最舊的丟掉(見下方carcampAskQuestion裡的shift())。
+    // ---------------------------------------------------------------
+    const CARCAMP_HISTORY_MAX_TURNS = 10;
+    let carcampHistory = [];
+
     carcampAuth.onAuthStateChanged(user => {
         carcampCurrentUser = user;
+        carcampHistory = []; // 換帳號/登出時清空對話記憶，避免把上一個使用者的對話內容誤帶給下一個人
         document.getElementById('login-gate').classList.toggle('hidden', !!user);
         document.getElementById('carcamp-root').classList.toggle('hidden', !user);
         if (user) {
@@ -409,6 +421,10 @@
                 body: JSON.stringify({
                     action: 'carcamp_query', idToken, question,
                     userLat: carcampUserLat, userLng: carcampUserLng,
+                    // 把目前記得的最近對話紀錄一起送給Worker，讓AI回答時能理解「這個」「那附近」
+                    // 這類指涉、或避免重複推薦同一個地點。這裡送的是「這次提問之前」累積的紀錄，
+                    // 不包含這次剛送出的問題(這次的問答要等拿到答案之後才會被存進歷史)
+                    history: carcampHistory,
                 }),
             });
             const data = await res.json();
@@ -421,10 +437,26 @@
             chatLog.scrollIntoView({ behavior: 'smooth', block: 'end' });
             renderCarcampMarkers(data.places || []);
             renderCarcampPlacesList(data.places || []);
+            carcampRememberTurn(question, data.answer, data.places);
         } catch (err) {
             document.getElementById(loadingId)?.remove();
             chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">查詢失敗（網路或連線問題）：${escapeHtmlCarcamp(err.message)}</div>`);
         }
+    }
+
+    // 只留摘要進歷史記憶，不留完整回答內容：完整的AI回答可能好幾百字，10輪存下來會讓
+    // 之後每一次查詢的prompt都跟著變得很長(等於每問一次都要多付一次前面所有輪次的token)。
+    // 這裡裁到最多100字+最多列5個推薦地點名稱，同時保留「這輪聊了什麼、推薦了誰」這個
+    // 對後續追問(「那附近呢」「還有其他選擇嗎」)真正有用的資訊
+    function carcampRememberTurn(question, answer, places) {
+        const placesNote = (places && places.length)
+            ? `（推薦：${places.slice(0, 5).map(p => p.name).join('、')}）`
+            : '';
+        carcampHistory.push({
+            q: (question || '').slice(0, 60),
+            a: (answer || '').slice(0, 100) + placesNote,
+        });
+        if (carcampHistory.length > CARCAMP_HISTORY_MAX_TURNS) carcampHistory.shift();
     }
 
     function renderCarcampPlacesList(places) {
