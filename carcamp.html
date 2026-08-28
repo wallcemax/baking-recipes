@@ -157,6 +157,18 @@
     }
     .chat-bubble.loading { align-self: flex-start; color: var(--dim); font-style: italic; }
 
+    /* ---------- 目前對話錨點提示：像隨身指南針，讓使用者知道AI現在鎖定在哪 ---------- */
+    #anchor-chip {
+        display: inline-flex; align-items: center; gap: 0.5rem; background: var(--panel-soft, var(--panel));
+        border: 1px solid var(--line); border-radius: 999px; padding: 0.4rem 0.9rem; margin-bottom: 0.7rem;
+        font-size: 0.78rem; color: var(--dim); align-self: flex-start;
+    }
+    #anchor-chip button {
+        background: none; border: none; color: var(--dim); cursor: pointer; font-size: 0.85rem;
+        line-height: 1; padding: 0 0.15rem;
+    }
+    #anchor-chip button:hover { color: var(--ember); }
+
     #question-form { display: flex; gap: 0.6rem; margin-bottom: 1.4rem; position: sticky; bottom: 1rem; z-index: 3; }
     #question-form input { flex: 1; }
 
@@ -217,6 +229,11 @@
 
     <div id="chat-log"></div>
 
+    <div id="anchor-chip" class="hidden">
+        <span id="anchor-chip-text"></span>
+        <button type="button" onclick="carcampClearAnchor()" title="不是這裡？點掉讓我改用你目前的位置">✕</button>
+    </div>
+
     <form id="question-form" onsubmit="carcampAskQuestion(event)">
         <input type="text" id="question-input" placeholder="今晚可以車泊睡哪？" autocomplete="off">
         <button class="btn" type="submit">送出</button>
@@ -271,18 +288,50 @@
     // 的相關註解。只存最基本的lat/lng/locationName，不是完整物件，跟history一樣輕量。
     let carcampLastAnchor = null;
 
+    // 目前對話錨點提示：把carcampLastAnchor視覺化成一個小標籤，貼在輸入框上面，讓使用者
+    // 隨時知道AI現在心裡認定「你在講哪裡」，不用等答案文不對題才發現AI猜錯了地方。
+    // 只有在anchor有locationName(代表是靠地名解析出來的，不是單純GPS)時才顯示——
+    // 純GPS查詢本來就沒有「講到哪個地方」這件事，不需要特別標示。
+    function carcampUpdateAnchorChip() {
+        const chip = document.getElementById('anchor-chip');
+        const chipText = document.getElementById('anchor-chip-text');
+        if (carcampLastAnchor && carcampLastAnchor.locationName) {
+            chipText.textContent = `目前聊到：${carcampLastAnchor.locationName}`;
+            chip.classList.remove('hidden');
+        } else {
+            chip.classList.add('hidden');
+        }
+    }
+    // 使用者點掉標籤 = 「不是這裡」，清掉記住的錨點，下一句問題如果也沒提新地名，
+    // 就會照原本的規則退回使用者目前的GPS位置，不會再被上一輪的地方卡住
+    function carcampClearAnchor() {
+        carcampLastAnchor = null;
+        carcampUpdateAnchorChip();
+    }
+
     carcampAuth.onAuthStateChanged(user => {
         carcampCurrentUser = user;
         carcampHistory = []; // 換帳號/登出時清空對話記憶，避免把上一個使用者的對話內容誤帶給下一個人
         carcampLastAnchor = null; // 同理，地點錨點也要一起清空，避免帶到下一個使用者的對話裡
+        carcampUpdateAnchorChip();
         document.getElementById('login-gate').classList.toggle('hidden', !!user);
         document.getElementById('carcamp-root').classList.toggle('hidden', !user);
         if (user) {
             document.getElementById('seed-default-btn').classList.toggle('hidden', user.email !== 'wallcemax@gmail.com');
             requestLocation();
             loadCarcampSources();
+            carcampShowMemoryIntroOnce();
         }
     });
+
+    // 第一次進到對話區時，用輕鬆的口吻講一句「我會記得什麼、不會記得什麼」，讓使用者對這個
+    // 工具的記憶能力有合理預期，不用去看文件或猜——只在chat-log目前是空的時候顯示一次，
+    // 避免每次登入都重複洗版
+    function carcampShowMemoryIntroOnce() {
+        const chatLog = document.getElementById('chat-log');
+        if (!chatLog || chatLog.children.length) return;
+        chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">嗨～我是你的車泊老朋友🚐 這場對話裡聊過的東西我會記得（最近10輪），你重新整理頁面或登出就會忘光光重新開始，這樣才不會越聊越吃資源，你可以放心聊～</div>`);
+    }
 
     async function carcampSeedDefault() {
         try {
@@ -435,6 +484,8 @@
                     // 把上一輪實際定位到的錨點也一起送過去，讓Worker在這次問題完全沒提地名時
                     // 可以延續上一輪的地方，而不是退回使用者現在的GPS位置(見上方carcampLastAnchor的說明)
                     previousAnchor: carcampLastAnchor,
+                    // 這個瀏覽器記得的長期偏好分類(只是軟性參考，見下方carcampGetPreferenceHint的說明)
+                    preferenceHint: carcampGetPreferenceHint(),
                 }),
             });
             const data = await res.json();
@@ -448,6 +499,7 @@
             renderCarcampMarkers(data.places || []);
             renderCarcampPlacesList(data.places || []);
             carcampRememberTurn(question, data.answer, data.places);
+            carcampUpdatePreferenceStats(data.places);
             // 記住這一輪Worker實際用的錨點，下一輪如果沒提新地名就可以延續用這個
             // (data.debug是Worker這次回傳的診斷資訊，理論上一定會有，這裡保守判斷一下避免報錯)
             if (data.debug && data.debug.anchor) {
@@ -456,7 +508,10 @@
                     lng: data.debug.anchor.lng,
                     locationName: data.debug.anchor.locationName || null,
                 };
+            } else {
+                carcampLastAnchor = null;
             }
+            carcampUpdateAnchorChip();
         } catch (err) {
             document.getElementById(loadingId)?.remove();
             chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">查詢失敗（網路或連線問題）：${escapeHtmlCarcamp(err.message)}</div>`);
@@ -476,6 +531,51 @@
             a: (answer || '').slice(0, 100) + placesNote,
         });
         if (carcampHistory.length > CARCAMP_HISTORY_MAX_TURNS) carcampHistory.shift();
+    }
+
+    // ---------------------------------------------------------------
+    // 輕量長期偏好記憶：跟上面carcampHistory不一樣，這個存在瀏覽器的localStorage，
+    // 不會因為重新整理頁面或這場對話結束就消失(但只留在「這台裝置的這個瀏覽器」，不會
+    // 跨裝置同步，也不會傳到任何資料庫)，讓AI能漸漸抓到「這個人平常比較常問什麼類型」。
+    // 只是軟性參考，不是硬性篩選規則——這次問題本身想問什麼，永遠比過去的習慣重要，
+    // Worker那邊的prompt也會這樣要求AI。用uid當key的一部分，換帳號登入不會混到別人的紀錄。
+    // ---------------------------------------------------------------
+    function carcampPrefStorageKey() {
+        return carcampCurrentUser ? `carcamp_pref_${carcampCurrentUser.uid}` : null;
+    }
+    function carcampLoadPrefStats() {
+        const key = carcampPrefStorageKey();
+        if (!key) return {};
+        try {
+            return JSON.parse(localStorage.getItem(key) || '{}') || {};
+        } catch (err) {
+            return {}; // 讀取失敗(例如無痕模式擋掉localStorage)不影響主要功能，安靜當作沒有紀錄
+        }
+    }
+    function carcampUpdatePreferenceStats(places) {
+        const key = carcampPrefStorageKey();
+        if (!key || !places || !places.length) return;
+        try {
+            const stats = carcampLoadPrefStats();
+            places.forEach(p => {
+                const top = p.folderPath && p.folderPath[0];
+                if (!top) return;
+                stats[top] = (stats[top] || 0) + 1;
+            });
+            localStorage.setItem(key, JSON.stringify(stats));
+        } catch (err) {
+            // 寫入失敗(例如無痕模式、儲存空間被擋)不影響主要問答功能，安靜跳過就好
+        }
+    }
+    // 取出目前累積次數最高的分類，當作這次請求附帶的軟性提示。次數太少(<3次)代表樣本
+    // 還不夠，先不提示，避免只問過一兩次就被貼上標籤、反而讓後續回答被過度引導
+    function carcampGetPreferenceHint() {
+        const stats = carcampLoadPrefStats();
+        const entries = Object.entries(stats);
+        if (!entries.length) return null;
+        entries.sort((a, b) => b[1] - a[1]);
+        const [topName, topCount] = entries[0];
+        return topCount >= 3 ? topName : null;
     }
 
     function renderCarcampPlacesList(places) {
