@@ -265,9 +265,16 @@
     const CARCAMP_HISTORY_MAX_TURNS = 10;
     let carcampHistory = [];
 
+    // 上一輪查詢實際定位到的地點錨點(Worker回傳的debug.anchor)，用來讓「沒提地名的追問」
+    // (例如問完「雲林口湖」之後接著問「那還有哪些」)能延續同一個地方，而不是被Worker誤判成
+    // 「這次沒提地名」就退回使用者的GPS位置——詳細原因見worker.js裡carcampResolveLocationAnchor
+    // 的相關註解。只存最基本的lat/lng/locationName，不是完整物件，跟history一樣輕量。
+    let carcampLastAnchor = null;
+
     carcampAuth.onAuthStateChanged(user => {
         carcampCurrentUser = user;
         carcampHistory = []; // 換帳號/登出時清空對話記憶，避免把上一個使用者的對話內容誤帶給下一個人
+        carcampLastAnchor = null; // 同理，地點錨點也要一起清空，避免帶到下一個使用者的對話裡
         document.getElementById('login-gate').classList.toggle('hidden', !!user);
         document.getElementById('carcamp-root').classList.toggle('hidden', !user);
         if (user) {
@@ -425,6 +432,9 @@
                     // 這類指涉、或避免重複推薦同一個地點。這裡送的是「這次提問之前」累積的紀錄，
                     // 不包含這次剛送出的問題(這次的問答要等拿到答案之後才會被存進歷史)
                     history: carcampHistory,
+                    // 把上一輪實際定位到的錨點也一起送過去，讓Worker在這次問題完全沒提地名時
+                    // 可以延續上一輪的地方，而不是退回使用者現在的GPS位置(見上方carcampLastAnchor的說明)
+                    previousAnchor: carcampLastAnchor,
                 }),
             });
             const data = await res.json();
@@ -438,6 +448,15 @@
             renderCarcampMarkers(data.places || []);
             renderCarcampPlacesList(data.places || []);
             carcampRememberTurn(question, data.answer, data.places);
+            // 記住這一輪Worker實際用的錨點，下一輪如果沒提新地名就可以延續用這個
+            // (data.debug是Worker這次回傳的診斷資訊，理論上一定會有，這裡保守判斷一下避免報錯)
+            if (data.debug && data.debug.anchor) {
+                carcampLastAnchor = {
+                    lat: data.debug.anchor.lat,
+                    lng: data.debug.anchor.lng,
+                    locationName: data.debug.anchor.locationName || null,
+                };
+            }
         } catch (err) {
             document.getElementById(loadingId)?.remove();
             chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">查詢失敗（網路或連線問題）：${escapeHtmlCarcamp(err.message)}</div>`);
