@@ -134,6 +134,16 @@
        非全螢幕狀態完全隱藏，畫面上只會看到播放器本身 */
     #fullscreen-wrapper:not(:fullscreen) #host-overlay-ui { display: none; }
     #fullscreen-wrapper:not(:fullscreen) #overlay-toggle-bar { display: none; }
+    /* 房間圖案/成員列表選單被公播橫幅蓋住這個問題，前面已經試過把選單z-index從999調到
+       10000(理論上應該要蓋過橫幅的z-index:9999)，但使用者實測後回報還是一樣被擋住——
+       z-index的比較理論上是對的(兩者都沒有被中間的祖先元素關進另一個獨立的stacking
+       context)，但既然實測還是有問題，與其繼續猜是不是有什麼沒注意到的CSS細節，不如
+       換一個不依賴z-index比較、保證不會再重疊的做法：只要房間圖案或成員列表選單其中
+       一個是打開的，就直接把公播橫幅整個藏起來(visibility:hidden，不是display:none，
+       這樣不會打斷banner原本的顯示/隱藏狀態邏輯，選單關掉之後banner該顯示的話會自動
+       恢復顯示)。這個class由JS的updateBroadcastBannerSuppression()維護，見下面
+       toggleRoomIconPicker/toggleMemberListPicker旁的說明 */
+    #fullscreen-wrapper.picker-open #public-broadcast-banner-host { visibility: hidden; }
     #overlay-toggle-bar {
         display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
         padding: 1.1rem 1.1rem; min-height: 3.6rem; background: rgba(21,10,36,0.8); backdrop-filter: blur(8px);
@@ -1425,6 +1435,19 @@
         'https://res.cloudinary.com/bumzwp9g/image/upload/v1786012690/karaoke_6431432_azesf2.png',
         'https://res.cloudinary.com/bumzwp9g/image/upload/v1786012690/karaoke_1323595_qt3nht.png',
     ];
+    // 見上面CSS裡#fullscreen-wrapper.picker-open的說明：不再只靠z-index比較誰蓋過誰，
+    // 而是只要房間圖案/成員列表選單「其中一個」是打開的，就直接把公播橫幅藏起來，從根本
+    // 排除兩者畫面重疊的可能。這裡每次任一個選單打開/關閉後都要重新檢查一次兩個選單目前
+    // 的開關狀態(不能只看「這次是開還是關」，因為另一個選單可能還開著，這時候banner還是
+    // 要繼續藏著)
+    function updateBroadcastBannerSuppression() {
+        const roomPicker = document.getElementById('room-icon-picker');
+        const memberPicker = document.getElementById('member-list-picker');
+        const anyPickerOpen = (roomPicker && !roomPicker.classList.contains('hidden'))
+            || (memberPicker && !memberPicker.classList.contains('hidden'));
+        const wrapper = document.getElementById('fullscreen-wrapper');
+        if (wrapper) wrapper.classList.toggle('picker-open', anyPickerOpen);
+    }
     function toggleRoomIconPicker() {
         const picker = document.getElementById('room-icon-picker');
         if (picker.classList.contains('hidden')) {
@@ -1435,12 +1458,14 @@
         } else {
             picker.classList.add('hidden');
         }
+        updateBroadcastBannerSuppression();
     }
     async function selectRoomIcon(url) {
         if (!isHost || !currentRoomId) return;
         try {
             await db.collection('ktvRooms').doc(currentRoomId).update({ roomIcon: url });
             document.getElementById('room-icon-picker').classList.add('hidden');
+            updateBroadcastBannerSuppression();
             showKtvToast('🖼 房間圖案已更新');
         } catch (err) {
             alert('設定房間圖案失敗：' + err.message);
@@ -1458,6 +1483,7 @@
         } else {
             picker.classList.add('hidden');
         }
+        updateBroadcastBannerSuppression();
     }
     function renderMemberListPicker() {
         const picker = document.getElementById('member-list-picker');
