@@ -668,12 +668,22 @@
         const linesNeeded = data.linesNeeded || 1;
 
         // 每叫一次牌都要檢查「所有人」有沒有達到房主設定的連線數門檻——因為所有人的同一種
-        // 食材會同步被翻開，這次叫的牌搞不好剛好幫別人湊滿需要的線數
+        // 食材會同步被翻開，這次叫的牌搞不好剛好幫別人湊滿需要的線數。
+        // 判定順序：先看「喊號者自己」這一叫是否也剛好讓自己達成門檻——如果有，不管其他人是否
+        // 同時達成，一律喊號者優先獲勝(獎勵主動叫牌、剛好輪到自己的那個人)。只有喊號者自己沒
+        // 達成門檻、但別人達成了，才照原本的turnOrder順位去找出真正的獲勝者。
         let winnerUid = null, winLines = null;
-        for (const uid of data.turnOrder) {
-          const pBoard = data.playerBoards[uid];
-          const completedLines = getCompletedLines(pBoard, calledSet);
-          if (completedLines.length >= linesNeeded) { winnerUid = uid; winLines = completedLines; break; }
+        const callerBoard = data.playerBoards[currentUser.uid];
+        const callerCompletedLines = getCompletedLines(callerBoard, calledSet);
+        if (callerCompletedLines.length >= linesNeeded) {
+          winnerUid = currentUser.uid;
+          winLines = callerCompletedLines;
+        } else {
+          for (const uid of data.turnOrder) {
+            const pBoard = data.playerBoards[uid];
+            const completedLines = getCompletedLines(pBoard, calledSet);
+            if (completedLines.length >= linesNeeded) { winnerUid = uid; winLines = completedLines; break; }
+          }
         }
 
         const updates = { calledItems: newCalledItems, eventLog: firebase.firestore.FieldValue.arrayUnion(...logs) };
