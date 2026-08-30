@@ -1364,6 +1364,19 @@
         const CLOUDINARY_CLOUD_NAME = 'bumzwp9g';
         const CLOUDINARY_UPLOAD_PRESET = 'barking';
         const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+        // 使用者上傳的食譜封面/步驟照片，現在遇到瀏覽器解碼不了的格式會直接把原始檔案送給
+        // Cloudinary存起來，不會再被擋下來——但這代表Cloudinary存到的可能就是原始格式，網址
+        // 結尾不一定是大家瀏覽器都看得懂的jpg/png，會變成別人看這則食譜時圖片顯示不出來。
+        // 這個函式把Cloudinary網址加上f_auto,q_auto這段轉換參數，讓Cloudinary的伺服器自動
+        // 依照瀏覽器能力轉成看得懂的格式再送出來，不管原始存的是什麼格式都能正常顯示——跟這個
+        // 檔案裡其他地方(例如分類圖示、頁面裝飾圖)本來就在用的f_auto手法一致。只處理
+        // res.cloudinary.com網址，其他來源的網址(理論上不會出現，但保險起見)原樣返回
+        function cloudinaryAutoFormat(url) {
+            if (!url || typeof url !== 'string') return url;
+            if (!url.includes('res.cloudinary.com') || !url.includes('/upload/')) return url;
+            if (url.includes('/upload/f_auto')) return url; // 已經加過了，不要重複加
+            return url.replace('/upload/', '/upload/f_auto,q_auto/');
+        }
         const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
         // 這份白名單原本用來擋「選到的檔案根本不是圖片」，但拿它擋file.type發現踩到一個手機
         // 才會出現的問題：iPhone相簿裡原始的照片預設是HEIC格式，直接從相簿選（不是先匯出到
@@ -1374,6 +1387,19 @@
         // handleImageSelect/handleStepImageSelect兩處的「參考」用途，真正擋不擋交給那邊
         // 更寬鬆的判斷方式(看file.type開頭是不是image/，而不是逐一比對死板清單)
         const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+        // 有些手機的檔案總管/相簿選圖流程，交給瀏覽器的檔案根本沒有帶正確的file.type，回傳的
+        // 不是空字串、而是像'application/octet-stream'這種「看不出來是什麼」的通用類型——這種
+        // 情況光看file.type開頭是不是image/沒辦法判斷，會把明明是正常jpg的照片也擋下來。這裡
+        // 多一層保險：type本身看不出來的話，退而求其次看副檔名像不像圖片格式，副檔名對得上
+        // 就先放行，交給後面實際上傳/顯示去判斷
+        const IMAGE_EXTENSION_RE = /\.(jpe?g|png|webp|heic|heif|gif|bmp|tiff?)$/i;
+        function looksLikeImageFile(file) {
+            if (file.type && file.type.startsWith('image/')) return true;
+            if (!file.type || file.type === 'application/octet-stream') {
+                return IMAGE_EXTENSION_RE.test(file.name || '');
+            }
+            return false; // 有明確、非空的type，而且不是image/開頭也不是octet-stream，才真的擋下來(例如pdf、txt)
+        }
 
         // 這個網站的圖片是用「unsigned upload preset」直接從瀏覽器上傳到 Cloudinary，沒有後端伺服器。
         // Cloudinary 刪除圖片一定要用 API Secret 簽名的請求，這個 Secret 絕對不能放進前端程式碼，
@@ -3592,7 +3618,7 @@
                         <i class="${isFav ? 'fas' : 'far'} fa-heart" style="color:var(--jam)"></i>
                     </button>
                     ${r.imageUrl
-                        ? `<div class="recipe-card-image-wrap"><img class="fade-img" src="${r.imageUrl}" loading="lazy" onload="this.classList.add('loaded')"></div>`
+                        ? `<div class="recipe-card-image-wrap"><img class="fade-img" src="${cloudinaryAutoFormat(r.imageUrl)}" loading="lazy" onload="this.classList.add('loaded')"></div>`
                         : (r.youtubeUrl && getYoutubeThumbnailUrl(r.youtubeUrl))
                             ? `<div class="recipe-card-image-wrap"><img class="fade-img" src="${getYoutubeThumbnailUrl(r.youtubeUrl)}" loading="lazy" onload="this.classList.add('loaded')"></div>`
                             : `<div class="recipe-card-image-wrap"><img class="fade-img" src="${placeholderImg}" loading="lazy" onload="this.classList.add('loaded')" style="object-fit:cover"></div>`}
@@ -4639,7 +4665,7 @@
                     </div>
                 </div>
                 ${recipe.imageUrl
-                    ? `<img id="detail-image" src="${recipe.imageUrl}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">`
+                    ? `<img id="detail-image" src="${cloudinaryAutoFormat(recipe.imageUrl)}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">`
                     : (recipe.youtubeUrl && getYoutubeThumbnailUrl(recipe.youtubeUrl))
                         ? `<img id="detail-image" src="${getYoutubeThumbnailUrl(recipe.youtubeUrl)}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">`
                         : `<img src="${CATEGORY_PLACEHOLDER_IMAGES[recipe.category] || CATEGORY_PLACEHOLDER_FALLBACK}" class="w-full h-56 sm:h-72 object-cover fade-img" onload="this.classList.add('loaded')">`}
@@ -4679,7 +4705,7 @@
                             const timerSpanId = `step-timer-${i}`;
                             const timerLottieId = `step-timer-lottie-${i}`;
                             const timerBadge = duration ? `<button id="step-timer-btn-${i}" onclick="startStepTimer('${timerSpanId}', ${duration}, ${i})" class="inline-flex items-center gap-1 mt-2 text-xs font-medium px-3 py-1 rounded-full" style="background:#EFEAE0; color:var(--espresso-soft)"><div id="${timerLottieId}" style="width:27px; height:27px;" class="shrink-0"></div> <span id="${timerSpanId}">${formatTimestamp(Math.round(duration * 60))}</span></button>` : '';
-                            const stepImage = stepImageUrl ? `<img src="${stepImageUrl}" class="rounded-xl mt-3 max-w-[220px] w-full" loading="lazy">` : '';
+                            const stepImage = stepImageUrl ? `<img src="${cloudinaryAutoFormat(stepImageUrl)}" class="rounded-xl mt-3 max-w-[220px] w-full" loading="lazy">` : '';
                             return `<div class="flex gap-4 mb-5 step-row">
                                 <button onclick="toggleStepCheck(${i})" id="step-check-${i}" class="step-checkbox shrink-0 w-7 h-7 rounded-full border-2 flex items-center justify-center mt-0.5 transition-colors" style="border-color:var(--jam)" aria-label="標記完成">
                                     <span id="step-num-${i}" class="text-xs font-bold font-display" style="color:var(--jam)">${i + 1}</span>
@@ -7953,8 +7979,9 @@
             statusEl.classList.remove('hidden');
             showAiProcessingAnimation();
             try {
+                // compressImageForUpload現在decode失敗一律退回原始檔案(不會是null了)，交給
+                // 後面的AI辨識/Cloudinary實際判斷格式對不對，這裡不用再另外擋一次
                 const compressed = await compressImageForUpload(file, 1600, 0.85);
-                if (compressed === null) throw new Error('這個檔案看起來不是有效的圖片格式，請確認選的檔案正確');
                 const base64 = await fileToBase64(compressed);
                 // 這個功能一定是登入之後才能觸發到（開「我的冰箱」時已經檢查過currentUser），
                 // 這裡直接拿現有的登入狀態換一張Token，讓Worker端可以驗證呼叫者身份，
@@ -8002,8 +8029,9 @@
             try {
                 const images = [];
                 for (const file of files) {
-                    const compressed = await compressImageForUpload(file, 1600, 0.85); // 食譜文字通常比日期文字更多、更密集，保留較高解析度比較容易辨識
-                    if (compressed === null) throw new Error('其中一個檔案看起來不是有效的圖片格式，請確認選的檔案正確');
+                    // 食譜文字通常比日期文字更多、更密集，保留較高解析度比較容易辨識。decode失敗
+                    // 現在一律退回原始檔案(不會是null了)，交給後面AI辨識實際判斷
+                    const compressed = await compressImageForUpload(file, 1600, 0.85);
                     const base64 = await fileToBase64(compressed);
                     images.push({ data: base64, mimeType: compressed.type || 'image/jpeg' });
                 }
@@ -9361,8 +9389,8 @@
             renderTagsContainer();
             resetImageField();
             if (recipe.imageUrl) {
-                currentImageUrl = recipe.imageUrl;
-                document.getElementById('image-preview').src = recipe.imageUrl;
+                currentImageUrl = recipe.imageUrl; // 存回Firestore用的還是原始網址，只有畫面上顯示的<img>要套用f_auto轉換
+                document.getElementById('image-preview').src = cloudinaryAutoFormat(recipe.imageUrl);
                 document.getElementById('image-preview-wrap').classList.remove('hidden');
                 document.getElementById('remove-image-btn').classList.remove('hidden');
             }
@@ -9393,8 +9421,8 @@
             renderTagsContainer();
             resetImageField();
             if (recipe.imageUrl) {
-                currentImageUrl = recipe.imageUrl;
-                document.getElementById('image-preview').src = recipe.imageUrl;
+                currentImageUrl = recipe.imageUrl; // 存回Firestore用的還是原始網址，只有畫面上顯示的<img>要套用f_auto轉換
+                document.getElementById('image-preview').src = cloudinaryAutoFormat(recipe.imageUrl);
                 document.getElementById('image-preview-wrap').classList.remove('hidden');
                 document.getElementById('remove-image-btn').classList.remove('hidden');
             }
@@ -9546,12 +9574,12 @@
             const file = event.target.files[0];
             if (!file) return;
             // 不用ALLOWED_IMAGE_TYPES逐一比對——那份清單擋不到手機常見的HEIC照片(file.type是
-            // 'image/heic')、也擋不到部分Android瀏覽器回傳空字串的狀況，會誤判成「格式不對」。
-            // 這裡改成只要file.type有值、而且開頭確定不是image/，才真的擋下來(例如選到pdf、
-            // txt這種明顯不是圖片的檔案)；type是空字串或本來就是image/開頭的都先放行，實際
-            // 能不能解碼、算不算是真正的圖片，交給後面compressImageForUpload實際用瀏覽器
-            // 解碼一次去判斷，那邊本來就處理過HEIC解碼逾時、跟真的不是圖片檔案兩種情況
-            if (file.type && !file.type.startsWith('image/')) {
+            // 'image/heic')、部分Android瀏覽器回傳空字串或看不出類型的'application/octet-stream'
+            // 的狀況，都會誤判成「格式不對」。這裡改用looksLikeImageFile統一判斷(type看得出來
+            // 就看type，看不出來就退而求其次看副檔名)，只有真的看得出來不是圖片的檔案(例如
+            // 選到pdf、txt)才擋下來；實際能不能解碼、算不算是真正的圖片，交給後面
+            // compressImageForUpload實際用瀏覽器解碼一次去判斷
+            if (!looksLikeImageFile(file)) {
                 alert('這個檔案看起來不是圖片格式，麻煩確認選的檔案正確');
                 event.target.value = '';
                 return;
@@ -9638,28 +9666,31 @@
                         finish(file);
                     }
                 };
-                img.onerror = () => { clearTimeout(timeoutId); finish(null); }; // null代表這根本不是圖片檔案，呼叫端要擋下來，不能真的送去上傳
+                // 這裡原本decode失敗(onerror)會直接resolve(null)，呼叫端看到null就整個擋下來、
+                // 跳「這個檔案看起來不是有效的圖片格式」的錯誤，理由是「HEIC那種暫時性的解碼
+                // 問題會走上面的逾時保護，走到onerror代表真的不是圖片」——但實際遇到的狀況證明
+                // 這個假設是錯的：有些手機瀏覽器對某些照片(不一定是HEIC，解析度很大的一般jpg
+                // 在記憶體較小的手機上也可能觸發)會直接、很快地觸發onerror(不是卡住逾時)，是
+                // 裝置這次解碼失敗，不是檔案本身有問題。這種情況下擋住使用者明明有效、剛剛都
+                // 能正常預覽的照片，變成新的bug。既然選圖片當下(handleImageSelect那一關)已經
+                // 確認過file.type看起來像圖片，這裡decode失敗更可能是「這台裝置這次解碼不了」，
+                // 不是「這根本不是圖片」——改成跟逾時保護一樣，直接退回用原始檔案繼續走上傳
+                // 流程，交給Cloudinary伺服器端實際判斷、轉檔，不要在瀏覽器這一關就武斷擋掉
+                img.onerror = () => { clearTimeout(timeoutId); finish(file); };
                 img.src = url;
             });
         }
 
         async function uploadImageToCloudinary(file) {
             let compressed = await compressImageForUpload(file);
-            // compressed是null，代表瀏覽器確認這個檔案根本無法解碼成圖片（不是HEIC那種暫時性的解碼問題，
-            // 是真的不是圖片格式，例如被偽裝成圖片副檔名的JSON/文字檔），這種情況必須直接擋下來、
-            // 不能像逾時保護那樣還是退回用原始檔案上傳，避免有心人士把非圖片內容偽裝上傳
-            if (compressed === null) {
-                throw new Error('這個檔案看起來不是有效的圖片格式，請確認選的檔案正確');
-            }
-            // 如果壓縮失敗（退回用原始檔案，也就是compressed跟file是同一個參照），先不要急著直接
-            // 用原始檔案上傳——原始檔案通常比較大，上傳失敗機率更高。稍微停頓一下讓瀏覽器有機會
-            // 釋放資源，再重新嘗試壓縮一次，真的還是不行才退回用原始檔案
+            // 如果壓縮失敗或這台裝置解碼不了(退回用原始檔案，也就是compressed跟file是同一個
+            // 參照)，先不要急著直接用原始檔案上傳——原始檔案通常比較大，上傳失敗機率更高。
+            // 稍微停頓一下讓瀏覽器有機會釋放資源，再重新嘗試壓縮一次，真的還是不行才直接用
+            // 原始檔案上傳，交給Cloudinary伺服器端判斷格式對不對，不在這裡用瀏覽器能不能解碼
+            // 來武斷擋掉使用者的檔案(手機瀏覽器這次解碼失敗不代表檔案本身有問題)
             if (compressed === file) {
                 await new Promise(r => setTimeout(r, 600));
                 compressed = await compressImageForUpload(file);
-                if (compressed === null) {
-                    throw new Error('這個檔案看起來不是有效的圖片格式，請確認選的檔案正確');
-                }
             }
             return await uploadCompressedWithRetry(compressed);
         }
@@ -9758,7 +9789,7 @@
                     </div>
                 </div>
                 <div id="step-image-preview-wrap-${idx}" class="${imageUrl ? '' : 'hidden'} mt-2 ml-7 flex items-center gap-2">
-                    <img id="step-image-preview-${idx}" src="${imageUrl}" class="w-16 h-16 object-cover rounded-xl" style="border:1px solid var(--line)">
+                    <img id="step-image-preview-${idx}" src="${cloudinaryAutoFormat(imageUrl)}" class="w-16 h-16 object-cover rounded-xl" style="border:1px solid var(--line)">
                     <button type="button" onclick="removeStepImage(${idx})" class="text-xs" style="color:var(--danger)">移除圖片</button>
                 </div>
             `;
@@ -9795,9 +9826,9 @@
         function handleStepImageSelect(event, idx) {
             const file = event.target.files[0];
             if (!file) return;
-            // 理由同handleImageSelect：不逐一比對死板白名單，避免擋到手機的HEIC照片或
-            // Android回傳空字串的情況，只擋確定不是圖片的檔案(有type、但不是image/開頭)
-            if (file.type && !file.type.startsWith('image/')) {
+            // 理由同handleImageSelect：用looksLikeImageFile統一判斷，避免擋到手機的HEIC照片、
+            // Android回傳空字串或octet-stream的情況，只擋確定不是圖片的檔案
+            if (!looksLikeImageFile(file)) {
                 alert('這個檔案看起來不是圖片格式，麻煩確認選的檔案正確');
                 event.target.value = '';
                 return;
