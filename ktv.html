@@ -537,7 +537,13 @@
                 <!-- 公播歌曲提示橫幅：一定要放在fullscreen-wrapper裡面，不然全螢幕時看不到——
                      跟下面命運輪盤視窗、toast提示是同一個道理，瀏覽器全螢幕API規範下，
                      不屬於被全螢幕元素底下的內容會直接被跳過不顯示 -->
-                <div id="public-broadcast-banner-host" class="hidden" style="position:fixed; top:76px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px);"></div>
+                <!-- pointer-events:none：這個橫幅純粹是文字提示，裡面沒有任何可以點的東西，但z-index
+                     開到9999(要蓋過全螢幕疊加介面裡的其他元素)，剛好跟「房間圖案」按鈕點開的圖案選單
+                     (room-icon-picker，z-index:999)在畫面上的位置有重疊——沒加這個的話，公播狀態下
+                     這個橫幅雖然只是純文字，卻會擋在圖案選單上面，把點擊事件整個吃掉，導致公播中完全
+                     選不到房間圖案。加了pointer-events:none之後，這個橫幅底下不管疊了什麼東西都能正常
+                     點擊，橫幅本身依然會照樣顯示，只是不再攔截滑鼠/觸控事件 -->
+                <div id="public-broadcast-banner-host" class="hidden" style="position:fixed; top:76px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px); pointer-events:none;"></div>
                 <div id="ktv-yt-player-target-wrap"><div id="ktv-yt-player-target" style="width:100%;height:100%"></div></div>
                 <div id="reaction-layer"></div>
                 <div id="reaction-banner"></div>
@@ -559,11 +565,22 @@
                         <button onclick="openWheelModal()" class="disband-inline-btn" style="background:rgba(255,61,154,0.85); margin-right:0.4rem;">🎡 命運輪盤</button>
                         <div style="position:relative; display:inline-block;">
                             <button class="disband-inline-btn" style="background:rgba(90,122,156,0.85); margin-right:0.4rem;" onclick="toggleMemberListPicker()">👥 成員列表</button>
-                            <div id="member-list-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.5rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.35); z-index:999; width:13rem; max-height:16rem; overflow-y:auto;"></div>
+                            <!-- z-index從999調高到10000：這個選單跟公播提示橫幅(public-broadcast-banner-host，
+                                 z-index:9999)在畫面上的位置剛好會重疊，公播中橫幅原本疊在選單上面，
+                                 把選單畫面蓋住(不只是點不到，是整個看不到)——選單本身是使用者主動點開
+                                 才會出現的疊加介面，理論上優先度本來就該比常駐的提示橫幅高，調高z-index
+                                 讓選單蓋過橫幅，而不是反過來 -->
+                            <div id="member-list-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.5rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.35); z-index:10000; width:13rem; max-height:16rem; overflow-y:auto;"></div>
                         </div>
                         <div style="position:relative; display:inline-block;">
                             <button class="disband-inline-btn" style="background:rgba(255,210,63,0.85); margin-right:0.4rem;" onclick="toggleRoomIconPicker()">🖼 房間圖案</button>
-                            <div id="room-icon-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.6rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.35); display:grid; grid-template-columns:repeat(4,1fr); gap:0.4rem; z-index:999; width:11rem;"></div>
+                            <!-- z-index從999調高到10000，理由同上面member-list-picker的說明：這個選單
+                                 開啟的位置(top:110%，就在按鈕正下方)跟公播提示橫幅(top:76px右側)剛好
+                                 重疊，之前橫幅z-index:9999比這裡的999高，選單一開就被橫幅整個蓋住，
+                                 圖案完全看不到也點不到，這正是「公播中無法選取房間圖案」這個問題的
+                                 根因。調高之後選單會蓋過橫幅，公播提示不會再擋住這個使用者主動點開
+                                 的選單 -->
+                            <div id="room-icon-picker" class="hidden" style="position:absolute; top:110%; right:0; background:var(--paper); border-radius:1rem; padding:0.6rem; box-shadow:0 10px 24px -6px rgba(58,42,30,0.35); display:grid; grid-template-columns:repeat(4,1fr); gap:0.4rem; z-index:10000; width:11rem;"></div>
                         </div>
                         <button class="disband-inline-btn" onclick="leaveRoomAsHost()">解散房間</button>
                     </div>
@@ -621,7 +638,9 @@
 
         <!-- 一般成員視角：純點歌遙控器，沒有播放畫面（因為畫面不會跟房主同步） -->
         <div id="member-view" class="hidden">
-            <div id="public-broadcast-banner-member" class="hidden" style="position:fixed; top:70px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px);"></div>
+            <!-- 同上面host版本的說明：純文字提示，沒有任何互動元素，加pointer-events:none避免
+                 這個高z-index的橫幅擋住底下其他可點擊的東西(例如成員端如果也有類似位置的選單) -->
+            <div id="public-broadcast-banner-member" class="hidden" style="position:fixed; top:70px; right:12px; z-index:9999; background:linear-gradient(135deg,#ff9966,#ff5e62); color:white; padding:10px 16px; border-radius:14px; font-size:13px; font-weight:700; box-shadow:0 8px 20px rgba(0,0,0,.25); max-width:min(90vw,320px); pointer-events:none;"></div>
             <div id="member-reaction-layer" style="position:fixed; inset:0; z-index:40; pointer-events:none; overflow:hidden;"></div>
             <div id="member-reaction-banner" style="position:fixed; top:35%; left:50%; transform:translate(-50%,-50%) scale(0.7); z-index:41; font-size:1.9rem; font-weight:800; color:var(--jam); text-shadow:0 2px 10px rgba(0,0,0,0.15); opacity:0; pointer-events:none; text-align:center;"></div>
             <div id="member-toast-stack" style="position:fixed; top:1rem; right:1rem; left:1rem; z-index:60; display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; pointer-events:none;"></div>
