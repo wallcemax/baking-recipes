@@ -1504,15 +1504,29 @@
     if (actionsLeft <= 0) return;
 
     let candidate;
-    if (action === 'forward') candidate = shipMoveForward(myShip);
-    else if (action === 'left') candidate = { ...myShip, heading: TURN_LEFT[myShip.heading] };
-    else if (action === 'right') candidate = { ...myShip, heading: TURN_RIGHT[myShip.heading] };
+    if (action === 'forward') {
+      candidate = shipMoveForward(myShip);
+    } else {
+      // 轉向卡死問題：見下面findValidRotationGeneric的說明，跟連線版(mpDoShipAction)是
+      // 同一個bug、同一套修法——原地轉不過去時，改嘗試連位置一起小幅度平移找出可行的轉向，
+      // 而不是直接判定失敗(這款demo原本就有的船身長度3/4，一樣會遇到邊緣死局)
+      const newHeading = action === 'left' ? TURN_LEFT[myShip.heading] : TURN_RIGHT[myShip.heading];
+      candidate = findValidRotationGeneric({ row: myShip.row, col: myShip.col }, newHeading, SHIP_TYPES[myShip.type]);
+    }
 
-    if (!shipWithinBounds(candidate)) {
+    if (!candidate || !shipWithinBounds({ ...myShip, ...candidate })) {
+      // (candidate為forward時是shipMoveForward的結果，直接用shipWithinBounds檢查；
+      // 為left/right時已經是findValidRotationGeneric驗證過的結果，這裡的shipWithinBounds
+      // 只是用單機版自己的getShipCells(依ship.type查spec)再確認一次，屬於防呆，理論上
+      // 一定會通過)
       playBlockedSound();
       addLogEntry(`🚫 「${myShip.name}」${action === 'forward' ? '前方是地圖邊界，無法前進' : '這個方向轉向會超出地圖，動作取消'}`, 'miss');
       return; // 超出邊界：不消耗操作次數，讓玩家重新選擇動作
     }
+
+    // 轉向時如果findValidRotationGeneric有連位置一起平移(不是單純原地轉向)，戰報要老實
+    // 講清楚，不然玩家會覺得莫名其妙船怎麼自己挪位置了
+    const wasNudged = action !== 'forward' && (candidate.row !== myShip.row || candidate.col !== myShip.col);
 
     // 直接修改myShip本身的屬性(myShip跟DEMO_SHIPS[0]是同一個物件參照)，不要整個用新物件
     // 取代myShip變數——不然DEMO_SHIPS陣列裡留著的會是移動前的舊資料，之後命中判定用
@@ -1529,7 +1543,7 @@
       addLogEntry(`⛵ 「${myShip.name}」前進一格`, 'miss');
     } else {
       playTurnSound();
-      addLogEntry(`${action === 'left' ? '↺' : '↻'} 「${myShip.name}」${action === 'left' ? '左轉' : '右轉'}，船頭轉向`, 'miss');
+      addLogEntry(`${action === 'left' ? '↺' : '↻'} 「${myShip.name}」${action === 'left' ? '左轉' : '右轉'}，船頭轉向${wasNudged ? '(太靠近邊界，船身順勢往旁邊挪了一下才轉得過去)' : ''}`, 'miss');
     }
   }
 
@@ -2459,6 +2473,32 @@
   function shipWithinBoundsGeneric(ship, spec) {
     return getShipCellsGeneric(ship, spec).every(c => c.row >= 1 && c.row <= MAP_SIZE && c.col >= 1 && c.col <= MAP_SIZE);
   }
+  // 使用者反映「船開到某個位置以後左右轉都失效，只能前進，等於卡死在那個地方」——原地轉向
+  // (row/col不變、只換heading)確實會有這種情況：長度3的船(巡洋艦/驅逐艦/巡防艦)轉向時，
+  // 船身會以中心格為準往兩側對稱延伸1格，如果船當下所在的那一列/欄剛好就是地圖最邊緣
+  // (row或col=1或20)，不管往哪個方向轉，延伸出去的那一格勢必會超出地圖——這種情況下
+  // 「原地轉向」永遠不可能成功，而這個方向(東西向卡在row=1/20，或南北向卡在col=1/20)偏偏
+  // 又只有forward會改變col/row(不會改到那個卡住的軸)，於是船會永遠困在那一整列/欄，
+  // 左右轉、甚至换個方式繞回去都不可能，是真正的死局，不是單純的邊界擋一下而已(單純擋一下
+  // 至少還能换個方向脫困)。長度4的船(兩棲突擊艦/潛水艇)因為船身前後不對稱(往中心前2格、
+  // 後1格延伸)，同樣在特定邊緣位置會遇到一樣的死局。
+  // 修法：轉向時如果原地(row/col不變)轉不過去，不要直接判定失敗，改成像其他方塊旋轉遊戲的
+  // 「wall kick」一樣，嘗試把船身沿著row或col方向小幅度平移(先試1格、找不到再試2格、3格)，
+  // 找到第一個平移後能讓新朝向合法落在地圖內的位置就採用——用Node.js窮舉過地圖上每一種
+  // 長度(3/4)、寬度(1/2)、位置、朝向組合，確認搜尋範圍到3格以內一定能找到解，不會出現
+  // 平移到底還是无解的情況。轉向的同時船的位置會跟著小幅度挪動，不是單純換朝向，呼叫端要
+  // 記得連row/col一起更新，不能只更新heading
+  function findValidRotationGeneric(ship, newHeading, spec, maxShift = 3) {
+    const inPlace = { row: ship.row, col: ship.col, heading: newHeading };
+    if (shipWithinBoundsGeneric(inPlace, spec)) return inPlace;
+    for (let d = 1; d <= maxShift; d++) {
+      for (const [dr, dc] of [[-d, 0], [d, 0], [0, -d], [0, d]]) {
+        const candidate = { row: ship.row + dr, col: ship.col + dc, heading: newHeading };
+        if (shipWithinBoundsGeneric(candidate, spec)) return candidate;
+      }
+    }
+    return null; // 理論上不會發生(已經用Node.js驗證過搜尋範圍3格內必有解)，保留當防呆
+  }
   // 跟單機demo版本的getShipCells邏輯完全一樣，但吃明確傳入的spec參數(不依賴全域的myShip)，
   // 因為連線模式要同時處理「自己的船」計算，跟spec本身無關myShip變數
   function getShipCellsGeneric(ship, spec) {
@@ -2654,29 +2694,46 @@
   }
 
   // ---------- 我方船隻操作(移動/轉向/修復)：都直接寫進自己的privateCombatState ----------
+  // 使用者反映「船艦開到某個位置以後左右轉都沒辦法，只能前進，等於卡死在那個地方」——
+  // 追查後發現這不是單純「靠近邊界擋一下」，是真正的死局：長度3/4的船轉向時船身會以中心格
+  // 為準延伸，如果船當下所在的那一列/欄剛好是地圖最邊緣，兩個轉向方向都會超出地圖，而
+  // forward在這個朝向下又不會改到卡住的那個軸，於是永遠困住、無法脫身(詳細數學說明見上面
+  // findValidRotationGeneric的註解)。原本只加了「擋下來要有提示」，但那只解決了「不知道為
+  // 什麼卡住」，沒解決「真的卡死走不出去」這個更嚴重的問題。這裡改成轉向時如果原地轉不過去，
+  // 呼叫findValidRotationGeneric嘗試連同位置一起小幅度平移找出可行的轉向，真的連平移都找不到
+  // (理論上不會發生，已經用Node.js窮舉驗證過)才視為真正被擋下來
   async function mpDoShipAction(action) {
     const roomRef = mpDb.collection('navalBattleRooms').doc(mpRoomState.roomId);
     const stateRef = roomRef.collection('privateCombatState').doc(mpCurrentUser.uid);
     try {
-      await mpDb.runTransaction(async (tx) => {
+      const blockedReason = await mpDb.runTransaction(async (tx) => {
         const roomDoc = await tx.get(roomRef);
         const roomD = roomDoc.data();
-        if (roomD.turnOrder[roomD.currentTurnIndex] !== mpCurrentUser.uid) return;
+        if (roomD.turnOrder[roomD.currentTurnIndex] !== mpCurrentUser.uid) return 'not-your-turn';
         const stateDoc = await tx.get(stateRef);
         const s = stateDoc.data();
-        if (s.actionsLeftThisTurn <= 0) return;
+        if (s.actionsLeftThisTurn <= 0) return 'no-actions-left';
         const spec = SHIP_TYPES[s.shipType];
-        let candidate = { row: s.row, col: s.col, heading: s.heading };
+        let candidate;
         if (action === 'forward') {
+          candidate = { row: s.row, col: s.col, heading: s.heading };
           if (s.heading === 'N') candidate.row--;
           else if (s.heading === 'S') candidate.row++;
           else if (s.heading === 'E') candidate.col++;
           else if (s.heading === 'W') candidate.col--;
-        } else if (action === 'left') candidate.heading = TURN_LEFT[s.heading];
-        else if (action === 'right') candidate.heading = TURN_RIGHT[s.heading];
-        if (!shipWithinBoundsGeneric(candidate, spec)) return; // 超出邊界，不消耗次數
+          if (!shipWithinBoundsGeneric(candidate, spec)) return 'out-of-bounds'; // 超出邊界，不消耗次數
+        } else {
+          const newHeading = action === 'left' ? TURN_LEFT[s.heading] : TURN_RIGHT[s.heading];
+          candidate = findValidRotationGeneric({ row: s.row, col: s.col }, newHeading, spec);
+          if (!candidate) return 'out-of-bounds'; // 理論上不會發生，保留當防呆
+        }
         tx.update(stateRef, { row: candidate.row, col: candidate.col, heading: candidate.heading, actionsLeftThisTurn: s.actionsLeftThisTurn - 1 });
+        return null;
       });
+      if (blockedReason === 'out-of-bounds') {
+        playBlockedSound();
+        alert(action === 'forward' ? '前方是地圖邊界，無法前進' : '這個方向轉向會超出地圖邊界，動作取消');
+      }
     } catch (err) { console.warn('移動失敗', err); }
   }
   async function mpRepairMovement() {
