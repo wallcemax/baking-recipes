@@ -10792,13 +10792,14 @@
             roomId: null, unsubscribe: null, canvas: null, ctx: null,
             drawing: false, lastX: 0, lastY: 0, timerInterval: null, deadline: null,
             hasSubmitted: false, isHost: false, lastRenderedStatus: null, judgeTriggered: false, lastSeenRound: 0,
+            advanceTriggered: false,
         };
 
         function drawGameCleanup() {
             if (drawGameState.unsubscribe) { drawGameState.unsubscribe(); drawGameState.unsubscribe = null; }
             if (drawGameState.timerInterval) { clearInterval(drawGameState.timerInterval); drawGameState.timerInterval = null; }
             if (drawLobbyUnsubscribe) { drawLobbyUnsubscribe(); drawLobbyUnsubscribe = null; }
-            drawGameState = { roomId: null, unsubscribe: null, canvas: null, ctx: null, drawing: false, lastX: 0, lastY: 0, timerInterval: null, deadline: null, hasSubmitted: false, isHost: false, lastRenderedStatus: null, judgeTriggered: false, lastSeenRound: 0 };
+            drawGameState = { roomId: null, unsubscribe: null, canvas: null, ctx: null, drawing: false, lastX: 0, lastY: 0, timerInterval: null, deadline: null, hasSubmitted: false, isHost: false, lastRenderedStatus: null, judgeTriggered: false, lastSeenRound: 0, advanceTriggered: false };
         }
         function escapeHtml(str) {
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -10978,6 +10979,7 @@
         function renderDrawGameWaitingRoom(data) {
             drawGameState.hasSubmitted = false;
             drawGameState.judgeTriggered = false;
+            drawGameState.advanceTriggered = false; // 回到準備室代表這一輪的揭曉畫面已經結束，下一次進到reveal時要能重新觸發一次推進
             const readyUids = data.readyUids || [];
             const allReady = data.members.length > 0 && data.members.every(m => readyUids.includes(m.uid));
             const iAmReady = readyUids.includes(currentUser.uid);
@@ -11427,6 +11429,18 @@
         // 這樣才符合「每回合結束以後也要各成員按下準備鍵才可以開始下一回合」的設計。
         // round數在這裡先不遞增，統一交給confirmStartDrawGameRound()處理，跟第一輪用同一套邏輯
         async function proceedDrawGameAfterReveal() {
+            // 這個函式有兩個獨立的觸發來源：renderDrawGameReveal()裡「大家都準備好了」的檢查、
+            // 跟下面20秒倒數計時器時間到——而且Firestore的onSnapshot對「自己這台裝置剛寫入、
+            // 還沒等到伺服器確認」跟「伺服器確認寫入」通常各會觸發一次render，只要房間人數少
+            // (甚至只有自己一個人在測試)，「大家都準備好了」這個條件很容易在這兩次render裡都
+            // 成立，導致這個函式在還沒真的把status從reveal改掉之前，被同一個client重複呼叫、
+            // 各自搶著開交易。交易本身雖然有防呆(freshDoc.status不是reveal就不搶)，但兩次呼叫
+            // 幾乎同時發生時，還是可能撞上Firestore用updateTime判斷「文件是否被改過」的機制，
+            // 多打一次不必要的請求，也會在console留下一次可以避免的失敗訊息(F12看得到，但
+            // 不影響最後結果，因為真正搶到的那次還是會成功)。這裡用一個旗標擋掉同一輪裡的
+            // 重複呼叫，只讓第一次真的執行，reset的時機在renderDrawGameWaitingRoom裡
+            if (drawGameState.advanceTriggered) return;
+            drawGameState.advanceTriggered = true;
             if (drawGameState.timerInterval) { clearInterval(drawGameState.timerInterval); drawGameState.timerInterval = null; }
             const ref = db.collection('drawGameRooms').doc(drawGameState.roomId);
             const doc = await ref.get();
@@ -11451,6 +11465,10 @@
                 });
             } catch (err) {
                 console.warn('推進失敗', err);
+                // 這裡是交易真的失敗了(不是被別人搶走推進資格，是網路或其他原因)，要把旗標
+                // 放回去，讓下一次觸發(倒數計時器到期、或下一次render)還有機會重試，不然
+                // 卡在這裡的話，畫面會永遠停在揭曉畫面出不去
+                drawGameState.advanceTriggered = false;
                 return;
             }
             if (!claimed) return;
