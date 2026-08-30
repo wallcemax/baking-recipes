@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>歡唱KTV - JUST DO EAT</title>
+<!-- 沒有這行的話，瀏覽器找不到這頁自己的icon，會自動改跟網站根目錄要favicon.ico，但根目錄
+     沒有放這個檔案，就會在F12主控台留下一個無害但看起來很像bug的404錯誤。跟game.html用
+     同一張現成的icon-192.png，不用另外準備新圖檔 -->
+<link rel="icon" href="icon-192.png">
 
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
@@ -1193,10 +1197,16 @@
         if (asHost) {
             document.getElementById('overlay-room-name').textContent = roomName || '';
             document.getElementById('overlay-room-id').textContent = roomId;
-            // 房主建立/進入房間後自動全螢幕，需要使用者手勢才能觸發，這裡緊接在建立房間的點擊事件內，
-            // 大部分瀏覽器允許在使用者互動後的同一輪呼叫鏈裡要求全螢幕
-            const wrapper = document.getElementById('fullscreen-wrapper');
-            wrapper.requestFullscreen().catch(() => {}); // 失敗就算了（例如瀏覽器政策不允許），不用跳錯誤打斷使用者
+            // 這裡原本還會再呼叫一次wrapper.requestFullscreen()，但拿掉了——會呼叫到enterRoom()
+            // 的三個地方(rejoinOwnRoom、房間列表點自己房間、createRoom)在呼叫這裡之前，都已經
+            // 先呼叫過prepareHostViewForFullscreen()要求過一次全螢幕了，這裡再要求一次只是重複，
+            // 不會有額外效果。真正的問題出在第四個會走到這裡的路徑：重新整理頁面時，
+            // watchOwnRoom()發現本來就在房間裡，會自動幫使用者呼叫enterRoom()——這個路徑完全
+            // 沒有經過使用者點擊，屬於「沒有使用者手勢」的情況，瀏覽器一定會拒絕全螢幕請求，
+            // F12主控台就會看到「requestFullscreen...can only be initiated by a user gesture」
+            // 這個錯誤，而且是每次重新整理都一定會發生，不是偶發的。拿掉這裡的呼叫後，這種
+            // 情況下就不會再有這個一定會失敗的嘗試，使用者會看到畫面上原本就設計好的
+            // 「⛶ 全螢幕開始使用」按鈕，自己點一下就能進全螢幕(見上面的html註解)
         } else {
             document.getElementById('member-room-name').textContent = '';
         }
@@ -1777,6 +1787,12 @@
     // ---------------------------------------------------------------
     // 統一的歌曲卡片產生器：搜尋結果/歷史/熱門排行/我的歷史/我的最愛都共用這個，
     // 一致提供「加入佇列」「插播」「收藏」三個動作按鈕（收藏可以切換收藏/取消收藏）
+    // 縮圖(thumbnail)存的是YouTube CDN的網址，不是我們自己控制的資源——某些影片(比較舊的、
+    // 有版權限制的、或是首播前的預告片)本來就沒有產生對應畫質的縮圖，直接讀取會404，F12
+    // 主控台會看到「Failed to load resource...404」。這種情況我們這邊沒辦法讓YouTube生出
+    // 一張本來就不存在的縮圖，只能優雅地處理失敗：縮圖讀取失敗時就把src移除，讓CSS本來就
+    // 有設定的底色(background:var(--line))顯示出來，跟「這首歌根本沒有縮圖網址」時看到的
+    // 效果一致，不會出現瀏覽器預設的「圖片損毀」小圖示，也不影響這首歌本身正常播放
     // ---------------------------------------------------------------
     function buildSongCard(song, kind, extra) {
         const songData = JSON.stringify({ videoId: song.videoId, title: song.title, thumbnail: song.thumbnail }).replace(/'/g, '&#39;');
@@ -1796,7 +1812,7 @@
         const rankBadge = extra && extra.rank ? `<span class="ktv-rank-badge">${extra.rank}</span>` : '';
         return `<div class="ktv-result-card">
             ${rankBadge}
-            <img src="${song.thumbnail || ''}" alt="">
+            <img src="${song.thumbnail || ''}" alt="" onerror="this.onerror=null; this.removeAttribute('src');">
             <div class="info">
                 <div class="title">${escapeHtmlKtv(song.title)}</div>
                 <div class="sub">${subText}</div>
@@ -1873,7 +1889,7 @@
         el.innerHTML = queue.map((q, i) => `
             <div class="ktv-queue-item" data-qid="${q.qid}">
                 ${draggable ? `<span class="ktv-queue-drag-handle" onpointerdown="startQueueDrag(event, '${q.qid}')">⠿</span>` : ''}
-                <img src="${q.thumbnail || ''}" alt="">
+                <img src="${q.thumbnail || ''}" alt="" onerror="this.onerror=null; this.removeAttribute('src');">
                 <div class="info" style="flex:1; min-width:0;">
                     <div class="title">${i === 0 ? '▶ ' : ''}${escapeHtmlKtv(q.title)}</div>
                     <div class="sub">${escapeHtmlKtv(q.requestedBy || '')}點的${i === 0 ? '・現正歡唱' : ''}</div>
