@@ -1287,10 +1287,10 @@
                             <img id="image-preview" class="w-full h-full object-cover" src="">
                         </div>
                         <div class="flex-1">
-                            <input type="file" id="image-file-input" accept="image/jpeg,image/png,image/webp" onchange="handleImageSelect(event)" class="hidden">
+                            <input type="file" id="image-file-input" accept="image/*" onchange="handleImageSelect(event)" class="hidden">
                             <label for="image-file-input" onclick="prepareFileInputBeforePick('image-file-input')" class="btn-secondary text-sm cursor-pointer inline-block">選擇圖片</label>
                             <button type="button" id="remove-image-btn" onclick="removeSelectedImage()" class="hidden text-sm ml-2" style="color:var(--danger)">移除圖片</button>
-                            <p class="text-xs mt-2" style="color:var(--muted)">支援 jpg / png / webp，檔案大小上限 5MB</p>
+                            <p class="text-xs mt-2" style="color:var(--muted)">支援手機/電腦的照片格式，檔案大小上限 5MB</p>
                         </div>
                     </div>
                 </div>
@@ -1365,6 +1365,14 @@
         const CLOUDINARY_UPLOAD_PRESET = 'barking';
         const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
         const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+        // 這份白名單原本用來擋「選到的檔案根本不是圖片」，但拿它擋file.type發現踩到一個手機
+        // 才會出現的問題：iPhone相簿裡原始的照片預設是HEIC格式，直接從相簿選（不是先匯出到
+        // 電腦，電腦那邊系統常會自動轉存成JPEG）file.type就會是'image/heic'，不在這份清單
+        // 裡；部分Android瀏覽器對某些照片甚至直接回傳空字串偵測不出類型。這兩種情況都會被
+        // 這份嚴格白名單擋下來，跳出「只支援jpg/png/webp」的錯誤，但其實檔案本身完全沒問題——
+        // 這也是「同一個檔案電腦上傳可以、手機不行」最常見的原因。現在這份清單改成只當
+        // handleImageSelect/handleStepImageSelect兩處的「參考」用途，真正擋不擋交給那邊
+        // 更寬鬆的判斷方式(看file.type開頭是不是image/，而不是逐一比對死板清單)
         const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
         // 這個網站的圖片是用「unsigned upload preset」直接從瀏覽器上傳到 Cloudinary，沒有後端伺服器。
@@ -9525,8 +9533,14 @@
         function handleImageSelect(event) {
             const file = event.target.files[0];
             if (!file) return;
-            if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-                alert('只支援 jpg、png、webp 格式的圖片');
+            // 不用ALLOWED_IMAGE_TYPES逐一比對——那份清單擋不到手機常見的HEIC照片(file.type是
+            // 'image/heic')、也擋不到部分Android瀏覽器回傳空字串的狀況，會誤判成「格式不對」。
+            // 這裡改成只要file.type有值、而且開頭確定不是image/，才真的擋下來(例如選到pdf、
+            // txt這種明顯不是圖片的檔案)；type是空字串或本來就是image/開頭的都先放行，實際
+            // 能不能解碼、算不算是真正的圖片，交給後面compressImageForUpload實際用瀏覽器
+            // 解碼一次去判斷，那邊本來就處理過HEIC解碼逾時、跟真的不是圖片檔案兩種情況
+            if (file.type && !file.type.startsWith('image/')) {
+                alert('這個檔案看起來不是圖片格式，麻煩確認選的檔案正確');
                 event.target.value = '';
                 return;
             }
@@ -9716,7 +9730,7 @@
                         <label for="step-image-file-${idx}" onclick="prepareFileInputBeforePick('step-image-file-${idx}')" title="新增這個步驟的圖片" class="shrink-0 w-9 h-9 rounded-full flex items-center justify-center cursor-pointer" style="background:var(--cream)">
                             <i class="fas fa-camera text-sm" style="color:var(--espresso-soft)"></i>
                         </label>
-                        <input type="file" id="step-image-file-${idx}" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="handleStepImageSelect(event, ${idx})">
+                        <input type="file" id="step-image-file-${idx}" accept="image/*" class="hidden" onchange="handleStepImageSelect(event, ${idx})">
                         <input type="hidden" data-role="step-image" id="step-image-${idx}" value="${imageUrl}">
                         <button type="button" onclick="insertStepFieldBefore(this.closest('.step-row-wrap'))" class="text-sm shrink-0" style="color:var(--sage)" title="在這一步上面插入新的一步">➕</button>
                         <button type="button" onclick="this.closest('.step-row-wrap').remove(); renumberStepLabels();" class="text-lg shrink-0" style="color:var(--danger)" title="刪除這一步">×</button>
@@ -9760,8 +9774,10 @@
         function handleStepImageSelect(event, idx) {
             const file = event.target.files[0];
             if (!file) return;
-            if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-                alert('只支援 jpg、png、webp 格式的圖片');
+            // 理由同handleImageSelect：不逐一比對死板白名單，避免擋到手機的HEIC照片或
+            // Android回傳空字串的情況，只擋確定不是圖片的檔案(有type、但不是image/開頭)
+            if (file.type && !file.type.startsWith('image/')) {
+                alert('這個檔案看起來不是圖片格式，麻煩確認選的檔案正確');
                 event.target.value = '';
                 return;
             }
