@@ -1427,6 +1427,14 @@
         // 食譜用到的孤兒圖片。key是步驟的idx（對應div.dataset.stepIdx），value是選到的File物件
         let pendingStepImageFiles = new Map();
         let currentImageUrl = '';     // 目前食譜的圖片網址(編輯時保留舊圖用)
+        // 跟上面「選圖片不會立刻上傳」是同一個道理，反過來的情況：使用者在編輯食譜時按「移除圖片」，
+        // 也不應該當下就真的把Cloudinary上的圖片刪掉——如果按了移除、又按「取消編輯」放棄這次修改，
+        // 食譜原本存的imageUrl其實完全沒變，但圖片本體卻已經被刪了，之後不管誰打開這則食譜都會看到
+        // 圖片讀取失敗(404)。這裡先只記住「這次編輯有按過移除，如果最後真的存檔了，才要清掉這個網址」，
+        // 真正的刪除動作延後到儲存流程裡Firestore資料真的寫入成功之後才執行；如果使用者最後選擇
+        // 取消編輯，這裡記住的網址就直接丟掉，不會真的觸發任何刪除
+        let pendingRemovedImageUrl = null;      // 移除食譜主圖時，暫存要在存檔成功後才刪除的舊網址
+        let pendingRemovedStepImageUrls = new Set(); // 移除步驟圖片時，暫存要在存檔成功後才刪除的舊網址(可能不只一張)
 
         let currentUser = null;
         let allRecipes = [];
@@ -9515,6 +9523,10 @@
         function resetImageField() {
             selectedImageFile = null;
             currentImageUrl = '';
+            // 每次重新打開編輯/新增食譜的表單，都是全新的一次編輯，保險起見這裡也一併清掉，
+            // 不要讓上一次編輯(理論上closeAddModal已經清過)殘留的「待刪除」狀態帶到這一次來
+            pendingRemovedImageUrl = null;
+            pendingRemovedStepImageUrls.clear();
             document.getElementById('image-file-input').value = '';
             document.getElementById('image-preview-wrap').classList.add('hidden');
             document.getElementById('remove-image-btn').classList.add('hidden');
@@ -9560,7 +9572,10 @@
         }
 
         function removeSelectedImage() {
-            if (currentImageUrl) deleteCloudinaryImage(currentImageUrl, '使用者移除食譜主圖');
+            // 不在這裡真的呼叫deleteCloudinaryImage——只是先記住這個網址，等使用者真的按下
+            // 「儲存」、Firestore資料也確定寫入成功了，才會真的去刪除；如果使用者接下來是按
+            // 「取消編輯」，這個記住的網址會在closeAddModal裡被丟掉，不會觸發任何刪除
+            if (currentImageUrl) pendingRemovedImageUrl = currentImageUrl;
             selectedImageFile = null;
             currentImageUrl = '';
             document.getElementById('image-file-input').value = '';
@@ -9681,6 +9696,12 @@
         function closeAddModal(fromPopState) {
             document.getElementById('add-modal').classList.add('hidden');
             pendingStepImageFiles.clear(); // 取消編輯的話，選過還沒上傳的步驟圖片檔案直接丟掉，本來就沒有真的送到Cloudinary過
+            // 這個函式在存檔成功後、跟使用者直接按「取消編輯」時都會被呼叫到。存檔成功的那條路徑
+            // 在saveRecipe裡已經先把該刪的圖片真的刪掉、才呼叫closeAddModal，這裡單純只是清掉
+            // 追蹤用的變數；如果是取消編輯這條路徑，代表這次編輯整個放棄，剛剛按過的「移除圖片」
+            // 從頭到尾都不會真的觸發任何刪除，直接把記住的網址丟掉就好，圖片在Cloudinary上完全沒動過
+            pendingRemovedImageUrl = null;
+            pendingRemovedStepImageUrls.clear();
             consumeModalHistoryState(fromPopState);
         }
 
@@ -9804,7 +9825,9 @@
         function removeStepImage(idx) {
             pendingStepImageFiles.delete(idx); // 如果這一步還有選了但還沒上傳的檔案，直接丟掉、不用管它
             const oldUrl = document.getElementById(`step-image-${idx}`).value;
-            if (oldUrl) deleteCloudinaryImage(oldUrl, '使用者移除步驟圖片');
+            // 理由同removeSelectedImage：不在這裡真的刪除，先記住網址，等存檔真的成功了才刪，
+            // 避免使用者移除步驟圖片後按「取消編輯」，圖片卻已經被刪掉、食譜資料卻沒真的改到
+            if (oldUrl) pendingRemovedStepImageUrls.add(oldUrl);
             document.getElementById(`step-image-${idx}`).value = '';
             document.getElementById(`step-image-file-${idx}`).value = '';
             document.getElementById(`step-image-preview-wrap-${idx}`).classList.add('hidden');
@@ -9831,6 +9854,14 @@
             if (!name) return alert("請輸入食譜名稱");
 
             showSaveProgress('處理中...');
+
+            // 這次存檔如果有任何舊圖片要清掉(換掉舊圖、或使用者按過移除)，先只記在這個陣列裡，
+            // 不要在收集資料的過程中就真的呼叫deleteCloudinaryImage——後面還有好幾個檢查點可能
+            // 會提前return(圖片上傳失敗、尺寸格式看不懂...)，如果那之前就把Cloudinary的圖刪了，
+            // 一旦真的提前return、Firestore資料根本沒寫入，就會變成資料還指著一張已經被刪掉的
+            // 圖片，別人打開食譜看到圖片讀取失敗。所以要等這個函式最後Firestore真的寫入成功、
+            // 確定這次編輯保留下來了，才統一在那個時間點真正執行刪除
+            const orphanImageDeletions = [];
 
             // 把所有「選好但還沒上傳」的步驟圖片，在這裡真正上傳到Cloudinary——跟食譜主圖的做法一致，
             // 圖片只有在真的要存檔的這一刻才會處理，如果使用者選了圖片卻按「取消編輯」，
@@ -9887,11 +9918,13 @@
                     const oldUrl = (imgInput && imgInput.value) ? imgInput.value : null;
                     const imageUrl = freshUrl || oldUrl;
                     // 如果這一步是「換掉舊圖片」的情況（原本有網址，這次又上傳了新的），舊圖片要記錄成孤兒清掉
-                    if (freshUrl && oldUrl && freshUrl !== oldUrl) deleteCloudinaryImage(oldUrl, '使用者換掉步驟圖片');
+                    if (freshUrl && oldUrl && freshUrl !== oldUrl) orphanImageDeletions.push([oldUrl, '使用者換掉步驟圖片']);
                     steps.push({ text: textInput.value.trim(), timestamp: timestamp, durationMinutes: durationMinutes, imageUrl: imageUrl });
                 }
             });
             pendingStepImageFiles.clear(); // 這次存檔已經處理完了，清空追蹤清單
+            // 這次編輯裡按過「移除步驟圖片」但沒有另外選新圖片替換的，也一併排進待刪清單
+            pendingRemovedStepImageUrls.forEach(url => orphanImageDeletions.push([url, '使用者移除步驟圖片']));
 
             let imageUrl = currentImageUrl; // 若沒有選新圖片，保留原本的（或編輯時移除後的空字串）
             if (selectedImageFile) {
@@ -9899,13 +9932,17 @@
                 const oldImageUrl = currentImageUrl; // 先記住舊圖網址，等一下上傳成功、確定要換掉了才記錄成孤兒圖片
                 try {
                     imageUrl = await uploadImageToCloudinary(selectedImageFile);
-                    if (oldImageUrl) deleteCloudinaryImage(oldImageUrl, '使用者換掉食譜主圖');
+                    if (oldImageUrl) orphanImageDeletions.push([oldImageUrl, '使用者換掉食譜主圖']);
                 } catch (err) {
                     hideSaveProgress();
                     alert('圖片上傳失敗：' + err.message);
                     return;
                 }
             }
+            // 這次編輯裡按過「移除圖片」但沒有另外選新圖片替換的，也一併排進待刪清單(選了新圖片的話，
+            // currentImageUrl在removeSelectedImage當下就已經被清空，上面的oldImageUrl會是空字串，
+            // 不會重複記錄，所以這裡永遠只會是「單純移除、沒有換新圖」這種情況才會真的排進去)
+            if (pendingRemovedImageUrl) orphanImageDeletions.push([pendingRemovedImageUrl, '使用者移除食譜主圖']);
 
             const sizeValueRaw = document.getElementById('size-value').value.trim();
             if (sizeValueRaw && !parseSizeDimensions(sizeValueRaw)) {
@@ -9942,6 +9979,11 @@
                     await db.collection("recipes").add(baseData);
                     recordRecipeCreated(baseData.category, ingredients); // 只有「新增」才算，編輯不算，避免灌水
                 }
+                // Firestore資料確定寫入成功、這次編輯真的保留下來了，這裡才是真正安全可以刪除
+                // 舊圖片的時間點——這之前不管哪裡提前return，都不會有任何圖片被真的刪掉
+                orphanImageDeletions.forEach(([url, reason]) => deleteCloudinaryImage(url, reason));
+                pendingRemovedImageUrl = null;
+                pendingRemovedStepImageUrls.clear();
                 // 全部（圖片上傳+資料寫入）都真的完成了，顯示完成打勾後直接關閉，不用刻意停留等待
                 showSaveComplete(id ? '✅ 更新完成！' : '✅ 食譜已上傳！');
                 hideSaveProgress();
