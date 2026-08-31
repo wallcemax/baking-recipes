@@ -183,6 +183,10 @@
     .place-card-meta .meta-open { color: var(--moss); }
     .place-card-meta .meta-closed { color: var(--danger); }
     .place-card .description { font-size: 0.8rem; color: var(--dim); margin-top: 0.3rem; line-height: 1.5; }
+    .place-card .hours-details { font-size: 0.78rem; color: var(--dim); margin-top: 0.3rem; }
+    .place-card .hours-details summary { cursor: pointer; color: var(--dim); list-style: none; }
+    .place-card .hours-details summary::-webkit-details-marker { display: none; }
+    .place-card .hours-details .hours-list { margin-top: 0.25rem; line-height: 1.6; padding-left: 0.2rem; }
 
     /* ---------- 地點卡片動作列：免綁信用卡的導航解法(開Google地圖App/網頁做真正的路線規劃)，
        以及把AI推薦的地點直接加進行程規劃的途經點清單 ---------- */
@@ -1173,12 +1177,20 @@
                 else if (s.openNow === false) metaParts.push('<span class="meta-closed">🔴 休息中</span>');
                 const metaHtml = metaParts.length ? `<div class="place-card-meta">${metaParts.join('')}</div>` : '';
                 const descriptionHtml = s.description ? `<div class="description">${escapeHtmlCarcamp(s.description)}</div>` : '';
+                // openNow是「規劃當下這一刻」是否營業，跟使用者實際造訪的那天對不上，容易誤導；
+                // openingHoursText是Google整理好的「平常每週營業時段」，用可收合的<details>顯示
+                // 完整一週時段，預設收起來，不想看的人不會被一堆時段資訊塞滿卡片，想確認的人
+                // 點開就看得到——尤其美食/澡點這種「有沒有開門」直接影響能不能去的類型最有用
+                const hoursHtml = (Array.isArray(s.openingHoursText) && s.openingHoursText.length)
+                    ? `<details class="hours-details"><summary>🕐 查看營業時間</summary><div class="hours-list">${s.openingHoursText.map(line => escapeHtmlCarcamp(line)).join('<br>')}</div></details>`
+                    : '';
                 return `
                 <div class="place-card">
                     <div class="place-card-main">
                         <div class="name">${categoryLabel[s.category] || '📍'} ${escapeHtmlCarcamp(s.name)}${tag}</div>
                         ${metaHtml}
                         ${descriptionHtml}
+                        ${hoursHtml}
                     </div>
                     <div class="place-card-actions">
                         <a href="https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}" target="_blank" rel="noopener">🧭 導航</a>
