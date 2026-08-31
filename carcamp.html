@@ -226,6 +226,35 @@
     .itinerary-error { font-size: 0.85rem; color: var(--danger); margin: 0; }
     .itinerary-loading { font-size: 0.85rem; color: var(--dim); margin: 0; }
 
+    /* ---------- 行程規劃v2：天數+逐項新增途經點+自由文字補充 ---------- */
+    .itinerary-days-field { display: flex; align-items: center; gap: 0.5rem; }
+    .itinerary-days-field label { font-size: 0.82rem; color: var(--dim); white-space: nowrap; }
+    .itinerary-days-field input[type="number"] { width: 4.5rem; flex: none; }
+    #itinerary-stops-list { display: flex; flex-direction: column; gap: 0.4rem; }
+    .itinerary-stop-item {
+        display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+        background: var(--panel-soft); border-radius: 0.7rem; padding: 0.5rem 0.7rem; font-size: 0.82rem;
+    }
+    .itinerary-stop-item .stop-name { color: var(--starlight); font-weight: 600; }
+    .itinerary-stop-item .stop-category { color: var(--dim); font-size: 0.75rem; margin-left: 0.4rem; }
+    .itinerary-stop-remove {
+        background: none; border: none; color: var(--dim); cursor: pointer; font-size: 1rem;
+        line-height: 1; padding: 0.1rem 0.3rem;
+    }
+    .itinerary-stop-remove:hover { color: var(--danger); }
+    .itinerary-stop-add-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .itinerary-stop-add-row input[type="text"] { flex: 1 1 10rem; }
+    .itinerary-stop-add-row select { flex: none; width: auto; }
+    #itinerary-freeform { min-height: 3.2rem; resize: vertical; font-family: inherit; }
+    .itinerary-field-label { font-size: 0.78rem; color: var(--dim); margin: 0.4rem 0 0.1rem; }
+    .itinerary-quota-note { font-size: 0.78rem; color: var(--ember); margin: 0.4rem 0 0; line-height: 1.6; }
+    .itinerary-warning-note { font-size: 0.78rem; color: var(--danger); margin: 0.4rem 0 0; line-height: 1.6; }
+    .itinerary-tag { display: inline-block; font-size: 0.68rem; padding: 0.1rem 0.45rem; border-radius: 999px; margin-left: 0.4rem; font-weight: 700; }
+    .itinerary-tag-required { background: rgba(82, 163, 124, 0.18); color: #52A37C; }
+    .itinerary-tag-supplemented { background: rgba(242, 153, 74, 0.18); color: var(--ember); }
+    .itinerary-tag-missing { background: rgba(235, 94, 40, 0.18); color: var(--danger); }
+    .itinerary-excluded-list, .itinerary-unresolved-list { font-size: 0.78rem; color: var(--dim); line-height: 1.7; margin: 0.3rem 0 0; padding-left: 1.1rem; }
+
     /* ---------- 分類篩選chip：不用開口問AI，點幾下就能直接瀏覽 ---------- */
     .section-label { font-size: 0.82rem; color: var(--dim); font-weight: 700; margin-bottom: 0.6rem; }
     #category-chips-panel { margin-bottom: 1rem; }
@@ -285,11 +314,32 @@
     </details>
 
     <details id="itinerary-panel">
-        <summary>🧭 行程規劃（出發地→目的地，真實路線）</summary>
-        <p id="itinerary-intro">用Google地圖真實路線規劃車泊行程，依實際開車時數自動分成好幾天，並從你的地圖資料裡挑順路的車泊點/景點/美食——不是憑聊天內容瞎湊的行程。</p>
+        <summary>🧭 智慧行程規劃（天數＋途經點，真實路線＋自動配額）</summary>
+        <p id="itinerary-intro">用Google地圖真實路線規劃車泊行程：填天數、放幾個一定要去的點（車宿/美食/景點都可以），系統會依真實開車時間算出最順路的安排——車宿/美食點提供太少會自動補推薦，提供太多也會自動篩選並說明原因。</p>
         <form id="itinerary-form" onsubmit="carcampPlanItinerary(event)">
             <input type="text" id="itinerary-origin" placeholder="出發地（留空＝用目前位置）">
             <input type="text" id="itinerary-destination" placeholder="目的地，例如：台南" required>
+            <div class="itinerary-days-field">
+                <label for="itinerary-days">天數</label>
+                <input type="number" id="itinerary-days" min="1" max="14" step="1" value="1">
+            </div>
+
+            <p class="itinerary-field-label">途經點（一定要去的車宿/美食/景點，可不填）</p>
+            <div id="itinerary-stops-list"></div>
+            <div class="itinerary-stop-add-row">
+                <input type="text" id="itinerary-stop-name-input" placeholder="地點名稱，例如：桃園某美食">
+                <select id="itinerary-stop-category-input">
+                    <option value="unknown">不確定</option>
+                    <option value="camp">車宿</option>
+                    <option value="food">美食</option>
+                    <option value="attraction">景點</option>
+                </select>
+                <button type="button" class="btn btn-outline" onclick="carcampAddItineraryStop()">＋ 新增地點</button>
+            </div>
+
+            <p class="itinerary-field-label">或用一段話補充想去的地方（AI會自動解析）</p>
+            <textarea id="itinerary-freeform" placeholder="例如：途中想在嘉義找地方車宿，順便吃個美食"></textarea>
+
             <button class="btn" type="submit" id="itinerary-submit-btn">規劃行程</button>
         </form>
         <div id="itinerary-result"></div>
@@ -900,17 +950,52 @@
     }
 
     // ---------------------------------------------------------------
-    // 行程規劃：出發地→目的地，Worker那邊會先用Routes API算出真實路線，再依實際開車時數
-    // 自動分天、沿路收集候選地點，AI只負責寫自然語言敘述+從候選清單挑順路推薦——這裡前端
-    // 只是把表單內容送過去，然後把結果渲染成「總覽+每天一個區塊」，並在地圖上畫出路線
-    // (polyline)跟每一天推薦的停靠點。跟carcampAskQuestion的問答結果是分開的兩條渲染路徑，
-    // 不會互相干擾；規劃行程之後地圖會改成顯示這趟行程的路線，不是問答的推薦地點。
+    // 行程規劃v2：使用者填天數、逐項新增一定要去的途經點(車宿/美食/景點)，或用一段話讓AI
+    // 解析——Worker那邊會把這些點解析成座標、算出真實路線跟最順路的拜訪順序、依天數分天、
+    // 計算車宿/美食配額(超額自動篩選並附理由、不足自動沿路補推薦真實地點)，AI只負責把已經
+    // 排定的地點寫成自然敘述。前端這裡負責維護「逐項新增」清單的畫面狀態、把表單內容送出去，
+    // 然後把結果渲染成「總覽+配額提醒+每天一個區塊」，並在地圖上畫出路線跟每一天的停靠點。
     // ---------------------------------------------------------------
+    let carcampItineraryStops = []; // { name, category }
+
+    function renderCarcampItineraryStopsList() {
+        const listEl = document.getElementById('itinerary-stops-list');
+        const categoryLabel = { camp: '車宿', food: '美食', attraction: '景點', unknown: '不確定' };
+        listEl.innerHTML = carcampItineraryStops.map((s, i) => `
+            <div class="itinerary-stop-item">
+                <span><span class="stop-name">${escapeHtmlCarcamp(s.name)}</span><span class="stop-category">（${categoryLabel[s.category] || '不確定'}）</span></span>
+                <button type="button" class="itinerary-stop-remove" onclick="carcampRemoveItineraryStop(${i})" aria-label="移除">✕</button>
+            </div>
+        `).join('');
+    }
+
+    function carcampAddItineraryStop() {
+        const nameInput = document.getElementById('itinerary-stop-name-input');
+        const categoryInput = document.getElementById('itinerary-stop-category-input');
+        const name = nameInput.value.trim();
+        if (!name) { alert('請輸入地點名稱'); return; }
+        carcampItineraryStops.push({ name, category: categoryInput.value || 'unknown' });
+        nameInput.value = '';
+        categoryInput.value = 'unknown';
+        nameInput.focus();
+        renderCarcampItineraryStopsList();
+    }
+
+    function carcampRemoveItineraryStop(index) {
+        carcampItineraryStops.splice(index, 1);
+        renderCarcampItineraryStopsList();
+    }
+
     async function carcampPlanItinerary(event) {
         event.preventDefault();
         const originText = document.getElementById('itinerary-origin').value.trim();
         const destinationText = document.getElementById('itinerary-destination').value.trim();
         if (!destinationText) { alert('請輸入目的地'); return; }
+
+        let tripDays = parseInt(document.getElementById('itinerary-days').value, 10);
+        if (!Number.isFinite(tripDays) || tripDays < 1) tripDays = 1;
+
+        const freeformNote = document.getElementById('itinerary-freeform').value.trim();
 
         const resultEl = document.getElementById('itinerary-result');
         const submitBtn = document.getElementById('itinerary-submit-btn');
@@ -921,6 +1006,9 @@
         const requestBody = {
             action: 'carcamp_itinerary',
             destinationText,
+            tripDays,
+            requestedStops: carcampItineraryStops,
+            freeformNote,
             preferenceHint: carcampGetPreferenceHint(),
         };
         if (originText) {
@@ -934,7 +1022,7 @@
         }
 
         submitBtn.disabled = true;
-        resultEl.innerHTML = '<p class="itinerary-loading">規劃中，要先算真實路線、再沿路找地點，可能要等一下下...</p>';
+        resultEl.innerHTML = '<p class="itinerary-loading">規劃中，要先算真實路線、解析途經點、再計算配額，可能要等一下下...</p>';
         try {
             const idToken = await carcampCurrentUser.getIdToken();
             requestBody.idToken = idToken;
@@ -960,31 +1048,63 @@
         const resultEl = document.getElementById('itinerary-result');
         const totalHours = Number.isFinite(data.totalDurationMinutes) ? Math.round(data.totalDurationMinutes / 60 * 10) / 10 : null;
         const days = Array.isArray(data.days) ? data.days : [];
+        const categoryLabel = { camp: '🏕️ 車宿', food: '🍜 美食', attraction: '🎡 景點', unknown: '📍 停靠點' };
+
+        const missingDaySlots = Number.isFinite(data.missingDaySlots) ? data.missingDaySlots : 0;
+        const missingDaysNote = missingDaySlots > 0
+            ? `<p class="itinerary-warning-note">⚠️ 提供的途經點不夠湊出完整${data.requestedDays}天的行程，目前只能排出${data.actualDays}天——建議再多指定${missingDaySlots}個車宿點，行程就能延長。</p>`
+            : '';
+
+        const campShortfall = data.quota?.camp?.shortfall || 0;
+        const foodShortfall = data.quota?.food?.shortfall || 0;
+        const quotaNote = (campShortfall > 0 || foodShortfall > 0)
+            ? `<p class="itinerary-warning-note">⚠️ ${campShortfall > 0 ? `還有${campShortfall}晚沒找到合適的車宿點` : ''}${campShortfall > 0 && foodShortfall > 0 ? '，' : ''}${foodShortfall > 0 ? `還缺${foodShortfall}個美食點沒補到` : ''}，可以自己在地圖來源裡補充資料，或再規劃一次試試看。</p>`
+            : '';
+
+        const excludedStops = Array.isArray(data.excludedStops) ? data.excludedStops : [];
+        const excludedHtml = excludedStops.length
+            ? `<p class="itinerary-field-label">已自動排除的超額地點</p><ul class="itinerary-excluded-list">${excludedStops.map(e => `<li>${escapeHtmlCarcamp(e.reason || e.name)}</li>`).join('')}</ul>`
+            : '';
+
+        const unresolvedStops = Array.isArray(data.unresolvedStops) ? data.unresolvedStops : [];
+        const unresolvedHtml = unresolvedStops.length
+            ? `<p class="itinerary-field-label">這幾個地點查不到，已略過</p><ul class="itinerary-unresolved-list">${unresolvedStops.map(u => `<li>${escapeHtmlCarcamp(u.name)}：${escapeHtmlCarcamp(u.reason || '')}</li>`).join('')}</ul>`
+            : '';
+
         const summaryHtml = `
             <div class="itinerary-summary">
                 <div class="itinerary-summary-route">🚗 ${escapeHtmlCarcamp(data.origin?.label || '出發地')} → ${escapeHtmlCarcamp(data.destination?.label || '目的地')}</div>
                 <div class="itinerary-summary-stats">全程約${Number.isFinite(data.totalDistanceKm) ? data.totalDistanceKm.toFixed(0) : '--'}公里${totalHours != null ? `・開車約${totalHours}小時` : ''}・共${days.length}天</div>
                 <p>${escapeHtmlCarcamp(data.tripSummary || '')}</p>
+                ${missingDaysNote}${quotaNote}${excludedHtml}${unresolvedHtml}
             </div>
         `;
         const daysHtml = days.map(d => {
             const kmText = Number.isFinite(d.drivingKmThisDay) ? `<span class="itinerary-day-km">約${d.drivingKmThisDay.toFixed(0)}公里</span>` : '';
             const stops = Array.isArray(d.stops) ? d.stops : [];
-            const stopsHtml = stops.length ? `<div class="itinerary-day-stops">${stops.map(s => `
+            const campMissingHtml = d.isCampNight && d.needsCampSupplement
+                ? `<p class="itinerary-warning-note">⚠️ 這天還沒找到合適的車宿點${d.campSupplementFailedReason ? `（${escapeHtmlCarcamp(d.campSupplementFailedReason)}）` : ''}</p>`
+                : '';
+            const stopsHtml = stops.length ? `<div class="itinerary-day-stops">${stops.map(s => {
+                const tag = s.supplemented
+                    ? '<span class="itinerary-tag itinerary-tag-supplemented">系統補推薦</span>'
+                    : '<span class="itinerary-tag itinerary-tag-required">指定必去</span>';
+                return `
                 <div class="place-card">
                     <div class="place-card-main">
-                        <div class="name">📍 ${escapeHtmlCarcamp(s.name)}</div>
-                        <div class="reason">${escapeHtmlCarcamp(s.reason || '')}</div>
+                        <div class="name">${categoryLabel[s.category] || '📍'} ${escapeHtmlCarcamp(s.name)}${tag}</div>
                     </div>
                     <div class="place-card-actions">
                         <a href="https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}" target="_blank" rel="noopener">🧭 導航</a>
                     </div>
                 </div>
-            `).join('')}</div>` : '';
+            `;
+            }).join('')}</div>` : '';
             return `
                 <div class="itinerary-day">
                     <div class="itinerary-day-title">${escapeHtmlCarcamp(d.dayTitle || `Day ${d.day}`)}${kmText}</div>
                     <p class="itinerary-day-narrative">${escapeHtmlCarcamp(d.narrative || '')}</p>
+                    ${campMissingHtml}
                     ${stopsHtml}
                 </div>
             `;
@@ -1041,13 +1161,15 @@
         }
 
         (Array.isArray(data.days) ? data.days : []).forEach(d => {
+            const categoryLabel = { camp: '車宿', food: '美食', attraction: '景點', unknown: '停靠點' };
             (Array.isArray(d.stops) ? d.stops : []).forEach(s => {
                 if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return;
+                const detailText = `${categoryLabel[s.category] || '停靠點'}${s.supplemented ? '・系統補推薦' : '・指定必去'}`;
                 const marker = new google.maps.Marker({
                     position: { lat: s.lat, lng: s.lng }, map: carcampMap, title: `Day${d.day}：${s.name}`,
                 });
                 const infoWindow = new google.maps.InfoWindow({
-                    content: `<div style="color:#1A2333; font-family:'Noto Sans TC',sans-serif; padding:2px;"><strong style="font-size:0.95rem;">Day${d.day}・${s.name}</strong><br><span style="color:#4A5568; font-size:0.85rem;">${s.reason || ''}</span></div>`,
+                    content: `<div style="color:#1A2333; font-family:'Noto Sans TC',sans-serif; padding:2px;"><strong style="font-size:0.95rem;">Day${d.day}・${s.name}</strong><br><span style="color:#4A5568; font-size:0.85rem;">${detailText}</span></div>`,
                 });
                 marker.addListener('click', () => infoWindow.open(carcampMap, marker));
                 carcampMarkers.push(marker);
