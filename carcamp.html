@@ -175,14 +175,19 @@
     .place-card .name { font-weight: 700; font-size: 0.92rem; margin-bottom: 0.25rem; color: var(--starlight); }
     .place-card .reason { font-size: 0.8rem; color: var(--dim); }
 
-    /* ---------- 地點卡片動作列：免綁信用卡的導航解法(開Google地圖App/網頁做真正的路線規劃) ---------- */
-    .place-card-actions { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
-    .place-card-actions a {
+    /* ---------- 地點卡片動作列：免綁信用卡的導航解法(開Google地圖App/網頁做真正的路線規劃)
+       + 加入/移除「我的行程清單」 ---------- */
+    .place-card-actions { display: flex; gap: 0.5rem; margin-top: 0.6rem; flex-wrap: wrap; }
+    .place-card-actions a, .place-card-actions button.trip-toggle-btn {
         font-size: 0.75rem; padding: 0.3rem 0.75rem; border-radius: 999px;
         background: var(--panel-soft); color: var(--dim); border: 1px solid var(--line);
-        text-decoration: none; white-space: nowrap; transition: border-color 0.15s, color 0.15s;
+        text-decoration: none; white-space: nowrap; cursor: pointer;
+        transition: border-color 0.15s, color 0.15s, background 0.15s;
+        font-family: inherit;
     }
     .place-card-actions a:hover { border-color: var(--ember); color: var(--ember); }
+    .trip-toggle-btn:hover { border-color: var(--moss); color: var(--moss); }
+    .trip-toggle-btn.in-trip { background: rgba(82,163,124,0.15); color: var(--moss); border-color: rgba(82,163,124,0.4); font-weight: 700; }
 
     /* ---------- 點選地點即時顯示天氣：卡片內展開，不用先問AI ---------- */
     .weather-inline { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px dashed var(--line); font-size: 0.78rem; color: var(--dim); }
@@ -208,7 +213,23 @@
         border-color: transparent; font-weight: 700;
     }
 
-    /* ---------- AI多日行程建議：把目前顯示的地點排成順路的行程 ---------- */
+    /* ---------- 我的行程清單：跨查詢/跨縣市累積地點，環島或多縣市規劃靠這個累積，
+       不是只靠單一次查詢的結果(單一次查詢通常都是同一個小區域，硬拆成多天沒有意義) ---------- */
+    #trip-list-panel { margin-bottom: 1rem; }
+    #trip-list-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .trip-chip {
+        display: inline-flex; align-items: center; gap: 0.4rem;
+        padding: 0.35rem 0.5rem 0.35rem 0.85rem; border-radius: 999px;
+        background: rgba(82,163,124,0.15); color: var(--moss); border: 1px solid rgba(82,163,124,0.4);
+        font-size: 0.8rem;
+    }
+    .trip-chip button {
+        background: none; border: none; color: var(--moss); cursor: pointer; font-size: 0.85rem;
+        padding: 0 0.2rem; line-height: 1; opacity: 0.75; font-family: inherit;
+    }
+    .trip-chip button:hover { opacity: 1; }
+
+    /* ---------- AI多日行程建議：把「我的行程清單」排成順路的多日行程 ---------- */
     #itinerary-wrap { display: flex; gap: 0.6rem; margin: 0 0 1rem; align-items: center; flex-wrap: wrap; }
     #itinerary-days {
         padding: 0.65rem 0.9rem; border-radius: 999px; border: 1px solid var(--line);
@@ -288,14 +309,21 @@
     <div id="map-container"></div>
     <div id="places-list"></div>
 
+    <div id="trip-list-panel" class="hidden">
+        <div class="section-label">🧳 我的行程清單（點地點卡片的「加入行程」慢慢累積，可以跨不同次查詢、不同縣市——適合環島或多縣市規劃）</div>
+        <div id="trip-list-chips"></div>
+    </div>
+
     <div id="itinerary-wrap" class="hidden">
-        <button class="btn btn-outline" id="itinerary-btn" onclick="carcampGenerateItinerary()">🗓️ 幫我把這些地點排成行程</button>
+        <button class="btn btn-outline" id="itinerary-btn" onclick="carcampGenerateItinerary()">🗓️ 幫我把行程清單排成行程</button>
         <select id="itinerary-days">
             <option value="1">1天</option>
             <option value="2">2天</option>
             <option value="3" selected>3天</option>
             <option value="4">4天</option>
             <option value="5">5天</option>
+            <option value="6">6天</option>
+            <option value="7">7天</option>
         </select>
     </div>
     <div id="itinerary-panel"></div>
@@ -351,6 +379,7 @@
         carcampHistory = []; // 換帳號/登出時清空對話記憶，避免把上一個使用者的對話內容誤帶給下一個人
         carcampLastAnchor = null; // 同理，地點錨點也要一起清空，避免帶到下一個使用者的對話裡
         carcampActiveCategories = new Set(); // 分類篩選chip的選取狀態也一樣，不要帶到下一個使用者
+        carcampTripList = []; // 行程清單也一樣，不要把上一個使用者累積的地點帶給下一個人
         document.getElementById('login-gate').classList.toggle('hidden', !!user);
         document.getElementById('carcamp-root').classList.toggle('hidden', !user);
         if (user) {
@@ -607,17 +636,14 @@
 
     function renderCarcampPlacesList(places) {
         const listEl = document.getElementById('places-list');
-        // 每次換一批新的地點清單，之前排好的行程建議就跟這批地點對不上了，清掉避免使用者
-        // 誤以為那份行程還是照目前顯示的地點排的
-        const itineraryPanel = document.getElementById('itinerary-panel');
-        if (itineraryPanel) itineraryPanel.innerHTML = '';
         if (!places.length) {
             listEl.innerHTML = '';
             window.__carcampLastPlaces = [];
-            carcampUpdateItineraryVisibility();
             return;
         }
-        listEl.innerHTML = places.map((p, i) => `
+        listEl.innerHTML = places.map((p, i) => {
+            const inTrip = carcampIsInTripList(p);
+            return `
             <div class="place-card">
                 <div class="place-card-main" onclick="carcampFocusPlace(${i})">
                     <div class="name">📍 ${escapeHtmlCarcamp(p.name)}</div>
@@ -625,12 +651,13 @@
                 </div>
                 <div class="place-card-actions">
                     <a href="https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}" target="_blank" rel="noopener">🧭 導航</a>
+                    <button type="button" class="trip-toggle-btn ${inTrip ? 'in-trip' : ''}" onclick="event.stopPropagation(); carcampToggleTripList(${i})">${inTrip ? '✓ 已加入行程' : '➕ 加入行程'}</button>
                 </div>
                 <div class="weather-inline hidden" id="weather-inline-${i}"></div>
             </div>
-        `).join('');
+        `;
+        }).join('');
         window.__carcampLastPlaces = places;
-        carcampUpdateItineraryVisibility();
     }
     function carcampFocusPlace(index) {
         const p = window.__carcampLastPlaces?.[index];
@@ -766,17 +793,71 @@
     }
 
     // ---------------------------------------------------------------
-    // AI多日行程建議：把目前顯示中的地點清單排成順路的多日行程
+    // 我的行程清單：跟window.__carcampLastPlaces(目前這次查詢/瀏覽顯示的地點)不一樣，這份
+    // 清單是使用者自己從一張張地點卡片手動「加入行程」慢慢累積出來的，不會因為問了下一個
+    // 問題或換了分類篩選就被洗掉——這樣才能真正拿來規劃環島或跨縣市的多日行程(先問墾丁、
+    // 挑幾個加進清單，再問台南、再加幾個，最後才排行程)，而不是把單一次查詢(通常都集中在
+    // 同一個小區域)硬拆成好幾天，拆了也沒有意義
+    // ---------------------------------------------------------------
+    let carcampTripList = [];
+
+    function carcampTripKey(p) { return `${p.name}__${p.lat}__${p.lng}`; }
+
+    function carcampIsInTripList(p) {
+        const key = carcampTripKey(p);
+        return carcampTripList.some(t => carcampTripKey(t) === key);
+    }
+
+    function carcampToggleTripList(index) {
+        const p = window.__carcampLastPlaces?.[index];
+        if (!p) return;
+        const key = carcampTripKey(p);
+        const existingIdx = carcampTripList.findIndex(t => carcampTripKey(t) === key);
+        if (existingIdx >= 0) {
+            carcampTripList.splice(existingIdx, 1);
+        } else {
+            carcampTripList.push({ name: p.name, lat: p.lat, lng: p.lng, reason: p.reason });
+        }
+        renderCarcampPlacesList(window.__carcampLastPlaces); // 更新卡片上「已加入/加入行程」按鈕的狀態
+        renderCarcampTripList();
+        document.getElementById('itinerary-panel').innerHTML = ''; // 行程清單變了，舊的行程建議跟著失效，不要留著誤導使用者
+    }
+
+    function carcampRemoveFromTripList(index) {
+        carcampTripList.splice(index, 1);
+        renderCarcampTripList();
+        if (window.__carcampLastPlaces && window.__carcampLastPlaces.length) {
+            renderCarcampPlacesList(window.__carcampLastPlaces); // 同步卡片上的按鈕狀態
+        }
+        document.getElementById('itinerary-panel').innerHTML = '';
+    }
+
+    function renderCarcampTripList() {
+        const wrap = document.getElementById('trip-list-panel');
+        const listEl = document.getElementById('trip-list-chips');
+        if (!carcampTripList.length) {
+            wrap.classList.add('hidden');
+            listEl.innerHTML = '';
+        } else {
+            wrap.classList.remove('hidden');
+            listEl.innerHTML = carcampTripList.map((p, i) => `
+                <span class="trip-chip">${escapeHtmlCarcamp(p.name)}<button type="button" onclick="carcampRemoveFromTripList(${i})" aria-label="從行程清單移除">✕</button></span>
+            `).join('');
+        }
+        carcampUpdateItineraryVisibility();
+    }
+
+    // ---------------------------------------------------------------
+    // AI多日行程建議：把「我的行程清單」(不是目前顯示中的查詢結果)排成順路的多日行程
     // ---------------------------------------------------------------
     function carcampUpdateItineraryVisibility() {
         const wrap = document.getElementById('itinerary-wrap');
         if (!wrap) return;
-        wrap.classList.toggle('hidden', !(window.__carcampLastPlaces && window.__carcampLastPlaces.length >= 2));
+        wrap.classList.toggle('hidden', carcampTripList.length < 2);
     }
 
     async function carcampGenerateItinerary() {
-        const places = window.__carcampLastPlaces || [];
-        if (places.length < 2) { alert('至少要有2個地點才能排行程，先問問題或用上面的分類篩選找出幾個地點吧'); return; }
+        if (carcampTripList.length < 2) { alert('至少要先把2個地點加入「我的行程清單」才能排行程'); return; }
         const days = Number(document.getElementById('itinerary-days').value) || 3;
         const panel = document.getElementById('itinerary-panel');
         const btn = document.getElementById('itinerary-btn');
@@ -789,7 +870,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     action: 'carcamp_itinerary', idToken, days,
-                    places: places.slice(0, 30).map(p => ({ name: p.name, lat: p.lat, lng: p.lng, reason: p.reason })),
+                    places: carcampTripList.slice(0, 30).map(p => ({ name: p.name, lat: p.lat, lng: p.lng, reason: p.reason })),
                 }),
             });
             const data = await res.json();
