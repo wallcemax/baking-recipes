@@ -171,8 +171,66 @@
         box-shadow: 0 6px 18px -6px rgba(0,0,0,0.3); cursor: pointer; transition: border-color 0.15s;
     }
     .place-card:hover { border-color: var(--ember); }
+    .place-card-main { cursor: pointer; }
     .place-card .name { font-weight: 700; font-size: 0.92rem; margin-bottom: 0.25rem; color: var(--starlight); }
     .place-card .reason { font-size: 0.8rem; color: var(--dim); }
+
+    /* ---------- 地點卡片動作列：免綁信用卡的導航解法(開Google地圖App/網頁做真正的路線規劃) ---------- */
+    .place-card-actions { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
+    .place-card-actions a {
+        font-size: 0.75rem; padding: 0.3rem 0.75rem; border-radius: 999px;
+        background: var(--panel-soft); color: var(--dim); border: 1px solid var(--line);
+        text-decoration: none; white-space: nowrap; transition: border-color 0.15s, color 0.15s;
+    }
+    .place-card-actions a:hover { border-color: var(--ember); color: var(--ember); }
+
+    /* ---------- 點選地點即時顯示天氣：卡片內展開，不用先問AI ---------- */
+    .weather-inline { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px dashed var(--line); font-size: 0.78rem; color: var(--dim); }
+    .weather-inline .weather-now { color: var(--starlight); font-weight: 600; margin-bottom: 0.35rem; }
+    .weather-inline .weather-days { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
+    .weather-inline .weather-day b { color: var(--starlight); margin-right: 0.2rem; }
+    .weather-inline .weather-alert { margin-top: 0.4rem; color: var(--danger); font-weight: 600; }
+    .weather-inline .weather-loading, .weather-inline .weather-error { font-style: italic; }
+
+    /* ---------- 分類篩選chip：不用開口問AI，點幾下就能直接瀏覽 ---------- */
+    .section-label { font-size: 0.82rem; color: var(--dim); font-weight: 700; margin-bottom: 0.6rem; }
+    #category-chips-panel { margin-bottom: 1rem; }
+    #category-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .chip {
+        padding: 0.4rem 0.85rem; border-radius: 999px; border: 1px solid var(--line);
+        background: var(--panel); color: var(--dim); font-size: 0.8rem; cursor: pointer;
+        transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .chip .count { opacity: 0.7; margin-left: 0.15rem; }
+    .chip:hover { border-color: var(--ember); color: var(--starlight); }
+    .chip.active {
+        background: linear-gradient(135deg, var(--ember), var(--ember-hot)); color: #1A0F08;
+        border-color: transparent; font-weight: 700;
+    }
+
+    /* ---------- AI多日行程建議：把目前顯示的地點排成順路的行程 ---------- */
+    #itinerary-wrap { display: flex; gap: 0.6rem; margin: 0 0 1rem; align-items: center; flex-wrap: wrap; }
+    #itinerary-days {
+        padding: 0.65rem 0.9rem; border-radius: 999px; border: 1px solid var(--line);
+        background: var(--panel-soft); color: var(--starlight); font-size: 0.82rem;
+    }
+    #itinerary-panel:not(:empty) {
+        background: var(--panel); border: 1px solid var(--line); border-radius: 1.2rem;
+        padding: 1.1rem 1.2rem; margin-bottom: 1.2rem; box-shadow: 0 6px 18px -6px rgba(0,0,0,0.3);
+    }
+    .itinerary-summary { font-size: 0.85rem; color: var(--dim); margin-bottom: 1rem; line-height: 1.6; }
+    .itinerary-day { padding: 0.8rem 0; border-top: 1px solid var(--line); }
+    .itinerary-day:first-of-type { border-top: none; padding-top: 0; }
+    .itinerary-day-title { font-weight: 700; color: var(--ember); font-size: 0.92rem; margin-bottom: 0.5rem; }
+    .itinerary-stops { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.45rem; }
+    .itinerary-stop { display: flex; align-items: center; gap: 0.55rem; font-size: 0.85rem; }
+    .itinerary-stop .badge {
+        width: 1.4rem; height: 1.4rem; border-radius: 50%; background: var(--panel-soft);
+        color: var(--starlight); display: flex; align-items: center; justify-content: center;
+        font-size: 0.7rem; font-weight: 700; flex-shrink: 0;
+    }
+    .itinerary-note { font-size: 0.78rem; color: var(--dim); font-style: italic; }
+    .itinerary-loading { color: var(--dim); font-size: 0.85rem; text-align: center; padding: 1rem; }
 </style>
 </head>
 <body>
@@ -215,6 +273,11 @@
         </div>
     </details>
 
+    <div id="category-chips-panel" class="hidden">
+        <div class="section-label">🏷️ 依分類快速瀏覽（不用開口問，點一下就好）</div>
+        <div id="category-chips"></div>
+    </div>
+
     <div id="chat-log"></div>
 
     <form id="question-form" onsubmit="carcampAskQuestion(event)">
@@ -224,6 +287,18 @@
 
     <div id="map-container"></div>
     <div id="places-list"></div>
+
+    <div id="itinerary-wrap" class="hidden">
+        <button class="btn btn-outline" id="itinerary-btn" onclick="carcampGenerateItinerary()">🗓️ 幫我把這些地點排成行程</button>
+        <select id="itinerary-days">
+            <option value="1">1天</option>
+            <option value="2">2天</option>
+            <option value="3" selected>3天</option>
+            <option value="4">4天</option>
+            <option value="5">5天</option>
+        </select>
+    </div>
+    <div id="itinerary-panel"></div>
 </div>
 </div>
 
@@ -275,12 +350,14 @@
         carcampCurrentUser = user;
         carcampHistory = []; // 換帳號/登出時清空對話記憶，避免把上一個使用者的對話內容誤帶給下一個人
         carcampLastAnchor = null; // 同理，地點錨點也要一起清空，避免帶到下一個使用者的對話裡
+        carcampActiveCategories = new Set(); // 分類篩選chip的選取狀態也一樣，不要帶到下一個使用者
         document.getElementById('login-gate').classList.toggle('hidden', !!user);
         document.getElementById('carcamp-root').classList.toggle('hidden', !user);
         if (user) {
             document.getElementById('seed-default-btn').classList.toggle('hidden', user.email !== 'wallcemax@gmail.com');
             requestLocation();
             loadCarcampSources();
+            carcampLoadCategories();
         }
     });
 
@@ -530,22 +607,219 @@
 
     function renderCarcampPlacesList(places) {
         const listEl = document.getElementById('places-list');
-        if (!places.length) { listEl.innerHTML = ''; return; }
+        // 每次換一批新的地點清單，之前排好的行程建議就跟這批地點對不上了，清掉避免使用者
+        // 誤以為那份行程還是照目前顯示的地點排的
+        const itineraryPanel = document.getElementById('itinerary-panel');
+        if (itineraryPanel) itineraryPanel.innerHTML = '';
+        if (!places.length) {
+            listEl.innerHTML = '';
+            window.__carcampLastPlaces = [];
+            carcampUpdateItineraryVisibility();
+            return;
+        }
         listEl.innerHTML = places.map((p, i) => `
-            <div class="place-card" onclick="carcampFocusPlace(${i})">
-                <div class="name">📍 ${escapeHtmlCarcamp(p.name)}</div>
-                <div class="reason">${escapeHtmlCarcamp(p.reason || '')}</div>
+            <div class="place-card">
+                <div class="place-card-main" onclick="carcampFocusPlace(${i})">
+                    <div class="name">📍 ${escapeHtmlCarcamp(p.name)}</div>
+                    <div class="reason">${escapeHtmlCarcamp(p.reason || '')}</div>
+                </div>
+                <div class="place-card-actions">
+                    <a href="https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}" target="_blank" rel="noopener">🧭 導航</a>
+                </div>
+                <div class="weather-inline hidden" id="weather-inline-${i}"></div>
             </div>
         `).join('');
         window.__carcampLastPlaces = places;
+        carcampUpdateItineraryVisibility();
     }
     function carcampFocusPlace(index) {
         const p = window.__carcampLastPlaces?.[index];
-        if (!p || !carcampMap) return;
-        carcampMap.panTo({ lat: p.lat, lng: p.lng });
-        carcampMap.setZoom(15);
-        const marker = carcampMarkers[index];
-        if (marker) google.maps.event.trigger(marker, 'click');
+        if (!p) return;
+        if (carcampMap) {
+            carcampMap.panTo({ lat: p.lat, lng: p.lng });
+            carcampMap.setZoom(15);
+            const marker = carcampMarkers[index];
+            if (marker) google.maps.event.trigger(marker, 'click');
+        }
+        // 點選地點就直接查這個地點的天氣，不用先問過AI、也不用問題裡提到天氣關鍵字才會有——
+        // 跟AI問答裡「候選清單依天氣關鍵字才enrich」是兩條獨立的路徑
+        carcampShowPlaceWeather(index, p);
+    }
+
+    // ---------------------------------------------------------------
+    // 點選地點即時顯示天氣：卡片內展開一塊天氣資訊，不用先問AI。用一個遞增token擋掉
+    // 「使用者很快點了好幾個不同地點」時，較早那次還沒回來的請求覆蓋掉後面新點的結果
+    // ---------------------------------------------------------------
+    const carcampWeatherTokens = {};
+    async function carcampShowPlaceWeather(index, place) {
+        const el = document.getElementById(`weather-inline-${index}`);
+        if (!el) return;
+        el.classList.remove('hidden');
+        const myToken = (carcampWeatherTokens[index] = (carcampWeatherTokens[index] || 0) + 1);
+        el.innerHTML = '<span class="weather-loading">🌡️ 查詢天氣中...</span>';
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'carcamp_place_weather', idToken, lat: place.lat, lng: place.lng }),
+            });
+            const data = await res.json();
+            if (carcampWeatherTokens[index] !== myToken) return; // 這份結果已經過期(使用者點了別的地點)，不要蓋掉新的顯示
+            if (!res.ok || data.error || !data.weather) {
+                el.innerHTML = `<span class="weather-error">⚠️ 天氣查詢失敗${data.error ? '：' + escapeHtmlCarcamp(data.error) : ''}</span>`;
+                return;
+            }
+            const w = data.weather;
+            const daysHtml = (w.forecast || []).map(d => `<span class="weather-day"><b>${escapeHtmlCarcamp(d.label)}</b>${d.minTempC ?? '--'}~${d.maxTempC ?? '--'}°C ${escapeHtmlCarcamp(d.condition || '')} 🌧️${d.chanceOfRain}%</span>`).join('');
+            const alertHtml = (w.alerts && w.alerts.length)
+                ? `<div class="weather-alert">⚠️ ${w.alerts.map(a => escapeHtmlCarcamp(a)).join('；')}</div>`
+                : '';
+            el.innerHTML = `
+                <div class="weather-now">🌡️ 現在 ${w.current.tempC ?? '--'}°C・${escapeHtmlCarcamp(w.current.condition || '')}</div>
+                <div class="weather-days">${daysHtml}</div>
+                ${alertHtml}
+            `;
+        } catch (err) {
+            if (carcampWeatherTokens[index] !== myToken) return;
+            el.innerHTML = `<span class="weather-error">⚠️ 天氣查詢失敗（網路或連線問題）</span>`;
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 分類篩選chip：不經過AI，直接依資料夾第一層分類瀏覽地點
+    // ---------------------------------------------------------------
+    let carcampCategoriesCache = [];
+    let carcampActiveCategories = new Set();
+
+    async function carcampLoadCategories() {
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'carcamp_list_categories', idToken }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error || !data.categories) return; // 分類清單只是輔助瀏覽功能，失敗不用打擾使用者
+            carcampCategoriesCache = data.categories;
+            renderCarcampCategoryChips();
+        } catch (err) {
+            // 同上，安靜跳過就好，不影響主要問答功能
+        }
+    }
+
+    function renderCarcampCategoryChips() {
+        const wrap = document.getElementById('category-chips-panel');
+        const listEl = document.getElementById('category-chips');
+        if (!carcampCategoriesCache.length) { wrap.classList.add('hidden'); return; }
+        wrap.classList.remove('hidden');
+        listEl.innerHTML = carcampCategoriesCache.map(c => `
+            <button type="button" class="chip ${carcampActiveCategories.has(c.name) ? 'active' : ''}" onclick="carcampToggleCategoryChip('${c.name.replace(/'/g, "\\'")}')">${escapeHtmlCarcamp(c.name)}<span class="count">(${c.count})</span></button>
+        `).join('');
+    }
+
+    async function carcampToggleCategoryChip(name) {
+        if (carcampActiveCategories.has(name)) {
+            carcampActiveCategories.delete(name);
+        } else {
+            carcampActiveCategories.add(name);
+        }
+        renderCarcampCategoryChips();
+        if (carcampActiveCategories.size) {
+            await carcampBrowseCategories();
+        }
+    }
+
+    async function carcampBrowseCategories() {
+        const chatLog = document.getElementById('chat-log');
+        const loadingId = 'loading-' + Date.now();
+        chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble loading" id="${loadingId}">依分類瀏覽中...</div>`);
+        chatLog.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'carcamp_browse_category', idToken,
+                    categories: Array.from(carcampActiveCategories),
+                    userLat: carcampUserLat, userLng: carcampUserLng,
+                }),
+            });
+            const data = await res.json();
+            document.getElementById(loadingId)?.remove();
+            if (!res.ok || data.error) {
+                chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">瀏覽失敗：${escapeHtmlCarcamp(data.error || '未知錯誤')}</div>`);
+                return;
+            }
+            const places = data.places || [];
+            const categoryLabel = Array.from(carcampActiveCategories).map(escapeHtmlCarcamp).join('、');
+            chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">依「${categoryLabel}」分類，找到 ${data.totalMatched} 個地點${data.truncated ? `（只顯示最近的${places.length}個）` : ''}。</div>`);
+            chatLog.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            renderCarcampMarkers(places);
+            renderCarcampPlacesList(places);
+        } catch (err) {
+            document.getElementById(loadingId)?.remove();
+            chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">瀏覽失敗（網路或連線問題）：${escapeHtmlCarcamp(err.message)}</div>`);
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // AI多日行程建議：把目前顯示中的地點清單排成順路的多日行程
+    // ---------------------------------------------------------------
+    function carcampUpdateItineraryVisibility() {
+        const wrap = document.getElementById('itinerary-wrap');
+        if (!wrap) return;
+        wrap.classList.toggle('hidden', !(window.__carcampLastPlaces && window.__carcampLastPlaces.length >= 2));
+    }
+
+    async function carcampGenerateItinerary() {
+        const places = window.__carcampLastPlaces || [];
+        if (places.length < 2) { alert('至少要有2個地點才能排行程，先問問題或用上面的分類篩選找出幾個地點吧'); return; }
+        const days = Number(document.getElementById('itinerary-days').value) || 3;
+        const panel = document.getElementById('itinerary-panel');
+        const btn = document.getElementById('itinerary-btn');
+        btn.disabled = true;
+        panel.innerHTML = '<div class="itinerary-loading">🗓️ 排行程中，稍等一下...</div>';
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'carcamp_itinerary', idToken, days,
+                    places: places.slice(0, 30).map(p => ({ name: p.name, lat: p.lat, lng: p.lng, reason: p.reason })),
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                panel.innerHTML = `<div class="itinerary-loading">⚠️ 排行程失敗：${escapeHtmlCarcamp(data.error || '未知錯誤')}</div>`;
+                return;
+            }
+            renderCarcampItinerary(data);
+        } catch (err) {
+            panel.innerHTML = `<div class="itinerary-loading">⚠️ 排行程失敗（網路或連線問題）：${escapeHtmlCarcamp(err.message)}</div>`;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function renderCarcampItinerary(data) {
+        const panel = document.getElementById('itinerary-panel');
+        const daysHtml = (data.days || []).map((d, i) => `
+            <div class="itinerary-day">
+                <div class="itinerary-day-title">第${i + 1}天・${escapeHtmlCarcamp(d.title || '')}</div>
+                <div class="itinerary-stops">
+                    ${(d.stops || []).map((s, si) => `<div class="itinerary-stop"><span class="badge">${si + 1}</span>${escapeHtmlCarcamp(s.name)}</div>`).join('')}
+                </div>
+                <div class="itinerary-note">${escapeHtmlCarcamp(d.note || '')}</div>
+            </div>
+        `).join('');
+        panel.innerHTML = `
+            <div class="itinerary-summary">${escapeHtmlCarcamp(data.summary || '')}</div>
+            ${daysHtml}
+        `;
     }
 
     // ---------------------------------------------------------------
