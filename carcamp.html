@@ -175,16 +175,18 @@
     .place-card .name { font-weight: 700; font-size: 0.92rem; margin-bottom: 0.25rem; color: var(--starlight); }
     .place-card .reason { font-size: 0.8rem; color: var(--dim); }
 
-    /* ---------- 地點卡片動作列：免綁信用卡的導航解法(開Google地圖App/網頁做真正的路線規劃) ---------- */
+    /* ---------- 地點卡片動作列：免綁信用卡的導航解法(開Google地圖App/網頁做真正的路線規劃)，
+       以及把AI推薦的地點直接加進行程規劃的途經點清單 ---------- */
     .place-card-actions { display: flex; gap: 0.5rem; margin-top: 0.6rem; flex-wrap: wrap; }
-    .place-card-actions a {
+    .place-card-actions a, .place-card-actions button {
         font-size: 0.75rem; padding: 0.3rem 0.75rem; border-radius: 999px;
         background: var(--panel-soft); color: var(--dim); border: 1px solid var(--line);
         text-decoration: none; white-space: nowrap; cursor: pointer;
         transition: border-color 0.15s, color 0.15s, background 0.15s;
         font-family: inherit;
     }
-    .place-card-actions a:hover { border-color: var(--ember); color: var(--ember); }
+    .place-card-actions a:hover, .place-card-actions button:hover:not(:disabled) { border-color: var(--ember); color: var(--ember); }
+    .place-card-actions button:disabled { opacity: 0.6; cursor: default; }
 
     /* ---------- 查無法標記的地點：AI提到、但系統查不到足夠可靠的地圖資料，不畫成一般的
        地點卡片(避免假裝已經驗證過)，只給一個Google地圖搜尋連結，並明確標示要自行確認 ---------- */
@@ -315,7 +317,7 @@
 
     <details id="itinerary-panel">
         <summary>🧭 智慧行程規劃（天數＋途經點，真實路線＋自動配額）</summary>
-        <p id="itinerary-intro">用Google地圖真實路線規劃車泊行程：填天數、放幾個一定要去的點（車宿/美食/景點都可以），系統會依真實開車時間算出最順路的安排——車宿/美食點提供太少會自動補推薦，提供太多也會自動篩選並說明原因。</p>
+        <p id="itinerary-intro">用Google地圖真實路線規劃車泊行程：填天數、放幾個一定要去的點（車宿/美食/景點/澡點都可以），系統會依真實開車時間算出最順路的安排——車宿/美食/澡點提供太少會自動補推薦，提供太多也會自動篩選並說明原因。</p>
         <form id="itinerary-form" onsubmit="carcampPlanItinerary(event)">
             <input type="text" id="itinerary-origin" placeholder="出發地（留空＝用目前位置）">
             <input type="text" id="itinerary-destination" placeholder="目的地，例如：台南" required>
@@ -324,7 +326,7 @@
                 <input type="number" id="itinerary-days" min="1" max="14" step="1" value="1">
             </div>
 
-            <p class="itinerary-field-label">途經點（一定要去的車宿/美食/景點，可不填）</p>
+            <p class="itinerary-field-label">途經點（一定要去的車宿/美食/景點/澡點，可不填）</p>
             <div id="itinerary-stops-list"></div>
             <div class="itinerary-stop-add-row">
                 <input type="text" id="itinerary-stop-name-input" placeholder="地點名稱，例如：桃園某美食">
@@ -333,6 +335,7 @@
                     <option value="camp">車宿</option>
                     <option value="food">美食</option>
                     <option value="attraction">景點</option>
+                    <option value="bath">澡點</option>
                 </select>
                 <button type="button" class="btn btn-outline" onclick="carcampAddItineraryStop()">＋ 新增地點</button>
             </div>
@@ -686,11 +689,50 @@
                 </div>
                 <div class="place-card-actions">
                     <a href="https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}" target="_blank" rel="noopener">🧭 導航</a>
+                    <button type="button" id="add-to-itinerary-btn-${i}" onclick="carcampAddPlaceToItinerary(${i})">➕ 加入行程規劃</button>
                 </div>
                 <div class="weather-inline hidden" id="weather-inline-${i}"></div>
             </div>
         `).join('');
         window.__carcampLastPlaces = places;
+    }
+
+    // ---------------------------------------------------------------
+    // 把AI問答推薦的地點直接加進行程規劃的途經點清單：跟後端carcampInferCategoryFromFolderPath
+    // 用完全一樣的關鍵字判斷邏輯(車宿/美食/景點/澡點)，這裡只是複製一份給前端立即顯示用——
+    // 這個地點只要是從使用者自己的地圖資料比對到的(有folderPath)，通常就能馬上判斷出正確
+    // 分類；如果是AI搜尋工具額外查到、不在使用者自己地圖裡的地點(沒有folderPath)，這裡先
+    // 標成「不確定」，等實際規劃行程時，後端還會再用Places API查到的分類資料重新判斷一次，
+    // 不會卡在前端這次猜錯的結果。
+    // ---------------------------------------------------------------
+    function carcampInferItineraryCategoryClient(folderPath) {
+        const pathText = Array.isArray(folderPath) ? folderPath.join('/') : '';
+        if (!pathText) return 'unknown';
+        if (/澡堂|公共浴室|投幣.{0,2}淋浴|淋浴間|沐浴|盥洗|溫泉|泡湯|三溫暖/.test(pathText)) return 'bath';
+        if (/車泊|露營|紮營|過夜|睡覺|營地|住宿|民宿|旅館|飯店/.test(pathText)) return 'camp';
+        if (/美食|餐廳|小吃|吃|夜市|咖啡|甜點/.test(pathText)) return 'food';
+        if (/景點|玩|遊玩|觀光|步道|瀑布|海邊|公園/.test(pathText)) return 'attraction';
+        return 'unknown';
+    }
+
+    function carcampAddPlaceToItinerary(index) {
+        const place = (window.__carcampLastPlaces || [])[index];
+        if (!place) return;
+        if (carcampItineraryStops.some(s => s.name === place.name)) {
+            alert(`「${place.name}」已經在行程規劃的途經點清單裡了`);
+            return;
+        }
+        const category = carcampInferItineraryCategoryClient(place.folderPath);
+        carcampItineraryStops.push({ name: place.name, category });
+        renderCarcampItineraryStopsList();
+
+        const btn = document.getElementById(`add-to-itinerary-btn-${index}`);
+        if (btn) {
+            const original = btn.textContent;
+            btn.textContent = '✅ 已加入';
+            btn.disabled = true;
+            setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 1500);
+        }
     }
     // AI提到、但系統查不到足夠可靠地圖資料(沒有真的搜尋依據，或搜尋有依據但地理編碼查不到
     // 座標)的地點：不畫成一般的地點卡片，避免看起來像是已經驗證過座標的正常結果，只給一個
@@ -960,7 +1002,7 @@
 
     function renderCarcampItineraryStopsList() {
         const listEl = document.getElementById('itinerary-stops-list');
-        const categoryLabel = { camp: '車宿', food: '美食', attraction: '景點', unknown: '不確定' };
+        const categoryLabel = { camp: '車宿', food: '美食', attraction: '景點', bath: '澡點', unknown: '不確定' };
         listEl.innerHTML = carcampItineraryStops.map((s, i) => `
             <div class="itinerary-stop-item">
                 <span><span class="stop-name">${escapeHtmlCarcamp(s.name)}</span><span class="stop-category">（${categoryLabel[s.category] || '不確定'}）</span></span>
@@ -1048,7 +1090,7 @@
         const resultEl = document.getElementById('itinerary-result');
         const totalHours = Number.isFinite(data.totalDurationMinutes) ? Math.round(data.totalDurationMinutes / 60 * 10) / 10 : null;
         const days = Array.isArray(data.days) ? data.days : [];
-        const categoryLabel = { camp: '🏕️ 車宿', food: '🍜 美食', attraction: '🎡 景點', unknown: '📍 停靠點' };
+        const categoryLabel = { camp: '🏕️ 車宿', food: '🍜 美食', attraction: '🎡 景點', bath: '🚿 澡點', unknown: '📍 停靠點' };
 
         const missingDaySlots = Number.isFinite(data.missingDaySlots) ? data.missingDaySlots : 0;
         const missingDaysNote = missingDaySlots > 0
@@ -1057,8 +1099,13 @@
 
         const campShortfall = data.quota?.camp?.shortfall || 0;
         const foodShortfall = data.quota?.food?.shortfall || 0;
-        const quotaNote = (campShortfall > 0 || foodShortfall > 0)
-            ? `<p class="itinerary-warning-note">⚠️ ${campShortfall > 0 ? `還有${campShortfall}晚沒找到合適的車宿點` : ''}${campShortfall > 0 && foodShortfall > 0 ? '，' : ''}${foodShortfall > 0 ? `還缺${foodShortfall}個美食點沒補到` : ''}，可以自己在地圖來源裡補充資料，或再規劃一次試試看。</p>`
+        const bathShortfall = data.quota?.bath?.shortfall || 0;
+        const shortfallParts = [];
+        if (campShortfall > 0) shortfallParts.push(`還有${campShortfall}晚沒找到合適的車宿點`);
+        if (foodShortfall > 0) shortfallParts.push(`還缺${foodShortfall}個美食點沒補到`);
+        if (bathShortfall > 0) shortfallParts.push(`還缺${bathShortfall}個澡點沒補到`);
+        const quotaNote = shortfallParts.length
+            ? `<p class="itinerary-warning-note">⚠️ ${shortfallParts.join('，')}，可以自己在地圖來源裡補充資料，或再規劃一次試試看。</p>`
             : '';
 
         const excludedStops = Array.isArray(data.excludedStops) ? data.excludedStops : [];
@@ -1161,7 +1208,7 @@
         }
 
         (Array.isArray(data.days) ? data.days : []).forEach(d => {
-            const categoryLabel = { camp: '車宿', food: '美食', attraction: '景點', unknown: '停靠點' };
+            const categoryLabel = { camp: '車宿', food: '美食', attraction: '景點', bath: '澡點', unknown: '停靠點' };
             (Array.isArray(d.stops) ? d.stops : []).forEach(s => {
                 if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return;
                 const detailText = `${categoryLabel[s.category] || '停靠點'}${s.supplemented ? '・系統補推薦' : '・指定必去'}`;
