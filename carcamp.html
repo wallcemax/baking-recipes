@@ -174,6 +174,15 @@
     .place-card-main { cursor: pointer; }
     .place-card .name { font-weight: 700; font-size: 0.92rem; margin-bottom: 0.25rem; color: var(--starlight); }
     .place-card .reason { font-size: 0.8rem; color: var(--dim); }
+    /* ---------- 地點卡片詳細資訊：地址/評分/營業狀態(Places API查到的)、使用者自己寫的
+       備註(自己地圖資料裡的description)——行程規劃的卡片以前只有名字+標籤+導航按鈕，
+       完全沒有這些細節，這裡補上 ---------- */
+    .place-card-meta { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; font-size: 0.78rem; color: var(--dim); margin-top: 0.3rem; }
+    .place-card-meta .meta-address { flex-basis: 100%; }
+    .place-card-meta .meta-rating { color: var(--ember); font-weight: 600; }
+    .place-card-meta .meta-open { color: var(--moss); }
+    .place-card-meta .meta-closed { color: var(--danger); }
+    .place-card .description { font-size: 0.8rem; color: var(--dim); margin-top: 0.3rem; line-height: 1.5; }
 
     /* ---------- 地點卡片動作列：免綁信用卡的導航解法(開Google地圖App/網頁做真正的路線規劃)，
        以及把AI推薦的地點直接加進行程規劃的途經點清單 ---------- */
@@ -232,6 +241,9 @@
     .itinerary-days-field { display: flex; align-items: center; gap: 0.5rem; }
     .itinerary-days-field label { font-size: 0.82rem; color: var(--dim); white-space: nowrap; }
     .itinerary-days-field input[type="number"] { width: 4.5rem; flex: none; }
+    .itinerary-roundtrip-field { display: flex; align-items: center; gap: 0.4rem; }
+    .itinerary-roundtrip-field label { font-size: 0.82rem; color: var(--dim); white-space: nowrap; cursor: pointer; display: flex; align-items: center; gap: 0.35rem; }
+    .itinerary-roundtrip-field input[type="checkbox"] { width: 1rem; height: 1rem; flex: none; accent-color: var(--ember); cursor: pointer; }
     #itinerary-stops-list { display: flex; flex-direction: column; gap: 0.4rem; }
     .itinerary-stop-item {
         display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
@@ -317,10 +329,13 @@
 
     <details id="itinerary-panel">
         <summary>🧭 智慧行程規劃（天數＋途經點，真實路線＋自動配額）</summary>
-        <p id="itinerary-intro">用Google地圖真實路線規劃車泊行程：填天數、放幾個一定要去的點（車宿/美食/景點/澡點都可以），系統會依真實開車時間算出最順路的安排——車宿/美食/澡點提供太少會自動補推薦，提供太多也會自動篩選並說明原因。</p>
+        <p id="itinerary-intro">用Google地圖真實路線規劃車泊行程：填天數、放幾個一定要去的點（車宿/美食/景點/澡點都可以，也可以完全不填，系統會自己沿路安排），系統會依真實開車時間算出最順路的安排——車宿/美食/澡點提供太少會自動補推薦，提供太多也會自動篩選並說明原因。要來回的話記得勾「來回」，回程也會自動安排車宿/美食/澡點，並盡量不跟去程重複。</p>
         <form id="itinerary-form" onsubmit="carcampPlanItinerary(event)">
             <input type="text" id="itinerary-origin" placeholder="出發地（留空＝用目前位置）">
             <input type="text" id="itinerary-destination" placeholder="目的地，例如：台南" required>
+            <div class="itinerary-roundtrip-field">
+                <label for="itinerary-roundtrip"><input type="checkbox" id="itinerary-roundtrip"> 來回（最後一天開車回出發地，不是抵達新地方）</label>
+            </div>
             <div class="itinerary-days-field">
                 <label for="itinerary-days">天數</label>
                 <input type="number" id="itinerary-days" min="1" max="14" step="1" value="1">
@@ -1038,6 +1053,9 @@
         if (!Number.isFinite(tripDays) || tripDays < 1) tripDays = 1;
 
         const freeformNote = document.getElementById('itinerary-freeform').value.trim();
+        // 來回：目的地旁邊的開關，勾選時整趟行程其實是「出發地→目的地→出發地」一個迴圈，
+        // 不是靠AI從自由文字裡自己猜「來回」兩個字——猜錯方向的話整趟行程會亂掉
+        const roundTrip = document.getElementById('itinerary-roundtrip').checked;
 
         const resultEl = document.getElementById('itinerary-result');
         const submitBtn = document.getElementById('itinerary-submit-btn');
@@ -1049,6 +1067,7 @@
             action: 'carcamp_itinerary',
             destinationText,
             tripDays,
+            roundTrip,
             requestedStops: carcampItineraryStops,
             freeformNote,
             preferenceHint: carcampGetPreferenceHint(),
@@ -1118,9 +1137,14 @@
             ? `<p class="itinerary-field-label">這幾個地點查不到，已略過</p><ul class="itinerary-unresolved-list">${unresolvedStops.map(u => `<li>${escapeHtmlCarcamp(u.name)}：${escapeHtmlCarcamp(u.reason || '')}</li>`).join('')}</ul>`
             : '';
 
+        const originLabelText = escapeHtmlCarcamp(data.origin?.label || '出發地');
+        const destinationLabelText = escapeHtmlCarcamp(data.destination?.label || '目的地');
+        const routeLabelText = data.roundTrip
+            ? `${originLabelText} → ${destinationLabelText} → ${originLabelText}（來回）`
+            : `${originLabelText} → ${destinationLabelText}`;
         const summaryHtml = `
             <div class="itinerary-summary">
-                <div class="itinerary-summary-route">🚗 ${escapeHtmlCarcamp(data.origin?.label || '出發地')} → ${escapeHtmlCarcamp(data.destination?.label || '目的地')}</div>
+                <div class="itinerary-summary-route">🚗 ${routeLabelText}</div>
                 <div class="itinerary-summary-stats">全程約${Number.isFinite(data.totalDistanceKm) ? data.totalDistanceKm.toFixed(0) : '--'}公里${totalHours != null ? `・開車約${totalHours}小時` : ''}・共${days.length}天</div>
                 <p>${escapeHtmlCarcamp(data.tripSummary || '')}</p>
                 ${missingDaysNote}${quotaNote}${excludedHtml}${unresolvedHtml}
@@ -1136,10 +1160,25 @@
                 const tag = s.supplemented
                     ? '<span class="itinerary-tag itinerary-tag-supplemented">系統補推薦</span>'
                     : '<span class="itinerary-tag itinerary-tag-required">指定必去</span>';
+                // 詳細資訊：地址/評分/營業狀態是Places API查到的地點才有(使用者自己地圖資料
+                // 裡的地點不會有這幾項)，description(使用者自己寫的備註)則相反——兩邊互斥，
+                // 有值才顯示對應那一小塊，不會兩邊都空白硬擠出一行
+                const metaParts = [];
+                if (s.address) metaParts.push(`<span class="meta-address">📍 ${escapeHtmlCarcamp(s.address)}</span>`);
+                if (Number.isFinite(s.rating)) {
+                    const ratingText = `⭐ ${s.rating.toFixed(1)}${Number.isFinite(s.userRatingCount) ? `（${s.userRatingCount}則評論）` : ''}`;
+                    metaParts.push(`<span class="meta-rating">${ratingText}</span>`);
+                }
+                if (s.openNow === true) metaParts.push('<span class="meta-open">🟢 營業中</span>');
+                else if (s.openNow === false) metaParts.push('<span class="meta-closed">🔴 休息中</span>');
+                const metaHtml = metaParts.length ? `<div class="place-card-meta">${metaParts.join('')}</div>` : '';
+                const descriptionHtml = s.description ? `<div class="description">${escapeHtmlCarcamp(s.description)}</div>` : '';
                 return `
                 <div class="place-card">
                     <div class="place-card-main">
                         <div class="name">${categoryLabel[s.category] || '📍'} ${escapeHtmlCarcamp(s.name)}${tag}</div>
+                        ${metaHtml}
+                        ${descriptionHtml}
                     </div>
                     <div class="place-card-actions">
                         <a href="https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}" target="_blank" rel="noopener">🧭 導航</a>
