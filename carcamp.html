@@ -189,6 +189,20 @@
     .trip-toggle-btn:hover { border-color: var(--moss); color: var(--moss); }
     .trip-toggle-btn.in-trip { background: rgba(82,163,124,0.15); color: var(--moss); border-color: rgba(82,163,124,0.4); font-weight: 700; }
 
+    /* ---------- 查無法標記的地點：AI提到、但系統查不到足夠可靠的地圖資料，不畫成一般的
+       地點卡片(避免假裝已經驗證過)，只給一個Google地圖搜尋連結，並明確標示要自行確認 ---------- */
+    #unverified-places-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.8rem; }
+    .unverified-card { background: var(--panel); border: 1px dashed rgba(232,96,76,0.5); border-radius: 1rem; padding: 0.75rem 1rem; font-size: 0.82rem; }
+    .unverified-card .unverified-label { color: var(--danger); font-weight: 700; font-size: 0.75rem; margin-bottom: 0.3rem; }
+    .unverified-card .name { font-weight: 700; color: var(--starlight); margin-bottom: 0.2rem; }
+    .unverified-card .reason { color: var(--dim); font-size: 0.78rem; margin-bottom: 0.55rem; }
+    .unverified-card a {
+        font-size: 0.75rem; padding: 0.3rem 0.75rem; border-radius: 999px;
+        background: var(--panel-soft); color: var(--dim); border: 1px solid var(--line);
+        text-decoration: none; white-space: nowrap;
+    }
+    .unverified-card a:hover { border-color: var(--ember); color: var(--ember); }
+
     /* ---------- 點選地點即時顯示天氣：卡片內展開，不用先問AI ---------- */
     .weather-inline { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px dashed var(--line); font-size: 0.78rem; color: var(--dim); }
     .weather-inline .weather-now { color: var(--starlight); font-weight: 600; margin-bottom: 0.35rem; }
@@ -308,6 +322,7 @@
 
     <div id="map-container"></div>
     <div id="places-list"></div>
+    <div id="unverified-places-list"></div>
 
     <div id="trip-list-panel" class="hidden">
         <div class="section-label">🧳 我的行程清單（點地點卡片的「加入行程」慢慢累積，可以跨不同次查詢、不同縣市——適合環島或多縣市規劃）</div>
@@ -555,6 +570,11 @@
             chatLog.scrollIntoView({ behavior: 'smooth', block: 'end' });
             renderCarcampMarkers(data.places || []);
             renderCarcampPlacesList(data.places || []);
+            // AI回答裡提到、但系統查不到足夠可靠地圖資料的地點(通常是搜尋grounding不足或
+            // 地理編碼失敗)，不會出現在上面的地點卡片/地圖標記裡——這裡額外顯示成一組
+            // 「查無法標記」的卡片，至少給使用者一個Google地圖搜尋連結可以點，而不是讓
+            // answer文字講得煞有其事、底下卻完全沒有任何可以點擊的東西
+            renderCarcampUnverifiedPlaces(data.unverifiedPlaces || []);
             carcampRememberTurn(question, data.answer, data.places);
             carcampUpdatePreferenceStats(data.places);
             // 記住這一輪Worker實際用的錨點，下一輪如果沒提新地名就可以延續用這個
@@ -659,6 +679,24 @@
         }).join('');
         window.__carcampLastPlaces = places;
     }
+    // AI提到、但系統查不到足夠可靠地圖資料(沒有真的搜尋依據，或搜尋有依據但地理編碼查不到
+    // 座標)的地點：不畫成一般的地點卡片，避免看起來像是已經驗證過座標的正常結果，只給一個
+    // Google地圖「搜尋」連結(不是導航，因為沒有座標可以導航)，讓使用者自己確認是否存在、
+    // 地址是否正確
+    function renderCarcampUnverifiedPlaces(list) {
+        const el = document.getElementById('unverified-places-list');
+        if (!el) return;
+        if (!list || !list.length) { el.innerHTML = ''; return; }
+        el.innerHTML = list.map(p => `
+            <div class="unverified-card">
+                <div class="unverified-label">⚠️ 查無法標記的地點，請自行確認</div>
+                <div class="name">${escapeHtmlCarcamp(p.name)}</div>
+                ${p.reason ? `<div class="reason">${escapeHtmlCarcamp(p.reason)}</div>` : ''}
+                <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name)}" target="_blank" rel="noopener">🔍 用Google地圖搜尋</a>
+            </div>
+        `).join('');
+    }
+
     function carcampFocusPlace(index) {
         const p = window.__carcampLastPlaces?.[index];
         if (!p) return;
@@ -786,6 +824,7 @@
             chatLog.scrollIntoView({ behavior: 'smooth', block: 'end' });
             renderCarcampMarkers(places);
             renderCarcampPlacesList(places);
+            renderCarcampUnverifiedPlaces([]); // 分類瀏覽完全不經過AI/搜尋，不會有「查無法標記」的地點，清掉上一次問答留下的殘留
         } catch (err) {
             document.getElementById(loadingId)?.remove();
             chatLog.insertAdjacentHTML('beforeend', `<div class="chat-bubble ai">瀏覽失敗（網路或連線問題）：${escapeHtmlCarcamp(err.message)}</div>`);
