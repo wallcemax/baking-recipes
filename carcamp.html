@@ -208,6 +208,24 @@
     .weather-inline .weather-alert { margin-top: 0.4rem; color: var(--danger); font-weight: 600; }
     .weather-inline .weather-loading, .weather-inline .weather-error { font-style: italic; }
 
+    /* ---------- 行程規劃：出發地→目的地，真實路線分天行程 ---------- */
+    #itinerary-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 1.2rem; padding: 1.1rem 1.2rem; margin-bottom: 1rem; }
+    #itinerary-panel summary { cursor: pointer; font-weight: 700; font-size: 0.95rem; color: var(--starlight); }
+    #itinerary-panel summary::marker { color: var(--ember); }
+    #itinerary-intro { font-size: 0.78rem; color: var(--dim); line-height: 1.6; margin: 0.6rem 0 0; }
+    #itinerary-form { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.8rem; }
+    .itinerary-summary { background: var(--panel-soft); border-radius: 1rem; padding: 0.9rem 1.05rem; margin-bottom: 0.9rem; }
+    .itinerary-summary-route { font-weight: 700; font-size: 0.95rem; color: var(--starlight); margin-bottom: 0.3rem; }
+    .itinerary-summary-stats { font-size: 0.78rem; color: var(--ember); margin-bottom: 0.5rem; }
+    .itinerary-summary p { font-size: 0.85rem; color: var(--dim); line-height: 1.6; margin: 0; }
+    .itinerary-day { border-top: 1px dashed var(--line); padding-top: 0.9rem; margin-top: 0.9rem; }
+    .itinerary-day-title { font-weight: 700; font-size: 0.92rem; color: var(--ember); display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; flex-wrap: wrap; }
+    .itinerary-day-km { font-size: 0.72rem; color: var(--dim); font-weight: 400; }
+    .itinerary-day-narrative { font-size: 0.85rem; color: var(--starlight); line-height: 1.6; margin: 0 0 0.6rem; }
+    .itinerary-day-stops { display: flex; flex-direction: column; gap: 0.5rem; }
+    .itinerary-error { font-size: 0.85rem; color: var(--danger); margin: 0; }
+    .itinerary-loading { font-size: 0.85rem; color: var(--dim); margin: 0; }
+
     /* ---------- 分類篩選chip：不用開口問AI，點幾下就能直接瀏覽 ---------- */
     .section-label { font-size: 0.82rem; color: var(--dim); font-weight: 700; margin-bottom: 0.6rem; }
     #category-chips-panel { margin-bottom: 1rem; }
@@ -264,6 +282,17 @@
             <input type="text" id="new-source-url" placeholder="貼上 Google 我的地圖分享連結">
             <button class="btn" onclick="carcampAddSource()">新增我的私人地圖</button>
         </div>
+    </details>
+
+    <details id="itinerary-panel">
+        <summary>🧭 行程規劃（出發地→目的地，真實路線）</summary>
+        <p id="itinerary-intro">用Google地圖真實路線規劃車泊行程，依實際開車時數自動分成好幾天，並從你的地圖資料裡挑順路的車泊點/景點/美食——不是憑聊天內容瞎湊的行程。</p>
+        <form id="itinerary-form" onsubmit="carcampPlanItinerary(event)">
+            <input type="text" id="itinerary-origin" placeholder="出發地（留空＝用目前位置）">
+            <input type="text" id="itinerary-destination" placeholder="目的地，例如：台南" required>
+            <button class="btn" type="submit" id="itinerary-submit-btn">規劃行程</button>
+        </form>
+        <div id="itinerary-result"></div>
     </details>
 
     <div id="category-chips-panel" class="hidden">
@@ -868,6 +897,165 @@
         } catch (err) {
             alert('新增失敗（網路或連線問題）：' + err.message);
         }
+    }
+
+    // ---------------------------------------------------------------
+    // 行程規劃：出發地→目的地，Worker那邊會先用Routes API算出真實路線，再依實際開車時數
+    // 自動分天、沿路收集候選地點，AI只負責寫自然語言敘述+從候選清單挑順路推薦——這裡前端
+    // 只是把表單內容送過去，然後把結果渲染成「總覽+每天一個區塊」，並在地圖上畫出路線
+    // (polyline)跟每一天推薦的停靠點。跟carcampAskQuestion的問答結果是分開的兩條渲染路徑，
+    // 不會互相干擾；規劃行程之後地圖會改成顯示這趟行程的路線，不是問答的推薦地點。
+    // ---------------------------------------------------------------
+    async function carcampPlanItinerary(event) {
+        event.preventDefault();
+        const originText = document.getElementById('itinerary-origin').value.trim();
+        const destinationText = document.getElementById('itinerary-destination').value.trim();
+        if (!destinationText) { alert('請輸入目的地'); return; }
+
+        const resultEl = document.getElementById('itinerary-result');
+        const submitBtn = document.getElementById('itinerary-submit-btn');
+
+        // 出發地：使用者有自己輸入地名就用地名(讓Worker那邊查Geocoding API)，沒輸入的話
+        // 退回目前定位到的GPS座標；兩者都沒有就沒辦法規劃，先擋掉、不要送一個沒有出發地的
+        // 請求白白浪費一次Routes API額度
+        const requestBody = {
+            action: 'carcamp_itinerary',
+            destinationText,
+            preferenceHint: carcampGetPreferenceHint(),
+        };
+        if (originText) {
+            requestBody.originText = originText;
+        } else if (Number.isFinite(carcampUserLat) && Number.isFinite(carcampUserLng)) {
+            requestBody.originLat = carcampUserLat;
+            requestBody.originLng = carcampUserLng;
+        } else {
+            alert('請輸入出發地，或允許定位權限後再試一次');
+            return;
+        }
+
+        submitBtn.disabled = true;
+        resultEl.innerHTML = '<p class="itinerary-loading">規劃中，要先算真實路線、再沿路找地點，可能要等一下下...</p>';
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            requestBody.idToken = idToken;
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                resultEl.innerHTML = `<p class="itinerary-error">規劃失敗：${escapeHtmlCarcamp(data.error || '未知錯誤')}</p>`;
+                return;
+            }
+            renderCarcampItinerary(data);
+        } catch (err) {
+            resultEl.innerHTML = `<p class="itinerary-error">規劃失敗（網路或連線問題）：${escapeHtmlCarcamp(err.message)}</p>`;
+        } finally {
+            submitBtn.disabled = false;
+        }
+    }
+
+    function renderCarcampItinerary(data) {
+        const resultEl = document.getElementById('itinerary-result');
+        const totalHours = Number.isFinite(data.totalDurationMinutes) ? Math.round(data.totalDurationMinutes / 60 * 10) / 10 : null;
+        const days = Array.isArray(data.days) ? data.days : [];
+        const summaryHtml = `
+            <div class="itinerary-summary">
+                <div class="itinerary-summary-route">🚗 ${escapeHtmlCarcamp(data.origin?.label || '出發地')} → ${escapeHtmlCarcamp(data.destination?.label || '目的地')}</div>
+                <div class="itinerary-summary-stats">全程約${Number.isFinite(data.totalDistanceKm) ? data.totalDistanceKm.toFixed(0) : '--'}公里${totalHours != null ? `・開車約${totalHours}小時` : ''}・共${days.length}天</div>
+                <p>${escapeHtmlCarcamp(data.tripSummary || '')}</p>
+            </div>
+        `;
+        const daysHtml = days.map(d => {
+            const kmText = Number.isFinite(d.drivingKmThisDay) ? `<span class="itinerary-day-km">約${d.drivingKmThisDay.toFixed(0)}公里</span>` : '';
+            const stops = Array.isArray(d.stops) ? d.stops : [];
+            const stopsHtml = stops.length ? `<div class="itinerary-day-stops">${stops.map(s => `
+                <div class="place-card">
+                    <div class="place-card-main">
+                        <div class="name">📍 ${escapeHtmlCarcamp(s.name)}</div>
+                        <div class="reason">${escapeHtmlCarcamp(s.reason || '')}</div>
+                    </div>
+                    <div class="place-card-actions">
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}" target="_blank" rel="noopener">🧭 導航</a>
+                    </div>
+                </div>
+            `).join('')}</div>` : '';
+            return `
+                <div class="itinerary-day">
+                    <div class="itinerary-day-title">${escapeHtmlCarcamp(d.dayTitle || `Day ${d.day}`)}${kmText}</div>
+                    <p class="itinerary-day-narrative">${escapeHtmlCarcamp(d.narrative || '')}</p>
+                    ${stopsHtml}
+                </div>
+            `;
+        }).join('');
+        resultEl.innerHTML = summaryHtml + daysHtml;
+        renderCarcampItineraryOnMap(data);
+    }
+
+    // 行程規劃結果畫在地圖上：清掉問答功能留下的舊標記，改畫這趟路線的polyline+出發/目的地
+    // 標記+每天推薦的停靠點標記。跟renderCarcampMarkers共用同一個carcampMarkers陣列(反正
+    // 同一時間只會顯示問答結果或行程結果其中一種)，另外用carcampItineraryPolyline單獨記錄
+    // 路線圖層，方便下次規劃前先清掉舊路線
+    let carcampItineraryPolyline = null;
+    function renderCarcampItineraryOnMap(data) {
+        carcampMarkers.forEach(m => m.setMap(null));
+        carcampMarkers = [];
+        if (carcampItineraryPolyline) {
+            carcampItineraryPolyline.setMap(null);
+            carcampItineraryPolyline = null;
+        }
+        if (!carcampMap) return;
+
+        const bounds = new google.maps.LatLngBounds();
+
+        if (Array.isArray(data.polyline) && data.polyline.length > 1) {
+            carcampItineraryPolyline = new google.maps.Polyline({
+                path: data.polyline.map(p => ({ lat: p.lat, lng: p.lng })),
+                geodesic: true, strokeColor: '#F2994A', strokeOpacity: 0.9, strokeWeight: 4,
+            });
+            carcampItineraryPolyline.setMap(carcampMap);
+            data.polyline.forEach(p => bounds.extend({ lat: p.lat, lng: p.lng }));
+        }
+
+        if (data.origin && Number.isFinite(data.origin.lat) && Number.isFinite(data.origin.lng)) {
+            const originMarker = new google.maps.Marker({
+                position: { lat: data.origin.lat, lng: data.origin.lng }, map: carcampMap,
+                title: '出發：' + (data.origin.label || ''),
+                label: { text: '起', color: '#1A0F08', fontWeight: '700' },
+                icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: '#52A37C', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+            });
+            carcampMarkers.push(originMarker);
+            bounds.extend({ lat: data.origin.lat, lng: data.origin.lng });
+        }
+
+        if (data.destination && Number.isFinite(data.destination.lat) && Number.isFinite(data.destination.lng)) {
+            const destMarker = new google.maps.Marker({
+                position: { lat: data.destination.lat, lng: data.destination.lng }, map: carcampMap,
+                title: '目的地：' + (data.destination.label || ''),
+                label: { text: '終', color: '#fff', fontWeight: '700' },
+                icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: '#EB5E28', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+            });
+            carcampMarkers.push(destMarker);
+            bounds.extend({ lat: data.destination.lat, lng: data.destination.lng });
+        }
+
+        (Array.isArray(data.days) ? data.days : []).forEach(d => {
+            (Array.isArray(d.stops) ? d.stops : []).forEach(s => {
+                if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return;
+                const marker = new google.maps.Marker({
+                    position: { lat: s.lat, lng: s.lng }, map: carcampMap, title: `Day${d.day}：${s.name}`,
+                });
+                const infoWindow = new google.maps.InfoWindow({
+                    content: `<div style="color:#1A2333; font-family:'Noto Sans TC',sans-serif; padding:2px;"><strong style="font-size:0.95rem;">Day${d.day}・${s.name}</strong><br><span style="color:#4A5568; font-size:0.85rem;">${s.reason || ''}</span></div>`,
+                });
+                marker.addListener('click', () => infoWindow.open(carcampMap, marker));
+                carcampMarkers.push(marker);
+                bounds.extend({ lat: s.lat, lng: s.lng });
+            });
+        });
+
+        if (!bounds.isEmpty()) carcampMap.fitBounds(bounds);
     }
 </script>
 </body>
