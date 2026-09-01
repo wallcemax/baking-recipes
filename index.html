@@ -599,7 +599,7 @@
                     <input id="personal-nickname-input" type="text" placeholder="輸入暱稱（選填）" maxlength="8" style="flex:0 0 8rem; padding:0.4rem 0.8rem; border-radius:999px; border:1px solid var(--line); font-size:0.85rem;">
                     <button onclick="saveNickname()" class="text-xs font-medium shrink-0" style="color:var(--jam)">儲存</button>
                 </div>
-                <div class="grid sm:grid-cols-2 gap-3 mb-6">
+                <div class="grid sm:grid-cols-3 gap-3 mb-6">
                     <button onclick="showProfileModal()" class="personal-info-card">
                         <span class="personal-info-card-icon">🏅</span>
                         <span class="personal-info-card-text">
@@ -612,6 +612,13 @@
                         <span class="personal-info-card-text">
                             <span class="personal-info-card-title">做菜音樂</span>
                             <span id="personal-music-status" class="personal-info-card-sub">尚未設定</span>
+                        </span>
+                    </button>
+                    <button onclick="showTrashModal()" class="personal-info-card">
+                        <span class="personal-info-card-icon">🗑</span>
+                        <span class="personal-info-card-text">
+                            <span class="personal-info-card-title">垃圾桶</span>
+                            <span id="personal-trash-status" class="personal-info-card-sub">目前是空的</span>
                         </span>
                     </button>
                 </div>
@@ -1191,6 +1198,20 @@
         </div>
     </div>
 
+    <!-- 垃圾桶：刪除食譜改成軟刪除，先進這裡可以復原，永久刪除才會真的清掉（含圖片）-->
+    <div id="trash-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
+        <div class="bg-white w-full md:max-w-lg max-h-[85vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
+            <div class="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0" style="border-color:var(--line)">
+                <h2 class="font-display text-xl sm:text-2xl font-bold">🗑 垃圾桶</h2>
+                <button onclick="closeTrashModal()" class="text-3xl leading-none" style="color:var(--muted)" aria-label="關閉">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+                <p class="text-xs mb-4" style="color:var(--muted)">刪除的食譜會先留在這裡，按「復原」可以救回來；「永久刪除」才會真的整個消失（連圖片也會一起清掉），沒辦法復原</p>
+                <div id="trash-list" class="space-y-2"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- 個人成就頁面 Modal -->
     <div id="profile-modal" class="hidden fixed inset-0 modal-backdrop flex items-end md:items-center justify-center z-50">
         <div class="bg-white w-full md:max-w-2xl max-h-[88vh] rounded-t-[2rem] md:rounded-[2rem] overflow-hidden flex flex-col sheet-panel">
@@ -1558,6 +1579,7 @@
             const profileModal = document.getElementById('profile-modal');
             const adminAchModal = document.getElementById('admin-achievements-modal');
             const orphanModal = document.getElementById('orphaned-images-modal');
+            const trashModal = document.getElementById('trash-modal');
             const shoppingModal = document.getElementById('shopping-list-modal');
             const activityLogModal = document.getElementById('family-activity-log-modal');
             const myCostsModal = document.getElementById('my-ingredient-costs-modal');
@@ -1580,6 +1602,8 @@
                 closeAdminAchievementsModal(true);
             } else if (orphanModal && !orphanModal.classList.contains('hidden')) {
                 closeOrphanedImagesModal(true);
+            } else if (trashModal && !trashModal.classList.contains('hidden')) {
+                closeTrashModal(true);
             } else if (shoppingModal && !shoppingModal.classList.contains('hidden')) {
                 closeShoppingListModal(true);
             } else if (activityLogModal && !activityLogModal.classList.contains('hidden')) {
@@ -3535,11 +3559,20 @@
 
         let hasRestoredLastRecipe = false;
         let hasOpenedRecipeFromUrl = false; // 避免同一次頁面載入重複處理?openRecipe=ID這個網址參數
+        // recipes collection沒有做真正的分頁/搜尋索引（分類統計、成就進度等一大堆邏輯都假設
+        // allRecipes是「全部資料」），要做真正的keyset分頁牽連太廣、風險太高，這裡先加一個實際的
+        // 上限當安全網——目前食譜量遠低於這個數字，行為不會有任何變化，純粹避免資料無上限成長
+        const RECIPES_QUERY_SAFETY_LIMIT = 3000;
+        let deletedRecipesCache = []; // 被軟刪除（有deletedAt）的食譜，只給「垃圾桶」畫面用，不會出現在allRecipes/搜尋/清單裡
         function loadRecipes() {
             // 不倚賴 Firestore 端的 orderBy（避免舊資料缺少 updatedAt 欄位而被排除），
             // 改為抓回全部後在前端依「最新編輯時間」排序：updatedAt 沒有就退回 createdAt
-            db.collection("recipes").onSnapshot(snap => {
-                allRecipes = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+            db.collection("recipes").limit(RECIPES_QUERY_SAFETY_LIMIT).onSnapshot(snap => {
+                const allDocs = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+                // 軟刪除的食譜（有deletedAt）不算進allRecipes——所有搜尋/篩選/個人頁面/成就統計
+                // 都是從allRecipes算出來的，這裡統一擋掉，其他地方完全不用另外改
+                allRecipes = allDocs.filter(r => !r.deletedAt);
+                deletedRecipesCache = allDocs.filter(r => r.deletedAt);
                 allRecipes.sort((a, b) => {
                     // 依「建立日期」排序，不是「最後編輯日期」——編輯過的舊食譜不應該因為改過內容
                     // 就跳到最前面，建立日期沒有的舊資料才退回用編輯日期頂替
@@ -3548,6 +3581,11 @@
                     const bTime = toMillis(b.createdAt) || toMillis(b.updatedAt);
                     return bTime - aTime;
                 });
+                updateTrashStatusText();
+                // 垃圾桶視窗如果剛好開著，資料一有異動也要跟著刷新，不然使用者在別的裝置復原/
+                // 永久刪除之後，這個視窗還會顯示舊的清單
+                const trashModal = document.getElementById('trash-modal');
+                if (trashModal && !trashModal.classList.contains('hidden')) renderTrashList();
                 // 個人頁面總覽（儀表板）不是靠filterRecipes()渲染的，食譜資料一有異動
                 // （新增、編輯、刪除…）要另外呼叫renderPersonalDashboard()才會跟著更新；
                 // 查看更多的完整清單、還有首頁格線，filterRecipes()內部本來就有處理好
@@ -3591,6 +3629,83 @@
                     } catch (e) { console.warn('從網址參數開啟食譜失敗', e); }
                 }
             });
+        }
+
+        // ========== 垃圾桶（食譜軟刪除） ==========
+        // 「刪除食譜」不再直接砍掉Firestore文件，而是標記deletedAt，食譜會從所有清單/搜尋/
+        // 個人頁面消失（見loadRecipes()裡的過濾），但資料還留著，可以在這裡復原，或選擇永久刪除。
+        // 圖片（Cloudinary）也是到「永久刪除」那一步才會真的清掉，單純刪除食譜不會動到圖片，
+        // 這樣復原的時候圖片才還在。
+        function myVisibleTrashItems() {
+            if (!currentUser) return [];
+            const isAdmin = currentUser.email === ADMIN_EMAIL;
+            return deletedRecipesCache.filter(r => isAdmin || r.authorId === currentUser.uid);
+        }
+        // 個人頁面儀表板上的「垃圾桶」卡片，顯示目前有幾篇可以復原，讓使用者不用點進去才知道是空的
+        function updateTrashStatusText() {
+            const el = document.getElementById('personal-trash-status');
+            if (!el) return;
+            const count = myVisibleTrashItems().length;
+            el.textContent = count ? `${count}篇可以復原` : '目前是空的';
+        }
+        function showTrashModal() {
+            if (!currentUser) { alert('請先登入才能查看垃圾桶'); return; }
+            document.getElementById('trash-modal').classList.remove('hidden');
+            renderTrashList();
+            pushModalHistoryState();
+        }
+        function closeTrashModal(fromPopState) {
+            document.getElementById('trash-modal').classList.add('hidden');
+            consumeModalHistoryState(fromPopState);
+        }
+        function renderTrashList() {
+            const listEl = document.getElementById('trash-list');
+            if (!listEl) return;
+            const toMillis = t => (t && typeof t.toMillis === 'function') ? t.toMillis() : 0;
+            const items = myVisibleTrashItems().sort((a, b) => toMillis(b.deletedAt) - toMillis(a.deletedAt));
+            if (!items.length) {
+                listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🗑</div><p>垃圾桶是空的</p></div>`;
+                return;
+            }
+            listEl.innerHTML = items.map(r => {
+                const deletedMs = toMillis(r.deletedAt);
+                const deletedDate = deletedMs ? new Date(deletedMs).toLocaleDateString('zh-TW') : '';
+                return `
+                <div class="flex items-center justify-between gap-2 p-3 rounded-xl" style="background:var(--cream); border:1px solid var(--line)">
+                    <div class="min-w-0">
+                        <p class="font-medium truncate">${escapeHtmlText(r.name || '（未命名食譜）')}</p>
+                        <p class="text-xs" style="color:var(--muted)">刪除於 ${deletedDate}</p>
+                    </div>
+                    <div class="flex gap-1.5 shrink-0">
+                        <button onclick="restoreRecipe('${r.id}')" class="btn-secondary text-xs" style="padding:0.45rem 0.9rem">復原</button>
+                        <button onclick="permanentlyDeleteRecipe('${r.id}')" class="btn-danger text-xs" style="padding:0.45rem 0.9rem">永久刪除</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+        function restoreRecipe(id) {
+            const recipe = deletedRecipesCache.find(r => r.id === id);
+            if (!recipe || !canEditRecipe(recipe)) { alert('你沒有權限復原這個食譜'); return; }
+            db.collection('recipes').doc(id).update({
+                deletedAt: firebase.firestore.FieldValue.delete(),
+                deletedBy: firebase.firestore.FieldValue.delete(),
+            }).then(() => {
+                showToast('食譜已復原', 'success');
+            }).catch(err => alert('復原失敗：' + err.message));
+        }
+        function permanentlyDeleteRecipe(id) {
+            const recipe = deletedRecipesCache.find(r => r.id === id);
+            if (!recipe || !canEditRecipe(recipe)) { alert('你沒有權限永久刪除這個食譜'); return; }
+            if (!confirm(`確定要永久刪除「${recipe.name || '這個食譜'}」嗎？這個動作沒辦法復原，連圖片都會一起清掉`)) return;
+            // 這裡才是真的清圖片的時機點（軟刪除當下不會動圖片，就是為了讓復原時圖片還在）
+            if (recipe.imageUrl) deleteCloudinaryImage(recipe.imageUrl, '垃圾桶永久刪除（主圖）');
+            (recipe.steps || []).forEach(s => {
+                const stepImageUrl = typeof s === 'string' ? null : (s && s.imageUrl);
+                if (stepImageUrl) deleteCloudinaryImage(stepImageUrl, '垃圾桶永久刪除（步驟圖片）');
+            });
+            db.collection('recipes').doc(id).delete().then(() => {
+                showToast('已永久刪除', 'success');
+            }).catch(err => alert('刪除失敗：' + err.message));
         }
 
         // 點卡片上的標籤，直接用這個標籤當關鍵字搜尋
@@ -9541,18 +9656,18 @@
             });
         }
 
+        // 改成軟刪除：只標記deletedAt，不會真的砍資料也不會動圖片——食譜會從所有清單/搜尋消失，
+        // 但還留在「垃圾桶」裡可以復原，避免手滑點錯就永久遺失（永久刪除要另外去垃圾桶按）
         function deleteRecipe(recipe) {
             if (!canEditRecipe(recipe)) { alert("你沒有權限刪除這個食譜"); return; }
-            if (confirm("確定刪除此食譜？")) {
-                if (recipe.imageUrl) deleteCloudinaryImage(recipe.imageUrl, '刪除食譜（主圖）');
-                (recipe.steps || []).forEach(s => {
-                    const stepImageUrl = typeof s === 'string' ? null : (s && s.imageUrl);
-                    if (stepImageUrl) deleteCloudinaryImage(stepImageUrl, '刪除食譜（步驟圖片）');
-                });
-                db.collection("recipes").doc(recipe.id).delete().then(() => {
-                    alert("食譜已刪除");
+            if (confirm("確定刪除此食譜？刪除後可以到「垃圾桶」復原")) {
+                db.collection("recipes").doc(recipe.id).update({
+                    deletedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    deletedBy: currentUser.uid,
+                }).then(() => {
+                    showToast('食譜已刪除，可以到「垃圾桶」復原', 'success');
                     closeDetail();
-                });
+                }).catch(err => alert('刪除失敗：' + err.message));
             }
         }
 
