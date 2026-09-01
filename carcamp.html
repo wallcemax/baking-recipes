@@ -620,8 +620,10 @@
                 </div>
                 <div class="place-card-actions">
                     <a href="https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}" target="_blank" rel="noopener">🧭 導航</a>
+                    <button type="button" onclick="event.stopPropagation(); carcampShowPlaceTide(${i}, window.__carcampLastPlaces[${i}])">🌊 潮汐</button>
                 </div>
                 <div class="weather-inline hidden" id="weather-inline-${i}"></div>
+                <div class="weather-inline hidden" id="tide-inline-${i}"></div>
             </div>
         `).join('');
         window.__carcampLastPlaces = places;
@@ -696,6 +698,54 @@
         } catch (err) {
             if (carcampWeatherTokens[index] !== myToken) return;
             el.innerHTML = `<span class="weather-error">⚠️ 天氣查詢失敗（網路或連線問題）</span>`;
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 點「🌊 潮汐」按鈕才查詢(不像天氣是點地點卡片就自動查)：潮汐只有沿海地點才有參考價值，
+    // 做成需要的人自己按，不會每次點地點都多打一次API
+    // ---------------------------------------------------------------
+    const carcampTideTokens = {};
+    async function carcampShowPlaceTide(index, place) {
+        const el = document.getElementById(`tide-inline-${index}`);
+        if (!el || !place) return;
+        el.classList.remove('hidden');
+        const myToken = (carcampTideTokens[index] = (carcampTideTokens[index] || 0) + 1);
+        el.innerHTML = '<span class="weather-loading">🌊 查詢潮汐中...</span>';
+        try {
+            const idToken = await carcampCurrentUser.getIdToken();
+            const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'carcamp_place_tide', idToken, lat: place.lat, lng: place.lng }),
+            });
+            const data = await res.json();
+            if (carcampTideTokens[index] !== myToken) return;
+            if (!res.ok || data.error) {
+                el.innerHTML = `<span class="weather-error">⚠️ 潮汐查詢失敗${data.error ? '：' + escapeHtmlCarcamp(data.error) : ''}</span>`;
+                return;
+            }
+            const distanceNote = (data.distanceKm !== null && data.distanceKm !== undefined)
+                ? `（最近潮位站：${escapeHtmlCarcamp(data.stationName)}，距離約${data.distanceKm}公里${data.distanceKm > 30 ? '，離這裡有點遠，僅供參考' : ''}）`
+                : '';
+            if (!data.days) {
+                // 解析失敗：這是已知的風險（見worker.js裡的說明），把原始資料印在Console方便回報格式，
+                // 畫面上不要嚇到使用者、也不要整個看起來像壞掉
+                console.warn('潮汐資料格式跟預期不同，原始回應：', data.raw);
+                el.innerHTML = `<span class="weather-error">⚠️ 潮汐資料格式跟預期不同，已經把原始資料印在瀏覽器Console，麻煩回報給開發者調整解析邏輯${distanceNote}</span>`;
+                return;
+            }
+            const daysHtml = data.days.map(d => {
+                const eventsText = d.events.map(e => `${escapeHtmlCarcamp(e.type || '')} ${escapeHtmlCarcamp(e.time || '')}${e.heightCm ? `(${escapeHtmlCarcamp(String(e.heightCm))}cm)` : ''}`).join('、');
+                return `<span class="weather-day"><b>${escapeHtmlCarcamp(d.date || '')}</b>${eventsText}</span>`;
+            }).join('');
+            el.innerHTML = `
+                <div class="weather-now">🌊 ${escapeHtmlCarcamp(data.stationName)}潮汐${distanceNote}</div>
+                <div class="weather-days">${daysHtml}</div>
+            `;
+        } catch (err) {
+            if (carcampTideTokens[index] !== myToken) return;
+            el.innerHTML = `<span class="weather-error">⚠️ 潮汐查詢失敗（網路或連線問題）</span>`;
         }
     }
 
