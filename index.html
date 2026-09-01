@@ -1144,8 +1144,9 @@
                 <div class="grid grid-cols-2 gap-2">
                     <label for="fridge-item-photo-file" class="btn-sage flex items-center justify-center cursor-pointer">📸 拍照新增</label>
                     <button onclick="openBarcodeScanner()" class="btn-sage">🏷️ 條碼新增</button>
-                    <input type="file" id="fridge-item-photo-file" accept="image/jpeg,image/png,image/webp" capture="environment" class="hidden" onchange="handleFridgeItemPhotoOcr(event)">
+                    <input type="file" id="fridge-item-photo-file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple class="hidden" onchange="handleFridgeItemPhotoOcr(event)">
                 </div>
+                <p class="text-xs mt-1 text-center" style="color:var(--muted)">可以一次選多張（例如正面品牌、背面條碼、效期標籤各拍一張），AI會合併判斷成同一件商品</p>
                 <p id="fridge-item-photo-status" class="hidden text-xs mt-2 text-center" style="color:var(--chambray)"></p>
             </div>
         </div>
@@ -7972,17 +7973,23 @@
         // 拍照辨識商品（冰箱新增食材用）：拍商品包裝正面照片，AI直接讀出品牌名稱跟規格數量，
         // 跳過條碼查詢這一步，適合條碼掃不到、或商品根本沒有條碼的情況（例如店家分裝品）
         async function handleFridgeItemPhotoOcr(event) {
-            const file = event.target.files[0];
-            if (!file) return;
+            const files = Array.from(event.target.files || []);
+            if (!files.length) return;
             const statusEl = document.getElementById('fridge-item-photo-status');
-            statusEl.textContent = '🔍 辨識中，請稍候...';
+            statusEl.textContent = `🔍 辨識中，請稍候...${files.length > 1 ? `（共${files.length}張照片）` : ''}`;
             statusEl.classList.remove('hidden');
             showAiProcessingAnimation();
             try {
-                // compressImageForUpload現在decode失敗一律退回原始檔案(不會是null了)，交給
-                // 後面的AI辨識/Cloudinary實際判斷格式對不對，這裡不用再另外擋一次
-                const compressed = await compressImageForUpload(file, 1600, 0.85);
-                const base64 = await fileToBase64(compressed);
+                // 支援一次選多張（例如正面品牌、背面條碼、效期標籤分開拍），跟拍照辨識食譜同一套
+                // 做法——一張包裝照片常常沒辦法同時拍到所有需要的資訊，讓使用者分開拍、AI合併判斷
+                const images = [];
+                for (const file of files) {
+                    // compressImageForUpload現在decode失敗一律退回原始檔案(不會是null了)，交給
+                    // 後面的AI辨識/Cloudinary實際判斷格式對不對，這裡不用再另外擋一次
+                    const compressed = await compressImageForUpload(file, 1600, 0.85);
+                    const base64 = await fileToBase64(compressed);
+                    images.push({ data: base64, mimeType: compressed.type || 'image/jpeg' });
+                }
                 // 這個功能一定是登入之後才能觸發到（開「我的冰箱」時已經檢查過currentUser），
                 // 這裡直接拿現有的登入狀態換一張Token，讓Worker端可以驗證呼叫者身份，
                 // 不會多跳出任何登入提示、使用體驗完全不變
@@ -7990,7 +7997,7 @@
                 const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'read_product_photo', imageBase64: base64, mimeType: compressed.type || 'image/jpeg', idToken }),
+                    body: JSON.stringify({ action: 'read_product_photo', images, idToken }),
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || '辨識失敗');
