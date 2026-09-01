@@ -605,6 +605,57 @@
         return topCount >= 3 ? topName : null;
     }
 
+    // ---------------------------------------------------------------
+    // 「這個地點離海夠近嗎」的粗略判斷，只用來決定要不要顯示🌊潮汐按鈕(內陸/山區地點顯示
+    // 這顆按鈕，點下去也只會看到「距離最近潮位站80公里，僅供參考」這種沒意義的結果，使用者
+    // 反映過這樣很奇怪)。用一份沿台灣海岸線(本島+主要離島)手動抓的參考點清單，算使用者
+    // 這個地點離「最近的參考點」有多遠，在門檻(12公里)以內才顯示按鈕。
+    // 這份清單不是精確的海岸線資料，點位間距抓在10~20公里左右，海灣/岬角這種地形變化大的
+    // 地方誤差會比較大，但用來做「附近有沒有海」這種粗略判斷已經夠用，比「每個地點不分青紅
+    // 皂白都顯示潮汐按鈕」更合理。之後如果想要更精準，可以改成串接完整的海岸線GeoJSON資料，
+    // 但那樣門檻高很多(檔案大小、多邊形距離運算)，先用這個輕量版本
+    // ---------------------------------------------------------------
+    const TW_COASTLINE_POINTS = [
+        // 東北角→基隆→淡水
+        { lat: 25.02, lng: 121.92 }, { lat: 25.09, lng: 121.80 }, { lat: 25.15, lng: 121.74 }, { lat: 25.18, lng: 121.69 }, { lat: 25.17, lng: 121.42 },
+        // 桃竹苗
+        { lat: 25.05, lng: 121.22 }, { lat: 24.90, lng: 121.02 }, { lat: 24.84, lng: 120.91 }, { lat: 24.65, lng: 120.75 },
+        // 中彰投海線
+        { lat: 24.45, lng: 120.55 }, { lat: 24.25, lng: 120.51 }, { lat: 24.05, lng: 120.35 },
+        // 雲嘉南
+        { lat: 23.78, lng: 120.20 }, { lat: 23.58, lng: 120.10 }, { lat: 23.45, lng: 120.10 }, { lat: 23.30, lng: 120.05 },
+        // 台南高雄
+        { lat: 23.14, lng: 120.08 }, { lat: 22.99, lng: 120.16 }, { lat: 22.75, lng: 120.20 }, { lat: 22.58, lng: 120.27 }, { lat: 22.45, lng: 120.35 },
+        // 屏東西岸→恆春
+        { lat: 22.35, lng: 120.42 }, { lat: 22.15, lng: 120.68 }, { lat: 21.97, lng: 120.69 }, { lat: 21.90, lng: 120.74 },
+        // 恆春東側→台東
+        { lat: 22.05, lng: 120.86 }, { lat: 22.30, lng: 121.00 }, { lat: 22.60, lng: 121.05 }, { lat: 22.75, lng: 121.15 },
+        { lat: 22.99, lng: 121.13 }, { lat: 23.10, lng: 121.38 }, { lat: 23.30, lng: 121.42 },
+        // 花東海岸
+        { lat: 23.55, lng: 121.48 }, { lat: 23.75, lng: 121.55 }, { lat: 23.97, lng: 121.63 }, { lat: 24.15, lng: 121.68 },
+        // 宜蘭
+        { lat: 24.35, lng: 121.83 }, { lat: 24.59, lng: 121.86 }, { lat: 24.75, lng: 121.85 }, { lat: 24.90, lng: 121.90 },
+        // 離島：澎湖、金門、馬祖、小琉球、綠島、蘭嶼
+        { lat: 23.57, lng: 119.58 }, { lat: 23.65, lng: 119.60 },
+        { lat: 24.44, lng: 118.32 }, { lat: 24.35, lng: 118.42 },
+        { lat: 26.15, lng: 119.93 },
+        { lat: 22.35, lng: 120.37 },
+        { lat: 22.66, lng: 121.48 },
+        { lat: 22.05, lng: 121.55 },
+    ];
+    const CARCAMP_TIDE_BUTTON_MAX_KM = 12;
+    function carcampHaversineKmClient(lat1, lng1, lat2, lng2) {
+        const R = 6371;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLng = (lng2 - lng1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+    function carcampIsNearTaiwanCoast(lat, lng) {
+        if (typeof lat !== 'number' || typeof lng !== 'number') return false;
+        return TW_COASTLINE_POINTS.some(p => carcampHaversineKmClient(lat, lng, p.lat, p.lng) <= CARCAMP_TIDE_BUTTON_MAX_KM);
+    }
+
     function renderCarcampPlacesList(places) {
         const listEl = document.getElementById('places-list');
         if (!places.length) {
@@ -620,7 +671,9 @@
                 </div>
                 <div class="place-card-actions">
                     <a href="https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}" target="_blank" rel="noopener">🧭 導航</a>
-                    <button type="button" onclick="event.stopPropagation(); carcampShowPlaceTide(${i}, window.__carcampLastPlaces[${i}])">🌊 潮汐</button>
+                    ${carcampIsNearTaiwanCoast(p.lat, p.lng)
+                        ? `<button type="button" onclick="event.stopPropagation(); carcampShowPlaceTide(${i}, window.__carcampLastPlaces[${i}])">🌊 潮汐</button>`
+                        : ''}
                 </div>
                 <div class="weather-inline hidden" id="weather-inline-${i}"></div>
                 <div class="weather-inline hidden" id="tide-inline-${i}"></div>
@@ -722,6 +775,7 @@
             const data = await res.json();
             if (carcampTideTokens[index] !== myToken) return;
             if (!res.ok || data.error) {
+                if (data.raw) console.warn('潮汐查詢失敗，原始回應：', data.raw);
                 el.innerHTML = `<span class="weather-error">⚠️ 潮汐查詢失敗${data.error ? '：' + escapeHtmlCarcamp(data.error) : ''}</span>`;
                 return;
             }
