@@ -8167,6 +8167,36 @@
             await handleRecipeOcr(files);
             clearPhotoQueue('recipe-ocr');
         }
+        // Gemini免費API有個已知限制：Cloudflare Worker每次執行可能被路由到不同的邊緣節點，
+        // 如果剛好那個節點落在Google目前擋掉的地區，那次呼叫就會被Google拒絕，回傳
+        // 「User location is not supported for the API use」——這不是帳號被封鎖(其他次呼叫
+        // 通常都正常)，只是那一次執行剛好衰到不好的節點，換一次執行(等於有機會被路由到
+        // 別的節點)常常就會成功。這裡包一層「遇到這個特定錯誤才自動重試一次」的小工具，
+        // 不影響其他任何錯誤的處理方式(那些還是照原本的方式直接顯示給使用者看)
+        async function fetchAiProxyWithRetry(payload, maxAttempts = 2) {
+            let lastErr = null;
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                    const data = await res.json();
+                    const isLocationBlock = !res.ok && typeof data.error === 'string' && data.error.includes('User location is not supported');
+                    if (isLocationBlock && attempt < maxAttempts) {
+                        await new Promise(r => setTimeout(r, 800));
+                        continue;
+                    }
+                    return { res, data };
+                } catch (err) {
+                    lastErr = err;
+                    if (attempt >= maxAttempts) throw err;
+                    await new Promise(r => setTimeout(r, 800));
+                }
+            }
+            throw lastErr || new Error('未知錯誤');
+        }
         async function handleFridgeItemPhotoOcr(files) {
             if (!files.length) return;
             const statusEl = document.getElementById('fridge-item-photo-status');
@@ -8188,12 +8218,7 @@
                 // 這裡直接拿現有的登入狀態換一張Token，讓Worker端可以驗證呼叫者身份，
                 // 不會多跳出任何登入提示、使用體驗完全不變
                 const idToken = await currentUser.getIdToken();
-                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'read_product_photo', images, idToken }),
-                });
-                const data = await res.json();
+                const { res, data } = await fetchAiProxyWithRetry({ action: 'read_product_photo', images, idToken });
                 if (!res.ok) throw new Error(data.error || '辨識失敗');
                 if (!data.name) {
                     statusEl.innerHTML = `⚠️ 照片上辨識不出商品資訊，麻煩拍清楚一點再試一次，或是直接手動輸入<br>
@@ -8237,12 +8262,7 @@
                 // 這個功能一定是登入之後才能觸發到（新增食譜視窗已經檢查過currentUser），
                 // 這裡直接拿現有的登入狀態換一張Token給Worker驗證，不會多跳出任何提示
                 const idToken = await currentUser.getIdToken();
-                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'read_recipe_photo', images, idToken }),
-                });
-                const data = await res.json();
+                const { res, data } = await fetchAiProxyWithRetry({ action: 'read_recipe_photo', images, idToken });
                 if (!res.ok) throw new Error(data.error || '辨識失敗');
                 const hasContent = data.name || (data.ingredients && data.ingredients.length) || (data.steps && data.steps.length);
                 if (!hasContent) {
@@ -8328,12 +8348,7 @@
             showAiProcessingAnimation();
             try {
                 const idToken = await currentUser.getIdToken();
-                const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'analyze_recipe_video', youtubeUrl, idToken }),
-                });
-                const data = await res.json();
+                const { res, data } = await fetchAiProxyWithRetry({ action: 'analyze_recipe_video', youtubeUrl, idToken });
                 if (!res.ok) throw new Error(data.error || '辨識失敗');
                 const hasContent = data.name || (data.ingredients && data.ingredients.length) || (data.steps && data.steps.length);
                 if (!hasContent) {
