@@ -1141,12 +1141,21 @@
                 </div>
             </div>
             <div id="fridge-bottom-actions" class="sticky bottom-0 px-6 sm:px-8 py-4 border-t bg-white shrink-0" style="border-color:var(--line)">
-                <div class="grid grid-cols-2 gap-2">
-                    <label for="fridge-item-photo-file" class="btn-sage flex items-center justify-center cursor-pointer">📸 拍照新增</label>
-                    <button onclick="openBarcodeScanner()" class="btn-sage">🏷️ 條碼新增</button>
-                    <input type="file" id="fridge-item-photo-file" accept="image/jpeg,image/png,image/webp" multiple class="hidden" onchange="handleFridgeItemPhotoOcr(event)">
+                <div class="grid grid-cols-3 gap-2">
+                    <label for="fridge-item-camera-file" class="btn-sage flex items-center justify-center cursor-pointer text-sm" style="padding:0.65rem 0.25rem">📷 拍照</label>
+                    <label for="fridge-item-gallery-file" class="btn-sage flex items-center justify-center cursor-pointer text-sm" style="padding:0.65rem 0.25rem">🖼️ 選相簿</label>
+                    <button onclick="openBarcodeScanner()" class="btn-sage text-sm" style="padding:0.65rem 0.25rem">🏷️ 條碼新增</button>
                 </div>
-                <p class="text-xs mt-1 text-center" style="color:var(--muted)">會先跳出選單問「拍照」還是「選取檔案」；選拍照的話，每拍完一張都可以繼續拍下一張，拍完全部再按完成一次送出（例如正面品牌、背面條碼、效期標籤各拍一張），AI會合併判斷成同一件商品</p>
+                <input type="file" id="fridge-item-camera-file" accept="image/jpeg,image/png,image/webp" capture="environment" class="hidden" onchange="queueFridgeItemPhotos(event)">
+                <input type="file" id="fridge-item-gallery-file" accept="image/jpeg,image/png,image/webp" multiple class="hidden" onchange="queueFridgeItemPhotos(event)">
+                <div id="fridge-item-photo-queue" class="hidden mt-2">
+                    <div id="fridge-item-photo-queue-thumbs" class="flex flex-wrap gap-2 mb-2"></div>
+                    <div class="flex gap-2">
+                        <button type="button" onclick="startFridgeItemPhotoOcr()" class="btn-sage flex-1" style="padding:0.5rem">🔍 開始辨識（<span id="fridge-item-photo-queue-count">0</span>張）</button>
+                        <button type="button" onclick="clearPhotoQueue('fridge-item-photo')" class="btn-secondary" style="padding:0.5rem 0.9rem">清空</button>
+                    </div>
+                </div>
+                <p class="text-xs mt-1 text-center" style="color:var(--muted)">「拍照」可以連續拍好幾張，每拍一張都會加進下面的清單，拍完全部再按「開始辨識」一次送出（例如正面品牌、背面條碼、效期標籤各拍一張）；「選相簿」則是一次選多張現有的照片，AI會合併判斷成同一件商品</p>
                 <p id="fridge-item-photo-status" class="hidden text-xs mt-2 text-center" style="color:var(--chambray)"></p>
             </div>
         </div>
@@ -1236,11 +1245,20 @@
             </div>
             <div class="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
                 <input id="recipe-id" type="hidden">
-                <label for="recipe-ocr-file" class="btn-sage w-full mb-3 flex items-center justify-center gap-2 cursor-pointer" style="padding:0.65rem">
-                    📷 拍照辨識食譜（自動帶入名稱/食材/步驟）
-                </label>
-                <input type="file" id="recipe-ocr-file" accept="image/jpeg,image/png,image/webp" multiple class="hidden" onchange="handleRecipeOcr(event)">
-                <p class="text-xs mb-3" style="color:var(--muted)">會先跳出選單問「拍照」還是「選取檔案」；選拍照的話，每拍完一張都可以繼續拍下一張，全部拍完再按完成一次送出（例如一張材料、一張步驟），AI會合併辨識</p>
+                <div class="grid grid-cols-2 gap-2 mb-1">
+                    <label for="recipe-ocr-camera-file" class="btn-sage flex items-center justify-center gap-2 cursor-pointer" style="padding:0.65rem">📷 拍照辨識</label>
+                    <label for="recipe-ocr-gallery-file" class="btn-sage flex items-center justify-center gap-2 cursor-pointer" style="padding:0.65rem">🖼️ 選相簿辨識</label>
+                </div>
+                <input type="file" id="recipe-ocr-camera-file" accept="image/jpeg,image/png,image/webp" capture="environment" class="hidden" onchange="queueRecipeOcrPhotos(event)">
+                <input type="file" id="recipe-ocr-gallery-file" accept="image/jpeg,image/png,image/webp" multiple class="hidden" onchange="queueRecipeOcrPhotos(event)">
+                <div id="recipe-ocr-queue" class="hidden mb-3">
+                    <div id="recipe-ocr-queue-thumbs" class="flex flex-wrap gap-2 mb-2"></div>
+                    <div class="flex gap-2">
+                        <button type="button" onclick="startRecipeOcr()" class="btn-sage flex-1" style="padding:0.5rem">🔍 開始辨識（自動帶入名稱/食材/步驟，共<span id="recipe-ocr-queue-count">0</span>張）</button>
+                        <button type="button" onclick="clearPhotoQueue('recipe-ocr')" class="btn-secondary" style="padding:0.5rem 0.9rem">清空</button>
+                    </div>
+                </div>
+                <p class="text-xs mb-3" style="color:var(--muted)">「拍照辨識」可以連續拍好幾張，每拍一張都會加進下面的清單，全部拍完再按「開始辨識」一次送出（例如一張材料、一張步驟）；「選相簿辨識」則是一次選多張現有的照片，AI會合併辨識</p>
                 <p id="recipe-ocr-status" class="hidden text-xs mb-3" style="color:var(--chambray)"></p>
                 <input id="name" class="form-input mb-1 text-lg" placeholder="食譜名稱">
                 <input id="recipe-tagline" oninput="updateTaglineCounter()" class="form-input mb-1" placeholder="一句話短描述（選填，例如：外酥內Q，越嚼越香的麻糬麵包）">
@@ -7869,6 +7887,9 @@
         async function openFridgeModal() {
             if (!currentUser) { alert('請先登入才能使用我的冰箱'); return; }
             document.getElementById('fridge-modal').classList.remove('hidden');
+            clearPhotoQueue('fridge-item-photo'); // 清掉上一次開這個視窗時可能還沒送出的待辨識照片佇列
+            const fridgePhotoStatus = document.getElementById('fridge-item-photo-status');
+            if (fridgePhotoStatus) { fridgePhotoStatus.textContent = ''; fridgePhotoStatus.classList.add('hidden'); }
             cancelEditFridgeItem();
             pushModalHistoryState();
             // 這幾個區塊各自獨立try/catch，避免任何一個環節出錯(例如讀取角色或食材成本失敗)
@@ -7973,8 +7994,65 @@
         // 自動整理成名稱、食材清單、作法步驟，直接幫忙填好表單，不用自己整段重新打字輸入
         // 拍照辨識商品（冰箱新增食材用）：拍商品包裝正面照片，AI直接讀出品牌名稱跟規格數量，
         // 跳過條碼查詢這一步，適合條碼掃不到、或商品根本沒有條碼的情況（例如店家分裝品）
-        async function handleFridgeItemPhotoOcr(event) {
+        //
+        // 手機相機的拍照功能（capture="environment"）一次只能拍一張，瀏覽器拍完就直接把那一張
+        // 傳回來、沒辦法在同一次相機操作裡連續拍好幾張；如果同時又加上multiple屬性，很多手機瀏覽器
+        // （尤其Android）乾脆整個不提供「拍照」這個選項，只剩相簿可以選，因為系統知道拍照這個動作
+        // 本來就只會產生一張照片、滿足不了multiple。所以「拍照」跟「一次選多張」這兩件事在手機上
+        // 沒辦法用同一個<input>同時做到，只能拆成兩個獨立的input：一個是capture="environment"、
+        // 沒有multiple，專門給「拍照」按鈕用；另一個是multiple、沒有capture，專門給「選相簿」按鈕用。
+        // 拍照的部分則是用下面這組photoOcrQueues暫存陣列做成「可以連續拍好幾張」的體驗——每按一次
+        // 拍照就把那一張加進暫存清單、清單顯示縮圖，使用者可以一直按「拍照」疊加好幾張，全部拍完後
+        // 再按一次「開始辨識」才把整批照片一起送出去，而不是每拍一張就馬上送出辨識一次
+        const photoOcrQueues = {};
+        function queuePhotosIntoAiOcrQueue(namespace, event) {
             const files = Array.from(event.target.files || []);
+            if (files.length) {
+                if (!photoOcrQueues[namespace]) photoOcrQueues[namespace] = [];
+                photoOcrQueues[namespace].push(...files);
+            }
+            event.target.value = ''; // 清空才能連續觸發同一個相機input、拍下一張
+            renderAiOcrPhotoQueue(namespace);
+        }
+        function renderAiOcrPhotoQueue(namespace) {
+            const queue = photoOcrQueues[namespace] || [];
+            const wrap = document.getElementById(`${namespace}-queue`);
+            const thumbs = document.getElementById(`${namespace}-queue-thumbs`);
+            const countEl = document.getElementById(`${namespace}-queue-count`);
+            if (!wrap || !thumbs || !countEl) return;
+            countEl.textContent = queue.length;
+            if (!queue.length) { wrap.classList.add('hidden'); thumbs.innerHTML = ''; return; }
+            wrap.classList.remove('hidden');
+            thumbs.innerHTML = queue.map((file, i) => `
+                <div class="relative" style="width:56px;height:56px">
+                    <img src="${URL.createObjectURL(file)}" style="width:100%;height:100%;object-fit:cover;border-radius:0.5rem" alt="待辨識照片${i + 1}">
+                    <button type="button" onclick="removeAiOcrQueueItem('${namespace}', ${i})" class="absolute -top-1.5 -right-1.5 rounded-full flex items-center justify-center text-xs" style="width:18px;height:18px;background:var(--espresso);color:#fff;line-height:1" aria-label="移除這張">×</button>
+                </div>
+            `).join('');
+        }
+        function removeAiOcrQueueItem(namespace, i) {
+            (photoOcrQueues[namespace] || []).splice(i, 1);
+            renderAiOcrPhotoQueue(namespace);
+        }
+        function clearPhotoQueue(namespace) {
+            photoOcrQueues[namespace] = [];
+            renderAiOcrPhotoQueue(namespace);
+        }
+        function queueFridgeItemPhotos(event) { queuePhotosIntoAiOcrQueue('fridge-item-photo', event); }
+        function queueRecipeOcrPhotos(event) { queuePhotosIntoAiOcrQueue('recipe-ocr', event); }
+        async function startFridgeItemPhotoOcr() {
+            const files = photoOcrQueues['fridge-item-photo'] || [];
+            if (!files.length) return;
+            await handleFridgeItemPhotoOcr(files);
+            clearPhotoQueue('fridge-item-photo');
+        }
+        async function startRecipeOcr() {
+            const files = photoOcrQueues['recipe-ocr'] || [];
+            if (!files.length) return;
+            await handleRecipeOcr(files);
+            clearPhotoQueue('recipe-ocr');
+        }
+        async function handleFridgeItemPhotoOcr(files) {
             if (!files.length) return;
             const statusEl = document.getElementById('fridge-item-photo-status');
             statusEl.textContent = `🔍 辨識中，請稍候...${files.length > 1 ? `（共${files.length}張照片）` : ''}`;
@@ -8023,12 +8101,10 @@
             } catch (err) {
                 statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
             } finally {
-                event.target.value = '';
                 hideAiProcessingAnimation();
             }
         }
-        async function handleRecipeOcr(event) {
-            const files = Array.from(event.target.files || []);
+        async function handleRecipeOcr(files) {
             if (!files.length) return;
             const statusEl = document.getElementById('recipe-ocr-status');
             statusEl.textContent = `🔍 辨識中，請稍候...（共${files.length}張照片）`;
@@ -8112,7 +8188,6 @@
             } catch (err) {
                 statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
             } finally {
-                event.target.value = '';
                 hideAiProcessingAnimation();
             }
         }
@@ -8480,7 +8555,7 @@
             nameInput.placeholder = '食材名稱';
             const statusEl = document.getElementById('fridge-new-name-status');
             if (statusEl) {
-                statusEl.textContent = '⚠️ 查無此條碼資料，請手動輸入，或改用「📸 拍照新增」';
+                statusEl.textContent = '⚠️ 查無此條碼資料，請手動輸入，或改用上方「📷 拍照」/「🖼️ 選相簿」';
                 statusEl.classList.remove('hidden');
             }
             nameInput.focus();
@@ -9521,6 +9596,9 @@
             // 清空AI影片辨識的狀態文字，不然上一次辨識成功/失敗的訊息會殘留，讓人誤以為是這次的結果
             const aiVideoStatus = document.getElementById('ai-video-recipe-status');
             if (aiVideoStatus) { aiVideoStatus.textContent = ''; aiVideoStatus.classList.add('hidden'); }
+            clearPhotoQueue('recipe-ocr'); // 清掉上一次開這個視窗時可能還沒送出的待辨識照片佇列
+            const recipeOcrStatus = document.getElementById('recipe-ocr-status');
+            if (recipeOcrStatus) { recipeOcrStatus.textContent = ''; recipeOcrStatus.classList.add('hidden'); }
             document.getElementById('ingredients-container').innerHTML = '';
             document.getElementById('steps-container').innerHTML = '';
             currentRecipeTags = [];
