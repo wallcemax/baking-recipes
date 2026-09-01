@@ -8053,6 +8053,12 @@
                 }
                 // 填入食譜名稱（只有辨識到名稱、而且目前欄位是空的時候才填入，不會覆蓋掉你已經自己填好的名稱）
                 if (data.name && !document.getElementById('name').value.trim()) document.getElementById('name').value = data.name;
+                // 一句話短描述：一樣是空的才填，並且觸發字數限制邏輯（超過14個中文字會自動截斷）——
+                // 跟AI影片辨識同一套邏輯
+                if (data.tagline && !document.getElementById('recipe-tagline').value.trim()) {
+                    document.getElementById('recipe-tagline').value = data.tagline;
+                    updateTaglineCounter();
+                }
                 // 分類：跟AI影片辨識同一套邏輯，AI判斷出屬於哪一類就直接選好下拉選單，
                 // 判斷不出來(null)或不在清單裡就維持原本的值，不會亂選一個
                 if (data.category) {
@@ -8073,7 +8079,9 @@
                 const allIngRowsEmpty = [...ingContainer.querySelectorAll('[data-role="ing-name"]')].every(el => !el.value.trim());
                 if (allIngRowsEmpty) ingContainer.innerHTML = '';
                 if (data.ingredients && data.ingredients.length) {
-                    data.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, ing.amount || 0, ing.unit || ''));
+                    // 份量/單位優先用AI實際判斷出來的值（包含模糊詞彙的合理估算），AI真的判斷不出來
+                    // （null）才退回0+「適量」，跟AI影片辨識同一套邏輯，不會顯示空白單位
+                    data.ingredients.forEach(ing => addIngredientField(ing.group || '', ing.name, ing.amount || 0, ing.unit || '適量'));
                 } else if (allIngRowsEmpty) {
                     addIngredientField(); // 這次沒辨識到食材、容器又清空了，至少留一個空欄位可以手動填
                 }
@@ -8082,13 +8090,17 @@
                 const allStepRowsEmpty = [...stepContainer.querySelectorAll('[data-role="step-text"]')].every(el => !el.value.trim());
                 if (allStepRowsEmpty) stepContainer.innerHTML = '';
                 if (data.steps && data.steps.length) {
-                    data.steps.forEach(stepText => addStepField(stepText));
+                    // 步驟現在跟AI影片辨識一樣會帶durationMinutes（例如照片上寫「烤25分鐘」），
+                    // 直接帶入計時器欄位；照片沒有影片時間軸，時間戳記固定留空
+                    data.steps.forEach(s => addStepField(s.text || '', '', s.durationMinutes || ''));
                 } else if (allStepRowsEmpty) {
                     addStepField();
                 }
                 renumberStepLabels(); // 加了新的步驟進去，重新排一次編號
 
-                statusEl.textContent = `✅ 已加入辨識結果！這次新增食材${data.ingredients.length}項、步驟${data.steps.length}項，用的模型：${data.modelUsed || '未知'}——請務必檢查內容是否正確再儲存`;
+                const durationCount = (data.steps || []).filter(s => s.durationMinutes).length;
+                const amountCount = (data.ingredients || []).filter(i => i.amount).length;
+                statusEl.textContent = `✅ 已加入辨識結果！這次新增食材${data.ingredients.length}項（其中${amountCount}項AI判斷出實際份量，其餘標示為「適量」請自己確認/修改）、步驟${data.steps.length}項（其中${durationCount}項有帶入計時器時長），用的模型：${data.modelUsed || '未知'}——請務必檢查內容是否正確再儲存`;
             } catch (err) {
                 statusEl.textContent = '⚠️ 辨識失敗：' + err.message;
             } finally {
