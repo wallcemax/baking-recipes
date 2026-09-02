@@ -345,6 +345,13 @@ async function fetchSpeciesDisplay(speciesId) {
     }
 }
 const TYPE_COLORS = { normal:'#A8A878',fire:'#F08030',water:'#6890F0',electric:'#F8D030',grass:'#78C850',ice:'#98D8D8',fighting:'#C03028',poison:'#A040A0',ground:'#E0C068',flying:'#A890F0',psychic:'#F85888',bug:'#A8B820',rock:'#B8A038',ghost:'#705898',dragon:'#7038F8',dark:'#705848',steel:'#B8B8D0',fairy:'#EE99AC' };
+// 屬性圖示：PokéAPI的/type/{id}端點本身就附官方的屬性symbol_icon圖檔(依世代分)，
+// 這裡固定用最新世代(朱紫)的小圖示版本，比自己做的emoji圖示更「正式」
+const TYPE_IDS = { normal:1, fighting:2, flying:3, poison:4, ground:5, rock:6, bug:7, ghost:8, steel:9, fire:10, water:11, grass:12, electric:13, psychic:14, ice:15, dragon:16, dark:17, fairy:18 };
+function typeIconUrl(typeName) {
+    const id = TYPE_IDS[typeName];
+    return id ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/types/generation-ix/scarlet-violet/small/${id}.png` : null;
+}
 function typeBadgesHtml(typesEnglish, typesZh) {
     return (typesEnglish || []).map((t, idx) => `<span class="type-badge" style="background:${TYPE_COLORS[t] || '#999'}">${(typesZh && typesZh[idx]) || t}</span>`).join(' ');
 }
@@ -533,7 +540,7 @@ async function openDetailModal(instanceId) {
         </div>
         <p class="text-xs text-gray-400 mb-1">目前招式</p>
         <div class="text-left mb-3 space-y-1">
-            ${moveDisplays.map(m => `<p class="text-sm flex items-start gap-1.5">${damageClassBadgeHtml(m.damageClass)}<span><span class="font-bold">${m.nameZh}</span><span class="text-xs text-gray-400">　${m.descZh || ''}</span></span></p>`).join('')}
+            ${moveDisplays.map(m => `<p class="text-sm flex items-start gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 mt-0.5 shrink-0" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}<span><span class="font-bold">${m.nameZh}</span><span class="text-xs text-gray-400">　${m.descZh || ''}</span></span></p>`).join('')}
         </div>
         <div class="grid grid-cols-2 gap-2 mb-2">
             <button onclick="toggleParty('${inst.id}')" class="text-sm py-2 rounded-xl font-bold ${inst.inParty ? 'bg-red-100 text-red-600' : 'bg-gray-100'}">${inst.inParty ? '移出隊伍' : '加入隊伍'}</button>
@@ -572,18 +579,6 @@ async function toggleIdlePlacement(instanceId) {
 const ITEM_SPRITE_BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/';
 function itemSpriteUrl(itemName) { return ITEM_SPRITE_BASE + itemName + '.png'; }
 function berrySpriteUrl(berryName) { return itemSpriteUrl(berryName + '-berry'); }
-// 傷害分類圖示：PokéAPI本身沒有附物理/特殊/變化的官方圖示素材(只有純文字的damage_class.name)，
-// 這裡用顏色圓點+emoji做一個對應掌機遊戲配色的簡易版(紅=物理、藍=特殊、灰=變化)，不是官方圖檔
-const DAMAGE_CLASS_INFO = {
-    physical: { emoji: '💥', label: '物理', color: '#ef4444' },
-    special: { emoji: '🌀', label: '特殊', color: '#3b82f6' },
-    status: { emoji: '✨', label: '變化', color: '#9ca3af' },
-};
-function damageClassBadgeHtml(damageClass) {
-    const info = DAMAGE_CLASS_INFO[damageClass] || DAMAGE_CLASS_INFO.status;
-    return `<span class="inline-flex items-center justify-center rounded-full text-white shrink-0" style="width:1.1rem;height:1.1rem;font-size:0.6rem;background:${info.color}" title="${info.label}">${info.emoji}</span>`;
-}
-
 // ---------- 餵樹果(親密度系統) ----------
 const COMMON_BERRIES = ['oran','pecha','cheri','chesto','rawst','aspear','leppa','sitrus','figy','wiki','mago','aguav','iapapa'];
 // 樹果本身的PokéAPI資料(/berry/{name})沒有直接附中文名稱，中文名稱要另外跟連結的道具
@@ -1147,18 +1142,21 @@ async function renderBattleStage(container, ctx) {
     const oppHpPct = Math.max(0, Math.round(oppTeam.currentHp / oppTeam.maxHp * 100));
     const hpColor = pct => pct > 50 ? 'bg-green-500' : pct > 20 ? 'bg-yellow-500' : 'bg-red-500';
 
+    // 招式指令區：仿掌機遊戲「FIGHT/BAG/POKéMON/RUN」那種2x2、每格一個實心色塊短標籤的排版——
+    // 這裡改成每個招式用自己的屬性色當底色，配上PokéAPI官方的屬性小圖示(symbol_icon)，
+    // 敘述文字縮成一行、超出就用...省略，避免像段落卡片一樣把畫面撐高
     let movesHtml;
     const myMoveSubmitted = !!(room.pendingMoves && room.pendingMoves[myUid]);
     if (locked) {
-        movesHtml = `<p class="text-center text-gray-400 py-4 text-sm">⚔️ 戰鬥中...</p>`;
+        movesHtml = `<div class="h-full min-h-[110px] flex items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200"><p class="text-gray-400 text-sm">⚔️ 戰鬥中...</p></div>`;
     } else if (myMoveSubmitted) {
-        movesHtml = `<p class="text-center text-gray-400 py-4 text-sm">已送出招式，等待對手...</p>`;
+        movesHtml = `<div class="h-full min-h-[110px] flex items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200"><p class="text-gray-400 text-sm">已送出招式，等待對手...</p></div>`;
     } else {
         const myMoveDisplays = await Promise.all((myTeam.moves || []).map(fetchMoveData));
         movesHtml = `<div class="grid grid-cols-2 gap-2">${myMoveDisplays.map(m => `
-            <button onclick="submitMove('${m.name}')" class="bg-red-50 hover:bg-red-100 text-red-700 rounded-xl py-2 px-3 text-left">
-                <span class="flex items-center gap-1">${damageClassBadgeHtml(m.damageClass)}<span class="text-sm font-bold">${m.nameZh}</span></span>
-                <span class="block text-[0.65rem] text-red-400 leading-snug mt-0.5">${m.descZh || '&nbsp;'}</span>
+            <button onclick="submitMove('${m.name}')" class="rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
+                <span class="flex items-center gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 shrink-0" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span class="text-white text-sm font-black truncate">${m.nameZh}</span></span>
+                <span class="block text-[0.6rem] text-white/85 mt-0.5 truncate">${m.descZh || ' '}</span>
             </button>`).join('')}</div>`;
     }
 
@@ -1195,11 +1193,13 @@ async function renderBattleStage(container, ctx) {
                 </div>
             </div>
         </div>
-        <div id="battle-log-box" class="bg-white rounded-2xl card-shadow p-3 mb-3 max-h-24 overflow-y-auto text-xs text-gray-500 space-y-0.5">
-            ${(room.battleState.log || []).slice(-6).map(l => `<p>${l}</p>`).join('') || '<p>對戰開始！</p>'}
+        <div class="flex flex-col sm:flex-row gap-2 mb-3 items-stretch">
+            <div id="battle-log-box" class="sm:w-2/5 bg-white rounded-2xl card-shadow p-3 max-h-24 sm:max-h-none overflow-y-auto text-xs text-gray-500 space-y-0.5 border-2 border-gray-100">
+                ${(room.battleState.log || []).slice(-6).map(l => `<p>${l}</p>`).join('') || '<p>對戰開始！</p>'}
+            </div>
+            <div class="sm:w-3/5">${movesHtml}</div>
         </div>
-        ${movesHtml}
-        <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-3 underline">投降離開</button>
+        <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-1 underline">投降離開</button>
     `;
 }
 
@@ -1318,6 +1318,7 @@ async function fetchMoveData(moveName) {
     const result = {
         name: data.name, nameZh: extractZhHantNameClient(data.names, data.name),
         power: data.power || 40, type: data.type.name, damageClass: data.damage_class?.name || 'physical',
+        typeIcon: typeIconUrl(data.type.name),
         descZh, ailment: ailmentName, ailmentChance: (data.meta && data.meta.ailment_chance) || 0,
     };
     moveDataCache.set(moveName, result);
