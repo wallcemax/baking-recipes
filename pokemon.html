@@ -1107,26 +1107,25 @@ async function submitWildBattleStart() {
         const wildTeam = await rollWildOpponent(inst.level);
         const myDisplay = await fetchSpeciesDisplay(inst.speciesId, inst.isShiny);
         const myUid = auth.currentUser.uid;
-        const myTeam = {
-            instanceId: inst.id,
-            speciesId: inst.speciesId,
-            nickname: pokemonDisplayName(inst, myDisplay),
-            level: inst.level,
-            maxHp: statAtLevel(inst.baseHp, inst.level, true),
-            currentHp: statAtLevel(inst.baseHp, inst.level, true),
-            atk: statAtLevel(inst.baseAtk, inst.level, false),
-            def: statAtLevel(inst.baseDef, inst.level, false),
-            spd: statAtLevel(inst.baseSpd, inst.level, false),
-            moves: inst.moves && inst.moves.length ? inst.moves : ['tackle'],
-            isShiny: !!inst.isShiny,
-        };
+        const myTeam = buildTeamDataFromInstData(inst.id, inst, pokemonDisplayName(inst, myDisplay));
+        // 野生對戰的候補隊伍：只有玩家自己這一側能替換(野生寶可夢單機出現只有一隻，本來就沒有候補的概念)，
+        // 直接用currentInstances(已經在記憶體裡)組，不用再查一次Firestore
+        const myBenchInsts = currentInstances.filter(i => i.inParty && i.id !== inst.id).slice(0, 5);
+        const myBenchDisplays = await Promise.all(myBenchInsts.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
+        const myBench = myBenchInsts.map((i, idx) => buildTeamDataFromInstData(i.id, i, pokemonDisplayName(i, myBenchDisplays[idx])));
         const roomRef = db.collection('pokemonBattleRooms').doc();
         await roomRef.set({
             hostUid: myUid,
             memberUids: [myUid],
             isWild: true,
             status: 'battling',
-            battleState: { teams: { [myUid]: myTeam, wild: wildTeam }, round: 1, log: [] },
+            battleState: {
+                teams: { [myUid]: myTeam, wild: wildTeam },
+                bench: { [myUid]: myBench },
+                weather: { type: null, turnsLeft: 0 }, terrain: { type: null, turnsLeft: 0 },
+                awaitingSwitch: [],
+                round: 1, log: [],
+            },
             pendingMoves: {},
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
@@ -1141,6 +1140,7 @@ let currentBattleRoomId = null;
 let currentRoomIsWild = false; // submitMove要知道現在是打野生的(自己算AI招式)還是PvP(要等對方送出)
 function watchRoom(roomId) {
     currentBattleRoomId = roomId;
+    battleShowSwitchPicker = false;
     document.getElementById('battle-lobby-view').classList.add('hidden');
     document.getElementById('battle-room-view').classList.remove('hidden');
     if (roomDetailUnsub) roomDetailUnsub();
@@ -1152,6 +1152,8 @@ function watchRoom(roomId) {
 function leaveRoomView() {
     if (roomDetailUnsub) { roomDetailUnsub(); roomDetailUnsub = null; }
     currentBattleRoomId = null;
+    battleShowSwitchPicker = false;
+    lastRenderedRoom = null;
     document.getElementById('battle-lobby-view').classList.remove('hidden');
     document.getElementById('battle-room-view').classList.add('hidden');
 }
@@ -1166,9 +1168,18 @@ let roomRenderToken = 0;
 // animatedResolvedRound：記錄每個房間「已經播過動畫的回合編號」，避免同一回合的攻擊動畫重播兩次，
 // 也避免玩家剛打開房間時把之前發生過的回合又重播一次
 let animatedResolvedRound = {};
+// lastRenderedRoom：最近一次renderRoomView拿到的房間資料快照——切換「替換寶可夢」選單這種
+// 純前端UI狀態不會觸發Firestore的onSnapshot，所以要靠這份快照手動重新呼叫renderRoomView
+let lastRenderedRoom = null;
+let battleShowSwitchPicker = false;
+function toggleSwitchPicker(show) {
+    battleShowSwitchPicker = show;
+    if (lastRenderedRoom) renderRoomView(lastRenderedRoom);
+}
 
 async function renderRoomView(room) {
     const myToken = ++roomRenderToken;
+    lastRenderedRoom = room;
     const container = document.getElementById('battle-room-view');
     const myUid = auth.currentUser.uid;
     currentRoomIsWild = !!room.isWild;
@@ -1244,23 +1255,72 @@ async function renderBattleStage(container, ctx) {
     const myHpPct = Math.max(0, Math.round(myTeam.currentHp / myTeam.maxHp * 100));
     const oppHpPct = Math.max(0, Math.round(oppTeam.currentHp / oppTeam.maxHp * 100));
     const hpColor = pct => pct > 50 ? 'bg-green-500' : pct > 20 ? 'bg-yellow-500' : 'bg-red-500';
+    const weather = (room.battleState && room.battleState.weather) || { type: null, turnsLeft: 0 };
+    const terrain = (room.battleState && room.battleState.terrain) || { type: null, turnsLeft: 0 };
+    const myBench = (room.battleState && room.battleState.bench && room.battleState.bench[myUid]) || [];
+    const awaitingSwitch = (room.battleState && room.battleState.awaitingSwitch) || [];
+    const iMustSwitch = awaitingSwitch.includes(myUid);
+    const oppMustSwitchOnly = !iMustSwitch && awaitingSwitch.length > 0;
 
     // 招式指令區：仿掌機遊戲「FIGHT/BAG/POKéMON/RUN」那種2x2、每格一個實心色塊短標籤的排版——
     // 這裡改成每個招式用自己的屬性色當底色，配上PokéAPI官方的屬性小圖示(symbol_icon)，
     // 敘述文字縮成一行、超出就用...省略，避免像段落卡片一樣把畫面撐高
     let movesHtml;
     const myMoveSubmitted = !!(room.pendingMoves && room.pendingMoves[myUid]);
-    if (locked) {
-        movesHtml = `<div class="h-full min-h-[110px] flex items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200"><p class="text-gray-400 text-sm flex items-center gap-1.5"><img src="${typeIconUrl('fighting')}" class="w-4 h-4" style="image-rendering:pixelated">戰鬥中...</p></div>`;
+    if (iMustSwitch) {
+        // 主動寶可夢倒下、還有候補活著：強制先選一隻上場，戰鬥還沒結束
+        const aliveBench = myBench.filter(b => b.currentHp > 0);
+        const displays = await Promise.all(aliveBench.map(b => fetchSpeciesDisplay(b.speciesId, b.isShiny)));
+        movesHtml = `<div>
+            <p class="text-sm font-bold text-red-500 mb-2 text-center">寶可夢倒下了！選一隻上場：</p>
+            <div class="grid grid-cols-2 gap-2">${aliveBench.map((b, idx) => `
+                <button onclick="submitForcedSwitch('${b.instanceId}')" class="bg-white border-2 border-gray-200 rounded-2xl p-2 text-center active:scale-95 transition-transform">
+                    <img src="${displays[idx].sprite}" class="w-10 h-10 mx-auto">
+                    <span class="block text-xs font-bold truncate">${b.nickname}</span>
+                    <span class="block text-[10px] text-gray-400">Lv.${b.level} · ${b.currentHp}/${b.maxHp}</span>
+                </button>`).join('')}</div>
+        </div>`;
+    } else if (locked || oppMustSwitchOnly) {
+        movesHtml = `<div class="h-full min-h-[110px] flex items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200"><p class="text-gray-400 text-sm flex items-center gap-1.5"><img src="${typeIconUrl('fighting')}" class="w-4 h-4" style="image-rendering:pixelated">${oppMustSwitchOnly ? '等待對方選擇下一隻寶可夢...' : '戰鬥中...'}</p></div>`;
     } else if (myMoveSubmitted) {
-        movesHtml = `<div class="h-full min-h-[110px] flex items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200"><p class="text-gray-400 text-sm">已送出招式，等待對手...</p></div>`;
+        movesHtml = `<div class="h-full min-h-[110px] flex items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200"><p class="text-gray-400 text-sm">已送出指令，等待對手...</p></div>`;
+    } else if (battleShowSwitchPicker) {
+        // 自願替換選單：換上場會消耗這一整回合的出招機會，扎根中的寶可夢禁止替換(送出時會被submitSwitch擋下)
+        const displays = await Promise.all(myBench.map(b => fetchSpeciesDisplay(b.speciesId, b.isShiny)));
+        movesHtml = `<div>
+            <div class="flex items-center justify-between mb-1.5">
+                <p class="text-[0.65rem] text-gray-400">選一隻上場(這回合不會出招)</p>
+                <button onclick="toggleSwitchPicker(false)" class="text-xs text-gray-400 underline">返回招式</button>
+            </div>
+            ${myBench.length === 0 ? '<p class="text-xs text-gray-400 text-center py-3">隊伍裡沒有其他候補寶可夢</p>' : `<div class="grid grid-cols-2 gap-2">${myBench.map((b, idx) => `
+                <button ${b.currentHp <= 0 ? 'disabled' : ''} onclick="submitSwitch('${b.instanceId}')" class="bg-white border-2 border-gray-200 rounded-2xl p-2 text-center active:scale-95 transition-transform ${b.currentHp <= 0 ? 'opacity-40' : ''}">
+                    <img src="${displays[idx].sprite}" class="w-10 h-10 mx-auto">
+                    <span class="block text-xs font-bold truncate">${b.nickname}</span>
+                    <span class="block text-[10px] text-gray-400">Lv.${b.level} · ${b.currentHp}/${b.maxHp}${b.currentHp <= 0 ? '(戰鬥不能)' : ''}</span>
+                </button>`).join('')}</div>`}
+        </div>`;
+    } else if (myTeam.chargingMove) {
+        // 雙回合蓄力招式：蓄力回合已經在上一輪動畫演過了，這一輪只能「釋放」，不能改選別的招式
+        const chargeMove = await fetchMoveData(myTeam.chargingMove);
+        movesHtml = `<button onclick="submitMove('${chargeMove.name}')" class="w-full h-full min-h-[110px] rounded-2xl text-white font-black text-lg active:scale-95 transition-transform" style="background:${TYPE_COLORS[chargeMove.type] || '#6b7280'}">
+            釋放蓄力：${chargeMove.nameZh}
+        </button>`;
     } else {
         const myMoveDisplays = await Promise.all((myTeam.moves || []).map(fetchMoveData));
-        movesHtml = `<div class="grid grid-cols-2 gap-2">${myMoveDisplays.map(m => `
-            <button onclick="submitMove('${m.name}')" class="rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
-                <span class="flex items-center gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 shrink-0" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span class="text-white text-sm font-black truncate">${m.nameZh}</span></span>
-                <span class="block text-[0.6rem] text-white/85 mt-0.5 truncate">${m.descZh || ' '}</span>
-            </button>`).join('')}</div>`;
+        const usableCount = myMoveDisplays.filter(m => getMovePp(myTeam, m) > 0).length;
+        if (usableCount === 0) {
+            movesHtml = `<button onclick="submitMove('struggle')" class="w-full h-full min-h-[110px] rounded-2xl bg-gray-500 text-white font-black text-base active:scale-95 transition-transform">所有招式PP都用盡了，使出掙扎！</button>`;
+        } else {
+            movesHtml = `<div class="grid grid-cols-2 gap-2">${myMoveDisplays.map(m => {
+                const pp = getMovePp(myTeam, m);
+                const disabled = pp <= 0;
+                return `<button ${disabled ? 'disabled' : ''} onclick="submitMove('${m.name}')" class="rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden ${disabled ? 'opacity-40' : ''}" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
+                    <span class="flex items-center gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 shrink-0" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span class="text-white text-sm font-black truncate">${m.nameZh}</span></span>
+                    <span class="block text-[0.6rem] text-white/85 mt-0.5 truncate">${m.descZh || ' '}</span>
+                    <span class="block text-[0.6rem] text-white/70 mt-0.5">PP ${pp}/${m.pp || '?'}</span>
+                </button>`;
+            }).join('')}</div>${myBench.length > 0 ? `<button onclick="toggleSwitchPicker(true)" class="w-full mt-2 text-xs text-gray-500 underline flex items-center justify-center gap-1"><img src="${itemSpriteUrl('luxury-ball')}" class="w-3.5 h-3.5" style="image-rendering:pixelated">替換寶可夢</button>` : ''}`;
+        }
     }
 
     // 戰鬥場景改成經典掌機遊戲那種對角透視：對手在右上方、體型畫小一點表示「站得比較遠」，
@@ -1268,8 +1328,16 @@ async function renderBattleStage(container, ctx) {
     // 圖片優先用PokéAPI黑白世代(gen5)的官方動畫gif(spriteAnimated/spriteBackAnimated)，
     // 那個世代的動圖只做到全國圖鑑第649號為止，六世代以後的寶可夢這兩個欄位會是null，
     // 這裡自動退回原本的靜態圖(不會破圖)
+    // 天氣/場地小徽章：疊在戰鬥畫面左上角，用天氣石/場地種子的官方道具圖示代表(使用者已授權
+    // 天氣/場地效果的圖示可以自由挑選API內的素材)
+    const weatherTerrainBadgeHtml = (weather.type || terrain.type) ? `
+        <div class="absolute top-2 left-2 z-10 flex flex-col gap-1">
+            ${weather.type ? `<span class="bg-white/85 rounded-full px-2 py-0.5 text-[10px] font-bold flex items-center gap-1 shadow">${weatherIconHtml(weather.type, 'w-3.5 h-3.5')}${WEATHER_NAME_ZH[weather.type]}</span>` : ''}
+            ${terrain.type ? `<span class="bg-white/85 rounded-full px-2 py-0.5 text-[10px] font-bold flex items-center gap-1 shadow">${terrainIconHtml(terrain.type, 'w-3.5 h-3.5')}${TERRAIN_NAME_ZH[terrain.type]}</span>` : ''}
+        </div>` : '';
     container.innerHTML = `
         <div class="relative bg-gradient-to-b from-sky-100 to-emerald-50 rounded-2xl card-shadow p-4 mb-3 overflow-hidden" style="min-height:270px">
+            ${weatherTerrainBadgeHtml}
             <div class="absolute top-3 right-3 text-right" style="max-width:52%">
                 <div class="mb-1">
                     <span class="text-sm font-bold">${oppTeam.nickname}${oppTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(oppTeam)}
@@ -1345,19 +1413,81 @@ async function playBattleEvents(events, ctx) {
     };
 
     for (const ev of events) {
-        // ---- 回合結束的中毒/劇毒/燒傷持續傷害：沒有攻守方，單純扣某一邊的血 ----
+        // ---- 替換寶可夢：不用太複雜的動畫，讓sprite淡出淡入一下當作提示就好(下一次
+        // renderBattleStage重繪整個畫面時，sprite的src本來就會自然換成新寶可夢) ----
+        if (ev.switchEvent) {
+            const isMe = ev.uid === ctx.myUid;
+            appendLog(`${ev.outName} 被收回，換上了 ${ev.inName}！`);
+            const el = document.getElementById(isMe ? 'sprite-me' : 'sprite-opp');
+            if (el) { el.style.transition = 'opacity 0.3s'; el.style.opacity = '0.15'; await sleep(350); el.style.opacity = '1'; }
+            await sleep(250);
+            continue;
+        }
+        // ---- 雙回合蓄力招式的第一回合：只蓄力、不會真的打到對手 ----
+        if (ev.charging) {
+            appendLog(`${ev.attackerName} 正在蓄力，準備使出 ${ev.moveNameZh}！`);
+            const el = document.getElementById(ev.attackerKey === ctx.myUid ? 'sprite-me' : 'sprite-opp');
+            if (el) { el.classList.remove('self-buff-glow'); void el.offsetWidth; el.classList.add('self-buff-glow'); }
+            await sleep(500);
+            continue;
+        }
+        // ---- 天氣/場地被改變 ----
+        if (ev.fieldEffect) {
+            const label = ev.fieldEffect.kind === 'weather' ? WEATHER_NAME_ZH[ev.fieldEffect.type] : TERRAIN_NAME_ZH[ev.fieldEffect.type];
+            appendLog(`${ev.fieldEffect.kind === 'weather' ? '天氣' : '場地'}變成了${label}！`);
+            await sleep(400);
+            continue;
+        }
+        // ---- 守住/替身：自己身上生效的準備動作，原地發光提示 ----
+        if (ev.protectSuccess || ev.protectFail || ev.substituteSet || ev.substituteFail) {
+            const el = document.getElementById(ev.attackerKey === ctx.myUid ? 'sprite-me' : 'sprite-opp');
+            if (ev.protectSuccess) appendLog(`${ev.attackerName} 擺出了防禦姿態！`);
+            else if (ev.protectFail) appendLog(`${ev.attackerName} 想要防禦，但是失敗了！`);
+            else if (ev.substituteSet) appendLog(`${ev.attackerName} 使出替身，代替自己承受攻擊！`);
+            else appendLog(`${ev.attackerName} 沒能使出替身！`);
+            if (el && (ev.protectSuccess || ev.substituteSet)) { el.classList.remove('self-buff-glow'); void el.offsetWidth; el.classList.add('self-buff-glow'); }
+            await sleep(450);
+            continue;
+        }
+        // ---- 攻擊被守住擋下：攻擊方照樣衝刺一下，但完全不會造成傷害/附加效果 ----
+        if (ev.protectedBlock) {
+            appendLog(`${ev.defenderName} 防住了攻擊！`);
+            const atkElBlock = document.getElementById(ev.attackerKey === ctx.myUid ? 'sprite-me' : 'sprite-opp');
+            if (atkElBlock) { atkElBlock.classList.remove('lunge-right', 'lunge-left'); void atkElBlock.offsetWidth; atkElBlock.classList.add(ev.attackerKey === ctx.myUid ? 'lunge-right' : 'lunge-left'); }
+            await sleep(450);
+            continue;
+        }
+        // ---- 回合結束的扎根回血／寄生種子吸血：跟endTurnStatus相反方向(加血)，一樣沒有攻守方 ----
+        if (ev.endTurnHeal) {
+            const isMe = ev.pokemonKey === ctx.myUid;
+            const el = document.getElementById(isMe ? 'sprite-me' : 'sprite-opp');
+            const bar = document.getElementById(isMe ? 'hpbar-me' : 'hpbar-opp');
+            const hpText = document.getElementById(isMe ? 'hptext-me' : 'hptext-opp');
+            const maxHp = isMe ? ctx.myMaxHp : ctx.oppMaxHp;
+            appendLog(`${ev.pokemonName} 回復了 ${ev.amount} 點HP！`);
+            popupText(isMe ? 'popupwrap-me' : 'popupwrap-opp', `+${ev.amount}`, '#16a34a');
+            if (el) { el.classList.remove('self-buff-glow'); void el.offsetWidth; el.classList.add('self-buff-glow'); }
+            const pct = Math.max(0, Math.round(ev.hpAfter / maxHp * 100));
+            if (bar) bar.style.width = pct + '%';
+            if (hpText) hpText.textContent = `${ev.hpAfter}/${maxHp}`;
+            await sleep(450);
+            continue;
+        }
+        // ---- 回合結束的中毒/劇毒/燒傷/寄生種子持續傷害：沒有攻守方，單純扣某一邊的血 ----
         if (ev.endTurnStatus) {
             const isMe = ev.pokemonKey === ctx.myUid;
             const el = document.getElementById(isMe ? 'sprite-me' : 'sprite-opp');
             const bar = document.getElementById(isMe ? 'hpbar-me' : 'hpbar-opp');
             const hpText = document.getElementById(isMe ? 'hptext-me' : 'hptext-opp');
             const maxHp = isMe ? ctx.myMaxHp : ctx.oppMaxHp;
-            appendLog(`${ev.pokemonName} 因為${ev.status === 'burn' ? '燒傷' : '中毒'}損失了 ${ev.damage} 點HP！`);
+            const endTurnLabel = ev.status === 'burn' ? '燒傷' : ev.status === 'leech-seed' ? '寄生種子' : '中毒';
+            const endTurnColor = ev.status === 'burn' ? '#f97316' : ev.status === 'leech-seed' ? '#22c55e' : '#a855f7';
+            appendLog(`${ev.pokemonName} 因為${endTurnLabel}損失了 ${ev.damage} 點HP！`);
             if (!el) continue;
             el.classList.remove('hit-flash-weak');
             void el.offsetWidth;
             el.classList.add('hit-flash-weak');
-            popupText(isMe ? 'popupwrap-me' : 'popupwrap-opp', `-${ev.damage}`, ev.status === 'burn' ? '#f97316' : '#a855f7');
+            popupText(isMe ? 'popupwrap-me' : 'popupwrap-opp', `-${ev.damage}`, endTurnColor);
             const pct = Math.max(0, Math.round(ev.hpAfter / maxHp * 100));
             if (bar) bar.style.width = pct + '%';
             if (hpText) hpText.textContent = `${Math.max(0, ev.hpAfter)}/${maxHp}`;
@@ -1502,36 +1632,67 @@ async function playBattleEvents(events, ctx) {
     }
 }
 
+// 把一筆pokemonInstances文件資料組成戰鬥用的teamObj——PvP的先發/替換候補、野生對戰的
+// 玩家先發/候補都共用這個function，確保欄位形狀一致
+function buildTeamDataFromInstData(instanceId, inst, nickname) {
+    const maxHp = statAtLevel(inst.baseHp, inst.level, true);
+    return {
+        instanceId,
+        speciesId: inst.speciesId,
+        nickname,
+        level: inst.level,
+        maxHp,
+        currentHp: maxHp,
+        atk: statAtLevel(inst.baseAtk, inst.level, false),
+        def: statAtLevel(inst.baseDef, inst.level, false),
+        spd: statAtLevel(inst.baseSpd, inst.level, false),
+        moves: inst.moves && inst.moves.length ? inst.moves : ['tackle'],
+        isShiny: !!inst.isShiny,
+    };
+}
+// 幫某個玩家組出「先發以外」的候補隊伍(bench)：從他隊伍中其餘已加入inParty的成員抓出來，
+// 每隻都套用跟先發一樣的buildTeamDataFromInstData——這樣PvP/野生對戰要替換寶可夢時，
+// 候補寶可夢的資料形狀才會跟先發一致(有自己獨立的HP/等級/招式，能力/異常狀態則是上場後才會有)
+async function buildBenchForUid(ownerUid, activeInstanceId, nicknamePrefix) {
+    const snap = await db.collection('pokemonInstances').where('ownerUid', '==', ownerUid).where('inParty', '==', true).get();
+    const bench = [];
+    for (const doc of snap.docs) {
+        if (doc.id === activeInstanceId) continue;
+        const inst = doc.data();
+        const display = await fetchSpeciesDisplay(inst.speciesId, inst.isShiny);
+        bench.push(buildTeamDataFromInstData(doc.id, inst, pokemonDisplayName({ ...inst, id: doc.id }, display)));
+        if (bench.length >= 5) break; // 先發1隻+候補最多5隻=一整隊6隻
+    }
+    return bench;
+}
 async function initBattleState(room) {
     const roomRef = db.collection('pokemonBattleRooms').doc(room.id);
     const hostInst = await db.collection('pokemonInstances').doc(room.hostInstanceId).get();
     const guestInst = await db.collection('pokemonInstances').doc(room.guestInstanceId).get();
-    const buildTeamData = (instSnap, nickname) => {
-        const inst = instSnap.data();
-        return {
-            instanceId: instSnap.id,
-            speciesId: inst.speciesId,
-            nickname,
-            level: inst.level,
-            maxHp: statAtLevel(inst.baseHp, inst.level, true),
-            currentHp: statAtLevel(inst.baseHp, inst.level, true),
-            atk: statAtLevel(inst.baseAtk, inst.level, false),
-            def: statAtLevel(inst.baseDef, inst.level, false),
-            spd: statAtLevel(inst.baseSpd, inst.level, false),
-            moves: inst.moves || ['tackle'],
-            isShiny: !!inst.isShiny,
-        };
-    };
     const teams = {
-        [room.hostUid]: buildTeamData(hostInst, room.hostNickname),
-        [room.guestUid]: buildTeamData(guestInst, room.guestNickname),
+        [room.hostUid]: buildTeamDataFromInstData(hostInst.id, hostInst.data(), room.hostNickname),
+        [room.guestUid]: buildTeamDataFromInstData(guestInst.id, guestInst.data(), room.guestNickname),
     };
+    // 防禦性try/catch：查詢隊伍候補用了兩個where條件(ownerUid+inParty)，萬一Firestore
+    // 因為索引問題查詢失敗，寧可讓這場對戰「沒有候補可以替換」照常開打，也不要整個房間卡在
+    // 「對戰準備中...」動不了
+    let hostBench = [], guestBench = [];
+    try {
+        [hostBench, guestBench] = await Promise.all([
+            buildBenchForUid(room.hostUid, room.hostInstanceId),
+            buildBenchForUid(room.guestUid, room.guestInstanceId),
+        ]);
+    } catch (err) { console.warn('讀取候補隊伍失敗，這場對戰將沒有候補寶可夢可以替換', err.message); }
+    const bench = { [room.hostUid]: hostBench, [room.guestUid]: guestBench };
     try {
         await db.runTransaction(async tx => {
             const snap = await tx.get(roomRef);
             const data = snap.data();
             if (!data || data.battleState) return; // 已經有人初始化過了，跳過
-            tx.update(roomRef, { battleState: { teams, round: 1, log: [] }, pendingMoves: {} });
+            tx.update(roomRef, {
+                battleState: { teams, bench, weather: { type: null, turnsLeft: 0 }, terrain: { type: null, turnsLeft: 0 }, awaitingSwitch: [], round: 1, log: [] },
+                pendingMoves: {},
+            });
         });
     } catch (err) { console.warn('初始化對戰狀態失敗', err.message); }
 }
@@ -1543,7 +1704,33 @@ const moveDataCache = new Map();
 // 去算傷害，其他欄位完全沒用到，等於絕大多數招式的真正效果(變化招式、狀態招式、連續技...)
 // 在遊戲裡都被當成「無效果的普通攻擊」，這裡把meta能提供的欄位整批抓齊，讓resolveBattleRound
 // 可以真的照著每隻招式各自的效果去結算，而不是全部招式都套同一種傷害公式
+// 掙扎(Struggle)：PP系統的保底招式，四招PP都歸零時強制使用——無視PP、固定威力50的無屬性
+// 攻擊(一定命中、不看屬性相剋)，攻擊方自己還會受到「最大HP的1/4」反作用力傷害。這招官方資料庫
+// 裡其實有，但它的效果(尤其是固定1/4最大HP反傷、而不是一般drain那種算傷害%數的反作用力)
+// 用手刻的資料更準確、也不用多打一次API，所以這裡直接寫死，不經過fetchMoveData的快取/API流程
+const STRUGGLE_MOVE = {
+    name: 'struggle', nameZh: '掙扎', power: 50, type: 'normal', damageClass: 'physical',
+    typeIcon: typeIconUrl('normal'), descZh: '所有招式都沒有PP時的最後手段，會對自己造成反作用力傷害。',
+    ailment: null, ailmentChance: 0, accuracy: null, priority: 0, target: 'selected-pokemon',
+    category: 'unique', drain: 0, healing: 0, critRate: 0, flinchChance: 0, statChance: 0,
+    minHits: null, maxHits: null, statChanges: [], pp: null, isStruggle: true,
+};
+// 雙回合蓄力招式：PokéAPI的結構化資料裡沒有專門的「兩回合招式」欄位，這裡自己整理一份
+// 常見蓄力招式表——第一回合「蓄力」(不會真的出招/不會扣血)，第二回合才真正攻擊。
+// skipChargeWeather有填的話，代表「天氣符合時可以省略蓄力回合直接出招」(日光烈焰在大晴天就是這樣)
+const TWO_TURN_MOVES = {
+    'solar-beam': { skipChargeWeather: 'sun' }, 'solar-blade': { skipChargeWeather: 'sun' },
+    'fly': {}, 'dig': {}, 'dive': {}, 'bounce': {}, 'phantom-force': {}, 'shadow-force': {},
+    'sky-attack': {}, 'freeze-shock': {}, 'ice-burn': {}, 'skull-bash': {}, 'razor-wind': {}, 'geomancy': {},
+};
+// 天氣/場地招式：value對應到battleState.weather.type / battleState.terrain.type，
+// 用來查傷害倍率表跟回合結束的持續效果
+const WEATHER_MOVES = { 'sunny-day': 'sun', 'rain-dance': 'rain', 'sandstorm': 'sandstorm', 'hail': 'hail' };
+const TERRAIN_MOVES = { 'electric-terrain': 'electric', 'grassy-terrain': 'grassy', 'misty-terrain': 'misty', 'psychic-terrain': 'psychic' };
+const PROTECT_MOVES = new Set(['protect', 'detect', 'king-shield', 'spiky-shield', 'baneful-bunker', 'obstruct', 'silk-trap']);
+const SUBSTITUTE_MOVES = new Set(['substitute']);
 async function fetchMoveData(moveName) {
+    if (moveName === 'struggle') return STRUGGLE_MOVE;
     if (moveDataCache.has(moveName)) return moveDataCache.get(moveName);
     const res = await fetch(`https://pokeapi.co/api/v2/move/${moveName}`);
     const data = await res.json();
@@ -1568,6 +1755,7 @@ async function fetchMoveData(moveName) {
         statChance: meta.stat_chance || 0,
         minHits: meta.min_hits || null,
         maxHits: meta.max_hits || null,
+        pp: data.pp || 0, // 這招最多能用幾次(PP系統)——歸零之後這招就不能選了
         // stat_changes的stat名稱(attack/defense/special-attack/special-defense/speed/accuracy/evasion)
         // 對應到這個簡化版遊戲僅有的atk/def/spd三圍(沒有拆物理/特殊)，命中/閃避各自算獨立等級
         statChanges: (data.stat_changes || [])
@@ -1606,7 +1794,16 @@ function computeDamage(attackerLevel, attackerAtk, defenderDef, power, typeEff, 
 // 不會寫回pokemonInstances的永久資料(不像等級/EXP那樣需要長期保存)
 // ============================================================
 function freshBattleStatus() {
-    return { status: null, statusTurns: 0, toxicCounter: 0, stages: { atk: 0, def: 0, spd: 0, acc: 0, eva: 0 }, confusedTurns: 0, flinched: false };
+    return {
+        status: null, statusTurns: 0, toxicCounter: 0, stages: { atk: 0, def: 0, spd: 0, acc: 0, eva: 0 }, confusedTurns: 0, flinched: false,
+        movePp: {}, // 每一招各自剩餘的PP，key是招式英文代號，缺欄位時代表「還沒用過、視為滿PP」
+        rooted: false, // 扎根(Ingrain)：每回合結束回復自己1/16最大HP，而且扎根中不能自願替換寶可夢
+        seeded: false, seederKey: null, // 寄生種子(Leech Seed)：每回合結束扣自己1/8最大HP，回血給下種子的那一方
+        mustSwitch: false, // 主動寶可夢倒下、但還有備用寶可夢時，強制要求這一方先選新的上場，戰鬥還不算結束
+        chargingMove: null, // 雙回合蓄力招式(日光烈焰等)：記錄「正在蓄力、下一回合要直接放」的招式代號
+        protectStreak: 0, protectedThisTurn: false, // 守住連續使用會遞減成功率；protectedThisTurn只在單一回合內有效
+        substituteHp: 0, // 替身還剩多少HP，>0時擋著本體、傷害/大部分附加效果都打在替身上
+    };
 }
 // 能力等級(-6~+6)換算成倍率：官方公式，攻/防/速用同一張表
 function statStageMult(stage) {
@@ -1669,17 +1866,67 @@ function statusIconHtml(statusKey, sizeClass) {
 }
 // 對戰畫面暱稱旁邊的異常狀態小徽章：主要異常狀態(麻痺/中毒/燒傷/睡眠/冰凍)跟混亂是各自獨立的
 // 兩條線(混亂可以跟中毒同時存在)，所以最多會同時顯示2個圖示
+// 通用小圖示徽章(不限於樹果)：扎根用ingrain對應的道具沒有專門圖示，這裡用最直觀的「莖果」；
+// 寄生種子用「金剛石種子」(leppa那類PP道具不合語意，改用真的跟種子/寄生視覺相關的素材)；
+// 替身用「木炭人偶」沒有官方素材，改用leek(大蔥鴨的蔥)這種常見的「替代物」聯想道具都太牽強，
+// 這裡索性直接用招式本身的圖示(substitute的type icon)最不會誤導玩家
+function genericIconHtml(src, sizeClass, title) {
+    if (!src) return '';
+    return `<img src="${src}" class="${sizeClass || 'w-4 h-4'} inline-block align-middle" style="image-rendering:pixelated" title="${title || ''}" onerror="this.style.display='none'">`;
+}
+function rootedIconHtml(sizeClass) { return genericIconHtml(berrySpriteUrl('leppa'), sizeClass, '扎根'); }
+function seededIconHtml(sizeClass) { return genericIconHtml(itemSpriteUrl('big-root'), sizeClass, '寄生種子'); }
+function substituteIconHtml(sizeClass) { return genericIconHtml(typeIconUrl('normal'), sizeClass, '替身'); }
 function battleStatusBadgesHtml(team) {
     if (!team) return '';
     let html = '';
     if (team.status) html += statusIconHtml(team.status, 'w-3.5 h-3.5');
     if (team.confusedTurns > 0) html += statusIconHtml('confusion', 'w-3.5 h-3.5');
+    if (team.rooted) html += rootedIconHtml('w-3.5 h-3.5');
+    if (team.seeded) html += seededIconHtml('w-3.5 h-3.5');
+    if (team.substituteHp > 0) html += substituteIconHtml('w-3.5 h-3.5');
+    if (team.chargingMove) html += genericIconHtml(typeIconUrl('flying'), 'w-3.5 h-3.5', '蓄力中');
     return html;
+}
+// ---------- 天氣/場地：圖示素材(天氣用道具庫的「天氣石」，場地用道具庫的「場地種子」，
+// 都是官方真實存在、語意上直接對應的道具圖示) ----------
+const WEATHER_ICON = { sun: 'heat-rock', rain: 'damp-rock', sandstorm: 'smooth-rock', hail: 'icy-rock' };
+const WEATHER_NAME_ZH = { sun: '大晴天', rain: '下雨', sandstorm: '沙暴', hail: '冰雹' };
+const TERRAIN_ICON = { electric: 'electric-seed', grassy: 'grassy-seed', misty: 'misty-seed', psychic: 'psychic-seed' };
+const TERRAIN_NAME_ZH = { electric: '電氣場地', grassy: '青草場地', misty: '薄霧場地', psychic: '精神場地' };
+function weatherIconHtml(weatherType, sizeClass) { return genericIconHtml(itemSpriteUrl(WEATHER_ICON[weatherType]), sizeClass, WEATHER_NAME_ZH[weatherType]); }
+function terrainIconHtml(terrainType, sizeClass) { return genericIconHtml(itemSpriteUrl(TERRAIN_ICON[terrainType]), sizeClass, TERRAIN_NAME_ZH[terrainType]); }
+// 天氣對特定屬性招式的傷害倍率(簡化版：只做傷害加成/減成，不做沙暴/冰雹的「非該屬性免疫者
+// 回合結束損血」以外的額外規則，例如原作沙暴會提升岩石屬性的特防，這裡不模擬)
+function weatherDamageMult(weatherType, moveType) {
+    if (weatherType === 'sun') { if (moveType === 'fire') return 1.5; if (moveType === 'water') return 0.5; }
+    if (weatherType === 'rain') { if (moveType === 'water') return 1.5; if (moveType === 'fire') return 0.5; }
+    return 1;
+}
+function terrainDamageMult(terrainType, moveType) {
+    if (terrainType === 'electric' && moveType === 'electric') return 1.3;
+    if (terrainType === 'grassy' && moveType === 'grass') return 1.3;
+    if (terrainType === 'psychic' && moveType === 'psychic') return 1.3;
+    if (terrainType === 'misty' && moveType === 'dragon') return 0.5;
+    return 1;
+}
+// PP：取得某招式目前剩餘PP(第一次用之前，movePp裡沒有這個key，視為滿PP)
+function getMovePp(team, move) {
+    if (move.isStruggle) return Infinity;
+    if (team.movePp && Object.prototype.hasOwnProperty.call(team.movePp, move.name)) return team.movePp[move.name];
+    return move.pp || 0;
+}
+function consumePp(team, move) {
+    if (move.isStruggle) return;
+    if (!team.movePp) team.movePp = {};
+    const cur = getMovePp(team, move);
+    team.movePp[move.name] = Math.max(0, cur - 1);
 }
 // 機率骰(chance是0~100的百分比數字)
 function rollChance(chancePct) { return Math.random() * 100 < chancePct; }
 
 async function submitMove(moveName) {
+    battleShowSwitchPicker = false;
     if (currentRoomIsWild) return submitWildMove(moveName);
     const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
     const myUid = auth.currentUser.uid;
@@ -1691,7 +1938,7 @@ async function submitMove(moveName) {
             if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
             const pending = { ...(data.pendingMoves || {}) };
             if (pending[myUid]) throw new Error('這回合已經送出過招式了');
-            pending[myUid] = moveName;
+            pending[myUid] = { type: 'move', move: moveName };
             tx.update(roomRef, { pendingMoves: pending });
             roomDataAfter = { ...data, pendingMoves: pending };
         });
@@ -1703,6 +1950,87 @@ async function submitMove(moveName) {
     if (roomDataAfter.pendingMoves[opponentUid]) {
         await resolveBattleRound(roomRef, roomDataAfter, myUid, opponentUid);
     }
+}
+
+// 自願替換：消耗這一整回合的出招機會(換上場的寶可夢這回合不會攻擊)，扎根中的寶可夢禁止替換——
+// 這兩個規則直接在送出前就擋掉，不用等結算才發現不能換
+async function submitSwitch(instanceId) {
+    battleShowSwitchPicker = false;
+    const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
+    const myUid = auth.currentUser.uid;
+    if (currentRoomIsWild) {
+        let roomDataAfter = null;
+        try {
+            await db.runTransaction(async tx => {
+                const snap = await tx.get(roomRef);
+                const data = snap.data();
+                if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
+                const myTeam = data.battleState.teams[myUid];
+                if (myTeam.rooted) throw new Error('扎根中無法替換寶可夢！');
+                const pending = { ...(data.pendingMoves || {}) };
+                if (pending[myUid]) throw new Error('這回合已經送出過指令了');
+                const wildMoves = (data.battleState.teams.wild && data.battleState.teams.wild.moves) || ['tackle'];
+                const aiMoveName = wildMoves[Math.floor(Math.random() * wildMoves.length)];
+                pending[myUid] = { type: 'switch', instanceId };
+                pending.wild = { type: 'move', move: aiMoveName };
+                tx.update(roomRef, { pendingMoves: pending });
+                roomDataAfter = { ...data, pendingMoves: pending };
+            });
+        } catch (err) { showToast(err.message); return; }
+        await resolveBattleRound(roomRef, roomDataAfter, myUid, 'wild');
+        return;
+    }
+    let roomDataAfter = null;
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
+            const myTeam = data.battleState.teams[myUid];
+            if (myTeam.rooted) throw new Error('扎根中無法替換寶可夢！');
+            const pending = { ...(data.pendingMoves || {}) };
+            if (pending[myUid]) throw new Error('這回合已經送出過指令了');
+            pending[myUid] = { type: 'switch', instanceId };
+            tx.update(roomRef, { pendingMoves: pending });
+            roomDataAfter = { ...data, pendingMoves: pending };
+        });
+    } catch (err) { showToast(err.message); return; }
+    const opponentUid = roomDataAfter.memberUids.find(u => u !== myUid);
+    if (roomDataAfter.pendingMoves[opponentUid]) {
+        await resolveBattleRound(roomRef, roomDataAfter, myUid, opponentUid);
+    }
+}
+
+// 強制替換：主動寶可夢倒下、但候補還有活著的寶可夢時，戰鬥不會直接結束，而是要求這一方
+// 先選一隻頂上——這是獨立於resolveBattleRound之外的輕量結算(不用等對方也送出指令)，
+// 因為對方在這個當下並沒有「這一輪」要送出的招式(上一輪已經結算完了，只是倒下的這一方
+// 還沒決定接下來換誰)
+async function submitForcedSwitch(instanceId) {
+    const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
+    const myUid = auth.currentUser.uid;
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.status !== 'battling' || !data.battleState) throw new Error('這場對戰已經結束了');
+            const awaiting = data.battleState.awaitingSwitch || [];
+            if (!awaiting.includes(myUid)) throw new Error('現在不是替換寶可夢的時候');
+            const bench = (data.battleState.bench && data.battleState.bench[myUid]) || [];
+            const chosen = bench.find(b => b.instanceId === instanceId && b.currentHp > 0);
+            if (!chosen) throw new Error('這隻寶可夢沒辦法上場');
+            const newTeams = { ...data.battleState.teams, [myUid]: { ...chosen, mustSwitch: false } };
+            const newBench = { ...data.battleState.bench, [myUid]: bench.filter(b => b.instanceId !== instanceId) };
+            const newAwaiting = awaiting.filter(u => u !== myUid);
+            const outName = data.battleState.teams[myUid].nickname;
+            tx.update(roomRef, {
+                'battleState.teams': newTeams,
+                'battleState.bench': newBench,
+                'battleState.awaitingSwitch': newAwaiting,
+                'battleState.log': firebase.firestore.FieldValue.arrayUnion(`${outName ? outName + '倒下後，' : ''}派出了 ${chosen.nickname}！`),
+                pendingMoves: {},
+            });
+        });
+    } catch (err) { showToast(err.message); }
 }
 
 // 野生對戰的AI很單純：從牠的招式裡隨機選一個，不用什麼策略判斷——這是休閒練等用的功能，
@@ -1720,7 +2048,7 @@ async function submitWildMove(moveName) {
             if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
             const wildMoves = (data.battleState.teams.wild && data.battleState.teams.wild.moves) || ['tackle'];
             const aiMoveName = wildMoves[Math.floor(Math.random() * wildMoves.length)];
-            const pending = { [myUid]: moveName, wild: aiMoveName };
+            const pending = { [myUid]: { type: 'move', move: moveName }, wild: { type: 'move', move: aiMoveName } };
             tx.update(roomRef, { pendingMoves: pending });
             roomDataAfter = { ...data, pendingMoves: pending };
         });
@@ -1737,26 +2065,99 @@ async function submitWildMove(moveName) {
 // 這樣PokéAPI裡每個招式meta欄位描述的效果，才會真的反映在戰鬥結果裡，不是每招都當成
 // 「只有傷害」的普通攻擊
 async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
-    const moveNameA = roomData.pendingMoves[uidA];
-    const moveNameB = roomData.pendingMoves[uidB];
+    const actionA = roomData.pendingMoves[uidA];
+    const actionB = roomData.pendingMoves[uidB];
     const teams = roomData.battleState.teams;
+    const benchAll = roomData.battleState.bench || {};
     // 用freshBattleStatus()補齊欄位——這樣即使是「這場對戰剛開打、Firestore裡還沒有異常狀態/
-    // 能力等級資料」的第一回合，也不會因為缺欄位而在下面算stages.xxx的時候爆錯
-    const teamA = { ...freshBattleStatus(), ...teams[uidA] };
-    const teamB = { ...freshBattleStatus(), ...teams[uidB] };
-    const [moveA, moveB] = await Promise.all([fetchMoveData(moveNameA), fetchMoveData(moveNameB)]);
-    const displayA = await fetchSpeciesDisplay(teamA.speciesId, teamA.isShiny);
-    const displayB = await fetchSpeciesDisplay(teamB.speciesId, teamB.isShiny);
-    const [effA, effB] = await Promise.all([
-        fetchTypeEffectiveness(moveA.type, displayB.types),
-        fetchTypeEffectiveness(moveB.type, displayA.types),
-    ]);
+    // 能力等級/PP資料」的第一回合，也不會因為缺欄位而在下面算stages.xxx的時候爆錯
+    const state = {
+        [uidA]: { ...freshBattleStatus(), ...teams[uidA] },
+        [uidB]: { ...freshBattleStatus(), ...teams[uidB] },
+    };
+    // protectedThisTurn只在單一回合內有意義，是否要在這回合生效要靠這回合的招式選擇重新判斷，
+    // 不能沿用上一回合寫進Firestore的舊值(否則守住的效果會一直卡著不會消失)
+    state[uidA].protectedThisTurn = false;
+    state[uidB].protectedThisTurn = false;
+    const benchState = { [uidA]: (benchAll[uidA] || []).slice(), [uidB]: (benchAll[uidB] || []).slice() };
+    const nameOfOriginal = { [uidA]: state[uidA].nickname, [uidB]: state[uidB].nickname };
 
-    const state = { [uidA]: teamA, [uidB]: teamB };
-    const moveOf = { [uidA]: moveA, [uidB]: moveB };
-    const effOf = { [uidA]: effA, [uidB]: effB };
+    const log = [];
+    const events = []; // 結構化的事件，給前端播放動畫用
+    const prevHpA = state[uidA].currentHp;
+    const prevHpB = state[uidB].currentHp;
+    let winnerUid = null;
+    let awaitingSwitchFinal = [];
+    // 寶可夢倒下時，不能直接判定戰鬥結束——要先看倒下的那一方還有沒有活著的候補寶可夢：
+    // 有的話戰鬥還沒結束，改成「強制替換」狀態(Task 3的核心)；沒有候補才是真的輸了
+    function handleFaint(defeatedUid) {
+        const aliveBench = (benchState[defeatedUid] || []).filter(b => b.currentHp > 0);
+        if (aliveBench.length > 0) {
+            state[defeatedUid].mustSwitch = true;
+            if (!awaitingSwitchFinal.includes(defeatedUid)) awaitingSwitchFinal.push(defeatedUid);
+        } else {
+            winnerUid = defeatedUid === uidA ? uidB : uidA;
+        }
+    }
+
+    // ---- Step 1：先處理「替換寶可夢」的動作——替換永遠比出招快，兩邊同時發生，
+    // 換上場的那一方這整回合就不會出招了 ----
+    function performSwitch(uid, instanceId) {
+        const bench = benchState[uid];
+        const idx = bench.findIndex(b => b.instanceId === instanceId);
+        if (idx === -1) return null; // 候補裡找不到(理論上不會發生，防禦性檢查)
+        const chosen = bench[idx];
+        // 被換下場的寶可夢：保留currentHp跟主要異常狀態(麻痺/中毒/燒傷/睡眠/冰凍——這些跟著
+        // 寶可夢本體走，換人也治不好)，但清掉能力等級/混亂/畏縮/蓄力/守住連續紀錄/扎根/寄生種子
+        // 這些「只在上場期間有意義」的暫時效果，之後才能再被换回來繼續戰鬥
+        const outgoing = { ...state[uid] };
+        outgoing.stages = { atk: 0, def: 0, spd: 0, acc: 0, eva: 0 };
+        outgoing.confusedTurns = 0; outgoing.flinched = false; outgoing.chargingMove = null;
+        outgoing.protectStreak = 0; outgoing.protectedThisTurn = false; outgoing.mustSwitch = false;
+        outgoing.rooted = false; outgoing.seeded = false; outgoing.seederKey = null; outgoing.substituteHp = 0;
+        const newBench = bench.slice();
+        newBench[idx] = outgoing;
+        benchState[uid] = newBench;
+        const incoming = { ...freshBattleStatus(), ...chosen };
+        const outName = state[uid].nickname;
+        state[uid] = incoming;
+        return { outName, inName: incoming.nickname };
+    }
+    if (actionA && actionA.type === 'switch') {
+        const info = performSwitch(uidA, actionA.instanceId);
+        if (info) { log.push(`${info.outName} 被收回，換上了 ${info.inName}！`); events.push({ switchEvent: true, uid: uidA, outName: info.outName, inName: info.inName }); }
+    }
+    if (actionB && actionB.type === 'switch') {
+        const info = performSwitch(uidB, actionB.instanceId);
+        if (info) { log.push(`${info.outName} 被收回，換上了 ${info.inName}！`); events.push({ switchEvent: true, uid: uidB, outName: info.outName, inName: info.inName }); }
+    }
+
+    // 換人之後才抓「現在真正在場上」的種類資料——如果剛剛換過人，要用新上場那隻的speciesId查屬性
+    const displayA = await fetchSpeciesDisplay(state[uidA].speciesId, state[uidA].isShiny);
+    const displayB = await fetchSpeciesDisplay(state[uidB].speciesId, state[uidB].isShiny);
     const displayOf = { [uidA]: displayA, [uidB]: displayB };
-    const nameOf = { [uidA]: teamA.nickname, [uidB]: teamB.nickname };
+    const nameOf = { [uidA]: state[uidA].nickname, [uidB]: state[uidB].nickname };
+
+    // ---- Step 2：只有「這回合真的選了招式」的那一方才需要抓招式資料/算出招順序——
+    // 換人的那一方這回合沒有招式，不會進入下面的攻擊流程 ----
+    const moveUids = [];
+    if (actionA && actionA.type === 'move') moveUids.push(uidA);
+    if (actionB && actionB.type === 'move') moveUids.push(uidB);
+    const moveOf = {};
+    for (const uid of moveUids) {
+        const act = uid === uidA ? actionA : actionB;
+        moveOf[uid] = await fetchMoveData(act.move);
+    }
+    const effOf = {};
+    for (const uid of moveUids) {
+        const opponentUid = uid === uidA ? uidB : uidA;
+        effOf[uid] = await fetchTypeEffectiveness(moveOf[uid].type, displayOf[opponentUid].types);
+    }
+
+    // 天氣/場地：從房間資料帶過來的「這回合開始前」狀態，招式效果/回合結束的持續效果都會更新這份本地副本，
+    // 最後才整份寫回Firestore
+    let weatherState = { ...(roomData.battleState.weather || { type: null, turnsLeft: 0 }) };
+    let terrainState = { ...(roomData.battleState.terrain || { type: null, turnsLeft: 0 }) };
 
     // 出招順序：優先度高的先出手(不管速度，保護/先制拳那種招式就是這樣)，優先度相同再比
     // 「有效速度」= 種族速度 × 能力等級倍率 × (麻痺的話再打對折，這是經典的麻痺副作用)
@@ -1766,18 +2167,17 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         return t.status === 'paralysis' ? base * 0.5 : base;
     };
     let order;
-    if (moveA.priority !== moveB.priority) {
-        order = moveA.priority > moveB.priority ? [uidA, uidB] : [uidB, uidA];
+    if (moveUids.length === 2) {
+        const moveA = moveOf[uidA], moveB = moveOf[uidB];
+        if (moveA.priority !== moveB.priority) {
+            order = moveA.priority > moveB.priority ? [uidA, uidB] : [uidB, uidA];
+        } else {
+            const spdA = effectiveSpeed(uidA), spdB = effectiveSpeed(uidB);
+            order = spdA === spdB ? (Math.random() < 0.5 ? [uidA, uidB] : [uidB, uidA]) : (spdA > spdB ? [uidA, uidB] : [uidB, uidA]);
+        }
     } else {
-        const spdA = effectiveSpeed(uidA), spdB = effectiveSpeed(uidB);
-        order = spdA === spdB ? (Math.random() < 0.5 ? [uidA, uidB] : [uidB, uidA]) : (spdA > spdB ? [uidA, uidB] : [uidB, uidA]);
+        order = moveUids.slice(); // 這回合0或1個人真的出招(另一方在換寶可夢)，不用排序
     }
-
-    const log = [];
-    const events = []; // 結構化的事件，給前端播放動畫用
-    const prevHpA = teamA.currentHp;
-    const prevHpB = teamB.currentHp;
-    let winnerUid = null;
 
     for (const attackerUid of order) {
         const defenderUid = attackerUid === uidA ? uidB : uidA;
@@ -1794,6 +2194,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             attackerName: atkName, defenderName: defName,
             moveName: move.name, moveNameZh: move.nameZh, moveType: move.type, moveTarget: move.target,
         };
+
+        // 守住連續使用的成功率是「這次選的招式還是不是守住」決定的——只要這回合改選別的招式
+        // (不管有沒有真的出招成功)，連續紀錄就重置，下次守住又會回到100%成功率
+        if (!PROTECT_MOVES.has(move.name)) atk.protectStreak = 0;
 
         // ---- 出招前檢查：畏縮／冰凍／睡眠／麻痺／混亂，任一個擋下來這回合就不會真的出招 ----
         if (atk.flinched) {
@@ -1843,7 +2247,62 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             ev.attackerHpAfter = atk.currentHp;
             log.push(`${atkName} 混亂中攻擊了自己，受到 ${selfDmg} 點傷害！`);
             events.push(ev);
-            if (atk.currentHp <= 0) { log.push(`${atkName} 倒下了！`); winnerUid = defenderUid; break; }
+            if (atk.currentHp <= 0) { log.push(`${atkName} 倒下了！`); handleFaint(attackerUid); break; }
+            continue;
+        }
+
+        // ---- PP扣除：前面的異常狀態檢查都通過了，這一下才算「真的要出招」，開始扣PP。
+        // 蓄力招式的「放」那一回合不再扣一次(蓄力那一回合已經扣過了)，掙扎無視PP ----
+        const alreadyCharging = atk.chargingMove === move.name;
+        if (!alreadyCharging && !move.isStruggle) consumePp(atk, move);
+
+        // ---- 雙回合蓄力招式：第一回合只蓄力、不會真的打到對手；天氣符合的話可以省略蓄力
+        // (例如日光烈焰在大晴天下直接放) ----
+        const chargeInfo = TWO_TURN_MOVES[move.name];
+        if (chargeInfo && !alreadyCharging) {
+            const skipCharge = chargeInfo.skipChargeWeather && weatherState.type === chargeInfo.skipChargeWeather;
+            if (!skipCharge) {
+                atk.chargingMove = move.name;
+                ev.charging = true;
+                log.push(`${atkName} 正在蓄力，準備使出 ${move.nameZh}！`);
+                events.push(ev);
+                continue;
+            }
+        }
+        if (alreadyCharging) atk.chargingMove = null; // 這回合是「放」的那一下，蓄力狀態解除
+
+        // ---- 守住/替身：完全客製化的成功率/資源邏輯，不走一般的命中/傷害流程 ----
+        if (PROTECT_MOVES.has(move.name)) {
+            const successChance = Math.pow(0.5, atk.protectStreak || 0) * 100;
+            if (rollChance(successChance)) {
+                atk.protectedThisTurn = true;
+                atk.protectStreak = (atk.protectStreak || 0) + 1;
+                ev.protectSuccess = true;
+                log.push(`${atkName} 擺出了防禦姿態！`);
+            } else {
+                atk.protectStreak = 0;
+                ev.protectFail = true;
+                log.push(`${atkName} 想要防禦，但是失敗了！`);
+            }
+            events.push(ev);
+            continue;
+        }
+        if (SUBSTITUTE_MOVES.has(move.name)) {
+            const cost = Math.max(1, Math.floor(atk.maxHp / 4));
+            if (atk.substituteHp > 0) {
+                ev.substituteFail = true;
+                log.push(`${atkName} 已經有替身了！`);
+            } else if (atk.currentHp <= cost) {
+                ev.substituteFail = true;
+                log.push(`但是 ${atkName} 的HP不夠，沒辦法使出替身！`);
+            } else {
+                atk.currentHp -= cost;
+                atk.substituteHp = cost;
+                ev.substituteSet = true;
+                ev.attackerHpAfter = atk.currentHp;
+                log.push(`${atkName} 使出替身，準備代替自己承受攻擊！`);
+            }
+            events.push(ev);
             continue;
         }
 
@@ -1861,9 +2320,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             continue;
         }
 
-        // ---- 沒有效果(屬性免疫)：只對「有指定攻擊目標」的招式有意義，對自己生效的招式
-        // (能力提升/回血)不用管跟對手的屬性相剋 ----
-        if (move.target !== 'user' && eff === 0) {
+        // ---- 沒有效果(屬性免疫)：只對「有指定攻擊目標」的招式有意義，對自己生效/對整個場地生效的
+        // 招式(能力提升/回血/天氣/場地)不用管跟對手的屬性相剋 ----
+        if (move.target !== 'user' && move.target !== 'entire-field' && eff === 0) {
             ev.effectiveness = 0;
             ev.damage = 0;
             log.push(`${atkName} 使出 ${move.nameZh}，但是沒有效果...`);
@@ -1871,8 +2330,17 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             continue;
         }
 
+        // ---- 對方擺出了守住：這回合的攻擊完全被擋下來，不會造成傷害或附加效果 ----
+        if (move.target !== 'user' && move.target !== 'entire-field' && def.protectedThisTurn) {
+            ev.protectedBlock = true;
+            log.push(`${defName} 防住了攻擊！`);
+            events.push(ev);
+            continue;
+        }
+
         const isStab = displayOf[attackerUid].types.includes(move.type);
-        let totalDamage = 0, hitCount = 0, crit = false, fainted = false;
+        let totalDamage = 0, hitCount = 0, crit = false, fainted = false, subBroke = false;
+        let defSubActiveBeforeHit = false; // 這一下攻擊命中前，替身是否還在場——用來決定附加效果要不要被擋掉
 
         if (move.category === 'ohko' || OHKO_MOVES.has(move.name)) {
             totalDamage = def.currentHp;
@@ -1887,23 +2355,44 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             fainted = def.currentHp <= 0;
             if (totalDamage > 0) log.push(`${atkName} 使出 ${move.nameZh}，造成 ${totalDamage} 點傷害！`);
             else log.push(`${atkName} 使出 ${move.nameZh}，但是沒有效果...`);
+        } else if (WEATHER_MOVES[move.name]) {
+            weatherState = { type: WEATHER_MOVES[move.name], turnsLeft: 5 };
+            ev.fieldEffect = { kind: 'weather', type: weatherState.type };
+            log.push(`${atkName} 使出 ${move.nameZh}，天氣變成了${WEATHER_NAME_ZH[weatherState.type]}！`);
+        } else if (TERRAIN_MOVES[move.name]) {
+            terrainState = { type: TERRAIN_MOVES[move.name], turnsLeft: 5 };
+            ev.fieldEffect = { kind: 'terrain', type: terrainState.type };
+            log.push(`${atkName} 使出 ${move.nameZh}，場地變成了${TERRAIN_NAME_ZH[terrainState.type]}！`);
         } else if (move.power > 0) {
             const hits = rollMultiHitCount(move.minHits, move.maxHits);
             const atkStat = atk.atk * statStageMult(atk.stages.atk);
             const defStat = def.def * statStageMult(def.stages.def);
+            defSubActiveBeforeHit = def.substituteHp > 0;
+            const wDmgMult = weatherDamageMult(weatherState.type, move.type);
+            const tDmgMult = terrainDamageMult(terrainState.type, move.type);
             for (let i = 0; i < hits; i++) {
                 if (def.currentHp <= 0) break;
+                if (defSubActiveBeforeHit && def.substituteHp <= 0) break; // 替身已經被打破了，連續攻擊剩下的次數不會再打到本體
                 const isCrit = rollChance(critChance(move.critRate) * 100);
                 if (isCrit) crit = true;
-                const dmg = computeDamage(atk.level, atkStat, defStat, move.power, eff, isStab, isCrit ? 1.5 : 1);
-                def.currentHp = Math.max(0, def.currentHp - dmg);
+                let dmg = computeDamage(atk.level, atkStat, defStat, move.power, eff, isStab, isCrit ? 1.5 : 1);
+                dmg = Math.max(1, Math.floor(dmg * wDmgMult * tDmgMult));
+                if (def.substituteHp > 0) {
+                    const absorbed = Math.min(def.substituteHp, dmg);
+                    def.substituteHp -= absorbed;
+                    if (def.substituteHp <= 0) subBroke = true;
+                } else {
+                    def.currentHp = Math.max(0, def.currentHp - dmg);
+                }
                 totalDamage += dmg;
                 hitCount++;
             }
-            fainted = def.currentHp <= 0;
+            fainted = def.currentHp <= 0; // 替身在的話本體血量沒變，不會倒下
             const effTxt = eff > 1 ? '，效果絕佳！' : eff < 1 ? '，效果不理想...' : '';
-            if (hitCount > 1) log.push(`${atkName} 使出 ${move.nameZh}，打中了 ${hitCount} 次，總共造成 ${totalDamage} 點傷害${effTxt}${crit ? '(會心一擊！)' : ''}`);
-            else log.push(`${atkName} 使出 ${move.nameZh}，造成 ${totalDamage} 點傷害${effTxt}${crit ? '，會心一擊！' : ''}`);
+            const subTxt = defSubActiveBeforeHit ? '(打在替身上)' : '';
+            if (hitCount > 1) log.push(`${atkName} 使出 ${move.nameZh}，打中了 ${hitCount} 次，總共造成 ${totalDamage} 點傷害${subTxt}${effTxt}${crit ? '(會心一擊！)' : ''}`);
+            else log.push(`${atkName} 使出 ${move.nameZh}，造成 ${totalDamage} 點傷害${subTxt}${effTxt}${crit ? '，會心一擊！' : ''}`);
+            if (subBroke) log.push(`${defName} 的替身消失了！`);
         } else {
             // 招式本身沒有威力(純變化/狀態招式)，傷害留在0——底下的回血/異常狀態/能力等級
             // 區塊才是這種招式真正的效果
@@ -1917,9 +2406,27 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         ev.crit = crit;
         ev.defenderHpAfter = def.currentHp;
         ev.fainted = fainted;
+        ev.hitSubstitute = defSubActiveBeforeHit;
+        ev.subBroken = subBroke;
+
+        // ---- 掙扎的反作用力：固定損失「自己最大HP的1/4」，不是靠傷害%數算的drain，
+        // 所以獨立成一段特例處理，不會被下面一般的drain分支蓋過 ----
+        if (move.isStruggle && totalDamage > 0) {
+            const recoil = Math.max(1, Math.floor(atk.maxHp / 4));
+            atk.currentHp = Math.max(0, atk.currentHp - recoil);
+            ev.attackerHpAfter = atk.currentHp;
+            ev.drainAmount = -recoil;
+            log.push(`${atkName} 因為反作用力，損失了 ${recoil} 點HP！`);
+            if (atk.currentHp <= 0) {
+                log.push(`${atkName} 倒下了！`);
+                handleFaint(attackerUid);
+                events.push(ev);
+                break;
+            }
+        }
 
         // ---- 吸血／反作用力(drain)：正值回攻擊方血、負值扣攻擊方血(可能因此自己也倒下) ----
-        if (move.drain && totalDamage > 0) {
+        if (move.drain && totalDamage > 0 && !move.isStruggle) {
             const drainAmt = Math.round(totalDamage * move.drain / 100);
             atk.currentHp = Math.max(0, Math.min(atk.maxHp, atk.currentHp + drainAmt));
             ev.attackerHpAfter = atk.currentHp;
@@ -1928,7 +2435,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             else if (drainAmt < 0) log.push(`${atkName} 受到反作用力，損失了 ${-drainAmt} 點HP！`);
             if (atk.currentHp <= 0 && drainAmt < 0) {
                 log.push(`${atkName} 倒下了！`);
-                winnerUid = defenderUid;
+                handleFaint(attackerUid);
                 events.push(ev);
                 break;
             }
@@ -1946,8 +2453,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
         }
 
-        // ---- 附加異常狀態 ----
-        if (move.ailment && (move.target === 'user' || eff !== 0)) {
+        // ---- 附加異常狀態：扎根/寄生種子有自己專屬的欄位(rooted/seeded)，不是共用.status那條
+        // 「互斥的主要異常狀態」線——這是修正扎根之前完全沒有回血邏輯的關鍵，把它從共用status
+        // 特例出來，並且被替身擋下來時不會附加(defSubActiveBeforeHit) ----
+        if (move.ailment && (move.target === 'user' || eff !== 0) && !(move.target !== 'user' && defSubActiveBeforeHit)) {
             const chance = move.category === 'ailment' ? 100 : (move.ailmentChance || 0);
             if (chance > 0 && rollChance(chance)) {
                 const ailmentTarget = move.target === 'user' ? atk : def;
@@ -1956,6 +2465,19 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                         ailmentTarget.confusedTurns = 1 + Math.floor(Math.random() * 4);
                         ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: 'confusion', statusNameZh: STATUS_NAME_ZH.confusion };
                         log.push(`${ailmentTarget === atk ? atkName : defName} 陷入混亂了！`);
+                    }
+                } else if (move.ailment === 'ingrain') {
+                    if (!ailmentTarget.rooted) {
+                        ailmentTarget.rooted = true;
+                        ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: 'ingrain', statusNameZh: '扎根' };
+                        log.push(`${ailmentTarget === atk ? atkName : defName} 扎根了！`);
+                    }
+                } else if (move.ailment === 'leech-seed') {
+                    if (!ailmentTarget.seeded) {
+                        ailmentTarget.seeded = true;
+                        ailmentTarget.seederKey = attackerUid;
+                        ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: 'leech-seed', statusNameZh: '寄生種子' };
+                        log.push(`${ailmentTarget === atk ? atkName : defName} 被種下了寄生種子！`);
                     }
                 } else if (!ailmentTarget.status) {
                     const isToxic = move.name === 'toxic';
@@ -1968,8 +2490,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
         }
 
-        // ---- 能力等級變化 ----
-        if (move.statChanges && move.statChanges.length) {
+        // ---- 能力等級變化(被替身擋下來時，對對方生效的部分不會套用) ----
+        if (move.statChanges && move.statChanges.length && !(move.target !== 'user' && defSubActiveBeforeHit)) {
             const chance = (move.category === 'net-good-stats' || move.category === 'swagger') ? 100 : (move.statChance || 100);
             if (rollChance(chance)) {
                 const statTarget = move.target === 'user' ? atk : def;
@@ -1988,35 +2510,122 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
         }
 
-        // ---- 畏縮：只有「這回合對方還沒出招」才有意義(先攻方讓後攻方這回合直接動不了) ----
-        if (move.flinchChance > 0 && def.currentHp > 0 && order.indexOf(defenderUid) > order.indexOf(attackerUid)) {
+        // ---- 畏縮：只有「這回合對方還沒出招」才有意義(先攻方讓後攻方這回合直接動不了)，
+        // 被替身擋下來時不會畏縮 ----
+        if (move.flinchChance > 0 && def.currentHp > 0 && !defSubActiveBeforeHit && order.indexOf(defenderUid) > order.indexOf(attackerUid)) {
             if (rollChance(move.flinchChance)) def.flinched = true;
         }
 
         events.push(ev);
         if (fainted) {
             log.push(`${defName} 倒下了！`);
-            winnerUid = attackerUid;
+            handleFaint(defenderUid);
             break;
         }
     }
 
-    // ---- 回合結束的異常狀態傷害(中毒/劇毒/燒傷)：還沒分出勝負才會結算 ----
+    // ---- 回合結束的持續效果：中毒/劇毒/燒傷、扎根回血(這就是原本回報的bug——扎根完全沒有
+    // 這段邏輯)、寄生種子吸血、沙暴/冰雹的天氣傷害、青草場地回血——通通還沒分出勝負才會結算，
+    // 而且是對「這回合結束時場上的兩隻寶可夢」結算(不是只看order，換人上場的也要算) ----
     if (!winnerUid) {
-        for (const uid of order) {
+        for (const uid of [uidA, uidB]) {
             const t = state[uid];
-            if (t.currentHp <= 0 || (t.status !== 'poison' && t.status !== 'burn')) continue;
-            const isToxic = t.status === 'poison' && t.toxicCounter > 0;
-            const pct = t.status === 'burn' ? 6.25 : (isToxic ? Math.min(25, 6.25 * t.toxicCounter) : 12.5);
-            const dmg = Math.max(1, Math.floor(t.maxHp * pct / 100));
-            t.currentHp = Math.max(0, t.currentHp - dmg);
-            if (isToxic) t.toxicCounter += 1;
-            const label = t.status === 'burn' ? '燒傷' : (isToxic ? '劇毒' : '中毒');
-            log.push(`${nameOf[uid]} 因為${label}損失了 ${dmg} 點HP！`);
-            events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: t.status, damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
-            if (t.currentHp <= 0) { log.push(`${nameOf[uid]} 倒下了！`); winnerUid = order.find(u => u !== uid); }
+            const opponentUid = uid === uidA ? uidB : uidA;
+            if (t.currentHp <= 0) continue;
+
+            if (t.status === 'poison' || t.status === 'burn') {
+                const isToxic = t.status === 'poison' && t.toxicCounter > 0;
+                const pct = t.status === 'burn' ? 6.25 : (isToxic ? Math.min(25, 6.25 * t.toxicCounter) : 12.5);
+                const dmg = Math.max(1, Math.floor(t.maxHp * pct / 100));
+                t.currentHp = Math.max(0, t.currentHp - dmg);
+                if (isToxic) t.toxicCounter += 1;
+                const label = t.status === 'burn' ? '燒傷' : (isToxic ? '劇毒' : '中毒');
+                log.push(`${nameOf[uid]} 因為${label}損失了 ${dmg} 點HP！`);
+                events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: t.status, damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+            }
+            if (t.currentHp <= 0) continue;
+
+            if (t.rooted) {
+                const heal = Math.max(1, Math.floor(t.maxHp / 16));
+                const before = t.currentHp;
+                t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                const actual = t.currentHp - before;
+                if (actual > 0) {
+                    log.push(`${nameOf[uid]} 因為扎根回復了 ${actual} 點HP！`);
+                    events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: actual, hpAfter: t.currentHp });
+                }
+            }
+
+            if (t.seeded) {
+                const seeder = state[t.seederKey];
+                const drain = Math.max(1, Math.floor(t.maxHp / 8));
+                const actualDrain = Math.min(drain, t.currentHp);
+                t.currentHp -= actualDrain;
+                log.push(`${nameOf[uid]} 被寄生種子吸取了 ${actualDrain} 點HP！`);
+                events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'leech-seed', damage: actualDrain, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                if (seeder && seeder.currentHp > 0 && actualDrain > 0) {
+                    const before = seeder.currentHp;
+                    seeder.currentHp = Math.min(seeder.maxHp, seeder.currentHp + actualDrain);
+                    const healed = seeder.currentHp - before;
+                    if (healed > 0) { log.push(`${nameOf[t.seederKey] || seeder.nickname} 吸收了 ${healed} 點HP！`); events.push({ endTurnHeal: true, pokemonKey: t.seederKey, pokemonName: nameOf[t.seederKey] || seeder.nickname, amount: healed, hpAfter: seeder.currentHp }); }
+                }
+                if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+            }
+            if (t.currentHp <= 0) continue;
+
+            if (weatherState.type === 'sandstorm' || weatherState.type === 'hail') {
+                const immuneTypes = weatherState.type === 'sandstorm' ? ['ground', 'rock', 'steel'] : ['ice'];
+                const types = (displayOf[uid] && displayOf[uid].types) || [];
+                const immune = types.some(ty => immuneTypes.includes(ty));
+                if (!immune) {
+                    const dmg = Math.max(1, Math.floor(t.maxHp / 16));
+                    t.currentHp = Math.max(0, t.currentHp - dmg);
+                    const label = weatherState.type === 'sandstorm' ? '沙暴' : '冰雹';
+                    log.push(`${nameOf[uid]} 受到${label}的傷害，損失了 ${dmg} 點HP！`);
+                    events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: weatherState.type, damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                    if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+                }
+            }
+            if (t.currentHp <= 0) continue;
+
+            if (terrainState.type === 'grassy') {
+                const heal = Math.max(1, Math.floor(t.maxHp / 16));
+                const before = t.currentHp;
+                t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                const actual = t.currentHp - before;
+                if (actual > 0) {
+                    log.push(`${nameOf[uid]} 因為青草場地回復了 ${actual} 點HP！`);
+                    events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: actual, hpAfter: t.currentHp });
+                }
+            }
         }
+        // 兩邊都要檢查完才能判斷輸贏——任一方這時候HP歸零，先看牠還有沒有活著的候補寶可夢，
+        // 有的話不會直接輸掉戰鬥，而是進入「強制替換」狀態
+        const awaitingSwitch = [];
+        for (const uid of [uidA, uidB]) {
+            if (state[uid].currentHp <= 0) {
+                const aliveBench = (benchState[uid] || []).filter(b => b.currentHp > 0);
+                if (aliveBench.length > 0) {
+                    state[uid].mustSwitch = true;
+                    awaitingSwitch.push(uid);
+                } else if (!winnerUid) {
+                    winnerUid = uid === uidA ? uidB : uidA;
+                }
+            }
+        }
+        if (!winnerUid && weatherState.turnsLeft > 0) {
+            weatherState.turnsLeft -= 1;
+            if (weatherState.turnsLeft <= 0) { log.push(`${WEATHER_NAME_ZH[weatherState.type]}結束了！`); weatherState = { type: null, turnsLeft: 0 }; }
+        }
+        if (!winnerUid && terrainState.turnsLeft > 0) {
+            terrainState.turnsLeft -= 1;
+            if (terrainState.turnsLeft <= 0) { log.push(`${TERRAIN_NAME_ZH[terrainState.type]}消失了！`); terrainState = { type: null, turnsLeft: 0 }; }
+        }
+        awaitingSwitchFinal = awaitingSwitch;
     }
+    // (else分支：主動寶可夢是被一般攻擊直接打倒分出勝負的情況，winnerUid在上面move迴圈就決定了，
+    // 天氣/場地不用再倒數，awaitingSwitchFinal維持預設的空陣列即可)
 
     const finalStatus = winnerUid ? 'finished' : 'battling';
     const winnerInstanceId = winnerUid ? state[winnerUid].instanceId : null;
@@ -2028,9 +2637,13 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             const data = snap.data();
             if (!data || data.status !== 'battling') return; // 已經被結算過了
             const pending = data.pendingMoves || {};
-            if (pending[uidA] !== moveNameA || pending[uidB] !== moveNameB) return; // 資料已經變了，避免重複結算
+            if (JSON.stringify(pending[uidA]) !== JSON.stringify(actionA) || JSON.stringify(pending[uidB]) !== JSON.stringify(actionB)) return; // 資料已經變了，避免重複結算
             tx.update(roomRef, {
                 'battleState.teams': state,
+                'battleState.bench': benchState,
+                'battleState.weather': weatherState,
+                'battleState.terrain': terrainState,
+                'battleState.awaitingSwitch': awaitingSwitchFinal,
                 'battleState.round': (data.battleState.round || 1) + 1,
                 'battleState.log': firebase.firestore.FieldValue.arrayUnion(...log),
                 'battleState.lastRoundEvents': events,
