@@ -160,7 +160,7 @@
             <button type="button" onclick="openBagModal()" class="text-xs bg-gray-100 px-3 py-1.5 rounded-full font-bold inline-flex items-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/bag.png" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">背包</button>
         </div>
         <div class="mb-3 space-y-2">
-            <input id="box-search-input" type="text" placeholder="搜尋暱稱/種類名字..." oninput="renderBoxTab()" class="w-full text-sm border border-gray-200 rounded-xl px-3 py-2">
+            <input id="box-search-input" type="text" placeholder="搜尋暱稱/種類名字..." oninput="debouncedRenderBoxTab()" class="w-full text-sm border border-gray-200 rounded-xl px-3 py-2">
             <div class="flex flex-wrap gap-1.5 items-center">
                 <select id="box-sort-select" onchange="renderBoxTab()" class="text-xs border border-gray-200 rounded-full px-2.5 py-1.5 font-bold bg-white">
                     <option value="default">預設排序</option>
@@ -369,12 +369,22 @@ auth.onAuthStateChanged(user => {
         document.getElementById('coin-display').classList.remove('hidden');
         document.getElementById('coin-display').classList.add('flex');
         startListeners(user.uid);
-        // 第一次登入的玩家會在這裡拿到開局代幣+一隻免費初始寶可夢(已經玩過的話這裡什麼都不會發生)。
-        // isNew時直接把伺服器回傳的starterInstance拿來顯示「歡迎獲得」畫面，不用另外等onSnapshot——
-        // 這樣新玩家一登入就能馬上看到自己的第一隻夥伴，體驗比較好
+        // 第一次登入的玩家會在這裡拿到開局代幣(3000)+一隻保底的免費初始寶可夢+一次真正的免費抽獎
+        // (機率跟花錢抽的完全一樣，見ensurePokemonPlayerDoc)。isNew時直接把伺服器回傳的資料拿來
+        // 顯示「歡迎獲得」畫面，不用另外等onSnapshot——這樣新玩家一登入就能馬上看到兩隻夥伴，體驗比較好。
+        // 兩隻要排隊顯示(先看完保底的那隻、按「太好了！」關掉之後才接著跳免費抽獎那隻)，不能同時
+        // 疊兩個彈窗，用pendingWelcomeReveals這個佇列讓closeCatchModal自己接著播下一個
         callWorker('pokemon_init_player').then(result => {
+            if (result.isNew && result.bonusDraw) {
+                pendingWelcomeReveals.push(() => {
+                    if (result.bonusDraw.wasDuplicate) showDuplicateAbsorbedResult(result.bonusDraw);
+                    else showCatchResult(result.bonusDraw.instance, { welcome: true, ballType: result.bonusDraw.ballType, ballNameZh: result.bonusDraw.ballNameZh });
+                });
+            }
             if (result.isNew && result.starterInstance) {
                 showCatchResult(result.starterInstance, { welcome: true });
+            } else if (pendingWelcomeReveals.length > 0) {
+                pendingWelcomeReveals.shift()();
             }
         }).catch(err => console.warn('初始化玩家資料失敗：', err.message));
     } else {
@@ -688,9 +698,16 @@ async function showCatchResult(instance, opts) {
         <button onclick="closeCatchModal()" class="bg-red-500 text-white px-6 py-2 rounded-full font-bold">太好了！</button>
     `;
 }
+// 新玩家開局的「保底初始寶可夢」+「免費抽獎」兩隻要排隊各自跳一次歡迎畫面，不能同時疊在一起——
+// 關掉目前這個catch-modal的當下，如果佇列裡還有排隊中的下一個，就接著播放
+let pendingWelcomeReveals = [];
 function closeCatchModal() {
     document.getElementById('catch-modal').classList.add('hidden');
     document.getElementById('catch-modal').classList.remove('flex');
+    if (pendingWelcomeReveals.length > 0) {
+        const showNext = pendingWelcomeReveals.shift();
+        showNext();
+    }
 }
 
 // ============================================================
@@ -719,6 +736,14 @@ function clearBoxFilters() {
     const sortEl = document.getElementById('box-sort-select'); if (sortEl) sortEl.value = 'default';
     renderBoxTab();
 }
+// 搜尋欄原本是每打一個字就整包重新渲染收藏庫(重跑Promise.all + 重建所有卡片的DOM)，
+// 收藏庫越大就越容易感覺到打字卡頓——改成打字停下來200ms才真的觸發render，中途每多打
+// 一個字就把前一次排定的render取消掉重新排一次，體感上不會少東西，但不會每個按鍵都重算一次
+let boxSearchDebounceTimer = null;
+function debouncedRenderBoxTab() {
+    if (boxSearchDebounceTimer) clearTimeout(boxSearchDebounceTimer);
+    boxSearchDebounceTimer = setTimeout(renderBoxTab, 200);
+}
 // 屬性篩選chip只需要畫一次(不依賴任何寶可夢資料，18種屬性是固定的)，之後每次renderBoxTab
 // 只更新選取狀態(用dataset.rendered記錄畫過了沒，避免重複整包innerHTML蓋掉、丟失DOM節點)
 function renderBoxTypeFilterChipsOnce() {
@@ -739,7 +764,16 @@ function syncBoxFilterChipStyles() {
     const idleBtn = document.getElementById('box-filter-placedForIdle');
     if (idleBtn) idleBtn.className = `text-xs px-2.5 py-1.5 rounded-full font-bold ${boxStatusFilters.placedForIdle ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100'}`;
 }
+// 每次呼叫這裡的instancesUnsub監聽都會觸發一次renderBoxTab，而放牧/對戰結算常常一口氣
+// 對好幾隻寶可夢各自送出一筆Firestore寫入(例如settleIdleEarnings裡Promise.all幫每一隻
+// 分別發EXP)，會讓監聽器在短時間內連續觸發好幾次renderBoxTab；每次都要對「全部」擁有的
+// 寶可夢重新跑一次fetchSpeciesDisplay+重建整個收藏庫DOM，如果好幾個舊的還沒跑完、新的又
+// 觸發，就會疊加成越玩越卡的感覺。這裡用一個簡單的世代號擋掉：每次呼叫就換一個新號碼，
+// await之後如果發現號碼已經不是「最新的那次」，代表半路又有更新的render觸發了，直接放棄
+// 這次(不動DOM)，只有最後一次觸發的render會真的寫入畫面，不會好幾個重複的render疊在一起跑
+let boxRenderToken = 0;
 async function renderBoxTab() {
+    const myToken = ++boxRenderToken;
     const partyList = document.getElementById('party-list');
     const boxList = document.getElementById('box-list');
     const boxEmptyHint = document.getElementById('box-empty-hint');
@@ -762,6 +796,7 @@ async function renderBoxTab() {
     partyEmptyHint.classList.toggle('hidden', partyMembers.length > 0);
 
     const displays = await Promise.all(currentInstances.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
+    if (myToken !== boxRenderToken) return; // 半路已經有更新的render觸發了，這次放棄、不動DOM
     const displayMap = new Map(currentInstances.map((i, idx) => [i.id, displays[idx]]));
 
     partyList.innerHTML = partyMembers.map(inst => {
@@ -1200,36 +1235,55 @@ async function openUseItemModal(instanceId) {
         ${moveReminderCount > 0 && forgottenMoves.length === 0 ? `<p class="text-xs text-gray-400 mb-2">這隻目前沒有忘記過任何招式，技能學習器暫時用不到</p>` : ''}
         ${forgottenMovesHtml}
         ${rareCandyCount === 0 && moveReminderCount === 0 ? `<p class="text-sm text-gray-400 text-center py-6">目前身上沒有可以用的道具，去玩「小遊戲」分頁賺一些吧！</p>` : ''}
-        <button onclick="openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm mt-1">返回</button>
+        <button onclick="closeUseItemModal(); openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm mt-1">返回</button>
     `;
 }
+// 之前這裡的「返回」按鈕只有openDetailModal()把detail-modal叫出來，忘了把use-item-modal自己
+// 關掉——兩個彈窗都是同樣的z-50、疊在最上層那個是DOM順序比較後面的use-item-modal，所以看起來
+// 變成「按返回沒反應」，只有點旁邊空白處(觸發use-item-modal自己的backdrop onclick)才關得掉。
+// 現在全部統一：只要要離開use-item-modal(不管是返回、用完道具、還是彈窗內部導覽)，一律
+// 先呼叫closeUseItemModal()才能再開別的彈窗，兩個彈窗才不會疊在一起
 function closeUseItemModal() {
     document.getElementById('use-item-modal').classList.add('hidden');
     document.getElementById('use-item-modal').classList.remove('flex');
 }
+// 防止「連點狂吃」：使用道具是會實際扣庫存的動作，網路請求還沒回來之前又點一次的話，
+// 舊版本沒有任何防呆，會真的送出好幾個請求、吃掉好幾顆糖果/學習器——跟牧場「連點收取」
+// 是同一種bug，這裡用同一套in-flight旗標擋掉(見collectIdle的idleCollectInFlight)
+let useItemInFlight = false;
 async function useRareCandy(instanceId) {
+    if (useItemInFlight) return;
+    useItemInFlight = true;
     const beforeLevel = currentInstances.find(i => i.id === instanceId)?.level || 1;
     try {
         const result = await callWorker('pokemon_use_rare_candy', { instanceId });
         showToast(result.newLevel > beforeLevel ? `使用了經驗糖果！升到Lv.${result.newLevel}了！` : '使用了經驗糖果！');
+        closeUseItemModal();
         openDetailModal(instanceId);
     } catch (err) {
         showToast('使用失敗：' + err.message);
+    } finally {
+        useItemInFlight = false;
     }
 }
 async function useMoveReminder(instanceId, moveName, replaceIdx) {
+    if (useItemInFlight) return;
     const inst = currentInstances.find(i => i.id === instanceId);
     if (!inst) return;
     if ((inst.moves || []).length >= 4 && replaceIdx === undefined) {
         showMoveReminderReplacePicker(instanceId, moveName);
         return;
     }
+    useItemInFlight = true;
     try {
         await callWorker('pokemon_use_move_reminder', { instanceId, moveName, replaceIndex: replaceIdx });
         showToast('學回來了！');
+        closeUseItemModal();
         openDetailModal(instanceId);
     } catch (err) {
         showToast('使用失敗：' + err.message);
+    } finally {
+        useItemInFlight = false;
     }
 }
 async function showMoveReminderReplacePicker(instanceId, moveName) {
@@ -1460,7 +1514,9 @@ async function resolveEvolveMerge(evolvingInstanceId, duplicateInstanceId, keepI
 // ============================================================
 // 放置牧場
 // ============================================================
+let idleRenderToken = 0; // 跟boxRenderToken同樣的道理(見renderBoxTab上面的說明)，擋掉短時間內連續觸發、疊加變慢的render
 async function renderIdleTab() {
+    const myToken = ++idleRenderToken;
     if (!currentPlayerData) return;
     const placed = currentInstances.filter(i => i.placedForIdle);
     const totalLevel = placed.reduce((sum, i) => sum + (i.level || 1), 0);
@@ -1483,6 +1539,7 @@ async function renderIdleTab() {
         return;
     }
     const displays = await Promise.all(placed.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
+    if (myToken !== idleRenderToken) return; // 半路已經有更新的render觸發了，這次放棄、不動DOM
     list.innerHTML = placed.map((inst, idx) => `
         <div class="bg-white rounded-xl card-shadow p-3 text-center cursor-pointer" onclick="openDetailModal('${inst.id}')">
             <img src="${displays[idx].sprite}" class="w-14 h-14 mx-auto">
