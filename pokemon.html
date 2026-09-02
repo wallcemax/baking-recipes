@@ -159,12 +159,12 @@
     <!-- ===== 放置牧場 ===== -->
     <div id="tab-idle" class="tab-panel hidden">
         <div class="bg-white rounded-2xl card-shadow p-5 mb-4 text-center">
-            <p class="text-sm text-gray-500 mb-2">把寶可夢放到牧場裡(最多10隻)，離線也會自動累積：寶可幣(每隻每小時 = 等級×2枚)、經驗值(牧場裡每一隻每小時都固定+10 EXP，跟等級無關)——離線超過24小時只算24小時，要按「收取」才會真的入帳</p>
+            <p class="text-sm text-gray-500 mb-2">把寶可夢放到牧場裡(最多10隻)，離線也會自動累積：寶可幣(每隻每小時 = 等級×2枚)、經驗值(每小時發一次「牧場裡全體寶可夢等級總和」的經驗值，每一隻都各自拿到這整包，等級越高、放的隻數越多，大家分到的就越多)——離線超過24小時只算24小時，要按「收取」才會真的入帳</p>
             <div class="flex items-center justify-center gap-4 mb-3">
                 <p class="text-2xl font-black text-yellow-600 flex items-center justify-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/amulet-coin.png" class="w-6 h-6" style="image-rendering:pixelated"><span id="idle-pending">0</span></p>
                 <p class="text-2xl font-black text-sky-600 flex items-center justify-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/rare-candy.png" class="w-6 h-6" style="image-rendering:pixelated">+<span id="idle-pending-exp">0</span> EXP</p>
             </div>
-            <button onclick="collectIdle()" class="bg-yellow-500 text-white px-6 py-2 rounded-full font-bold">收取</button>
+            <button id="idle-collect-btn" onclick="collectIdle()" class="bg-yellow-500 text-white px-6 py-2 rounded-full font-bold">收取</button>
         </div>
         <h3 class="font-bold mb-2 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/shell-bell.png" class="w-5 h-5" style="image-rendering:pixelated">牧場裡的寶可夢(<span id="idle-placed-count">0</span>/10，點擊收藏庫的寶可夢卡片可以放進來/牽出去)</h3>
         <div id="idle-placed-list" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
@@ -442,10 +442,26 @@ function statAtLevel(base, level, isHp) {
     if (isHp) return Math.floor(base * level / 50) + level + 10;
     return Math.floor(base * level / 50) + 5;
 }
-function maxHpOf(instance) { return statAtLevel(instance.baseHp, instance.level, true); }
-function atkOf(instance) { return statAtLevel(instance.baseAtk, instance.level, false); }
-function defOf(instance) { return statAtLevel(instance.baseDef, instance.level, false); }
-function spdOf(instance) { return statAtLevel(instance.baseSpd, instance.level, false); }
+// 星級加成：抽到重複的同種寶可夢時，倉庫裡原本那隻會+1星(封頂5星)，每多一顆星、各項數值
+// (HP/攻擊/防禦/速度)都+10%，滿5星是1.5倍——只有「玩家擁有的這一隻」才有stars欄位，
+// 野生寶可夢/PvP對手直接組出來的臨時資料沒有這個欄位，starMultiplier(undefined)會自然當成0星、倍率1倍
+function starMultiplier(stars) {
+    const s = Math.max(0, Math.min(5, Number(stars) || 0));
+    return 1 + s * 0.1;
+}
+// 畫5顆星星(★實心/☆空心)，每隻寶可夢一開始都是5顆空心星星，星級越高實心的顆數越多
+function starsHtml(stars, extraStyle) {
+    const s = Math.max(0, Math.min(5, Number(stars) || 0));
+    let html = '';
+    for (let i = 0; i < 5; i++) {
+        html += `<span style="color:${i < s ? '#eab308' : '#d1d5db'};${extraStyle || ''}">${i < s ? '★' : '☆'}</span>`;
+    }
+    return html;
+}
+function maxHpOf(instance) { return Math.floor(statAtLevel(instance.baseHp, instance.level, true) * starMultiplier(instance.stars)); }
+function atkOf(instance) { return Math.floor(statAtLevel(instance.baseAtk, instance.level, false) * starMultiplier(instance.stars)); }
+function defOf(instance) { return Math.floor(statAtLevel(instance.baseDef, instance.level, false) * starMultiplier(instance.stars)); }
+function spdOf(instance) { return Math.floor(statAtLevel(instance.baseSpd, instance.level, false) * starMultiplier(instance.stars)); }
 
 // ============================================================
 // 捕捉——伺服器依5種球的權重骰出這次用哪種球、再依球對應的稀有度池子選一隻寶可夢
@@ -555,7 +571,33 @@ async function playCaptureRevealSequence(resultPromise) {
     flashEl.classList.add('flash');
     await sleep(280);
 
-    await showCatchResult(result.instance, { ballType: result.ballType, ballNameZh: result.ballNameZh || tierInfo.nameZh });
+    // 抽到重複的種類的話，worker那邊不會建立新的一筆，而是讓倉庫裡原本那隻吸收掉、星級+1——
+    // 這種情況要播完全不一樣的畫面(不是「抓到新寶可夢」，是「原本那隻發揮了奉獻精神」)
+    if (result.wasDuplicate) {
+        await showDuplicateAbsorbedResult(result);
+    } else {
+        await showCatchResult(result.instance, { ballType: result.ballType, ballNameZh: result.ballNameZh || tierInfo.nameZh });
+    }
+}
+
+// 抽到已經擁有的種類：不是「抓到新寶可夢」，是倉庫裡原本那隻吸收掉這次抽到的、星級+1(封頂5星)。
+// 用result.speciesId/isShiny(不是result.instance，因為重複的情況worker那邊沒有建立新實例、
+// 也就沒有完整的instance物件可以用)去查圖鑑抓對應的圖片
+async function showDuplicateAbsorbedResult(result) {
+    const modal = document.getElementById('catch-modal');
+    const content = document.getElementById('catch-modal-content');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    const display = await fetchSpeciesDisplay(result.speciesId, result.isShiny);
+    const isMaxed = result.newStars >= 5;
+    content.innerHTML = `
+        <img src="${display.sprite}" class="w-32 h-32 mx-auto mb-2">
+        <p class="font-black text-lg mb-1">${result.absorbedSpeciesNameZh || display.nameZh}</p>
+        <p class="text-gray-500 mb-2">又抽到了同一隻！<br>牠發揮出了崇高的奉獻精神，把自己奉獻給了倉庫裡的夥伴——</p>
+        <p class="text-xl mb-2">${starsHtml(result.newStars)}</p>
+        <p class="text-xs text-gray-400 mb-3">${isMaxed ? '已經是滿星了！各項數值提升到1.5倍，這個種類不會再重複抽到了' : `星級提升到 ${result.newStars} 星，各項數值 +${result.newStars * 10}%`}</p>
+        <button onclick="closeCatchModal()" class="bg-red-500 text-white px-6 py-2 rounded-full font-bold">太好了！</button>
+    `;
 }
 
 // welcome=true時是「新玩家第一次登入拿到免費初始寶可夢」的情境，文字/標題會不一樣；
@@ -576,6 +618,7 @@ async function showCatchResult(instance, opts) {
         ${ballType ? `<img src="${gachaBallSprite(ballType)}" class="w-8 h-8 mx-auto mb-1" style="image-rendering:pixelated"><p class="text-xs text-gray-400 mb-2">用${ballNameZh || ''}抓到的</p>` : ''}
         <img src="${display.sprite}" class="w-40 h-40 mx-auto mb-2">
         <p class="font-black text-lg mb-1">${display.nameZh}</p>
+        <p class="mb-1">${starsHtml(instance.stars || 0)}</p>
         <p class="mb-3">${typeBadgesHtml(display.types, display.typesZh)}</p>
         ${instance.isShiny ? `<p class="text-yellow-500 font-bold mb-2 flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('shiny-stone')}" class="w-5 h-5" style="image-rendering:pixelated">閃光個體！<img src="${itemSpriteUrl('shiny-stone')}" class="w-5 h-5" style="image-rendering:pixelated"></p>` : ''}
         ${instance.isLegendary ? `<p class="text-purple-600 font-bold mb-2 flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('master-ball')}" class="w-5 h-5" style="image-rendering:pixelated">傳說/幻之寶可夢！<img src="${itemSpriteUrl('master-ball')}" class="w-5 h-5" style="image-rendering:pixelated"></p>` : ''}
@@ -627,6 +670,7 @@ async function renderBoxTab() {
                 <img src="${d.sprite || ''}" class="w-14 h-14">
                 <div class="min-w-0">
                     <p class="text-sm font-bold truncate">${pokemonDisplayName(inst, d)}${inst.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</p>
+                    <p class="text-[10px] leading-none">${starsHtml(inst.stars)}</p>
                     <p class="text-xs text-gray-400">Lv.${inst.level} · ${inst.flavor}口味</p>
                     <div class="flex gap-1 mt-0.5">${typeBadgesHtml(d.types, d.typesZh)}</div>
                 </div>
@@ -655,6 +699,7 @@ async function openDetailModal(instanceId) {
         <div class="text-center mb-3">
             <img src="${d.sprite}" class="w-44 h-44 mx-auto">
             <p class="font-black text-lg">${pokemonDisplayName(inst, d)}${inst.isShiny ? ' ' + shinyIconHtml('w-4 h-4') : ''}</p>
+            <p class="text-sm mb-0.5">${starsHtml(inst.stars)}</p>
             <p class="text-xs text-gray-400 mb-1">${typeBadgesHtml(d.types, d.typesZh)}</p>
             <p class="text-xs text-gray-400">Lv.${inst.level} · EXP ${inst.exp} · 親密度 ${inst.friendship} · ${inst.flavor}口味</p>
         </div>
@@ -902,10 +947,10 @@ async function renderIdleTab() {
     const elapsedHours = Math.min(24, Math.max(0, (Date.now() - lastCollect) / 3600000));
     const pending = Math.floor(totalLevel * 2 * elapsedHours);
     document.getElementById('idle-pending').textContent = pending;
-    // 牧場新機制的預覽數字：牧場裡「每一隻」寶可夢每小時固定+10EXP，不看等級——這裡只是前端
-    // 自己算的預覽估算值(跟代幣預覽一樣)，真正入帳的計算跟寫入還是由worker的settleIdleEarnings
-    // 在按下「收取」的當下才會做，這裡算錯也不影響實際拿到的數字
-    const pendingExpEach = placed.length > 0 ? Math.floor(10 * elapsedHours) : 0;
+    // 牧場EXP：每小時發一次「牧場裡全體寶可夢等級總和」的經驗值，每一隻都各自拿到這整包——
+    // 這裡只是前端自己算的預覽估算值(跟代幣預覽一樣)，真正入帳的計算跟寫入還是由worker的
+    // settleIdleEarnings在按下「收取」的當下才會做，這裡算錯也不影響實際拿到的數字
+    const pendingExpEach = placed.length > 0 ? Math.floor(totalLevel * elapsedHours) : 0;
     const pendingExpEl = document.getElementById('idle-pending-exp');
     if (pendingExpEl) pendingExpEl.textContent = pendingExpEach;
     const countEl = document.getElementById('idle-placed-count');
@@ -925,13 +970,30 @@ async function renderIdleTab() {
         </div>
     `).join('');
 }
+// 修正「連點收取」的bug：worker那邊已經用Firestore的樂觀鎖(updateTimePrecondition)擋掉了
+// 真正重複結算的可能性(見settleIdleEarnings)，這裡的idleCollectInFlight+按鈕disable是
+// 前端這一層的防呆——沒有這層的話，使用者連續點擊會同時送出好幾個請求，雖然worker那邊
+// 最後只有一個真的會結算成功，但畫面上還是會閃過好幾次「收取中」的網路請求，體感上
+// 感覺按鈕「壞了」；直接在按下的當下就鎖住按鈕，使用者也比較清楚知道已經點過一次了
+let idleCollectInFlight = false;
 async function collectIdle() {
+    if (idleCollectInFlight) return;
+    idleCollectInFlight = true;
+    const btn = document.getElementById('idle-collect-btn');
+    if (btn) { btn.disabled = true; btn.classList.add('opacity-50'); }
     try {
         const result = await callWorker('pokemon_idle_collect');
         const expMsg = result.expGainedEach > 0 ? `，牧場寶可夢各 +${result.expGainedEach} EXP` : '';
-        showToastWithIcon(itemSpriteUrl('amulet-coin'), `收到 ${result.earned}${expMsg}！`);
+        if (result.earned > 0 || result.expGainedEach > 0) {
+            showToastWithIcon(itemSpriteUrl('amulet-coin'), `收到 ${result.earned}${expMsg}！`);
+        } else {
+            showToast('目前還沒有可以收取的代幣/經驗值');
+        }
     } catch (err) {
         showToast('收取失敗：' + err.message);
+    } finally {
+        idleCollectInFlight = false;
+        if (btn) { btn.disabled = false; btn.classList.remove('opacity-50'); }
     }
 }
 setInterval(renderIdleTab, 30000); // 每30秒重算一次待收取數字，讓畫面上的數字會動，不用一直手動重整
@@ -1982,7 +2044,10 @@ async function playBattleEvents(events, ctx) {
 // 把一筆pokemonInstances文件資料組成戰鬥用的teamObj——PvP的先發/替換候補、野生對戰的
 // 玩家先發/候補都共用這個function，確保欄位形狀一致
 function buildTeamDataFromInstData(instanceId, inst, nickname) {
-    const maxHp = statAtLevel(inst.baseHp, inst.level, true);
+    // 星級加成也要套進戰鬥用的數值(不是只有展示用的maxHpOf/atkOf/defOf/spdOf那幾個函式)，
+    // 不然玩家看到的卡片數值跟真正上場戰鬥用的數值會對不上
+    const mult = starMultiplier(inst.stars);
+    const maxHp = Math.floor(statAtLevel(inst.baseHp, inst.level, true) * mult);
     return {
         instanceId,
         speciesId: inst.speciesId,
@@ -1990,9 +2055,9 @@ function buildTeamDataFromInstData(instanceId, inst, nickname) {
         level: inst.level,
         maxHp,
         currentHp: maxHp,
-        atk: statAtLevel(inst.baseAtk, inst.level, false),
-        def: statAtLevel(inst.baseDef, inst.level, false),
-        spd: statAtLevel(inst.baseSpd, inst.level, false),
+        atk: Math.floor(statAtLevel(inst.baseAtk, inst.level, false) * mult),
+        def: Math.floor(statAtLevel(inst.baseDef, inst.level, false) * mult),
+        spd: Math.floor(statAtLevel(inst.baseSpd, inst.level, false) * mult),
         moves: inst.moves && inst.moves.length ? inst.moves : ['tackle'],
         isShiny: !!inst.isShiny,
     };
