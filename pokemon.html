@@ -211,6 +211,13 @@
     <div class="bg-white rounded-3xl p-6 max-w-sm w-full" id="detail-modal-content"></div>
 </div>
 
+<!-- 升級學新招式彈窗：升級時偵測到有新招式可以學，跳出來讓玩家自己選要不要學(招式滿4招要選一招換掉)。
+     點背景空白處等同「先不要」(不學這招，但不會卡住不消失——跟其他彈窗一樣可以點外面關掉)，
+     只要還有pendingMoveLearns沒處理完，就會一直排隊跳出來，直到全部決定完為止 -->
+<div id="learn-move-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) dismissLearnMoveModal()">
+    <div class="bg-white rounded-3xl p-6 max-w-sm w-full text-center" id="learn-move-modal-content"></div>
+</div>
+
 <div id="toast-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center"></div>
 <div id="gacha-flash-overlay" class="gacha-flash-overlay"></div>
 
@@ -344,6 +351,7 @@ function startListeners(uid) {
         currentInstances = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         renderBoxTab();
         renderIdleTab();
+        checkPendingMoveLearns();
     });
     listenOpenRooms();
 }
@@ -727,6 +735,108 @@ async function openDetailModal(instanceId) {
 function closeDetailModal() {
     document.getElementById('detail-modal').classList.add('hidden');
     document.getElementById('detail-modal').classList.remove('flex');
+}
+
+// ============================================================
+// 升級學新招式：worker端在等級變化的兩個地方(對戰結算handlePokemonBattleReportResult、
+// 牧場收取結算settleIdleEarnings)偵測到有新招式可以學時，會把{name,level}塞進該隻的
+// pendingMoveLearns陣列。這裡負責跳出提示讓玩家自己決定要不要學(招式滿4招要選一招換掉)。
+// 學/換/不學這三種選擇本身沒有經濟數值可以鑽漏洞(不影響代幣/EXP)，所以直接讓client端
+// 寫Firestore就好，不用另外開一個worker action繞一圈——跟toggleParty改inParty是同樣的做法
+// ============================================================
+let learnMoveModalOpen = false; // 避免同一時間疊加彈出好幾個提示
+function checkPendingMoveLearns() {
+    if (learnMoveModalOpen) return;
+    const inst = currentInstances.find(i => Array.isArray(i.pendingMoveLearns) && i.pendingMoveLearns.length > 0);
+    if (!inst) return;
+    showLearnMoveModal(inst);
+}
+async function showLearnMoveModal(inst) {
+    learnMoveModalOpen = true;
+    const modal = document.getElementById('learn-move-modal');
+    const content = document.getElementById('learn-move-modal-content');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+
+    const pending = inst.pendingMoveLearns[0];
+    const d = await fetchSpeciesDisplay(inst.speciesId, inst.isShiny);
+    const newMoveData = await fetchMoveData(pending.name);
+    const currentMoves = inst.moves || [];
+    const currentMoveDisplays = await Promise.all(currentMoves.map(fetchMoveData));
+
+    let buttonsHtml;
+    if (currentMoves.length < 4) {
+        buttonsHtml = `
+            <button onclick="learnNewMove('${inst.id}')" class="w-full bg-red-500 text-white py-2 rounded-xl font-bold mb-2">學習！</button>
+            <button onclick="skipLearnMove('${inst.id}')" class="w-full text-gray-400 text-sm">先不要</button>
+        `;
+    } else {
+        buttonsHtml = `
+            <p class="text-xs text-gray-400 mb-2">招式已經滿4招了，要換掉哪一招？</p>
+            <div class="space-y-1.5 mb-2">
+                ${currentMoves.map((moveName, idx) => `
+                    <button onclick="replaceMoveWithNew('${inst.id}', ${idx})" class="w-full bg-gray-50 hover:bg-red-50 py-2 rounded-xl flex items-center justify-center gap-1.5">
+                        ${currentMoveDisplays[idx].typeIcon ? `<img src="${currentMoveDisplays[idx].typeIcon}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}
+                        <span class="text-sm font-bold">換掉「${currentMoveDisplays[idx].nameZh}」</span>
+                    </button>`).join('')}
+            </div>
+            <button onclick="skipLearnMove('${inst.id}')" class="w-full text-gray-400 text-sm">先不要</button>
+        `;
+    }
+
+    content.innerHTML = `
+        <img src="${d.sprite}" class="w-28 h-28 mx-auto mb-1">
+        <p class="font-black text-base mb-1">${pokemonDisplayName(inst, d)} 升到了 Lv.${pending.level}！</p>
+        <p class="text-gray-500 text-sm mb-2">可以學習新招式：</p>
+        <div class="bg-red-50 rounded-xl p-3 mb-3">
+            <p class="flex items-center justify-center gap-1.5 font-bold mb-1">${newMoveData.typeIcon ? `<img src="${newMoveData.typeIcon}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}${newMoveData.nameZh}</p>
+            <p class="text-xs text-gray-400">${newMoveData.descZh || ''}</p>
+        </div>
+        ${buttonsHtml}
+    `;
+}
+function closeLearnMoveModal() {
+    document.getElementById('learn-move-modal').classList.add('hidden');
+    document.getElementById('learn-move-modal').classList.remove('flex');
+    learnMoveModalOpen = false;
+    // 這隻可能還有排在後面的其他待學招式，或還有別隻在排隊——處理完一個之後馬上檢查下一個，
+    // 一路跳到全部pendingMoveLearns都處理完為止(currentInstances由onSnapshot即時同步，這裡拿到的一定是最新資料)
+    setTimeout(checkPendingMoveLearns, 200);
+}
+async function resolvePendingMoveLearn(instanceId, newMovesArray) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst) { closeLearnMoveModal(); return; }
+    const remainingPending = (inst.pendingMoveLearns || []).slice(1);
+    const updateFields = { pendingMoveLearns: remainingPending };
+    if (newMovesArray) updateFields.moves = newMovesArray;
+    try {
+        await db.collection('pokemonInstances').doc(instanceId).update(updateFields);
+    } catch (err) {
+        showToast('操作失敗：' + err.message);
+    }
+    closeLearnMoveModal();
+}
+function learnNewMove(instanceId) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst || !inst.pendingMoveLearns || !inst.pendingMoveLearns[0]) { closeLearnMoveModal(); return; }
+    const newMoves = (inst.moves || []).concat([inst.pendingMoveLearns[0].name]);
+    resolvePendingMoveLearn(instanceId, newMoves);
+}
+function replaceMoveWithNew(instanceId, replaceIdx) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst || !inst.pendingMoveLearns || !inst.pendingMoveLearns[0]) { closeLearnMoveModal(); return; }
+    const newMoves = (inst.moves || []).slice();
+    newMoves[replaceIdx] = inst.pendingMoveLearns[0].name;
+    resolvePendingMoveLearn(instanceId, newMoves);
+}
+function skipLearnMove(instanceId) {
+    resolvePendingMoveLearn(instanceId, null);
+}
+// 點背景空白處關閉：找目前正在顯示的那一隻，當成「先不要」處理掉(不會留著卡住讓提示消失不了)
+function dismissLearnMoveModal() {
+    const inst = currentInstances.find(i => Array.isArray(i.pendingMoveLearns) && i.pendingMoveLearns.length > 0);
+    if (inst) { skipLearnMove(inst.id); } else { closeLearnMoveModal(); }
 }
 
 async function toggleParty(instanceId) {
