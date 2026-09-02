@@ -320,9 +320,12 @@ const TYPE_COLORS = { normal:'#A8A878',fire:'#F08030',water:'#6890F0',electric:'
 function typeBadgesHtml(typesEnglish, typesZh) {
     return (typesEnglish || []).map((t, idx) => `<span class="type-badge" style="background:${TYPE_COLORS[t] || '#999'}">${(typesZh && typesZh[idx]) || t}</span>`).join(' ');
 }
-function pokemonDisplayName(instance) {
-    const zh = instance.nickname || instance.speciesNameZh || instance.speciesName || '???';
-    return zh;
+// display是fetchSpeciesDisplay抓回來、即時查PokéAPI算出的中文名——優先用這個，而不是
+// 存在Firestore裡的nickname欄位：這個功能上線之前孵化的寶可夢，nickname存的是當時的英文
+// 代號(例如"gimmighoul")，沒辦法回溯改掉；由於目前沒有另外的自訂改名功能，nickname
+// 本來就只是「孵化當下的中文名快照」，永遠優先信任即時查到的中文名，舊資料才會自動變正確
+function pokemonDisplayName(instance, display) {
+    return (display && display.nameZh) || instance.nickname || instance.speciesNameZh || instance.speciesName || '???';
 }
 function statAtLevel(base, level, isHp) {
     // 簡化版的等級成長公式(不套用個體值/努力值/性格加成那套完整規則)，符合遊戲附件描述的
@@ -451,7 +454,7 @@ async function renderBoxTab() {
         const d = displayMap.get(inst.id) || {};
         return `<div class="bg-white rounded-xl card-shadow p-2 text-center cursor-pointer" onclick="openDetailModal('${inst.id}')">
             <img src="${d.sprite || ''}" class="w-14 h-14 mx-auto">
-            <p class="text-[11px] font-bold truncate">${pokemonDisplayName(inst)}</p>
+            <p class="text-[11px] font-bold truncate">${pokemonDisplayName(inst, d)}</p>
             <p class="text-[10px] text-gray-400">Lv.${inst.level}</p>
         </div>`;
     }).join('');
@@ -462,7 +465,7 @@ async function renderBoxTab() {
             <div class="flex items-center gap-2">
                 <img src="${d.sprite || ''}" class="w-12 h-12">
                 <div class="min-w-0">
-                    <p class="text-sm font-bold truncate">${pokemonDisplayName(inst)}</p>
+                    <p class="text-sm font-bold truncate">${pokemonDisplayName(inst, d)}</p>
                     <p class="text-xs text-gray-400">Lv.${inst.level} · ${inst.flavor}口味</p>
                     <div class="flex gap-1 mt-0.5">${typeBadgesHtml(d.types, d.typesZh)}</div>
                 </div>
@@ -490,7 +493,7 @@ async function openDetailModal(instanceId) {
     content.innerHTML = `
         <div class="text-center mb-3">
             <img src="${d.sprite}" class="w-28 h-28 mx-auto">
-            <p class="font-black text-lg">${pokemonDisplayName(inst)}</p>
+            <p class="font-black text-lg">${pokemonDisplayName(inst, d)}</p>
             <p class="text-xs text-gray-400 mb-1">${typeBadgesHtml(d.types, d.typesZh)}</p>
             <p class="text-xs text-gray-400">Lv.${inst.level} · EXP ${inst.exp} · 親密度 ${inst.friendship} · ${inst.flavor}口味</p>
         </div>
@@ -719,7 +722,7 @@ async function renderIdleTab() {
     list.innerHTML = placed.map((inst, idx) => `
         <div class="bg-white rounded-xl card-shadow p-3 text-center cursor-pointer" onclick="openDetailModal('${inst.id}')">
             <img src="${displays[idx].sprite}" class="w-14 h-14 mx-auto">
-            <p class="text-xs font-bold truncate">${pokemonDisplayName(inst)}</p>
+            <p class="text-xs font-bold truncate">${pokemonDisplayName(inst, displays[idx])}</p>
             <p class="text-[10px] text-gray-400">Lv.${inst.level}</p>
         </div>
     `).join('');
@@ -807,7 +810,7 @@ async function renderPartyPicker(containerId, party, onPick) {
     container.innerHTML = party.map((inst, idx) => `
         <div class="border-2 border-transparent rounded-xl p-2 text-center cursor-pointer party-pick-item" data-instance-id="${inst.id}">
             <img src="${displays[idx].sprite}" class="w-12 h-12 mx-auto">
-            <p class="text-[10px] font-bold truncate">${pokemonDisplayName(inst)}</p>
+            <p class="text-[10px] font-bold truncate">${pokemonDisplayName(inst, displays[idx])}</p>
         </div>
     `).join('');
     container.querySelectorAll('.party-pick-item').forEach(el => {
@@ -823,10 +826,11 @@ async function submitCreateRoom() {
     const inst = currentInstances.find(i => i.id === pendingRoomInstanceId);
     if (!inst) return;
     const roomName = document.getElementById('create-room-name').value.trim() || `${auth.currentUser.displayName || '訓練家'}的房間`;
+    const instDisplay = await fetchSpeciesDisplay(inst.speciesId);
     const roomRef = db.collection('pokemonBattleRooms').doc();
     await roomRef.set({
         hostUid: auth.currentUser.uid,
-        hostNickname: pokemonDisplayName(inst),
+        hostNickname: pokemonDisplayName(inst, instDisplay),
         hostSpeciesId: inst.speciesId,
         hostInstanceId: inst.id,
         roomName,
@@ -854,6 +858,7 @@ function openJoinRoomModal(roomId) {
 async function submitJoinRoom() {
     if (!pendingJoinInstanceId || !pendingJoinRoomId) { showToast('先選一隻寶可夢'); return; }
     const inst = currentInstances.find(i => i.id === pendingJoinInstanceId);
+    const instDisplay = await fetchSpeciesDisplay(inst.speciesId);
     const roomRef = db.collection('pokemonBattleRooms').doc(pendingJoinRoomId);
     try {
         await db.runTransaction(async tx => {
@@ -863,7 +868,7 @@ async function submitJoinRoom() {
             tx.update(roomRef, {
                 memberUids: firebase.firestore.FieldValue.arrayUnion(auth.currentUser.uid),
                 guestUid: auth.currentUser.uid,
-                guestNickname: pokemonDisplayName(inst),
+                guestNickname: pokemonDisplayName(inst, instDisplay),
                 guestSpeciesId: inst.speciesId,
                 guestInstanceId: inst.id,
                 status: 'battling',
