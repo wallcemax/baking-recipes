@@ -36,8 +36,17 @@
     @keyframes hitFlashWeak { 0%{filter:brightness(1)} 50%{filter:brightness(1.35) saturate(0.4)} 100%{filter:brightness(1)} }
     .miss-shake { animation: missShake 0.4s ease; }
     @keyframes missShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)} 50%{transform:translateX(5px)} 75%{transform:translateX(-3px)} }
+    /* 倒下：縮小＋變半透明，模擬被收回精靈球，而不是整隻消失或整隻還在原地(舊版做法) */
     .faint-drop { animation: faintDrop 0.6s ease forwards; }
-    @keyframes faintDrop { 0%{transform:translateY(0) rotate(0);opacity:1} 100%{transform:translateY(26px) rotate(18deg);opacity:0} }
+    @keyframes faintDrop { 0%{transform:scale(1) translateY(0);opacity:1} 100%{transform:scale(0.4) translateY(16px);opacity:0.28} }
+    /* 不管動畫有沒有播過，只要資料顯示這隻血量歸零，畫面就要一直維持「已收回」的縮小半透明狀態——
+       這樣即使中途重新整理、或整個戰鬥畫面被完整重繪(換人後的render)，倒下的寶可夢也不會又變回滿血原尺寸 */
+    .sprite-fainted { opacity: 0.28; transform: scale(0.4) translateY(16px); }
+    /* 替換寶可夢：先縮小淡出(收回)，換好圖跟血條之後再彈出來(丟出精靈球上場)，
+       彈出動畫沿用扭蛋抽選那邊已經有的ballPopIn，畫面語彙保持一致 */
+    .switch-out { animation: switchOut 0.4s ease forwards; }
+    @keyframes switchOut { 0%{transform:scale(1) translateY(0);opacity:1} 100%{transform:scale(0.25) translateY(18px);opacity:0} }
+    .switch-in { animation: ballPopIn 0.45s ease; }
     .fx-burst { position: absolute; inset: -8px; border-radius: 9999px; pointer-events: none; opacity: 0; }
     .fx-burst.show { animation: fxBurst 0.5s ease; }
     @keyframes fxBurst { 0%{opacity:0; transform:scale(0.4)} 30%{opacity:0.6; transform:scale(1.15)} 100%{opacity:0; transform:scale(1.7)} }
@@ -593,7 +602,7 @@ async function renderBoxTab() {
         const d = displayMap.get(inst.id) || {};
         return `<div class="bg-white rounded-xl card-shadow p-3 cursor-pointer" onclick="openDetailModal('${inst.id}')">
             <div class="flex items-center gap-2">
-                <img src="${d.sprite || ''}" class="w-12 h-12">
+                <img src="${d.sprite || ''}" class="w-14 h-14">
                 <div class="min-w-0">
                     <p class="text-sm font-bold truncate">${pokemonDisplayName(inst, d)}${inst.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</p>
                     <p class="text-xs text-gray-400">Lv.${inst.level} · ${inst.flavor}口味</p>
@@ -664,7 +673,14 @@ async function toggleParty(instanceId) {
 async function toggleIdlePlacement(instanceId) {
     const inst = currentInstances.find(i => i.id === instanceId);
     if (!inst) return;
-    await db.collection('pokemonInstances').doc(instanceId).update({ placedForIdle: !inst.placedForIdle });
+    // 改成呼叫伺服器端動作：由worker先結算「換入/換出前」累積的代幣，再切換放置狀態，
+    // 避免直接改Firestore欄位的話，換入/換出的時間點可以被拿來鑽時數計算的漏洞
+    try {
+        await callWorker('pokemon_idle_toggle_placement', { instanceId });
+    } catch (err) {
+        showToast('操作失敗：' + err.message);
+        return;
+    }
     closeDetailModal();
 }
 
@@ -1429,12 +1445,31 @@ async function renderRoomView(room) {
         const prevHp = room.battleState.lastRoundPrevHp || {};
         const startHpMe = prevHp[myUid] != null ? prevHp[myUid] : myTeam.currentHp;
         const startHpOpp = prevHp[opponentUid] != null ? prevHp[opponentUid] : oppTeam.currentHp;
+        // 如果這回合真的換過人，「回合開始前」畫面要用換人前那隻的圖片跟血量上限，不能用
+        // 現在(換人後)的隊伍資料硬套換人前的血量數字，不然血條百分比會算錯(=玩家回報的血條異常)
+        const switchSnap = room.battleState.lastRoundSwitchSnapshot || {};
+        const myPrevSnap = switchSnap[myUid];
+        const oppPrevSnap = switchSnap[opponentUid];
+        const startMyDisplay = myPrevSnap ? await fetchSpeciesDisplay(myPrevSnap.speciesId, myPrevSnap.isShiny) : myDisplay;
+        const startOppDisplay = oppPrevSnap ? await fetchSpeciesDisplay(oppPrevSnap.speciesId, oppPrevSnap.isShiny) : oppDisplay;
+        if (myToken !== roomRenderToken) return;
+        const startMyTeam = myPrevSnap
+            ? { ...myTeam, currentHp: startHpMe, maxHp: myPrevSnap.maxHp, nickname: myPrevSnap.nickname, isShiny: myPrevSnap.isShiny, status: myPrevSnap.status }
+            : { ...myTeam, currentHp: startHpMe };
+        const startOppTeam = oppPrevSnap
+            ? { ...oppTeam, currentHp: startHpOpp, maxHp: oppPrevSnap.maxHp, nickname: oppPrevSnap.nickname, isShiny: oppPrevSnap.isShiny, status: oppPrevSnap.status }
+            : { ...oppTeam, currentHp: startHpOpp };
         await renderBattleStage(container, {
-            myTeam: { ...myTeam, currentHp: startHpMe }, oppTeam: { ...oppTeam, currentHp: startHpOpp },
-            myDisplay, oppDisplay, room, locked: true,
+            myTeam: startMyTeam, oppTeam: startOppTeam,
+            myDisplay: startMyDisplay, oppDisplay: startOppDisplay, room, locked: true,
         });
         if (myToken !== roomRenderToken) return;
-        await playBattleEvents(events, { myUid, opponentUid, myMaxHp: myTeam.maxHp, oppMaxHp: oppTeam.maxHp });
+        await playBattleEvents(events, {
+            myUid, opponentUid, myMaxHp: myTeam.maxHp, oppMaxHp: oppTeam.maxHp,
+            myCurrentHp: myTeam.currentHp, oppCurrentHp: oppTeam.currentHp,
+            mySwitchInSprite: myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite,
+            oppSwitchInSprite: oppDisplay.spriteAnimated || oppDisplay.sprite,
+        });
         if (myToken !== roomRenderToken) return;
     } else if (alreadyAnimated === undefined) {
         animatedResolvedRound[room.id] = resolvedRound != null ? resolvedRound : null;
@@ -1465,6 +1500,10 @@ async function renderBattleStage(container, ctx) {
     const myHpPct = Math.max(0, Math.round(myTeam.currentHp / myTeam.maxHp * 100));
     const oppHpPct = Math.max(0, Math.round(oppTeam.currentHp / oppTeam.maxHp * 100));
     const hpColor = pct => pct > 50 ? 'bg-green-500' : pct > 20 ? 'bg-yellow-500' : 'bg-red-500';
+    // 倒下中(血量歸零、正在等待強制替換)的寶可夢：不管這次是不是剛播完倒下動畫，畫面都要
+    // 一直維持「已收回」的縮小半透明樣子，避免整個戰鬥畫面重繪(例如換人後)時它又變回滿血原尺寸
+    const myFainted = myTeam.currentHp <= 0;
+    const oppFainted = oppTeam.currentHp <= 0;
     const weather = (room.battleState && room.battleState.weather) || { type: null, turnsLeft: 0 };
     const terrain = (room.battleState && room.battleState.terrain) || { type: null, turnsLeft: 0 };
     const myBench = (room.battleState && room.battleState.bench && room.battleState.bench[myUid]) || [];
@@ -1566,17 +1605,17 @@ async function renderBattleStage(container, ctx) {
                 <div class="w-28 ml-auto bg-gray-200 rounded-full h-2.5 mb-2 overflow-hidden">
                     <div id="hpbar-opp" class="hp-bar-fill h-2.5 rounded-full ${hpColor(oppHpPct)}" style="width:${oppHpPct}%"></div>
                 </div>
-                <div class="relative flex justify-end" style="min-height:72px">
+                <div class="relative flex justify-end" style="min-height:92px">
                     <div id="fx-opp" class="fx-burst"></div>
                     <div id="popupwrap-opp" class="absolute inset-x-0 top-0 flex justify-end z-10"></div>
-                    <img id="sprite-opp" src="${oppDisplay.spriteAnimated || oppDisplay.sprite}" class="w-16 h-16 battle-sprite" style="image-rendering:pixelated">
+                    <img id="sprite-opp" src="${oppDisplay.spriteAnimated || oppDisplay.sprite}" class="w-24 h-24 battle-sprite ${oppFainted ? 'sprite-fainted' : ''}" style="image-rendering:pixelated">
                 </div>
             </div>
             <div class="absolute bottom-3 left-3 text-left" style="max-width:60%">
                 <div class="relative flex justify-start mb-2" style="min-height:104px">
                     <div id="fx-me" class="fx-burst"></div>
                     <div id="popupwrap-me" class="absolute inset-x-0 top-0 flex justify-start z-10"></div>
-                    <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-28 battle-sprite" style="image-rendering:pixelated">
+                    <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-28 battle-sprite ${myFainted ? 'sprite-fainted' : ''}" style="image-rendering:pixelated">
                 </div>
                 <div class="mb-1">
                     <span class="text-sm font-bold">${myTeam.nickname}${myTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(myTeam)}
@@ -1633,14 +1672,33 @@ async function playBattleEvents(events, ctx) {
     };
 
     for (const ev of events) {
-        // ---- 替換寶可夢：不用太複雜的動畫，讓sprite淡出淡入一下當作提示就好(下一次
-        // renderBattleStage重繪整個畫面時，sprite的src本來就會自然換成新寶可夢) ----
+        // ---- 替換寶可夢：先播「收回精靈球」(縮小淡出)，換好圖跟血條(用新寶可夢的血量上限，
+        // 不是沿用舊寶可夢的)之後，再播「丟出精靈球上場」(彈出動畫，沿用扭蛋抽選的ballPopIn) ----
         if (ev.switchEvent) {
             const isMe = ev.uid === ctx.myUid;
             appendLog(`${ev.outName} 被收回，換上了 ${ev.inName}！`);
             const el = document.getElementById(isMe ? 'sprite-me' : 'sprite-opp');
-            if (el) { el.style.transition = 'opacity 0.3s'; el.style.opacity = '0.15'; await sleep(350); el.style.opacity = '1'; }
-            await sleep(250);
+            if (el) {
+                el.classList.remove('switch-out', 'switch-in', 'faint-drop', 'sprite-fainted');
+                void el.offsetWidth;
+                el.classList.add('switch-out');
+                await sleep(400);
+                // 這一刻才正式換成新寶可夢的圖片跟血條——用新寶可夢自己的血量上限來算百分比，
+                // 不能繼續沿用舊寶可夢的血量數字套在新寶可夢的血條上(這正是玩家回報的血條異常成因)
+                el.src = isMe ? ctx.mySwitchInSprite : ctx.oppSwitchInSprite;
+                const bar = document.getElementById(isMe ? 'hpbar-me' : 'hpbar-opp');
+                const hpText = document.getElementById(isMe ? 'hptext-me' : 'hptext-opp');
+                const maxHp = isMe ? ctx.myMaxHp : ctx.oppMaxHp;
+                const curHp = Math.max(0, isMe ? ctx.myCurrentHp : ctx.oppCurrentHp);
+                if (bar) bar.style.width = Math.max(0, Math.round(curHp / maxHp * 100)) + '%';
+                if (hpText) hpText.textContent = `${curHp}/${maxHp}`;
+                el.classList.remove('switch-out');
+                void el.offsetWidth;
+                el.classList.add('switch-in');
+                await sleep(450);
+                el.classList.remove('switch-in');
+            }
+            await sleep(150);
             continue;
         }
         // ---- 雙回合蓄力招式的第一回合：只蓄力、不會真的打到對手 ----
@@ -2367,6 +2425,13 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     const events = []; // 結構化的事件，給前端播放動畫用
     const prevHpA = state[uidA].currentHp;
     const prevHpB = state[uidB].currentHp;
+    // 換人這回合開打前的完整快照(種類/暱稱/閃光/血量上限/主要異常狀態)——如果這回合真的
+    // 換人了，前端動畫要先用「換人前」這隻的圖片跟血條上限播放收回動畫，播完才換成新寶可夢，
+    // 不能直接拿換人「後」的隊伍資料(新寶可夢的血量上限)硬套換人「前」的血量數字，
+    // 不然血條會算出離譜的百分比(這正是玩家回報的「血條顯示異常」的成因)
+    const prevSnapshotA = { nickname: state[uidA].nickname, speciesId: state[uidA].speciesId, isShiny: state[uidA].isShiny, maxHp: state[uidA].maxHp, status: state[uidA].status || null };
+    const prevSnapshotB = { nickname: state[uidB].nickname, speciesId: state[uidB].speciesId, isShiny: state[uidB].isShiny, maxHp: state[uidB].maxHp, status: state[uidB].status || null };
+    let switchedA = false, switchedB = false;
     let winnerUid = null;
     let awaitingSwitchFinal = [];
     // 寶可夢倒下時，不能直接判定戰鬥結束——要先看倒下的那一方還有沒有活著的候補寶可夢：
@@ -2418,11 +2483,11 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     }
     if (actionA && actionA.type === 'switch') {
         const info = performSwitch(uidA, actionA.instanceId);
-        if (info) { log.push(`${info.outName} 被收回，換上了 ${info.inName}！`); events.push({ switchEvent: true, uid: uidA, outName: info.outName, inName: info.inName }); }
+        if (info) { switchedA = true; log.push(`${info.outName} 被收回，換上了 ${info.inName}！`); events.push({ switchEvent: true, uid: uidA, outName: info.outName, inName: info.inName }); }
     }
     if (actionB && actionB.type === 'switch') {
         const info = performSwitch(uidB, actionB.instanceId);
-        if (info) { log.push(`${info.outName} 被收回，換上了 ${info.inName}！`); events.push({ switchEvent: true, uid: uidB, outName: info.outName, inName: info.inName }); }
+        if (info) { switchedB = true; log.push(`${info.outName} 被收回，換上了 ${info.inName}！`); events.push({ switchEvent: true, uid: uidB, outName: info.outName, inName: info.inName }); }
     }
 
     // 換人之後才抓「現在真正在場上」的種類資料——如果剛剛換過人，要用新上場那隻的speciesId查屬性
@@ -3204,6 +3269,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 'battleState.log': firebase.firestore.FieldValue.arrayUnion(...log),
                 'battleState.lastRoundEvents': events,
                 'battleState.lastRoundPrevHp': { [uidA]: prevHpA, [uidB]: prevHpB },
+                'battleState.lastRoundSwitchSnapshot': { [uidA]: switchedA ? prevSnapshotA : null, [uidB]: switchedB ? prevSnapshotB : null },
                 'battleState.resolvedRound': resolvedRoundNum,
                 pendingMoves: {},
                 status: finalStatus,
