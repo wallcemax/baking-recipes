@@ -362,10 +362,16 @@ async function fetchSpeciesDisplay(speciesId, isShiny) {
         const types = (data.types || []).map(t => t.type.name);
         const typesZh = await Promise.all(types.map(fetchTypeNameZh));
         const artwork = data.sprites?.other?.['official-artwork'];
+        // 黑白世代(gen5)的動畫gif只涵蓋到第五世代結束(全國圖鑑1~649號)，六世代以後的
+        // 寶可夢PokéAPI沒有官方動圖素材——這幾個欄位在沒有動圖的情況下會是null，
+        // 呼叫端(戰鬥畫面)要自己判斷null時退回上面已經有的靜態圖，不能直接假設一定有動圖
+        const animated = data.sprites?.versions?.['generation-v']?.['black-white']?.animated;
         const result = {
             nameZh: extractZhHantNameClient(speciesData.names, data.name),
             sprite: (shiny && artwork?.front_shiny) || artwork?.front_default || data.sprites?.front_default || '',
             spriteBack: (shiny && data.sprites?.back_shiny) || data.sprites?.back_default || data.sprites?.front_default || '',
+            spriteAnimated: (shiny && animated?.front_shiny) || animated?.front_default || null,
+            spriteBackAnimated: (shiny && animated?.back_shiny) || animated?.back_default || null,
             types,
             typesZh,
             isShiny: shiny,
@@ -373,7 +379,7 @@ async function fetchSpeciesDisplay(speciesId, isShiny) {
         speciesCache.set(cacheKey, result);
         return result;
     } catch (err) {
-        return { nameZh: '???', sprite: '', spriteBack: '', types: [], typesZh: [], isShiny: shiny };
+        return { nameZh: '???', sprite: '', spriteBack: '', spriteAnimated: null, spriteBackAnimated: null, types: [], typesZh: [], isShiny: shiny };
     }
 }
 const TYPE_COLORS = { normal:'#A8A878',fire:'#F08030',water:'#6890F0',electric:'#F8D030',grass:'#78C850',ice:'#98D8D8',fighting:'#C03028',poison:'#A040A0',ground:'#E0C068',flying:'#A890F0',psychic:'#F85888',bug:'#A8B820',rock:'#B8A038',ghost:'#705898',dragon:'#7038F8',dark:'#705848',steel:'#B8B8D0',fairy:'#EE99AC' };
@@ -424,9 +430,18 @@ const GACHA_BALL_TIERS = [
 function gachaBallSprite(key) { return GACHA_BALL_SPRITE_BASE + key + '-ball.png'; }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// 跟worker.js的POKEMON_GACHA_COST維持一致——這裡先在前端擋一次餘額不夠的情況，
+// 不用真的送出請求、等伺服器回應才知道錢不夠，也才不會出現「明明沒錢還是照樣播完整套
+// 捕捉動畫，最後才跳失敗」這種畫面跟結果對不上的情況
+const POKEMON_GACHA_COST = 1000;
 let gachaAnimating = false;
 async function drawPokemon() {
     if (gachaAnimating) return;
+    const coins = Number(currentPlayerData && currentPlayerData.coins) || 0;
+    if (coins < POKEMON_GACHA_COST) {
+        showToast(`寶可幣不夠，捕捉一次需要${POKEMON_GACHA_COST}、你目前只有${coins}`);
+        return;
+    }
     const btn = document.getElementById('gacha-draw-btn');
     gachaAnimating = true;
     btn.disabled = true;
@@ -1245,36 +1260,39 @@ async function renderBattleStage(container, ctx) {
             </button>`).join('')}</div>`;
     }
 
+    // 戰鬥場景改成經典掌機遊戲那種對角透視：對手在右上方、體型畫小一點表示「站得比較遠」，
+    // 玩家在左下方(背影)、體型畫大一點表示「站得比較近」，營造出縱深的距離感。
+    // 圖片優先用PokéAPI黑白世代(gen5)的官方動畫gif(spriteAnimated/spriteBackAnimated)，
+    // 那個世代的動圖只做到全國圖鑑第649號為止，六世代以後的寶可夢這兩個欄位會是null，
+    // 這裡自動退回原本的靜態圖(不會破圖)
     container.innerHTML = `
-        <div class="relative bg-gradient-to-b from-sky-100 to-emerald-50 rounded-2xl card-shadow p-4 mb-3 overflow-hidden">
-            <div class="flex items-start justify-between gap-3">
-                <div class="w-1/2">
-                    <div class="mb-1 text-left">
-                        <span class="text-sm font-bold">${myTeam.nickname}${myTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span>
-                        <div id="hptext-me" class="text-xs text-gray-400">${myTeam.currentHp}/${myTeam.maxHp}</div>
-                    </div>
-                    <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2 overflow-hidden">
-                        <div id="hpbar-me" class="hp-bar-fill h-2.5 rounded-full ${hpColor(myHpPct)}" style="width:${myHpPct}%"></div>
-                    </div>
-                    <div class="relative flex justify-center pt-2" style="min-height:88px">
-                        <div id="fx-me" class="fx-burst"></div>
-                        <div id="popupwrap-me" class="absolute inset-x-0 top-0 flex justify-center z-10"></div>
-                        <img id="sprite-me" src="${myDisplay.spriteBack || myDisplay.sprite}" class="w-20 h-20 battle-sprite">
-                    </div>
+        <div class="relative bg-gradient-to-b from-sky-100 to-emerald-50 rounded-2xl card-shadow p-4 mb-3 overflow-hidden" style="min-height:270px">
+            <div class="absolute top-3 right-3 text-right" style="max-width:52%">
+                <div class="mb-1">
+                    <span class="text-sm font-bold">${oppTeam.nickname}${oppTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span>
+                    <div id="hptext-opp" class="text-xs text-gray-400">${oppTeam.currentHp}/${oppTeam.maxHp}</div>
                 </div>
-                <div class="w-1/2">
-                    <div class="mb-1 text-right">
-                        <span class="text-sm font-bold">${oppTeam.nickname}${oppTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span>
-                        <div id="hptext-opp" class="text-xs text-gray-400">${oppTeam.currentHp}/${oppTeam.maxHp}</div>
-                    </div>
-                    <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2 overflow-hidden">
-                        <div id="hpbar-opp" class="hp-bar-fill h-2.5 rounded-full ${hpColor(oppHpPct)}" style="width:${oppHpPct}%"></div>
-                    </div>
-                    <div class="relative flex justify-center pt-2" style="min-height:88px">
-                        <div id="fx-opp" class="fx-burst"></div>
-                        <div id="popupwrap-opp" class="absolute inset-x-0 top-0 flex justify-center z-10"></div>
-                        <img id="sprite-opp" src="${oppDisplay.sprite}" class="w-20 h-20 battle-sprite">
-                    </div>
+                <div class="w-28 ml-auto bg-gray-200 rounded-full h-2.5 mb-2 overflow-hidden">
+                    <div id="hpbar-opp" class="hp-bar-fill h-2.5 rounded-full ${hpColor(oppHpPct)}" style="width:${oppHpPct}%"></div>
+                </div>
+                <div class="relative flex justify-end" style="min-height:72px">
+                    <div id="fx-opp" class="fx-burst"></div>
+                    <div id="popupwrap-opp" class="absolute inset-x-0 top-0 flex justify-end z-10"></div>
+                    <img id="sprite-opp" src="${oppDisplay.spriteAnimated || oppDisplay.sprite}" class="w-16 h-16 battle-sprite" style="image-rendering:pixelated">
+                </div>
+            </div>
+            <div class="absolute bottom-3 left-3 text-left" style="max-width:60%">
+                <div class="relative flex justify-start mb-2" style="min-height:104px">
+                    <div id="fx-me" class="fx-burst"></div>
+                    <div id="popupwrap-me" class="absolute inset-x-0 top-0 flex justify-start z-10"></div>
+                    <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-28 battle-sprite" style="image-rendering:pixelated">
+                </div>
+                <div class="mb-1">
+                    <span class="text-sm font-bold">${myTeam.nickname}${myTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span>
+                    <div id="hptext-me" class="text-xs text-gray-400">${myTeam.currentHp}/${myTeam.maxHp}</div>
+                </div>
+                <div class="w-28 bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                    <div id="hpbar-me" class="hp-bar-fill h-2.5 rounded-full ${hpColor(myHpPct)}" style="width:${myHpPct}%"></div>
                 </div>
             </div>
         </div>
