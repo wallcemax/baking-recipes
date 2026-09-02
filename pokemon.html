@@ -162,10 +162,12 @@
     <div class="bg-white rounded-3xl p-6 max-w-sm w-full text-center" id="catch-modal-content"></div>
 </div>
 
-<!-- 建立對戰房間彈窗 -->
+<!-- 建立對戰房間彈窗：野生對戰要在這裡先選1隻出戰；連線對戰(建房/加入)不用在這裡選，
+     隊伍最多6隻的名單會在雙方到齊後進入「封鎖+選人」階段才決定 -->
 <div id="create-room-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeCreateRoomModal()">
     <div class="bg-white rounded-3xl p-6 max-w-sm w-full">
-        <h3 class="font-bold text-lg mb-3">選一隻寶可夢出戰</h3>
+        <h3 id="create-room-modal-title" class="font-bold text-lg mb-3">選一隻寶可夢出戰</h3>
+        <p id="create-room-modal-hint" class="hidden text-sm text-gray-500 mb-4">連線對戰用你「我的寶可夢」隊伍裡最多6隻的名單，雙方到齊後會先各自封鎖對方一隻，再各自從剩下的隊伍選3隻上場。</p>
         <div id="create-room-party-picker" class="grid grid-cols-3 gap-2 mb-4"></div>
         <input id="create-room-name" placeholder="房間名稱(選填)" class="w-full border rounded-xl px-3 py-2 text-sm mb-3">
         <button id="create-room-submit-btn" onclick="submitRoomModal()" class="w-full bg-red-500 text-white py-2 rounded-xl font-bold">建立房間</button>
@@ -892,6 +894,8 @@ function listenOpenRooms() {
             renderRoomList();
         }, err => console.warn('讀取房間列表失敗', err.message));
 }
+// 連線對戰現在不再是「房主先選好1隻」才開房間，房間列表沒辦法再秀host選了哪隻寶可夢的圖示，
+// 改成秀房主的訓練家名稱+隊伍人數，用精靈球圖示當通用房間icon
 async function renderRoomList() {
     const list = document.getElementById('room-list');
     const emptyHint = document.getElementById('room-empty-hint');
@@ -901,14 +905,13 @@ async function renderRoomList() {
         return;
     }
     emptyHint.classList.add('hidden');
-    const displays = await Promise.all(openRooms.map(r => fetchSpeciesDisplay(r.hostSpeciesId, r.hostSpeciesIsShiny)));
-    list.innerHTML = openRooms.map((room, idx) => `
+    list.innerHTML = openRooms.map(room => `
         <div class="bg-white rounded-xl card-shadow p-3 flex items-center justify-between">
             <div class="flex items-center gap-2">
-                <img src="${displays[idx].sprite}" class="w-10 h-10">
+                <img src="${itemSpriteUrl('poke-ball')}" class="w-10 h-10" style="image-rendering:pixelated">
                 <div>
                     <p class="text-sm font-bold">${room.roomName || '無名房間'}</p>
-                    <p class="text-xs text-gray-400">房主的 ${room.hostNickname || displays[idx].nameZh}</p>
+                    <p class="text-xs text-gray-400">${room.hostTrainerName || '訓練家'}的房間 · 隊伍${(room.hostTeam || []).length}隻</p>
                 </div>
             </div>
             ${room.hostUid === auth.currentUser?.uid
@@ -921,21 +924,26 @@ async function cancelRoom(roomId) {
     await db.collection('pokemonBattleRooms').doc(roomId).delete();
 }
 
+// 連線對戰要進行「封鎖+選人」，隊伍至少要有4隻才有意義(禁用1隻、還要能從剩下的挑3隻上場)
+const PVP_MIN_PARTY_SIZE = 4;
+
 // roomModalMode決定「建立房間」彈窗這次是拿來開新房間、加入別人的房間、還是出發打野生寶可夢——
-// 這三種情境共用同一個彈窗UI(選寶可夢的介面一模一樣)，用一個狀態變數切換行為，比動態改onclick
-// 屬性穩定：改onclick字串的寫法如果使用者中途按取消，下次打開彈窗容易殘留上一次沒清乾淨的狀態
+// 野生對戰維持原本「先選1隻出戰」的流程；連線對戰(建房/加入)不用在這裡選寶可夢了，
+// 雙方到齊後會另外進入封鎖+選人的畫面，從隊伍最多6隻裡決定上場名單
 let roomModalMode = 'create'; // 'create' | 'join' | 'wild'
 let pendingRoomInstanceId = null;
 let pendingJoinRoomId = null;
 function openCreateRoomModal() {
     const party = currentInstances.filter(i => i.inParty);
-    if (party.length === 0) { showToast('要先在「我的寶可夢」把至少一隻加入隊伍才能對戰'); return; }
+    if (party.length < PVP_MIN_PARTY_SIZE) { showToast(`連線對戰要先在「我的寶可夢」把隊伍湊到至少${PVP_MIN_PARTY_SIZE}隻才能開房間(會先封鎖1隻、再從剩下的選3隻上場)`); return; }
     roomModalMode = 'create';
     pendingRoomInstanceId = null;
+    document.getElementById('create-room-modal-title').textContent = '開一個連線對戰房間';
+    document.getElementById('create-room-modal-hint').classList.remove('hidden');
+    document.getElementById('create-room-party-picker').innerHTML = '';
     document.getElementById('create-room-name').classList.remove('hidden');
     document.getElementById('create-room-name').value = '';
     document.getElementById('create-room-submit-btn').textContent = '建立房間';
-    renderPartyPicker('create-room-party-picker', party, (id) => { pendingRoomInstanceId = id; });
     document.getElementById('create-room-modal').classList.remove('hidden');
     document.getElementById('create-room-modal').classList.add('flex');
 }
@@ -944,6 +952,8 @@ function openWildBattleModal() {
     if (party.length === 0) { showToast('要先在「我的寶可夢」把至少一隻加入隊伍才能對戰'); return; }
     roomModalMode = 'wild';
     pendingRoomInstanceId = null;
+    document.getElementById('create-room-modal-title').textContent = '選一隻寶可夢出戰';
+    document.getElementById('create-room-modal-hint').classList.add('hidden');
     document.getElementById('create-room-name').classList.add('hidden');
     document.getElementById('create-room-submit-btn').textContent = '出發挑戰！';
     renderPartyPicker('create-room-party-picker', party, (id) => { pendingRoomInstanceId = id; });
@@ -976,19 +986,24 @@ async function renderPartyPicker(containerId, party, onPick) {
         });
     });
 }
+// 把自己隊伍的每一隻(最多6隻)組成戰鬥用資料，寫進房間文件讓對方也能讀到——pokemonInstances
+// 的安全規則只有擁有者能讀，對方沒辦法直接查我的隊伍，所以要由「我自己」把資料寫進雙方都能讀寫的
+// pokemonBattleRooms文件裡，這是整個封鎖+選人機制能運作的關鍵
+async function buildOwnTeamSnapshot() {
+    const party = currentInstances.filter(i => i.inParty).slice(0, 6);
+    const displays = await Promise.all(party.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
+    return party.map((inst, idx) => buildTeamDataFromInstData(inst.id, inst, pokemonDisplayName(inst, displays[idx])));
+}
 async function submitCreateRoom() {
-    if (!pendingRoomInstanceId) { showToast('先選一隻寶可夢'); return; }
-    const inst = currentInstances.find(i => i.id === pendingRoomInstanceId);
-    if (!inst) return;
+    const party = currentInstances.filter(i => i.inParty);
+    if (party.length < PVP_MIN_PARTY_SIZE) { showToast(`隊伍至少要有${PVP_MIN_PARTY_SIZE}隻才能開連線對戰房間`); return; }
     const roomName = document.getElementById('create-room-name').value.trim() || `${auth.currentUser.displayName || '訓練家'}的房間`;
-    const instDisplay = await fetchSpeciesDisplay(inst.speciesId, inst.isShiny);
+    const hostTeam = await buildOwnTeamSnapshot();
     const roomRef = db.collection('pokemonBattleRooms').doc();
     await roomRef.set({
         hostUid: auth.currentUser.uid,
-        hostNickname: pokemonDisplayName(inst, instDisplay),
-        hostSpeciesId: inst.speciesId,
-        hostSpeciesIsShiny: !!inst.isShiny,
-        hostInstanceId: inst.id,
+        hostTrainerName: auth.currentUser.displayName || '訓練家',
+        hostTeam,
         roomName,
         memberUids: [auth.currentUser.uid],
         status: 'waiting',
@@ -998,23 +1013,22 @@ async function submitCreateRoom() {
     watchRoom(roomRef.id);
 }
 
-let pendingJoinInstanceId = null;
 function openJoinRoomModal(roomId) {
     const party = currentInstances.filter(i => i.inParty);
-    if (party.length === 0) { showToast('要先在「我的寶可夢」把至少一隻加入隊伍才能對戰'); return; }
+    if (party.length < PVP_MIN_PARTY_SIZE) { showToast(`連線對戰要先在「我的寶可夢」把隊伍湊到至少${PVP_MIN_PARTY_SIZE}隻才能加入(會先封鎖1隻、再從剩下的選3隻上場)`); return; }
     roomModalMode = 'join';
     pendingJoinRoomId = roomId;
-    pendingJoinInstanceId = null;
+    document.getElementById('create-room-modal-title').textContent = '加入這場連線對戰';
+    document.getElementById('create-room-modal-hint').classList.remove('hidden');
+    document.getElementById('create-room-party-picker').innerHTML = '';
     document.getElementById('create-room-name').classList.add('hidden');
     document.getElementById('create-room-submit-btn').textContent = '加入對戰';
-    renderPartyPicker('create-room-party-picker', party, (id) => { pendingJoinInstanceId = id; });
     document.getElementById('create-room-modal').classList.remove('hidden');
     document.getElementById('create-room-modal').classList.add('flex');
 }
 async function submitJoinRoom() {
-    if (!pendingJoinInstanceId || !pendingJoinRoomId) { showToast('先選一隻寶可夢'); return; }
-    const inst = currentInstances.find(i => i.id === pendingJoinInstanceId);
-    const instDisplay = await fetchSpeciesDisplay(inst.speciesId, inst.isShiny);
+    if (!pendingJoinRoomId) { showToast('房間不存在'); return; }
+    const guestTeam = await buildOwnTeamSnapshot();
     const roomRef = db.collection('pokemonBattleRooms').doc(pendingJoinRoomId);
     try {
         await db.runTransaction(async tx => {
@@ -1024,11 +1038,10 @@ async function submitJoinRoom() {
             tx.update(roomRef, {
                 memberUids: firebase.firestore.FieldValue.arrayUnion(auth.currentUser.uid),
                 guestUid: auth.currentUser.uid,
-                guestNickname: pokemonDisplayName(inst, instDisplay),
-                guestSpeciesId: inst.speciesId,
-                guestSpeciesIsShiny: !!inst.isShiny,
-                guestInstanceId: inst.id,
-                status: 'battling',
+                guestTrainerName: auth.currentUser.displayName || '訓練家',
+                guestTeam,
+                status: 'drafting',
+                pendingBans: {},
             });
         });
         const joinedRoomId = pendingJoinRoomId;
@@ -1037,6 +1050,199 @@ async function submitJoinRoom() {
     } catch (err) {
         showToast('加入失敗：' + err.message);
     }
+}
+
+// ---------- 連線對戰的封鎖(Ban)+選人(Pick)階段 ----------
+// 雙方到齊(status='drafting')後：先各自從對方隊伍中盲選1隻禁用(pendingBans，兩邊都選完才揭曉成
+// banResult)，接著各自從自己剩下的隊伍選3隻上場(pendingPicks，兩邊都選完才正式開戰)。
+// 全程沿用pendingMoves結算時同一套「寫入->檢查對方是否也寫完->由後到的那個人觸發結算」模式
+async function submitBan(instanceId) {
+    const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
+    const myUid = auth.currentUser.uid;
+    let roomDataAfter = null;
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.status !== 'drafting' || data.banResult) throw new Error('現在不是封鎖階段');
+            const pending = { ...(data.pendingBans || {}) };
+            if (pending[myUid]) throw new Error('已經選過封鎖對象了');
+            pending[myUid] = instanceId;
+            tx.update(roomRef, { pendingBans: pending });
+            roomDataAfter = { ...data, pendingBans: pending };
+        });
+    } catch (err) { showToast(err.message); return; }
+    const opponentUid = roomDataAfter.memberUids.find(u => u !== myUid);
+    if (roomDataAfter.pendingBans[opponentUid]) {
+        await finalizeBans(roomRef, roomDataAfter);
+    }
+}
+async function finalizeBans(roomRef, roomData) {
+    const hostUid = roomData.hostUid, guestUid = roomData.guestUid;
+    // banResult[uid] = 「uid自己被對方禁用掉的那一隻」，也就是對方在pendingBans裡選的那個instanceId
+    const banResult = {
+        [hostUid]: roomData.pendingBans[guestUid],
+        [guestUid]: roomData.pendingBans[hostUid],
+    };
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.banResult) return; // 已經算過了
+            tx.update(roomRef, { banResult, pendingBans: {}, pendingPicks: {} });
+        });
+    } catch (err) { console.warn('封鎖結算失敗', err.message); }
+}
+async function submitPick(ids) {
+    if (!Array.isArray(ids) || ids.length !== 3) { showToast('要選滿3隻才能送出'); return; }
+    const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
+    const myUid = auth.currentUser.uid;
+    let roomDataAfter = null;
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.status !== 'drafting' || !data.banResult) throw new Error('現在還不是選人的時候');
+            const pending = { ...(data.pendingPicks || {}) };
+            if (pending[myUid]) throw new Error('已經選過上場名單了');
+            pending[myUid] = ids;
+            tx.update(roomRef, { pendingPicks: pending });
+            roomDataAfter = { ...data, pendingPicks: pending };
+        });
+    } catch (err) { showToast(err.message); return; }
+    const opponentUid = roomDataAfter.memberUids.find(u => u !== myUid);
+    if (roomDataAfter.pendingPicks[opponentUid]) {
+        await finalizeDraftBattleStart(roomRef, roomDataAfter);
+    }
+}
+async function finalizeDraftBattleStart(roomRef, roomData) {
+    const hostUid = roomData.hostUid, guestUid = roomData.guestUid;
+    const hostPicks = roomData.pendingPicks[hostUid];
+    const guestPicks = roomData.pendingPicks[guestUid];
+    const findEntry = (team, id) => (team || []).find(m => m.instanceId === id);
+    const hostActive = findEntry(roomData.hostTeam, hostPicks[0]);
+    const guestActive = findEntry(roomData.guestTeam, guestPicks[0]);
+    if (!hostActive || !guestActive) { console.warn('選人資料不完整，無法開戰'); return; }
+    const teams = { [hostUid]: { ...hostActive }, [guestUid]: { ...guestActive } };
+    const bench = {
+        [hostUid]: hostPicks.slice(1).map(id => ({ ...findEntry(roomData.hostTeam, id) })).filter(Boolean),
+        [guestUid]: guestPicks.slice(1).map(id => ({ ...findEntry(roomData.guestTeam, id) })).filter(Boolean),
+    };
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.status !== 'drafting' || data.battleState) return;
+            tx.update(roomRef, {
+                status: 'battling',
+                battleState: {
+                    teams, bench,
+                    weather: { type: null, turnsLeft: 0 }, terrain: { type: null, turnsLeft: 0 },
+                    awaitingSwitch: [], round: 1, log: [],
+                },
+                pendingMoves: {}, pendingPicks: {},
+            });
+        });
+    } catch (err) { console.warn('開戰失敗', err.message); }
+}
+// 選人畫面：點擊卡片切換選取狀態(最多3隻)，第一個點的算先發，其餘算候補——用一個模組層級的
+// 陣列記錄目前選了誰，重繪畫面(renderDraftView)時會呼叫setupDraftPickPicker()重新掛上事件
+let draftPickSelection = [];
+function setupDraftPickPicker() {
+    draftPickSelection = [];
+    const items = document.querySelectorAll('#draft-pick-grid .draft-pick-item');
+    const btn = document.getElementById('draft-pick-confirm-btn');
+    const refreshUi = () => {
+        items.forEach(el => {
+            const i = draftPickSelection.indexOf(el.dataset.instanceId);
+            el.classList.toggle('border-red-500', i !== -1);
+            const orderEl = el.querySelector('.draft-pick-order');
+            if (i !== -1) { orderEl.textContent = i === 0 ? '先發' : `候補${i}`; orderEl.classList.remove('hidden'); }
+            else { orderEl.classList.add('hidden'); }
+        });
+        if (btn) {
+            btn.disabled = draftPickSelection.length !== 3;
+            btn.classList.toggle('opacity-40', draftPickSelection.length !== 3);
+            btn.textContent = `選好了(${draftPickSelection.length}/3)`;
+        }
+    };
+    items.forEach(el => {
+        el.addEventListener('click', () => {
+            const id = el.dataset.instanceId;
+            const idx = draftPickSelection.indexOf(id);
+            if (idx !== -1) draftPickSelection.splice(idx, 1);
+            else { if (draftPickSelection.length >= 3) return; draftPickSelection.push(id); }
+            refreshUi();
+        });
+    });
+    refreshUi();
+}
+async function submitDraftPickConfirm() {
+    if (draftPickSelection.length !== 3) return;
+    await submitPick(draftPickSelection.slice());
+}
+// 封鎖/選人畫面本體：依房間目前的drafting子階段(還沒禁用/禁用完但還沒選人)決定要顯示哪一種介面
+async function renderDraftView(container, room) {
+    const myUid = auth.currentUser.uid;
+    const myTeamKey = myUid === room.hostUid ? 'hostTeam' : 'guestTeam';
+    const oppTeamKey = myUid === room.hostUid ? 'guestTeam' : 'hostTeam';
+    const myFullTeam = room[myTeamKey] || [];
+    const oppFullTeam = room[oppTeamKey] || [];
+
+    if (!room.banResult) {
+        const myBanSubmitted = !!(room.pendingBans && room.pendingBans[myUid]);
+        if (myBanSubmitted) {
+            container.innerHTML = `<div class="bg-white rounded-2xl card-shadow p-8 text-center">
+                <p class="text-gray-400">已送出封鎖對象，等待對方選擇中...</p>
+                <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-4 underline">投降離開</button>
+            </div>`;
+            return;
+        }
+        const displays = await Promise.all(oppFullTeam.map(m => fetchSpeciesDisplay(m.speciesId, m.isShiny)));
+        container.innerHTML = `
+            <div class="bg-white rounded-2xl card-shadow p-4">
+                <p class="text-center font-bold mb-1">封鎖階段</p>
+                <p class="text-center text-xs text-gray-400 mb-3">從對方隊伍中選一隻，禁止對方在這場對戰使用牠</p>
+                <div class="grid grid-cols-3 gap-2 mb-3">${oppFullTeam.map((m, idx) => `
+                    <button onclick="submitBan('${m.instanceId}')" class="bg-gray-50 border-2 border-gray-200 rounded-2xl p-2 text-center active:scale-95 transition-transform">
+                        <img src="${displays[idx].sprite}" class="w-12 h-12 mx-auto">
+                        <span class="block text-xs font-bold truncate">${m.nickname}</span>
+                        <span class="block text-[10px] text-gray-400">Lv.${m.level}</span>
+                    </button>`).join('')}</div>
+                <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-1 underline">投降離開</button>
+            </div>`;
+        return;
+    }
+
+    // 禁用結果已經出來，進入選人階段
+    const bannedId = room.banResult[myUid];
+    const bannedEntry = myFullTeam.find(m => m.instanceId === bannedId);
+    const pickable = myFullTeam.filter(m => m.instanceId !== bannedId);
+    const mySubmitted = !!(room.pendingPicks && room.pendingPicks[myUid]);
+    if (mySubmitted) {
+        container.innerHTML = `<div class="bg-white rounded-2xl card-shadow p-8 text-center">
+            <p class="text-gray-400">已選好上場名單，等待對方選擇中...</p>
+            <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-4 underline">投降離開</button>
+        </div>`;
+        return;
+    }
+    const displays = await Promise.all(pickable.map(m => fetchSpeciesDisplay(m.speciesId, m.isShiny)));
+    container.innerHTML = `
+        <div class="bg-white rounded-2xl card-shadow p-4">
+            <p class="text-center font-bold mb-1">選人階段</p>
+            <p class="text-center text-xs text-gray-400 mb-1">對方禁用了你的 ${bannedEntry ? bannedEntry.nickname : '一隻寶可夢'}</p>
+            <p class="text-center text-xs text-gray-400 mb-3">從剩下的隊伍選3隻上場——第一隻點的是先發，其餘2隻是候補</p>
+            <div id="draft-pick-grid" class="grid grid-cols-3 gap-2 mb-3">${pickable.map((m, idx) => `
+                <div class="draft-pick-item border-2 border-transparent bg-gray-50 rounded-2xl p-2 text-center cursor-pointer" data-instance-id="${m.instanceId}">
+                    <img src="${displays[idx].sprite}" class="w-12 h-12 mx-auto">
+                    <span class="block text-xs font-bold truncate">${m.nickname}</span>
+                    <span class="block text-[10px] text-gray-400">Lv.${m.level}</span>
+                    <span class="draft-pick-order hidden text-[10px] font-black text-red-500"></span>
+                </div>`).join('')}</div>
+            <button id="draft-pick-confirm-btn" disabled onclick="submitDraftPickConfirm()" class="w-full bg-red-500 text-white py-2 rounded-full font-bold opacity-40">選好了(0/3)</button>
+            <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-2 underline">投降離開</button>
+        </div>`;
+    setupDraftPickPicker();
 }
 
 // ---------- 挑戰野生寶可夢(練等用，單機不需要等對手) ----------
@@ -1192,10 +1398,14 @@ async function renderRoomView(room) {
         </div>`;
         return;
     }
+    if (room.status === 'drafting') {
+        animatedResolvedRound[room.id] = undefined;
+        await renderDraftView(container, room);
+        return;
+    }
     if (room.status === 'battling' && !room.battleState) {
-        // 兩人到齊、但戰鬥狀態還沒初始化：由「剛加入的那一方」負責初始化一次(用transaction防止重複初始化)
-        if (myUid === room.guestUid) { await initBattleState(room); }
-        if (myToken !== roomRenderToken) return;
+        // 正常流程下(連線對戰經過drafting、野生對戰建立時就直接帶battleState)不會走到這裡——
+        // 留著純粹是給舊格式房間文件的防呆，避免萬一真的遇到就整個卡住不會動
         container.innerHTML = `<p class="text-center text-gray-400 py-10">對戰準備中...</p>`;
         return;
     }
@@ -1650,52 +1860,7 @@ function buildTeamDataFromInstData(instanceId, inst, nickname) {
         isShiny: !!inst.isShiny,
     };
 }
-// 幫某個玩家組出「先發以外」的候補隊伍(bench)：從他隊伍中其餘已加入inParty的成員抓出來，
-// 每隻都套用跟先發一樣的buildTeamDataFromInstData——這樣PvP/野生對戰要替換寶可夢時，
-// 候補寶可夢的資料形狀才會跟先發一致(有自己獨立的HP/等級/招式，能力/異常狀態則是上場後才會有)
-async function buildBenchForUid(ownerUid, activeInstanceId, nicknamePrefix) {
-    const snap = await db.collection('pokemonInstances').where('ownerUid', '==', ownerUid).where('inParty', '==', true).get();
-    const bench = [];
-    for (const doc of snap.docs) {
-        if (doc.id === activeInstanceId) continue;
-        const inst = doc.data();
-        const display = await fetchSpeciesDisplay(inst.speciesId, inst.isShiny);
-        bench.push(buildTeamDataFromInstData(doc.id, inst, pokemonDisplayName({ ...inst, id: doc.id }, display)));
-        if (bench.length >= 5) break; // 先發1隻+候補最多5隻=一整隊6隻
-    }
-    return bench;
-}
-async function initBattleState(room) {
-    const roomRef = db.collection('pokemonBattleRooms').doc(room.id);
-    const hostInst = await db.collection('pokemonInstances').doc(room.hostInstanceId).get();
-    const guestInst = await db.collection('pokemonInstances').doc(room.guestInstanceId).get();
-    const teams = {
-        [room.hostUid]: buildTeamDataFromInstData(hostInst.id, hostInst.data(), room.hostNickname),
-        [room.guestUid]: buildTeamDataFromInstData(guestInst.id, guestInst.data(), room.guestNickname),
-    };
-    // 防禦性try/catch：查詢隊伍候補用了兩個where條件(ownerUid+inParty)，萬一Firestore
-    // 因為索引問題查詢失敗，寧可讓這場對戰「沒有候補可以替換」照常開打，也不要整個房間卡在
-    // 「對戰準備中...」動不了
-    let hostBench = [], guestBench = [];
-    try {
-        [hostBench, guestBench] = await Promise.all([
-            buildBenchForUid(room.hostUid, room.hostInstanceId),
-            buildBenchForUid(room.guestUid, room.guestInstanceId),
-        ]);
-    } catch (err) { console.warn('讀取候補隊伍失敗，這場對戰將沒有候補寶可夢可以替換', err.message); }
-    const bench = { [room.hostUid]: hostBench, [room.guestUid]: guestBench };
-    try {
-        await db.runTransaction(async tx => {
-            const snap = await tx.get(roomRef);
-            const data = snap.data();
-            if (!data || data.battleState) return; // 已經有人初始化過了，跳過
-            tx.update(roomRef, {
-                battleState: { teams, bench, weather: { type: null, turnsLeft: 0 }, terrain: { type: null, turnsLeft: 0 }, awaitingSwitch: [], round: 1, log: [] },
-                pendingMoves: {},
-            });
-        });
-    } catch (err) { console.warn('初始化對戰狀態失敗', err.message); }
-}
+
 
 // ---------- 招式/屬性資料(對戰結算用) ----------
 const moveDataCache = new Map();
@@ -1718,10 +1883,14 @@ const STRUGGLE_MOVE = {
 // 雙回合蓄力招式：PokéAPI的結構化資料裡沒有專門的「兩回合招式」欄位，這裡自己整理一份
 // 常見蓄力招式表——第一回合「蓄力」(不會真的出招/不會扣血)，第二回合才真正攻擊。
 // skipChargeWeather有填的話，代表「天氣符合時可以省略蓄力回合直接出招」(日光烈焰在大晴天就是這樣)
+// vanish:true代表正統規則裡「蓄力回合會消失/鑽進地底/飛到天上，這段期間對方的招式一律
+// 打不到」的那幾招(飛翔/挖洞/潛水/彈跳/影子分身/燕返)；日光烈焰/太陽刃/衝角地鼠/刨光/
+// 遠古哭嚎/羽毛芭蕾這些純粹「蓄力不出招」但不會消失，沒有無敵效果
 const TWO_TURN_MOVES = {
     'solar-beam': { skipChargeWeather: 'sun' }, 'solar-blade': { skipChargeWeather: 'sun' },
-    'fly': {}, 'dig': {}, 'dive': {}, 'bounce': {}, 'phantom-force': {}, 'shadow-force': {},
-    'sky-attack': {}, 'freeze-shock': {}, 'ice-burn': {}, 'skull-bash': {}, 'razor-wind': {}, 'geomancy': {},
+    'fly': { vanish: true }, 'dig': { vanish: true }, 'dive': { vanish: true }, 'bounce': { vanish: true },
+    'phantom-force': { vanish: true }, 'shadow-force': { vanish: true }, 'sky-attack': { vanish: true },
+    'freeze-shock': {}, 'ice-burn': {}, 'skull-bash': {}, 'razor-wind': {}, 'geomancy': {},
 };
 // 天氣/場地招式：value對應到battleState.weather.type / battleState.terrain.type，
 // 用來查傷害倍率表跟回合結束的持續效果
@@ -1729,6 +1898,20 @@ const WEATHER_MOVES = { 'sunny-day': 'sun', 'rain-dance': 'rain', 'sandstorm': '
 const TERRAIN_MOVES = { 'electric-terrain': 'electric', 'grassy-terrain': 'grassy', 'misty-terrain': 'misty', 'psychic-terrain': 'psychic' };
 const PROTECT_MOVES = new Set(['protect', 'detect', 'king-shield', 'spiky-shield', 'baneful-bunker', 'obstruct', 'silk-trap']);
 const SUBSTITUTE_MOVES = new Set(['substitute']);
+// 替身正統規則的例外：音波系招式無視替身，直接打中本體(附加效果也正常生效)——這裡列出這個
+// 簡化版遊戲比較可能學到的常見音波招式，不是完整清單(PokéAPI沒有穩定可用的「音波旗標」欄位
+// 可以查，這裡用手動整理的清單頂替)
+const SOUND_MOVES = new Set([
+    'growl', 'roar', 'screech', 'sing', 'supersonic', 'snore', 'uproar', 'metal-sound', 'hyper-voice',
+    'echoed-voice', 'boomburst', 'bug-buzz', 'chatter', 'disarming-voice', 'noble-roar', 'confide',
+    'snarl', 'parting-shot', 'round', 'relic-song', 'clanging-scales', 'clangorous-soul', 'sparkling-aria',
+    'overdrive', 'grass-whistle', 'howl', 'perish-song', 'heal-bell', 'bug-bite',
+]);
+// 場地效果的「接地」判定：飛行屬性視為沒有接地(沒有飄浮特性/氣球道具這些機制，僅用屬性簡化判斷)，
+// 場地的傷害加成/減成/回血都只對接地的寶可夢生效——這是正統規則跟先前簡化版最主要的差異之一
+function isGrounded(display) {
+    return !((display && display.types) || []).includes('flying');
+}
 async function fetchMoveData(moveName) {
     if (moveName === 'struggle') return STRUGGLE_MOVE;
     if (moveDataCache.has(moveName)) return moveDataCache.get(moveName);
@@ -1903,11 +2086,14 @@ function weatherDamageMult(weatherType, moveType) {
     if (weatherType === 'rain') { if (moveType === 'water') return 1.5; if (moveType === 'fire') return 0.5; }
     return 1;
 }
-function terrainDamageMult(terrainType, moveType) {
-    if (terrainType === 'electric' && moveType === 'electric') return 1.3;
-    if (terrainType === 'grassy' && moveType === 'grass') return 1.3;
-    if (terrainType === 'psychic' && moveType === 'psychic') return 1.3;
-    if (terrainType === 'misty' && moveType === 'dragon') return 0.5;
+// 正統規則：電氣/青草/精神場地是「攻擊方站在地面上」才會加成(攻擊方接地)，
+// 薄霧場地減龍系傷害則是「防禦方站在地面上」才會生效(防禦方接地)——這兩種判定方向不一樣，
+// 分別傳attackerGrounded/defenderGrounded進來
+function terrainDamageMult(terrainType, moveType, attackerGrounded, defenderGrounded) {
+    if (terrainType === 'electric' && moveType === 'electric' && attackerGrounded) return 1.3;
+    if (terrainType === 'grassy' && moveType === 'grass' && attackerGrounded) return 1.3;
+    if (terrainType === 'psychic' && moveType === 'psychic' && attackerGrounded) return 1.3;
+    if (terrainType === 'misty' && moveType === 'dragon' && defenderGrounded) return 0.5;
     return 1;
 }
 // PP：取得某招式目前剩餘PP(第一次用之前，movePp裡沒有這個key，視為滿PP)
@@ -2306,9 +2492,14 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             continue;
         }
 
-        // ---- 命中判定：move.accuracy是null代表一定命中，否則要看命中率/閃避率等級調整過的機率 ----
+        // ---- 命中判定：move.accuracy是null代表一定命中，否則要看命中率/閃避率等級調整過的機率。
+        // 正統規則：對方正在飛翔/挖洞/潛水等「蓄力中消失」的招式時，這回合的攻擊一定會落空
+        // (先不模擬地震能打到挖洞中對手這類「特定招式可以打到無敵狀態」的例外) ----
         let hit = true;
-        if (move.accuracy != null) {
+        const defVanished = !!(def.chargingMove && TWO_TURN_MOVES[def.chargingMove] && TWO_TURN_MOVES[def.chargingMove].vanish);
+        if (move.target !== 'user' && move.target !== 'entire-field' && defVanished) {
+            hit = false;
+        } else if (move.accuracy != null) {
             const netStage = Math.max(-6, Math.min(6, (atk.stages.acc || 0) - (def.stages.eva || 0)));
             const chance = Math.max(0, Math.min(100, move.accuracy * accStageMult(netStage)));
             hit = rollChance(chance);
@@ -2367,9 +2558,11 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             const hits = rollMultiHitCount(move.minHits, move.maxHits);
             const atkStat = atk.atk * statStageMult(atk.stages.atk);
             const defStat = def.def * statStageMult(def.stages.def);
-            defSubActiveBeforeHit = def.substituteHp > 0;
+            // 正統規則：音波系招式無視替身，直接打中本體(defSubActiveBeforeHit保持false，
+            // 後面的傷害/附加效果判斷都會照「沒有替身擋著」處理)
+            defSubActiveBeforeHit = def.substituteHp > 0 && !SOUND_MOVES.has(move.name);
             const wDmgMult = weatherDamageMult(weatherState.type, move.type);
-            const tDmgMult = terrainDamageMult(terrainState.type, move.type);
+            const tDmgMult = terrainDamageMult(terrainState.type, move.type, isGrounded(displayOf[attackerUid]), isGrounded(displayOf[defenderUid]));
             for (let i = 0; i < hits; i++) {
                 if (def.currentHp <= 0) break;
                 if (defSubActiveBeforeHit && def.substituteHp <= 0) break; // 替身已經被打破了，連續攻擊剩下的次數不會再打到本體
@@ -2377,7 +2570,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 if (isCrit) crit = true;
                 let dmg = computeDamage(atk.level, atkStat, defStat, move.power, eff, isStab, isCrit ? 1.5 : 1);
                 dmg = Math.max(1, Math.floor(dmg * wDmgMult * tDmgMult));
-                if (def.substituteHp > 0) {
+                if (defSubActiveBeforeHit) {
+                    // 用defSubActiveBeforeHit(而不是即時的def.substituteHp>0)判斷要不要打替身——
+                    // 音波系招式即使替身還在，也一律直接打本體，不會被替身吸收
                     const absorbed = Math.min(def.substituteHp, dmg);
                     def.substituteHp -= absorbed;
                     if (def.substituteHp <= 0) subBroke = true;
@@ -2589,7 +2784,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
             if (t.currentHp <= 0) continue;
 
-            if (terrainState.type === 'grassy') {
+            if (terrainState.type === 'grassy' && isGrounded(displayOf[uid])) {
                 const heal = Math.max(1, Math.floor(t.maxHp / 16));
                 const before = t.currentHp;
                 t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
