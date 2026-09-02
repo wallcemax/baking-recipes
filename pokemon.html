@@ -159,11 +159,14 @@
     <!-- ===== 放置牧場 ===== -->
     <div id="tab-idle" class="tab-panel hidden">
         <div class="bg-white rounded-2xl card-shadow p-5 mb-4 text-center">
-            <p class="text-sm text-gray-500 mb-2">把寶可夢放到牧場裡，離線也會自動累積寶可幣(每隻每小時 = 等級×2枚，離線超過24小時只算24小時)</p>
-            <p class="text-3xl font-black text-yellow-600 mb-3 flex items-center justify-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/amulet-coin.png" class="w-7 h-7" style="image-rendering:pixelated"><span id="idle-pending">0</span></p>
+            <p class="text-sm text-gray-500 mb-2">把寶可夢放到牧場裡(最多10隻)，離線也會自動累積：寶可幣(每隻每小時 = 等級×2枚)、經驗值(牧場裡每一隻每小時都固定+10 EXP，跟等級無關)——離線超過24小時只算24小時，要按「收取」才會真的入帳</p>
+            <div class="flex items-center justify-center gap-4 mb-3">
+                <p class="text-2xl font-black text-yellow-600 flex items-center justify-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/amulet-coin.png" class="w-6 h-6" style="image-rendering:pixelated"><span id="idle-pending">0</span></p>
+                <p class="text-2xl font-black text-sky-600 flex items-center justify-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/rare-candy.png" class="w-6 h-6" style="image-rendering:pixelated">+<span id="idle-pending-exp">0</span> EXP</p>
+            </div>
             <button onclick="collectIdle()" class="bg-yellow-500 text-white px-6 py-2 rounded-full font-bold">收取</button>
         </div>
-        <h3 class="font-bold mb-2 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/shell-bell.png" class="w-5 h-5" style="image-rendering:pixelated">牧場裡的寶可夢(點擊收藏庫的寶可夢卡片可以放進來/牽出去)</h3>
+        <h3 class="font-bold mb-2 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/shell-bell.png" class="w-5 h-5" style="image-rendering:pixelated">牧場裡的寶可夢(<span id="idle-placed-count">0</span>/10，點擊收藏庫的寶可夢卡片可以放進來/牽出去)</h3>
         <div id="idle-placed-list" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
     </div>
 
@@ -692,7 +695,14 @@ async function toggleParty(instanceId) {
 async function toggleIdlePlacement(instanceId) {
     const inst = currentInstances.find(i => i.id === instanceId);
     if (!inst) return;
-    // 改成呼叫伺服器端動作：由worker先結算「換入/換出前」累積的代幣，再切換放置狀態，
+    // 牧場最多放10隻——先在前端擋一次(跟toggleParty的隊伍上限檢查一樣的做法)，
+    // 省一趟來回；真正的上限還是由worker那邊擋(見handlePokemonIdleTogglePlacement)，
+    // 這裡只是為了不用等一趟網路才知道放不進去
+    if (!inst.placedForIdle) {
+        const placedCount = currentInstances.filter(i => i.placedForIdle).length;
+        if (placedCount >= 10) { showToast('牧場最多只能放10隻寶可夢'); return; }
+    }
+    // 改成呼叫伺服器端動作：由worker先結算「換入/換出前」累積的代幣跟EXP，再切換放置狀態，
     // 避免直接改Firestore欄位的話，換入/換出的時間點可以被拿來鑽時數計算的漏洞
     try {
         await callWorker('pokemon_idle_toggle_placement', { instanceId });
@@ -892,6 +902,14 @@ async function renderIdleTab() {
     const elapsedHours = Math.min(24, Math.max(0, (Date.now() - lastCollect) / 3600000));
     const pending = Math.floor(totalLevel * 2 * elapsedHours);
     document.getElementById('idle-pending').textContent = pending;
+    // 牧場新機制的預覽數字：牧場裡「每一隻」寶可夢每小時固定+10EXP，不看等級——這裡只是前端
+    // 自己算的預覽估算值(跟代幣預覽一樣)，真正入帳的計算跟寫入還是由worker的settleIdleEarnings
+    // 在按下「收取」的當下才會做，這裡算錯也不影響實際拿到的數字
+    const pendingExpEach = placed.length > 0 ? Math.floor(10 * elapsedHours) : 0;
+    const pendingExpEl = document.getElementById('idle-pending-exp');
+    if (pendingExpEl) pendingExpEl.textContent = pendingExpEach;
+    const countEl = document.getElementById('idle-placed-count');
+    if (countEl) countEl.textContent = placed.length;
 
     const list = document.getElementById('idle-placed-list');
     if (placed.length === 0) {
@@ -910,7 +928,8 @@ async function renderIdleTab() {
 async function collectIdle() {
     try {
         const result = await callWorker('pokemon_idle_collect');
-        showToastWithIcon(itemSpriteUrl('amulet-coin'), `收到 ${result.earned}！`);
+        const expMsg = result.expGainedEach > 0 ? `，牧場寶可夢各 +${result.expGainedEach} EXP` : '';
+        showToastWithIcon(itemSpriteUrl('amulet-coin'), `收到 ${result.earned}${expMsg}！`);
     } catch (err) {
         showToast('收取失敗：' + err.message);
     }
@@ -1229,7 +1248,7 @@ async function renderDraftView(container, room) {
         if (myBanSubmitted) {
             container.innerHTML = `<div class="bg-white rounded-2xl card-shadow p-8 text-center">
                 <p class="text-gray-400">已送出封鎖對象，等待對方選擇中...</p>
-                <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-4 underline">投降離開</button>
+                <div class="text-center mt-4"><button onclick="forfeitRoom('${room.id}')" class="text-xs text-gray-400 underline px-3 py-1">投降離開</button></div>
             </div>`;
             return;
         }
@@ -1244,7 +1263,7 @@ async function renderDraftView(container, room) {
                         <span class="block text-xs font-bold truncate">${m.nickname}</span>
                         <span class="block text-[10px] text-gray-400">Lv.${m.level}</span>
                     </button>`).join('')}</div>
-                <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-1 underline">投降離開</button>
+                <div class="text-center mt-2"><button onclick="forfeitRoom('${room.id}')" class="text-xs text-gray-400 underline px-3 py-1">投降離開</button></div>
             </div>`;
         return;
     }
@@ -1257,7 +1276,7 @@ async function renderDraftView(container, room) {
     if (mySubmitted) {
         container.innerHTML = `<div class="bg-white rounded-2xl card-shadow p-8 text-center">
             <p class="text-gray-400">已選好上場名單，等待對方選擇中...</p>
-            <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-4 underline">投降離開</button>
+            <div class="text-center mt-4"><button onclick="forfeitRoom('${room.id}')" class="text-xs text-gray-400 underline px-3 py-1">投降離開</button></div>
         </div>`;
         return;
     }
@@ -1275,7 +1294,7 @@ async function renderDraftView(container, room) {
                     <span class="draft-pick-order hidden text-[10px] font-black text-red-500"></span>
                 </div>`).join('')}</div>
             <button id="draft-pick-confirm-btn" disabled onclick="submitDraftPickConfirm()" class="w-full bg-red-500 text-white py-2 rounded-full font-bold opacity-40">選好了(0/3)</button>
-            <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-2 underline">投降離開</button>
+            <div class="text-center mt-3"><button onclick="forfeitRoom('${room.id}')" class="text-xs text-gray-400 underline px-3 py-1">投降離開</button></div>
         </div>`;
     setupDraftPickPicker();
 }
@@ -1534,6 +1553,10 @@ async function renderBattleStage(container, ctx) {
     // 這裡改成每個招式用自己的屬性色當底色，配上PokéAPI官方的屬性小圖示(symbol_icon)，
     // 敘述文字縮成一行、超出就用...省略，避免像段落卡片一樣把畫面撐高
     let movesHtml;
+    // 「替換寶可夢」原本是招式區底下一顆按鈕，跟正下方的「投降離開」離太近，手機上很容易點錯——
+    // 改成直接點自己場上的寶可夢圖片來開啟替換選單，這個flag決定現在能不能點(跟原本按鈕出現的
+    // 條件完全一樣：一定要是「正常選招式」的狀態，而不是被鎖住/已送出/被強制替換/蓄力中等狀態)
+    let allowSwitchTap = false;
     const myMoveSubmitted = !!(room.pendingMoves && room.pendingMoves[myUid]);
     if (iMustSwitch) {
         // 主動寶可夢倒下、還有候補活著：強制先選一隻上場，戰鬥還沒結束
@@ -1597,7 +1620,8 @@ async function renderBattleStage(container, ctx) {
                     <span class="block text-[0.6rem] text-white/85 mt-0.5 truncate">${blockReason || m.descZh || ' '}</span>
                     <span class="block text-[0.6rem] text-white/70 mt-0.5">PP ${pp}/${m.pp || '?'}</span>
                 </button>`;
-            }).join('')}</div>${myBench.length > 0 ? `<button onclick="toggleSwitchPicker(true)" class="w-full mt-2 text-xs text-gray-500 underline flex items-center justify-center gap-1"><img src="${itemSpriteUrl('luxury-ball')}" class="w-3.5 h-3.5" style="image-rendering:pixelated">替換寶可夢</button>` : ''}`;
+            }).join('')}</div>`;
+            allowSwitchTap = myBench.length > 0; // 這個分支才是「正常選招式」狀態，才能點寶可夢圖片開替換選單
         }
     }
 
@@ -1637,9 +1661,10 @@ async function renderBattleStage(container, ctx) {
                 <div class="relative flex justify-start mb-2" style="min-height:104px">
                     <div id="fx-me" class="fx-burst"></div>
                     <div id="popupwrap-me" class="absolute inset-x-0 top-0 flex justify-start z-10"></div>
-                    <div class="relative w-28 h-28">
+                    <div class="relative w-28 h-28 ${allowSwitchTap ? 'cursor-pointer' : ''}" ${allowSwitchTap ? `onclick="toggleSwitchPicker(true)" title="點擊替換寶可夢"` : ''}>
                         <img id="pokeball-me" src="${itemSpriteUrl('poke-ball')}" class="pokeball-icon">
                         <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-28 battle-sprite ${myFainted ? 'sprite-fainted' : ''}" style="image-rendering:pixelated">
+                        ${allowSwitchTap ? `<img src="${itemSpriteUrl('luxury-ball')}" class="absolute -bottom-1 -right-1 w-5 h-5 pointer-events-none drop-shadow" style="image-rendering:pixelated">` : ''}
                     </div>
                 </div>
                 <div class="mb-1">
@@ -1657,7 +1682,7 @@ async function renderBattleStage(container, ctx) {
             </div>
             <div class="sm:w-3/5">${movesHtml}</div>
         </div>
-        <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-1 underline">投降離開</button>
+        <div class="text-center mt-3"><button onclick="forfeitRoom('${room.id}')" class="text-xs text-gray-400 underline px-3 py-1">投降離開</button></div>
     `;
 }
 
