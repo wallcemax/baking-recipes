@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎮 寶可夢世界 - JUST DO EAT</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<style>
+    body { font-family: 'Noto Sans TC', system-ui, -apple-system, sans-serif; background: #f4f1ea; }
+    .tab-btn.active { background: #ef4444; color: #fff; }
+    .egg-shake { animation: eggshake 0.35s ease-in-out infinite; }
+    @keyframes eggshake { 0%,100%{transform:rotate(-3deg)} 50%{transform:rotate(3deg)} }
+    .hp-bar-fill { transition: width 0.5s ease; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+    .card-shadow { box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
+    [v-cloak], .hidden { display: none !important; }
+    .type-badge { font-size: 0.65rem; padding: 2px 8px; border-radius: 999px; color: #fff; font-weight: 700; }
+</style>
+</head>
+<body class="min-h-screen pb-24">
+
+<!-- 頂部列：標題、代幣、登入狀態 -->
+<div class="sticky top-0 z-30 bg-white border-b card-shadow">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+        <a href="game.html" class="text-sm text-gray-500 hover:text-gray-800">← 遊戲場</a>
+        <h1 class="text-xl font-black text-red-600">🎮 寶可夢世界</h1>
+        <div class="flex items-center gap-3">
+            <div id="coin-display" class="hidden items-center gap-1 bg-yellow-50 border border-yellow-300 rounded-full px-3 py-1 text-sm font-bold text-yellow-700">
+                🪙 <span id="coin-value">0</span>
+            </div>
+            <div id="login-area">
+                <button id="login-btn" class="text-sm bg-red-500 text-white px-3 py-1.5 rounded-full font-bold">登入</button>
+                <img id="user-avatar" class="hidden w-8 h-8 rounded-full cursor-pointer" onclick="logoutUser()" title="點擊登出">
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 未登入提示 -->
+<div id="logged-out-view" class="max-w-5xl mx-auto px-4 py-20 text-center">
+    <p class="text-6xl mb-4">🥚</p>
+    <p class="text-gray-500 mb-4">登入之後才能開始養成、抽蛋、對戰喔</p>
+    <button onclick="loginUser()" class="bg-red-500 text-white px-5 py-2 rounded-full font-bold">用Google登入</button>
+</div>
+
+<!-- 主畫面(登入後顯示) -->
+<div id="main-view" class="hidden max-w-5xl mx-auto px-4 py-4">
+
+    <!-- 分頁導覽 -->
+    <div class="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-4 px-4">
+        <button class="tab-btn active shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100" data-tab="gacha" onclick="switchTab('gacha')">🥚 扭蛋</button>
+        <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100" data-tab="eggs" onclick="switchTab('eggs')">🔥 蛋窩 <span id="egg-count-badge" class="hidden ml-1 bg-red-500 text-white rounded-full px-1.5 text-xs"></span></button>
+        <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100" data-tab="box" onclick="switchTab('box')">📦 我的寶可夢</button>
+        <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100" data-tab="idle" onclick="switchTab('idle')">🏕️ 放置牧場</button>
+        <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100" data-tab="battle" onclick="switchTab('battle')">⚔️ 對戰</button>
+    </div>
+
+    <!-- ===== 扭蛋分頁 ===== -->
+    <div id="tab-gacha" class="tab-panel">
+        <p class="text-sm text-gray-500 mb-4">用寶可幣抽蛋，蛋裡到底孵出哪一隻要等孵化那一刻才會知道！</p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="bg-white rounded-2xl card-shadow p-5 text-center">
+                <p class="text-4xl mb-2">🥚</p>
+                <p class="font-bold mb-1">普通蛋</p>
+                <p class="text-xs text-gray-400 mb-3">不會孵出神獸/幻獸</p>
+                <p class="font-bold text-yellow-600 mb-3">🪙 100</p>
+                <button onclick="drawEgg('normal')" class="w-full bg-gray-700 text-white py-2 rounded-xl font-bold text-sm">抽一顆</button>
+            </div>
+            <div class="bg-white rounded-2xl card-shadow p-5 text-center border-2 border-blue-300">
+                <p class="text-4xl mb-2">🥚✨</p>
+                <p class="font-bold mb-1">高級蛋</p>
+                <p class="text-xs text-gray-400 mb-3">15%機率孵出神獸</p>
+                <p class="font-bold text-yellow-600 mb-3">🪙 500</p>
+                <button onclick="drawEgg('great')" class="w-full bg-blue-500 text-white py-2 rounded-xl font-bold text-sm">抽一顆</button>
+            </div>
+            <div class="bg-white rounded-2xl card-shadow p-5 text-center border-2 border-purple-400">
+                <p class="text-4xl mb-2">🥚🌟</p>
+                <p class="font-bold mb-1">神獸蛋</p>
+                <p class="text-xs text-gray-400 mb-3">保證孵出神獸/幻獸</p>
+                <p class="font-bold text-yellow-600 mb-3">🪙 3000</p>
+                <button onclick="drawEgg('legendary')" class="w-full bg-purple-600 text-white py-2 rounded-xl font-bold text-sm">抽一顆</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 蛋窩(孵化中) ===== -->
+    <div id="tab-eggs" class="tab-panel hidden">
+        <div id="egg-list" class="grid grid-cols-2 sm:grid-cols-3 gap-4"></div>
+        <p id="egg-empty-hint" class="hidden text-center text-gray-400 py-16">目前沒有蛋在孵化中，去扭蛋分頁抽一顆吧</p>
+    </div>
+
+    <!-- ===== 我的寶可夢(box+隊伍) ===== -->
+    <div id="tab-box" class="tab-panel hidden">
+        <div class="mb-5">
+            <h3 class="font-bold mb-2">⭐ 目前隊伍(最多6隻，對戰用第一隻上場)</h3>
+            <div id="party-list" class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-2"></div>
+            <p id="party-empty-hint" class="text-xs text-gray-400">還沒有寶可夢加入隊伍，在下面的收藏庫點「加入隊伍」</p>
+        </div>
+        <h3 class="font-bold mb-2">📦 收藏庫</h3>
+        <div id="box-list" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+        <p id="box-empty-hint" class="hidden text-center text-gray-400 py-16">還沒有任何寶可夢，先去孵一顆蛋吧</p>
+    </div>
+
+    <!-- ===== 放置牧場 ===== -->
+    <div id="tab-idle" class="tab-panel hidden">
+        <div class="bg-white rounded-2xl card-shadow p-5 mb-4 text-center">
+            <p class="text-sm text-gray-500 mb-2">把寶可夢放到牧場裡，離線也會自動累積寶可幣(每隻每小時 = 等級×2枚，離線超過24小時只算24小時)</p>
+            <p class="text-3xl font-black text-yellow-600 mb-3">🪙 <span id="idle-pending">0</span></p>
+            <button onclick="collectIdle()" class="bg-yellow-500 text-white px-6 py-2 rounded-full font-bold">收取</button>
+        </div>
+        <h3 class="font-bold mb-2">🏕️ 牧場裡的寶可夢(點擊收藏庫的寶可夢卡片可以放進來/牽出去)</h3>
+        <div id="idle-placed-list" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+    </div>
+
+    <!-- ===== 對戰 ===== -->
+    <div id="tab-battle" class="tab-panel hidden">
+        <div id="battle-lobby-view">
+            <div class="flex gap-2 mb-4">
+                <button onclick="openCreateRoomModal()" class="bg-red-500 text-white px-4 py-2 rounded-xl font-bold text-sm">➕ 開一個房間</button>
+            </div>
+            <h3 class="font-bold mb-2">目前開放的房間</h3>
+            <div id="room-list" class="space-y-2"></div>
+            <p id="room-empty-hint" class="hidden text-center text-gray-400 py-16">目前沒有開放中的房間，開一個等朋友加入吧</p>
+        </div>
+        <div id="battle-room-view" class="hidden"></div>
+    </div>
+</div>
+
+<!-- 孵化彈窗 -->
+<div id="hatch-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeHatchModal()">
+    <div class="bg-white rounded-3xl p-6 max-w-sm w-full text-center" id="hatch-modal-content"></div>
+</div>
+
+<!-- 建立對戰房間彈窗 -->
+<div id="create-room-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeCreateRoomModal()">
+    <div class="bg-white rounded-3xl p-6 max-w-sm w-full">
+        <h3 class="font-bold text-lg mb-3">選一隻寶可夢出戰</h3>
+        <div id="create-room-party-picker" class="grid grid-cols-3 gap-2 mb-4"></div>
+        <input id="create-room-name" placeholder="房間名稱(選填)" class="w-full border rounded-xl px-3 py-2 text-sm mb-3">
+        <button id="create-room-submit-btn" onclick="submitRoomModal()" class="w-full bg-red-500 text-white py-2 rounded-xl font-bold">建立房間</button>
+        <button onclick="closeCreateRoomModal()" class="w-full text-gray-400 text-sm mt-2">取消</button>
+    </div>
+</div>
+
+<!-- 寶可夢詳情彈窗(改暱稱/餵果實/進化/加入隊伍) -->
+<div id="detail-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeDetailModal()">
+    <div class="bg-white rounded-3xl p-6 max-w-sm w-full" id="detail-modal-content"></div>
+</div>
+
+<div id="toast-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center"></div>
+
+<script>
+// ============================================================
+// 寶可夢世界——前端遊戲邏輯
+// ------------------------------------------------------------
+// 跟主站(index.html)共用同一個Firebase專案，所以已經登入過主站的人，這裡通常會自動判定成
+// 已登入，不用重新登入一次。資料存放策略：
+//   - pokemonPlayers/{uid}、pokemonInstances/*、pokemonEggs/*、pokemonBattleRooms/* 這幾個
+//     集合，一般讀取/低風險寫入(暱稱、隊伍順序、對戰出招、離開房間...)都直接用瀏覽器端的
+//     firebase.firestore() SDK讀寫，即時同步靠onSnapshot，不需要額外架WebSocket/Durable Object。
+//   - 只有「會動到寶可幣、或決定抽蛋/孵蛋隨機結果」這幾個動作，才會呼叫Cloudflare Worker
+//     (worker.js的pokemon_gacha_draw / pokemon_collect_egg / pokemon_idle_collect /
+//     pokemon_battle_report_result)，避免玩家直接用瀏覽器主控台改自己的代幣或偷看蛋裡孵出什麼。
+// 寶可夢資料(圖鑑/招式/屬性相剋)全部即時向PokéAPI(https://pokeapi.co)抓取，這是公開、
+// 不需要金鑰的API，前端直接呼叫即可。
+// ============================================================
+
+const firebaseConfig = {
+  apiKey: "AIzaSyB2srYJRT8FqovYt_vCJh35h69H0W7cBLU",
+  authDomain: "recipe-synchronization.firebaseapp.com",
+  projectId: "recipe-synchronization",
+  storageBucket: "recipe-synchronization.firebasestorage.app",
+  messagingSenderId: "559668909743",
+  appId: "1:559668909743:web:63dc34572b98839479265a"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
+
+const CLOUDFLARE_AI_PROXY_URL = 'https://baking-recipes-ai.wallcemax.workers.dev/';
+
+function showToast(message) {
+    const container = document.getElementById('toast-container');
+    const item = document.createElement('div');
+    item.className = 'bg-gray-900 text-white text-sm px-4 py-2 rounded-full shadow-lg';
+    item.textContent = message;
+    container.appendChild(item);
+    setTimeout(() => item.remove(), 3200);
+}
+
+// ---------- 呼叫Worker(寶可幣/隨機性相關的動作用這個) ----------
+async function callWorker(action, extra = {}) {
+    const user = auth.currentUser;
+    if (!user) throw new Error('請先登入');
+    const idToken = await user.getIdToken();
+    const res = await fetch(CLOUDFLARE_AI_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, idToken, ...extra }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || '發生未知錯誤');
+    return data;
+}
+
+// ---------- 登入/登出 ----------
+function loginUser() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(err => {
+        if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
+            auth.signInWithRedirect(provider).catch(() => showToast('登入失敗：' + err.message));
+        } else if (err.code !== 'auth/popup-closed-by-user') {
+            showToast('登入失敗：' + err.message);
+        }
+    });
+}
+function logoutUser() {
+    if (!confirm('確定要登出嗎？')) return;
+    detachAllListeners();
+    auth.signOut();
+}
+
+let playerUnsub = null, eggsUnsub = null, instancesUnsub = null, roomListUnsub = null, roomDetailUnsub = null;
+function detachAllListeners() {
+    [playerUnsub, eggsUnsub, instancesUnsub, roomListUnsub, roomDetailUnsub].forEach(fn => { if (fn) fn(); });
+    playerUnsub = eggsUnsub = instancesUnsub = roomListUnsub = roomDetailUnsub = null;
+}
+
+let currentPlayerData = null;
+let currentEggs = [];       // [{id, ...fields}]
+let currentInstances = [];  // [{id, ...fields}]
+
+auth.onAuthStateChanged(user => {
+    if (user) {
+        document.getElementById('logged-out-view').classList.add('hidden');
+        document.getElementById('main-view').classList.remove('hidden');
+        document.getElementById('login-btn').classList.add('hidden');
+        document.getElementById('user-avatar').classList.remove('hidden');
+        document.getElementById('user-avatar').src = user.photoURL || '';
+        document.getElementById('coin-display').classList.remove('hidden');
+        document.getElementById('coin-display').classList.add('flex');
+        startListeners(user.uid);
+    } else {
+        document.getElementById('logged-out-view').classList.remove('hidden');
+        document.getElementById('main-view').classList.add('hidden');
+        document.getElementById('login-btn').classList.remove('hidden');
+        document.getElementById('user-avatar').classList.add('hidden');
+        document.getElementById('coin-display').classList.add('hidden');
+    }
+});
+
+function startListeners(uid) {
+    detachAllListeners();
+    playerUnsub = db.collection('pokemonPlayers').doc(uid).onSnapshot(snap => {
+        currentPlayerData = snap.exists ? snap.data() : { coins: 0 };
+        document.getElementById('coin-value').textContent = currentPlayerData.coins ?? 0;
+        renderIdleTab();
+    });
+    eggsUnsub = db.collection('pokemonEggs').where('ownerUid', '==', uid).onSnapshot(snap => {
+        currentEggs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderEggTab();
+    });
+    instancesUnsub = db.collection('pokemonInstances').where('ownerUid', '==', uid).onSnapshot(snap => {
+        currentInstances = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderBoxTab();
+        renderIdleTab();
+    });
+    listenOpenRooms();
+}
+
+// ---------- 分頁切換 ----------
+function switchTab(name) {
+    document.querySelectorAll('.tab-panel').forEach(el => el.classList.add('hidden'));
+    document.getElementById('tab-' + name).classList.remove('hidden');
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
+}
+
+// ============================================================
+// PokéAPI 資料快取(同一隻/同一招式，這次連線期間只抓一次)
+// ============================================================
+const speciesCache = new Map(); // speciesId -> {name, sprite, types:[...]}
+async function fetchSpeciesDisplay(speciesId) {
+    if (speciesCache.has(speciesId)) return speciesCache.get(speciesId);
+    try {
+        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${speciesId}`);
+        const data = await res.json();
+        const result = {
+            name: data.name,
+            sprite: data.sprites?.other?.['official-artwork']?.front_default || data.sprites?.front_default || '',
+            spriteBack: data.sprites?.back_default || data.sprites?.front_default || '',
+            types: (data.types || []).map(t => t.type.name),
+        };
+        speciesCache.set(speciesId, result);
+        return result;
+    } catch (err) {
+        return { name: '???', sprite: '', spriteBack: '', types: [] };
+    }
+}
+const TYPE_COLORS = { normal:'#A8A878',fire:'#F08030',water:'#6890F0',electric:'#F8D030',grass:'#78C850',ice:'#98D8D8',fighting:'#C03028',poison:'#A040A0',ground:'#E0C068',flying:'#A890F0',psychic:'#F85888',bug:'#A8B820',rock:'#B8A038',ghost:'#705898',dragon:'#7038F8',dark:'#705848',steel:'#B8B8D0',fairy:'#EE99AC' };
+function typeBadgesHtml(types) {
+    return (types || []).map(t => `<span class="type-badge" style="background:${TYPE_COLORS[t] || '#999'}">${t}</span>`).join(' ');
+}
+function pokemonDisplayName(instance) {
+    return instance.nickname && instance.nickname !== instance.speciesName ? `${instance.nickname}(${instance.speciesName})` : (instance.nickname || instance.speciesName || '???');
+}
+function statAtLevel(base, level, isHp) {
+    // 簡化版的等級成長公式(不套用個體值/努力值/性格加成那套完整規則)，符合遊戲附件描述的
+    // 「依公式等比例放大」精神，但用最單純的線性公式，方便維護、也方便玩家理解數值怎麼來的
+    if (isHp) return Math.floor(base * level / 50) + level + 10;
+    return Math.floor(base * level / 50) + 5;
+}
+function maxHpOf(instance) { return statAtLevel(instance.baseHp, instance.level, true); }
+function atkOf(instance) { return statAtLevel(instance.baseAtk, instance.level, false); }
+function defOf(instance) { return statAtLevel(instance.baseDef, instance.level, false); }
+function spdOf(instance) { return statAtLevel(instance.baseSpd, instance.level, false); }
+
+// ============================================================
+// 扭蛋
+// ============================================================
+async function drawEgg(tier) {
+    try {
+        await callWorker('pokemon_gacha_draw', { tier });
+        showToast('抽到一顆蛋了！去「蛋窩」分頁看看');
+        switchTab('eggs');
+    } catch (err) {
+        showToast('抽蛋失敗：' + err.message);
+    }
+}
+
+// ============================================================
+// 蛋窩(孵化中)
+// ============================================================
+let eggCountdownTimer = null;
+function renderEggTab() {
+    const list = document.getElementById('egg-list');
+    const badge = document.getElementById('egg-count-badge');
+    const emptyHint = document.getElementById('egg-empty-hint');
+    if (currentEggs.length === 0) {
+        list.innerHTML = '';
+        emptyHint.classList.remove('hidden');
+        badge.classList.add('hidden');
+        return;
+    }
+    emptyHint.classList.add('hidden');
+    badge.textContent = currentEggs.length;
+    badge.classList.remove('hidden');
+    const tierEmoji = { normal: '🥚', great: '🥚✨', legendary: '🥚🌟' };
+    list.innerHTML = currentEggs.map(egg => {
+        const ready = Date.now() >= Number(egg.hatchAt);
+        return `<div class="bg-white rounded-2xl card-shadow p-4 text-center" data-hatch-at="${egg.hatchAt}" data-egg-id="${egg.id}">
+            <p class="text-5xl mb-2 ${ready ? 'egg-shake' : ''}">${tierEmoji[egg.tier] || '🥚'}</p>
+            <p class="text-xs text-gray-400 mb-2 egg-countdown">${ready ? '孵化準備好了！' : '計算中...'}</p>
+            ${ready
+                ? `<button onclick="collectEgg('${egg.id}')" class="w-full bg-green-500 text-white py-1.5 rounded-xl font-bold text-sm">孵化！</button>`
+                : `<button disabled class="w-full bg-gray-200 text-gray-400 py-1.5 rounded-xl font-bold text-sm">孵化中</button>`}
+        </div>`;
+    }).join('');
+    if (!eggCountdownTimer) {
+        eggCountdownTimer = setInterval(updateEggCountdowns, 1000);
+    }
+}
+function updateEggCountdowns() {
+    document.querySelectorAll('#egg-list [data-hatch-at]').forEach(el => {
+        const hatchAt = Number(el.dataset.hatchAt);
+        const remain = hatchAt - Date.now();
+        const countdownEl = el.querySelector('.egg-countdown');
+        if (remain <= 0) {
+            if (countdownEl && countdownEl.textContent !== '孵化準備好了！') renderEggTab();
+            return;
+        }
+        const mins = Math.floor(remain / 60000);
+        const secs = Math.floor((remain % 60000) / 1000);
+        if (countdownEl) countdownEl.textContent = `還要 ${mins}分${secs}秒`;
+    });
+}
+async function collectEgg(eggId) {
+    try {
+        const result = await callWorker('pokemon_collect_egg', { eggId });
+        showHatchResult(result.instance);
+    } catch (err) {
+        showToast('孵化失敗：' + err.message);
+    }
+}
+async function showHatchResult(instance) {
+    const modal = document.getElementById('hatch-modal');
+    const content = document.getElementById('hatch-modal-content');
+    content.innerHTML = `<p class="text-5xl mb-3">🎉</p><p class="text-gray-500">恭喜孵化！</p>`;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    const display = await fetchSpeciesDisplay(instance.speciesId);
+    content.innerHTML = `
+        <p class="text-5xl mb-2">🎉</p>
+        <p class="text-gray-500 mb-2">恭喜孵化！</p>
+        <img src="${display.sprite}" class="w-32 h-32 mx-auto mb-2">
+        <p class="font-black text-lg mb-1">${display.name}</p>
+        <p class="mb-3">${typeBadgesHtml(display.types)}</p>
+        ${instance.isLegendary ? '<p class="text-purple-600 font-bold mb-2">✨ 傳說/幻之寶可夢！✨</p>' : ''}
+        <button onclick="closeHatchModal()" class="bg-red-500 text-white px-6 py-2 rounded-full font-bold">太好了！</button>
+    `;
+}
+function closeHatchModal() {
+    document.getElementById('hatch-modal').classList.add('hidden');
+    document.getElementById('hatch-modal').classList.remove('flex');
+}
+
+// ============================================================
+// 我的寶可夢(收藏庫 + 隊伍)
+// ============================================================
+async function renderBoxTab() {
+    const partyList = document.getElementById('party-list');
+    const boxList = document.getElementById('box-list');
+    const boxEmptyHint = document.getElementById('box-empty-hint');
+    const partyEmptyHint = document.getElementById('party-empty-hint');
+
+    if (currentInstances.length === 0) {
+        boxList.innerHTML = '';
+        partyList.innerHTML = '';
+        boxEmptyHint.classList.remove('hidden');
+        partyEmptyHint.classList.remove('hidden');
+        return;
+    }
+    boxEmptyHint.classList.add('hidden');
+
+    const partyMembers = currentInstances.filter(i => i.inParty).slice(0, 6);
+    partyEmptyHint.classList.toggle('hidden', partyMembers.length > 0);
+
+    const displays = await Promise.all(currentInstances.map(i => fetchSpeciesDisplay(i.speciesId)));
+    const displayMap = new Map(currentInstances.map((i, idx) => [i.id, displays[idx]]));
+
+    partyList.innerHTML = partyMembers.map(inst => {
+        const d = displayMap.get(inst.id) || {};
+        return `<div class="bg-white rounded-xl card-shadow p-2 text-center cursor-pointer" onclick="openDetailModal('${inst.id}')">
+            <img src="${d.sprite || ''}" class="w-14 h-14 mx-auto">
+            <p class="text-[11px] font-bold truncate">${pokemonDisplayName(inst)}</p>
+            <p class="text-[10px] text-gray-400">Lv.${inst.level}</p>
+        </div>`;
+    }).join('');
+
+    boxList.innerHTML = currentInstances.map(inst => {
+        const d = displayMap.get(inst.id) || {};
+        return `<div class="bg-white rounded-xl card-shadow p-3 cursor-pointer" onclick="openDetailModal('${inst.id}')">
+            <div class="flex items-center gap-2">
+                <img src="${d.sprite || ''}" class="w-12 h-12">
+                <div class="min-w-0">
+                    <p class="text-sm font-bold truncate">${pokemonDisplayName(inst)}</p>
+                    <p class="text-xs text-gray-400">Lv.${inst.level} · ${inst.flavor}口味</p>
+                    <div class="flex gap-1 mt-0.5">${typeBadgesHtml(d.types)}</div>
+                </div>
+            </div>
+            <div class="flex gap-1 mt-2">
+                ${inst.inParty ? '<span class="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">隊伍中</span>' : ''}
+                ${inst.placedForIdle ? '<span class="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-bold">牧場中</span>' : ''}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+async function openDetailModal(instanceId) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst) return;
+    const modal = document.getElementById('detail-modal');
+    const content = document.getElementById('detail-modal-content');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+
+    const d = await fetchSpeciesDisplay(inst.speciesId);
+    const evoInfo = await checkEvolutionEligibility(inst);
+    content.innerHTML = `
+        <div class="text-center mb-3">
+            <img src="${d.sprite}" class="w-28 h-28 mx-auto">
+            <p class="font-black text-lg">${pokemonDisplayName(inst)}</p>
+            <p class="text-xs text-gray-400 mb-1">${typeBadgesHtml(d.types)}</p>
+            <p class="text-xs text-gray-400">Lv.${inst.level} · EXP ${inst.exp} · 親密度 ${inst.friendship} · ${inst.flavor}口味</p>
+        </div>
+        <div class="grid grid-cols-4 gap-1 text-center text-xs mb-3">
+            <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">HP</p><p class="font-bold">${maxHpOf(inst)}</p></div>
+            <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">攻擊</p><p class="font-bold">${atkOf(inst)}</p></div>
+            <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">防禦</p><p class="font-bold">${defOf(inst)}</p></div>
+            <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">速度</p><p class="font-bold">${spdOf(inst)}</p></div>
+        </div>
+        <p class="text-xs text-gray-400 mb-1">目前招式</p>
+        <p class="text-sm mb-3">${(inst.moves || []).join('、')}</p>
+        <div class="grid grid-cols-2 gap-2 mb-2">
+            <button onclick="toggleParty('${inst.id}')" class="text-sm py-2 rounded-xl font-bold ${inst.inParty ? 'bg-red-100 text-red-600' : 'bg-gray-100'}">${inst.inParty ? '移出隊伍' : '加入隊伍'}</button>
+            <button onclick="toggleIdlePlacement('${inst.id}')" class="text-sm py-2 rounded-xl font-bold ${inst.placedForIdle ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100'}">${inst.placedForIdle ? '牽出牧場' : '放進牧場'}</button>
+        </div>
+        <button onclick="openFeedModal('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-green-100 text-green-700 mb-2">🍓 餵樹果</button>
+        ${evoInfo.canEvolve
+            ? `<button onclick="evolvePokemon('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2">✨ 進化成 ${evoInfo.nextName}！</button>`
+            : (evoInfo.nextName ? `<p class="text-xs text-gray-400 text-center mb-2">${evoInfo.hint || ''}</p>` : '')}
+        <button onclick="closeDetailModal()" class="w-full text-gray-400 text-sm">關閉</button>
+    `;
+}
+function closeDetailModal() {
+    document.getElementById('detail-modal').classList.add('hidden');
+    document.getElementById('detail-modal').classList.remove('flex');
+}
+
+async function toggleParty(instanceId) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst) return;
+    const partyCount = currentInstances.filter(i => i.inParty).length;
+    if (!inst.inParty && partyCount >= 6) { showToast('隊伍最多只能有6隻'); return; }
+    await db.collection('pokemonInstances').doc(instanceId).update({ inParty: !inst.inParty });
+    closeDetailModal();
+}
+async function toggleIdlePlacement(instanceId) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst) return;
+    await db.collection('pokemonInstances').doc(instanceId).update({ placedForIdle: !inst.placedForIdle });
+    closeDetailModal();
+}
+
+// ---------- 餵樹果(親密度系統) ----------
+const COMMON_BERRIES = ['oran','pecha','cheri','chesto','rawst','aspear','leppa','sitrus','figy','wiki','mago','aguav','iapapa'];
+async function openFeedModal(instanceId) {
+    const content = document.getElementById('detail-modal-content');
+    content.innerHTML = `
+        <h3 class="font-bold mb-3 text-center">🍓 選一顆樹果餵食</h3>
+        <div class="grid grid-cols-4 gap-2 mb-3">
+            ${COMMON_BERRIES.map(b => `<button onclick="feedBerry('${instanceId}','${b}')" class="text-xs bg-gray-50 hover:bg-green-50 rounded-lg p-2">${b}莓</button>`).join('')}
+        </div>
+        <p class="text-xs text-gray-400 text-center mb-3">口味跟寶可夢喜好對上的話，親密度加成比較多</p>
+        <button onclick="openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm">返回</button>
+    `;
+}
+const berryFlavorCache = new Map();
+async function feedBerry(instanceId, berryName) {
+    try {
+        const inst = currentInstances.find(i => i.id === instanceId);
+        if (!inst) return;
+        let flavors = berryFlavorCache.get(berryName);
+        if (!flavors) {
+            const res = await fetch(`https://pokeapi.co/api/v2/berry/${berryName}`);
+            const data = await res.json();
+            // PokéAPI的flavors是甜(sweet)/酸(sour)/苦(bitter)/辣(spicy)+澀(dry)這幾種口味的強度組合，
+            // 這裡簡化只取強度最高的那個當作這顆樹果的「主要口味」
+            const flavorMap = { sweet: '甜', sour: '酸', bitter: '苦', spicy: '辣', dry: '澀' };
+            let best = null, bestPotency = -1;
+            (data.flavors || []).forEach(f => {
+                if (f.potency > bestPotency) { bestPotency = f.potency; best = flavorMap[f.flavor.name] || null; }
+            });
+            flavors = best;
+            berryFlavorCache.set(berryName, flavors);
+        }
+        const isMatch = flavors === inst.flavor;
+        const gain = isMatch ? 15 : 5;
+        const newFriendship = Math.min(255, (inst.friendship || 0) + gain);
+        await db.collection('pokemonInstances').doc(instanceId).update({ friendship: newFriendship });
+        showToast(isMatch ? `牠很喜歡這個口味！親密度+${gain}` : `親密度+${gain}`);
+        openDetailModal(instanceId);
+    } catch (err) {
+        showToast('餵食失敗：' + err.message);
+    }
+}
+
+// ---------- 進化 ----------
+const evolutionChainCache = new Map();
+async function checkEvolutionEligibility(inst) {
+    try {
+        const species = await (async () => {
+            const res = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${inst.speciesId}`);
+            return res.json();
+        })();
+        const chainUrl = species.evolution_chain?.url;
+        if (!chainUrl) return { canEvolve: false, nextName: null };
+        let chain = evolutionChainCache.get(chainUrl);
+        if (!chain) {
+            const res = await fetch(chainUrl);
+            chain = await res.json();
+            evolutionChainCache.set(chainUrl, chain);
+        }
+        // 在進化鏈裡找到目前這隻的節點，看它的下一階(evolves_to)需要什麼條件
+        function findNode(node) {
+            if (node.species.name === species.name) return node;
+            for (const child of node.evolves_to || []) {
+                const found = findNode(child);
+                if (found) return found;
+            }
+            return null;
+        }
+        const node = findNode(chain.chain);
+        const next = node?.evolves_to?.[0];
+        if (!next) return { canEvolve: false, nextName: null };
+        const detail = next.evolution_details?.[0] || {};
+        const minLevel = detail.min_level || null;
+        const minFriendship = detail.min_happiness || null;
+        let canEvolve = true, hint = '';
+        if (minLevel && inst.level < minLevel) { canEvolve = false; hint = `等級到${minLevel}才能進化(目前Lv.${inst.level})`; }
+        else if (minFriendship && (inst.friendship || 0) < minFriendship) { canEvolve = false; hint = `親密度要到${minFriendship}才能進化(目前${inst.friendship || 0})`; }
+        else if (detail.item) { canEvolve = false; hint = `需要道具「${detail.item.name}」才能進化(這個功能還沒開放)`; }
+        else if (!minLevel && !minFriendship && !detail.item) { canEvolve = inst.level >= 16; hint = `等級到16才能進化(目前Lv.${inst.level})`; }
+        return { canEvolve, nextName: next.species.name, nextSpeciesUrl: next.species.url, hint };
+    } catch (err) {
+        return { canEvolve: false, nextName: null };
+    }
+}
+async function evolvePokemon(instanceId) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst) return;
+    const evoInfo = await checkEvolutionEligibility(inst);
+    if (!evoInfo.canEvolve || !evoInfo.nextSpeciesUrl) { showToast('現在還不能進化'); return; }
+    try {
+        const nextIdMatch = evoInfo.nextSpeciesUrl.match(/\/(\d+)\/?$/);
+        const nextSpeciesId = nextIdMatch ? Number(nextIdMatch[1]) : null;
+        if (!nextSpeciesId) throw new Error('抓不到進化後的種類編號');
+        const pokemonRes = await fetch(`https://pokeapi.co/api/v2/pokemon/${nextSpeciesId}`);
+        const pokemonData = await pokemonRes.json();
+        const baseStats = {};
+        (pokemonData.stats || []).forEach(s => { baseStats[s.stat.name] = s.base_stat; });
+        await db.collection('pokemonInstances').doc(instanceId).update({
+            speciesId: nextSpeciesId,
+            speciesName: pokemonData.name,
+            baseHp: baseStats.hp || inst.baseHp,
+            baseAtk: baseStats.attack || inst.baseAtk,
+            baseDef: baseStats.defense || inst.baseDef,
+            baseSpd: baseStats.speed || inst.baseSpd,
+        });
+        showToast(`進化成功！變成了${pokemonData.name}`);
+        closeDetailModal();
+    } catch (err) {
+        showToast('進化失敗：' + err.message);
+    }
+}
+
+// ============================================================
+// 放置牧場
+// ============================================================
+async function renderIdleTab() {
+    if (!currentPlayerData) return;
+    const placed = currentInstances.filter(i => i.placedForIdle);
+    const totalLevel = placed.reduce((sum, i) => sum + (i.level || 1), 0);
+    const lastCollect = Number(currentPlayerData.lastIdleCollectAt) || Date.now();
+    const elapsedHours = Math.min(24, Math.max(0, (Date.now() - lastCollect) / 3600000));
+    const pending = Math.floor(totalLevel * 2 * elapsedHours);
+    document.getElementById('idle-pending').textContent = pending;
+
+    const list = document.getElementById('idle-placed-list');
+    if (placed.length === 0) {
+        list.innerHTML = '<p class="col-span-full text-center text-gray-400 py-10">牧場裡還沒有寶可夢，去「我的寶可夢」放一些進來吧</p>';
+        return;
+    }
+    const displays = await Promise.all(placed.map(i => fetchSpeciesDisplay(i.speciesId)));
+    list.innerHTML = placed.map((inst, idx) => `
+        <div class="bg-white rounded-xl card-shadow p-3 text-center cursor-pointer" onclick="openDetailModal('${inst.id}')">
+            <img src="${displays[idx].sprite}" class="w-14 h-14 mx-auto">
+            <p class="text-xs font-bold truncate">${pokemonDisplayName(inst)}</p>
+            <p class="text-[10px] text-gray-400">Lv.${inst.level}</p>
+        </div>
+    `).join('');
+}
+async function collectIdle() {
+    try {
+        const result = await callWorker('pokemon_idle_collect');
+        showToast(`收到 🪙${result.earned}！`);
+    } catch (err) {
+        showToast('收取失敗：' + err.message);
+    }
+}
+setInterval(renderIdleTab, 30000); // 每30秒重算一次待收取數字，讓畫面上的數字會動，不用一直手動重整
+
+// ============================================================
+// 對戰(直接讀寫Firestore，房間狀態onSnapshot即時同步)
+// ============================================================
+let openRooms = [];
+function listenOpenRooms() {
+    if (roomListUnsub) roomListUnsub();
+    roomListUnsub = db.collection('pokemonBattleRooms').where('status', '==', 'waiting').limit(20)
+        .onSnapshot(snap => {
+            openRooms = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            renderRoomList();
+        }, err => console.warn('讀取房間列表失敗', err.message));
+}
+async function renderRoomList() {
+    const list = document.getElementById('room-list');
+    const emptyHint = document.getElementById('room-empty-hint');
+    if (openRooms.length === 0) {
+        list.innerHTML = '';
+        emptyHint.classList.remove('hidden');
+        return;
+    }
+    emptyHint.classList.add('hidden');
+    const displays = await Promise.all(openRooms.map(r => fetchSpeciesDisplay(r.hostSpeciesId)));
+    list.innerHTML = openRooms.map((room, idx) => `
+        <div class="bg-white rounded-xl card-shadow p-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <img src="${displays[idx].sprite}" class="w-10 h-10">
+                <div>
+                    <p class="text-sm font-bold">${room.roomName || '無名房間'}</p>
+                    <p class="text-xs text-gray-400">房主的 ${room.hostNickname || displays[idx].name}</p>
+                </div>
+            </div>
+            ${room.hostUid === auth.currentUser?.uid
+                ? `<button onclick="cancelRoom('${room.id}')" class="text-xs bg-gray-100 text-gray-500 px-3 py-1.5 rounded-full font-bold">取消</button>`
+                : `<button onclick="openJoinRoomModal('${room.id}')" class="text-xs bg-red-500 text-white px-3 py-1.5 rounded-full font-bold">加入對戰</button>`}
+        </div>
+    `).join('');
+}
+async function cancelRoom(roomId) {
+    await db.collection('pokemonBattleRooms').doc(roomId).delete();
+}
+
+// roomModalMode決定「建立房間」彈窗這次是拿來開新房間、還是加入別人的房間——這兩個情境
+// 共用同一個彈窗UI(選寶可夢的介面一模一樣)，用一個狀態變數切換行為，比動態改onclick屬性
+// 穩定：改onclick字串的寫法如果使用者中途按取消，下次打開彈窗容易殘留上一次沒清乾淨的狀態
+let roomModalMode = 'create'; // 'create' | 'join'
+let pendingRoomInstanceId = null;
+let pendingJoinRoomId = null;
+function openCreateRoomModal() {
+    const party = currentInstances.filter(i => i.inParty);
+    if (party.length === 0) { showToast('要先在「我的寶可夢」把至少一隻加入隊伍才能對戰'); return; }
+    roomModalMode = 'create';
+    pendingRoomInstanceId = null;
+    document.getElementById('create-room-name').classList.remove('hidden');
+    document.getElementById('create-room-name').value = '';
+    document.getElementById('create-room-submit-btn').textContent = '建立房間';
+    renderPartyPicker('create-room-party-picker', party, (id) => { pendingRoomInstanceId = id; });
+    document.getElementById('create-room-modal').classList.remove('hidden');
+    document.getElementById('create-room-modal').classList.add('flex');
+}
+function closeCreateRoomModal() {
+    document.getElementById('create-room-modal').classList.add('hidden');
+    document.getElementById('create-room-modal').classList.remove('flex');
+}
+async function submitRoomModal() {
+    if (roomModalMode === 'join') await submitJoinRoom();
+    else await submitCreateRoom();
+}
+async function renderPartyPicker(containerId, party, onPick) {
+    const container = document.getElementById(containerId);
+    const displays = await Promise.all(party.map(i => fetchSpeciesDisplay(i.speciesId)));
+    container.innerHTML = party.map((inst, idx) => `
+        <div class="border-2 border-transparent rounded-xl p-2 text-center cursor-pointer party-pick-item" data-instance-id="${inst.id}">
+            <img src="${displays[idx].sprite}" class="w-12 h-12 mx-auto">
+            <p class="text-[10px] font-bold truncate">${pokemonDisplayName(inst)}</p>
+        </div>
+    `).join('');
+    container.querySelectorAll('.party-pick-item').forEach(el => {
+        el.addEventListener('click', () => {
+            container.querySelectorAll('.party-pick-item').forEach(e => e.classList.remove('border-red-500'));
+            el.classList.add('border-red-500');
+            onPick(el.dataset.instanceId);
+        });
+    });
+}
+async function submitCreateRoom() {
+    if (!pendingRoomInstanceId) { showToast('先選一隻寶可夢'); return; }
+    const inst = currentInstances.find(i => i.id === pendingRoomInstanceId);
+    if (!inst) return;
+    const roomName = document.getElementById('create-room-name').value.trim() || `${auth.currentUser.displayName || '訓練家'}的房間`;
+    const roomRef = db.collection('pokemonBattleRooms').doc();
+    await roomRef.set({
+        hostUid: auth.currentUser.uid,
+        hostNickname: pokemonDisplayName(inst),
+        hostSpeciesId: inst.speciesId,
+        hostInstanceId: inst.id,
+        roomName,
+        memberUids: [auth.currentUser.uid],
+        status: 'waiting',
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    closeCreateRoomModal();
+    watchRoom(roomRef.id);
+}
+
+let pendingJoinInstanceId = null;
+function openJoinRoomModal(roomId) {
+    const party = currentInstances.filter(i => i.inParty);
+    if (party.length === 0) { showToast('要先在「我的寶可夢」把至少一隻加入隊伍才能對戰'); return; }
+    roomModalMode = 'join';
+    pendingJoinRoomId = roomId;
+    pendingJoinInstanceId = null;
+    document.getElementById('create-room-name').classList.add('hidden');
+    document.getElementById('create-room-submit-btn').textContent = '加入對戰';
+    renderPartyPicker('create-room-party-picker', party, (id) => { pendingJoinInstanceId = id; });
+    document.getElementById('create-room-modal').classList.remove('hidden');
+    document.getElementById('create-room-modal').classList.add('flex');
+}
+async function submitJoinRoom() {
+    if (!pendingJoinInstanceId || !pendingJoinRoomId) { showToast('先選一隻寶可夢'); return; }
+    const inst = currentInstances.find(i => i.id === pendingJoinInstanceId);
+    const roomRef = db.collection('pokemonBattleRooms').doc(pendingJoinRoomId);
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.status !== 'waiting') throw new Error('這個房間已經不能加入了');
+            tx.update(roomRef, {
+                memberUids: firebase.firestore.FieldValue.arrayUnion(auth.currentUser.uid),
+                guestUid: auth.currentUser.uid,
+                guestNickname: pokemonDisplayName(inst),
+                guestSpeciesId: inst.speciesId,
+                guestInstanceId: inst.id,
+                status: 'battling',
+            });
+        });
+        const joinedRoomId = pendingJoinRoomId;
+        closeCreateRoomModal();
+        watchRoom(joinedRoomId);
+    } catch (err) {
+        showToast('加入失敗：' + err.message);
+    }
+}
+
+// ---------- 對戰房間內畫面 ----------
+let currentBattleRoomId = null;
+function watchRoom(roomId) {
+    currentBattleRoomId = roomId;
+    document.getElementById('battle-lobby-view').classList.add('hidden');
+    document.getElementById('battle-room-view').classList.remove('hidden');
+    if (roomDetailUnsub) roomDetailUnsub();
+    roomDetailUnsub = db.collection('pokemonBattleRooms').doc(roomId).onSnapshot(async snap => {
+        if (!snap.exists) { leaveRoomView(); showToast('對方離開了房間'); return; }
+        await renderRoomView({ id: snap.id, ...snap.data() });
+    });
+}
+function leaveRoomView() {
+    if (roomDetailUnsub) { roomDetailUnsub(); roomDetailUnsub = null; }
+    currentBattleRoomId = null;
+    document.getElementById('battle-lobby-view').classList.remove('hidden');
+    document.getElementById('battle-room-view').classList.add('hidden');
+}
+async function forfeitRoom(roomId) {
+    try { await db.collection('pokemonBattleRooms').doc(roomId).delete(); } catch (err) {}
+    leaveRoomView();
+}
+
+async function renderRoomView(room) {
+    const container = document.getElementById('battle-room-view');
+    const myUid = auth.currentUser.uid;
+    if (room.status === 'waiting') {
+        container.innerHTML = `<div class="bg-white rounded-2xl card-shadow p-8 text-center">
+            <p class="text-4xl mb-3">⏳</p>
+            <p class="text-gray-500 mb-4">等待對手加入中...</p>
+            <button onclick="forfeitRoom('${room.id}')" class="text-sm text-gray-400 underline">取消房間</button>
+        </div>`;
+        return;
+    }
+    if (room.status === 'battling' && !room.battleState) {
+        // 兩人到齊、但戰鬥狀態還沒初始化：由「剛加入的那一方」負責初始化一次(用transaction防止重複初始化)
+        if (myUid === room.guestUid) { await initBattleState(room); }
+        container.innerHTML = `<p class="text-center text-gray-400 py-10">對戰準備中...</p>`;
+        return;
+    }
+    if (!room.battleState) { container.innerHTML = `<p class="text-center text-gray-400 py-10">載入中...</p>`; return; }
+
+    const opponentUid = room.memberUids.find(u => u !== myUid);
+    const myTeam = room.battleState.teams[myUid];
+    const oppTeam = room.battleState.teams[opponentUid];
+    const myDisplay = await fetchSpeciesDisplay(myTeam.speciesId);
+    const oppDisplay = await fetchSpeciesDisplay(oppTeam.speciesId);
+    const myHpPct = Math.max(0, Math.round(myTeam.currentHp / myTeam.maxHp * 100));
+    const oppHpPct = Math.max(0, Math.round(oppTeam.currentHp / oppTeam.maxHp * 100));
+
+    if (room.status === 'finished') {
+        const won = room.winnerUid === myUid;
+        if (won && !room.rewardClaimed) {
+            try { const r = await callWorker('pokemon_battle_report_result', { roomId: room.id }); showToast(`勝利獎勵：🪙${r.coinsEarned} + EXP${r.expEarned}`); } catch (err) {}
+        }
+        container.innerHTML = `<div class="bg-white rounded-2xl card-shadow p-8 text-center">
+            <p class="text-5xl mb-3">${won ? '🏆' : '💧'}</p>
+            <p class="text-xl font-black mb-4">${won ? '你贏了！' : '敗北了...'}</p>
+            <button onclick="leaveRoomView()" class="bg-red-500 text-white px-6 py-2 rounded-full font-bold">返回大廳</button>
+        </div>`;
+        return;
+    }
+
+    const myMoveSubmitted = !!(room.pendingMoves && room.pendingMoves[myUid]);
+    container.innerHTML = `
+        <div class="bg-white rounded-2xl card-shadow p-4 mb-3">
+            <div class="flex justify-between items-center mb-1">
+                <span class="text-sm font-bold">${oppTeam.nickname}</span>
+                <span class="text-xs text-gray-400">${oppTeam.currentHp}/${oppTeam.maxHp}</span>
+            </div>
+            <div class="w-full bg-gray-100 rounded-full h-3 mb-2"><div class="hp-bar-fill h-3 rounded-full ${oppHpPct > 50 ? 'bg-green-500' : oppHpPct > 20 ? 'bg-yellow-500' : 'bg-red-500'}" style="width:${oppHpPct}%"></div></div>
+            <div class="flex justify-center"><img src="${oppDisplay.sprite}" class="w-24 h-24"></div>
+        </div>
+        <div class="bg-white rounded-2xl card-shadow p-4 mb-3">
+            <div class="flex justify-center mb-2"><img src="${myDisplay.spriteBack || myDisplay.sprite}" class="w-24 h-24"></div>
+            <div class="flex justify-between items-center mb-1">
+                <span class="text-sm font-bold">${myTeam.nickname}</span>
+                <span class="text-xs text-gray-400">${myTeam.currentHp}/${myTeam.maxHp}</span>
+            </div>
+            <div class="w-full bg-gray-100 rounded-full h-3"><div class="hp-bar-fill h-3 rounded-full ${myHpPct > 50 ? 'bg-green-500' : myHpPct > 20 ? 'bg-yellow-500' : 'bg-red-500'}" style="width:${myHpPct}%"></div></div>
+        </div>
+        <div class="bg-white rounded-2xl card-shadow p-3 mb-3 max-h-24 overflow-y-auto text-xs text-gray-500 space-y-0.5">
+            ${(room.battleState.log || []).slice(-6).map(l => `<p>${l}</p>`).join('') || '<p>對戰開始！</p>'}
+        </div>
+        ${myMoveSubmitted
+            ? `<p class="text-center text-gray-400 py-4">已送出招式，等待對手...</p>`
+            : `<div class="grid grid-cols-2 gap-2">${(myTeam.moves || []).map(m => `<button onclick="submitMove('${m}')" class="bg-red-50 hover:bg-red-100 text-red-700 rounded-xl py-3 text-sm font-bold">${m}</button>`).join('')}</div>`}
+        <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-3 underline">投降離開</button>
+    `;
+}
+
+async function initBattleState(room) {
+    const roomRef = db.collection('pokemonBattleRooms').doc(room.id);
+    const hostInst = await db.collection('pokemonInstances').doc(room.hostInstanceId).get();
+    const guestInst = await db.collection('pokemonInstances').doc(room.guestInstanceId).get();
+    const buildTeamData = (instSnap, nickname) => {
+        const inst = instSnap.data();
+        return {
+            instanceId: instSnap.id,
+            speciesId: inst.speciesId,
+            nickname,
+            level: inst.level,
+            maxHp: statAtLevel(inst.baseHp, inst.level, true),
+            currentHp: statAtLevel(inst.baseHp, inst.level, true),
+            atk: statAtLevel(inst.baseAtk, inst.level, false),
+            def: statAtLevel(inst.baseDef, inst.level, false),
+            spd: statAtLevel(inst.baseSpd, inst.level, false),
+            moves: inst.moves || ['tackle'],
+        };
+    };
+    const teams = {
+        [room.hostUid]: buildTeamData(hostInst, room.hostNickname),
+        [room.guestUid]: buildTeamData(guestInst, room.guestNickname),
+    };
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.battleState) return; // 已經有人初始化過了，跳過
+            tx.update(roomRef, { battleState: { teams, round: 1, log: [] }, pendingMoves: {} });
+        });
+    } catch (err) { console.warn('初始化對戰狀態失敗', err.message); }
+}
+
+// ---------- 招式/屬性資料(對戰結算用) ----------
+const moveDataCache = new Map();
+async function fetchMoveData(moveName) {
+    if (moveDataCache.has(moveName)) return moveDataCache.get(moveName);
+    const res = await fetch(`https://pokeapi.co/api/v2/move/${moveName}`);
+    const data = await res.json();
+    const result = { name: data.name, power: data.power || 40, type: data.type.name, damageClass: data.damage_class?.name || 'physical' };
+    moveDataCache.set(moveName, result);
+    return result;
+}
+const typeRelationCache = new Map();
+async function fetchTypeEffectiveness(attackType, defendTypes) {
+    if (!typeRelationCache.has(attackType)) {
+        const res = await fetch(`https://pokeapi.co/api/v2/type/${attackType}`);
+        const data = await res.json();
+        typeRelationCache.set(attackType, data.damage_relations);
+    }
+    const rel = typeRelationCache.get(attackType);
+    let mult = 1;
+    defendTypes.forEach(dt => {
+        if (rel.double_damage_to.some(t => t.name === dt)) mult *= 2;
+        if (rel.half_damage_to.some(t => t.name === dt)) mult *= 0.5;
+        if (rel.no_damage_to.some(t => t.name === dt)) mult *= 0;
+    });
+    return mult;
+}
+function computeDamage(attackerLevel, attackerAtk, defenderDef, power, typeEff, isStab) {
+    if (typeEff === 0 || power <= 0) return 0;
+    const base = ((2 * attackerLevel / 5 + 2) * power * (attackerAtk / defenderDef)) / 50 + 2;
+    const rand = 0.85 + Math.random() * 0.15;
+    return Math.max(1, Math.floor(base * typeEff * (isStab ? 1.5 : 1) * rand));
+}
+
+async function submitMove(moveName) {
+    const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
+    const myUid = auth.currentUser.uid;
+    let roomDataAfter = null;
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
+            const pending = { ...(data.pendingMoves || {}) };
+            if (pending[myUid]) throw new Error('這回合已經送出過招式了');
+            pending[myUid] = moveName;
+            tx.update(roomRef, { pendingMoves: pending });
+            roomDataAfter = { ...data, pendingMoves: pending };
+        });
+    } catch (err) {
+        showToast(err.message);
+        return;
+    }
+    const opponentUid = roomDataAfter.memberUids.find(u => u !== myUid);
+    if (roomDataAfter.pendingMoves[opponentUid]) {
+        await resolveBattleRound(roomRef, roomDataAfter, myUid, opponentUid);
+    }
+}
+
+async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
+    const moveNameA = roomData.pendingMoves[uidA];
+    const moveNameB = roomData.pendingMoves[uidB];
+    const teams = roomData.battleState.teams;
+    const teamA = { ...teams[uidA] };
+    const teamB = { ...teams[uidB] };
+    const [moveA, moveB] = await Promise.all([fetchMoveData(moveNameA), fetchMoveData(moveNameB)]);
+    const displayA = await fetchSpeciesDisplay(teamA.speciesId);
+    const displayB = await fetchSpeciesDisplay(teamB.speciesId);
+    const [effA, effB] = await Promise.all([
+        fetchTypeEffectiveness(moveA.type, displayB.types),
+        fetchTypeEffectiveness(moveB.type, displayA.types),
+    ]);
+
+    // 速度快的先攻——這裡用「戰鬥開始當下算出的速度值」比較，簡化處理(不考慮中途變速的招式效果)
+    const order = teamA.spd >= teamB.spd ? [uidA, uidB] : [uidB, uidA];
+    const log = [];
+    const state = { [uidA]: teamA, [uidB]: teamB };
+    const moveOf = { [uidA]: moveA, [uidB]: moveB };
+    const effOf = { [uidA]: effA, [uidB]: effB };
+    const nameOf = { [uidA]: teamA.nickname, [uidB]: teamB.nickname };
+
+    let winnerUid = null;
+    for (const attackerUid of order) {
+        const defenderUid = attackerUid === uidA ? uidB : uidA;
+        if (state[attackerUid].currentHp <= 0) continue; // 已經先手被打倒了，不能再出招
+        const move = moveOf[attackerUid];
+        const eff = effOf[attackerUid];
+        const isStab = displayA && (attackerUid === uidA ? displayA.types : displayB.types).includes(move.type);
+        const dmg = computeDamage(state[attackerUid].level, state[attackerUid].atk, state[defenderUid].def, move.power, eff, isStab);
+        state[defenderUid].currentHp = Math.max(0, state[defenderUid].currentHp - dmg);
+        if (eff === 0) log.push(`${nameOf[attackerUid]} 使出 ${move.name}，但是沒有效果...`);
+        else log.push(`${nameOf[attackerUid]} 使出 ${move.name}，造成 ${dmg} 點傷害${eff > 1 ? '，效果絕佳！' : eff < 1 ? '，效果不理想...' : ''}`);
+        if (state[defenderUid].currentHp <= 0) {
+            log.push(`${nameOf[defenderUid]} 倒下了！`);
+            winnerUid = attackerUid;
+            break;
+        }
+    }
+
+    const status = winnerUid ? 'finished' : 'battling';
+    const winnerInstanceId = winnerUid ? state[winnerUid].instanceId : null;
+
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.status !== 'battling') return; // 已經被結算過了
+            const pending = data.pendingMoves || {};
+            if (pending[uidA] !== moveNameA || pending[uidB] !== moveNameB) return; // 資料已經變了，避免重複結算
+            tx.update(roomRef, {
+                'battleState.teams': state,
+                'battleState.round': (data.battleState.round || 1) + 1,
+                'battleState.log': firebase.firestore.FieldValue.arrayUnion(...log),
+                pendingMoves: {},
+                status,
+                winnerUid: winnerUid || null,
+                winnerInstanceId: winnerInstanceId || null,
+            });
+        });
+    } catch (err) { console.warn('結算回合失敗', err.message); }
+}
+</script>
+</body>
+</html>
