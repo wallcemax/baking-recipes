@@ -1509,6 +1509,13 @@ async function renderBattleStage(container, ctx) {
                     <span class="block text-[10px] text-gray-400">Lv.${b.level} · ${b.currentHp}/${b.maxHp}${b.currentHp <= 0 ? '(戰鬥不能)' : ''}</span>
                 </button>`).join('')}</div>`}
         </div>`;
+    } else if (myTeam.encoreTurns > 0 && myTeam.encoreMove) {
+        // 再來一次：不管玩家想選什麼，都只能繼續使用同一招——跟蓄力招式一樣用強制按鈕呈現，
+        // resolveBattleRound那邊也有一份對應的伺服器端防呆檢查
+        const encMove = await fetchMoveData(myTeam.encoreMove);
+        movesHtml = `<button onclick="submitMove('${encMove.name}')" class="w-full h-full min-h-[110px] rounded-2xl text-white font-black text-lg active:scale-95 transition-transform" style="background:${TYPE_COLORS[encMove.type] || '#6b7280'}">
+            被要求再來一次：${encMove.nameZh}
+        </button>`;
     } else if (myTeam.chargingMove) {
         // 雙回合蓄力招式：蓄力回合已經在上一輪動畫演過了，這一輪只能「釋放」，不能改選別的招式
         const chargeMove = await fetchMoveData(myTeam.chargingMove);
@@ -1517,16 +1524,19 @@ async function renderBattleStage(container, ctx) {
         </button>`;
     } else {
         const myMoveDisplays = await Promise.all((myTeam.moves || []).map(fetchMoveData));
-        const usableCount = myMoveDisplays.filter(m => getMovePp(myTeam, m) > 0).length;
+        // 招式清單改用isMoveBlockedByStatus統一判斷「這招現在能不能選」——PP用完只是其中一種
+        // 原因，這次新補的挑釁/定身法/折磨/封印/封聲都要在這裡一起擋掉，玩家才不會選到送出去
+        // 才被伺服器擋下來的招式
+        const usableList = myMoveDisplays.map(m => ({ m, pp: getMovePp(myTeam, m), blockReason: isMoveBlockedByStatus(myTeam, m) }));
+        const usableCount = usableList.filter(x => x.pp > 0 && !x.blockReason).length;
         if (usableCount === 0) {
-            movesHtml = `<button onclick="submitMove('struggle')" class="w-full h-full min-h-[110px] rounded-2xl bg-gray-500 text-white font-black text-base active:scale-95 transition-transform">所有招式PP都用盡了，使出掙扎！</button>`;
+            movesHtml = `<button onclick="submitMove('struggle')" class="w-full h-full min-h-[110px] rounded-2xl bg-gray-500 text-white font-black text-base active:scale-95 transition-transform">所有招式都沒辦法使用了，使出掙扎！</button>`;
         } else {
-            movesHtml = `<div class="grid grid-cols-2 gap-2">${myMoveDisplays.map(m => {
-                const pp = getMovePp(myTeam, m);
-                const disabled = pp <= 0;
+            movesHtml = `<div class="grid grid-cols-2 gap-2">${usableList.map(({ m, pp, blockReason }) => {
+                const disabled = pp <= 0 || !!blockReason;
                 return `<button ${disabled ? 'disabled' : ''} onclick="submitMove('${m.name}')" class="rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden ${disabled ? 'opacity-40' : ''}" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
                     <span class="flex items-center gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 shrink-0" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span class="text-white text-sm font-black truncate">${m.nameZh}</span></span>
-                    <span class="block text-[0.6rem] text-white/85 mt-0.5 truncate">${m.descZh || ' '}</span>
+                    <span class="block text-[0.6rem] text-white/85 mt-0.5 truncate">${blockReason || m.descZh || ' '}</span>
                     <span class="block text-[0.6rem] text-white/70 mt-0.5">PP ${pp}/${m.pp || '?'}</span>
                 </button>`;
             }).join('')}</div>${myBench.length > 0 ? `<button onclick="toggleSwitchPicker(true)" class="w-full mt-2 text-xs text-gray-500 underline flex items-center justify-center gap-1"><img src="${itemSpriteUrl('luxury-ball')}" class="w-3.5 h-3.5" style="image-rendering:pixelated">替換寶可夢</button>` : ''}`;
@@ -1727,6 +1737,12 @@ async function playBattleEvents(events, ctx) {
                 sleep: `${ev.attackerName} 正在沉睡中...`,
                 paralysis: `${ev.attackerName} 因為麻痺而無法動彈！`,
                 'confusion-self': `${ev.attackerName} 混亂中攻擊了自己，受到 ${ev.confusionSelfDamage} 點傷害！`,
+                taunt: `${ev.attackerName} 被挑釁了，無法使出變化招式！`,
+                torment: `${ev.attackerName} 因為受到折磨，不能連續使用同一招式！`,
+                disable: `${ev.attackerName} 的招式被定身法封印了！`,
+                imprison: `${ev.attackerName} 的招式被封印了！`,
+                silence: `${ev.attackerName} 被封住了聲音，無法使出音波系招式！`,
+                encore: `${ev.attackerName} 被要求再來一次，沒辦法使用別的招式！`,
             }[ev.blocked] || `${ev.attackerName} 無法動彈！`;
             appendLog(blockedText);
             atkEl.classList.remove('miss-shake');
@@ -1912,6 +1928,40 @@ const SOUND_MOVES = new Set([
 function isGrounded(display) {
     return !((display && display.types) || []).includes('flying');
 }
+// ---- 屬性免疫表：不管招式本身是什麼屬性，這幾種屬性天生就不會中對應的主要異常狀態
+// (跟招式本身的屬性相剋是兩回事——例如一般屬性的百萬吨拳打電系一樣有效，但電系還是不會被
+// 麻痺，這是官方規則裡獨立於招式屬性之外的「防禦方屬性」免疫，Gen6之後才確立成這個樣子) ----
+const STATUS_TYPE_IMMUNITY = {
+    burn: ['fire'],
+    paralysis: ['electric'],
+    freeze: ['ice'],
+    poison: ['poison', 'steel'], // 中毒/劇毒共用同一個'poison'欄位，毒屬性跟鋼屬性都免疫
+};
+// 粉末/孢子類招式：草屬性天生完全免疫(不看招式本身屬性)，Gen6之後的規則
+const POWDER_MOVES = new Set(['stun-spore', 'poison-powder', 'sleep-powder', 'spore', 'cotton-spore', 'rage-powder', 'powder', 'magic-powder']);
+// 以下這批「之前完全沒做」的狀態招式，全部用招式名稱直接比對
+const TAUNT_MOVES = new Set(['taunt']);
+const TORMENT_MOVES = new Set(['torment']);
+const DISABLE_MOVES = new Set(['disable']);
+const ENCORE_MOVES = new Set(['encore']);
+const IMPRISON_MOVES = new Set(['imprison']);
+const YAWN_MOVES = new Set(['yawn']);
+const NIGHTMARE_MOVES = new Set(['nightmare']);
+const EMBARGO_MOVES = new Set(['embargo']);
+const HEAL_BLOCK_MOVES = new Set(['heal-block']);
+const PERISH_SONG_MOVES = new Set(['perish-song']);
+const SILENCE_MOVES = new Set(['throat-chop']); // 這招本身還有威力，是「有傷害+附加封聲」的招式
+const IDENTIFY_MOVES = new Set(['miracle-eye', 'odor-sleuth', 'foresight']);
+// 束縛系招式：min/max是正統規則的持續回合數(大部分官方資料庫都有記載，這裡取比較新版本的數字)，
+// pure:true代表這招本身沒有威力(只是單純困住，像盯住/封鎖/蜘蛛網那種)，沒有pure的則是「有傷害
+// 又會困住」的纏繞系招式，回合結束時還會額外扣血
+const TRAP_MOVES = {
+    'bind': { min: 4, max: 5 }, 'wrap': { min: 4, max: 5 }, 'fire-spin': { min: 4, max: 5 },
+    'whirlpool': { min: 4, max: 5 }, 'sand-tomb': { min: 4, max: 5 }, 'clamp': { min: 5, max: 6 },
+    'infestation': { min: 4, max: 5 }, 'magma-storm': { min: 5, max: 6 }, 'thunder-cage': { min: 5, max: 6 },
+    'snap-trap': { min: 5, max: 6 },
+    'mean-look': { pure: true }, 'block': { pure: true }, 'spider-web': { pure: true },
+};
 async function fetchMoveData(moveName) {
     if (moveName === 'struggle') return STRUGGLE_MOVE;
     if (moveDataCache.has(moveName)) return moveDataCache.get(moveName);
@@ -1986,6 +2036,23 @@ function freshBattleStatus() {
         chargingMove: null, // 雙回合蓄力招式(日光烈焰等)：記錄「正在蓄力、下一回合要直接放」的招式代號
         protectStreak: 0, protectedThisTurn: false, // 守住連續使用會遞減成功率；protectedThisTurn只在單一回合內有效
         substituteHp: 0, // 替身還剩多少HP，>0時擋著本體、傷害/大部分附加效果都打在替身上
+        // ---- 這一輪新補齊的異常/變化狀態欄位：之前完全沒做的挑釁/折磨/定身法/再來一次/封印/
+        // 瞌睡/惡夢/道具封印/治癒封印/束縛/封聲/亡語歌/看穿系，通通是「只在場上時才有意義」的
+        // 揮發性效果，換人(performSwitch)時會整批清空 ----
+        lastMoveUsed: null, // 上一個真正出招成功嘗試的招式代號，折磨/定身法/再來一次都要用到
+        tauntTurns: 0, // 挑釁：這幾回合內不能使用變化招式(威力<=0的招式)
+        tormented: false, // 折磨：不能連續兩次使用同一招式(直到解除或換人為止，不會自動倒數消失)
+        disabledMove: null, disableTurns: 0, // 定身法：指定的那一招在這幾回合內不能使用
+        encoreMove: null, encoreTurns: 0, // 再來一次：這幾回合內強制只能使用同一招式
+        imprisonMoves: null, // 封印：對方也會的招式清單(來自施放封印那一方的招式表)，這些招式沒辦法使用
+        drowsyTurns: 0, // 瞌睡：倒數到0時，如果還沒有主要異常狀態就會強制睡著
+        nightmared: false, // 惡夢：只在睡眠中才有意義，每回合結束會額外損血，醒來就解除
+        healBlockTurns: 0, // 治癒封印：這幾回合內任何「自己回血」的效果都會失效
+        embargoTurns: 0, // 道具封印：這個簡化版遊戲沒有戰鬥中道具系統，這裡只留紀錄跟訊息，沒有實際效果
+        trapped: false, trapTurns: 0, trapperKey: null, trapDamage: false, // 束縛系：不能替換寶可夢，部分招式(纏繞/流沙等)還會每回合扣血
+        silencedTurns: 0, // 封聲(封喉飽拳)：這幾回合內不能使用音波系招式
+        perishCount: 0, // 亡語之歌：倒數到0時直接昏厥，不管HP還剩多少
+        identified: false, // 看穿/識破/定身術：閃避等級不再影響命中率，且會讓特定的屬性免疫失效
     };
 }
 // 能力等級(-6~+6)換算成倍率：官方公式，攻/防/速用同一張表
@@ -2069,6 +2136,21 @@ function battleStatusBadgesHtml(team) {
     if (team.seeded) html += seededIconHtml('w-3.5 h-3.5');
     if (team.substituteHp > 0) html += substituteIconHtml('w-3.5 h-3.5');
     if (team.chargingMove) html += genericIconHtml(typeIconUrl('flying'), 'w-3.5 h-3.5', '蓄力中');
+    // 這次新補的一批狀態小圖示：沒有專門的官方素材對應，統一借用招式本身屬性的type icon
+    // (跟原本替身借用一般屬性圖示是同一種做法)，道具類的則挑語意相近的真實道具圖示
+    if (team.tauntTurns > 0) html += genericIconHtml(typeIconUrl('fighting'), 'w-3.5 h-3.5', '挑釁中(無法使用變化招式)');
+    if (team.tormented) html += genericIconHtml(typeIconUrl('dark'), 'w-3.5 h-3.5', '折磨中(不能連續使用同一招式)');
+    if (team.disableTurns > 0) html += genericIconHtml(typeIconUrl('normal'), 'w-3.5 h-3.5', '定身法封印中');
+    if (team.encoreTurns > 0) html += genericIconHtml(itemSpriteUrl('metronome'), 'w-3.5 h-3.5', '再來一次');
+    if (team.imprisonMoves && team.imprisonMoves.length) html += genericIconHtml(typeIconUrl('psychic'), 'w-3.5 h-3.5', '部分招式被封印');
+    if (team.drowsyTurns > 0) html += genericIconHtml(typeIconUrl('psychic'), 'w-3.5 h-3.5', '瞌睡中，快睡著了');
+    if (team.nightmared) html += genericIconHtml(typeIconUrl('ghost'), 'w-3.5 h-3.5', '惡夢纏身');
+    if (team.healBlockTurns > 0) html += genericIconHtml(itemSpriteUrl('heal-ball'), 'w-3.5 h-3.5', '治癒封印中(無法回血)');
+    if (team.embargoTurns > 0) html += genericIconHtml(typeIconUrl('dark'), 'w-3.5 h-3.5', '道具封印中');
+    if (team.trapped) html += genericIconHtml(itemSpriteUrl('grip-claw'), 'w-3.5 h-3.5', '被束縛中(無法替換)');
+    if (team.silencedTurns > 0) html += genericIconHtml(typeIconUrl('dark'), 'w-3.5 h-3.5', '被封住聲音(無法使用音波招式)');
+    if (team.perishCount > 0) html += genericIconHtml(itemSpriteUrl('reaper-cloth'), 'w-3.5 h-3.5', `滅亡倒數：${team.perishCount}`);
+    if (team.identified) html += genericIconHtml(typeIconUrl('psychic'), 'w-3.5 h-3.5', '已被看穿(閃避無效)');
     return html;
 }
 // ---------- 天氣/場地：圖示素材(天氣用道具庫的「天氣石」，場地用道具庫的「場地種子」，
@@ -2107,6 +2189,17 @@ function consumePp(team, move) {
     if (!team.movePp) team.movePp = {};
     const cur = getMovePp(team, move);
     team.movePp[move.name] = Math.max(0, cur - 1);
+}
+// 這招現在能不能選：PP用完只是其中一種原因，這次新補的挑釁/定身法/折磨/封印/封聲都要一起判斷，
+// 回傳原因文字給UI當說明用，回傳null代表可以正常選——resolveBattleRound裡也有一份對應的伺服器端
+// 防呆判斷(避免玩家繞過UI或畫面沒即時更新時選到不合法的招式)
+function isMoveBlockedByStatus(team, move) {
+    if (team.disableTurns > 0 && team.disabledMove === move.name) return '被定身法封印中';
+    if (team.tauntTurns > 0 && move.power <= 0) return '被挑釁了，只能用攻擊招式';
+    if (team.tormented && team.lastMoveUsed === move.name) return '折磨中，不能連續使用';
+    if (team.imprisonMoves && team.imprisonMoves.includes(move.name)) return '被封印了';
+    if (team.silencedTurns > 0 && SOUND_MOVES.has(move.name)) return '被封聲了';
+    return null;
 }
 // 機率骰(chance是0~100的百分比數字)
 function rollChance(chancePct) { return Math.random() * 100 < chancePct; }
@@ -2153,6 +2246,7 @@ async function submitSwitch(instanceId) {
                 if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
                 const myTeam = data.battleState.teams[myUid];
                 if (myTeam.rooted) throw new Error('扎根中無法替換寶可夢！');
+            if (myTeam.trapped) throw new Error('被束縛住了，無法替換寶可夢！');
                 const pending = { ...(data.pendingMoves || {}) };
                 if (pending[myUid]) throw new Error('這回合已經送出過指令了');
                 const wildMoves = (data.battleState.teams.wild && data.battleState.teams.wild.moves) || ['tackle'];
@@ -2174,6 +2268,7 @@ async function submitSwitch(instanceId) {
             if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
             const myTeam = data.battleState.teams[myUid];
             if (myTeam.rooted) throw new Error('扎根中無法替換寶可夢！');
+            if (myTeam.trapped) throw new Error('被束縛住了，無法替換寶可夢！');
             const pending = { ...(data.pendingMoves || {}) };
             if (pending[myUid]) throw new Error('這回合已經送出過指令了');
             pending[myUid] = { type: 'switch', instanceId };
@@ -2301,6 +2396,18 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         outgoing.confusedTurns = 0; outgoing.flinched = false; outgoing.chargingMove = null;
         outgoing.protectStreak = 0; outgoing.protectedThisTurn = false; outgoing.mustSwitch = false;
         outgoing.rooted = false; outgoing.seeded = false; outgoing.seederKey = null; outgoing.substituteHp = 0;
+        // 這次新補的一批「換人就解除」揮發性效果：挑釁/折磨/定身法/再來一次/封印/瞌睡/惡夢/
+        // 治癒封印/道具封印/束縛/封聲/亡語倒數/看穿——正統規則裡這些全部都是「只在場上時才有意義」，
+        // 換下場(不管自願替換還是強制替換)就會清空，回到隊伍裡等於重新開始
+        outgoing.lastMoveUsed = null;
+        outgoing.tauntTurns = 0; outgoing.tormented = false;
+        outgoing.disabledMove = null; outgoing.disableTurns = 0;
+        outgoing.encoreMove = null; outgoing.encoreTurns = 0;
+        outgoing.imprisonMoves = null;
+        outgoing.drowsyTurns = 0; outgoing.nightmared = false;
+        outgoing.healBlockTurns = 0; outgoing.embargoTurns = 0;
+        outgoing.trapped = false; outgoing.trapTurns = 0; outgoing.trapperKey = null; outgoing.trapDamage = false;
+        outgoing.silencedTurns = 0; outgoing.perishCount = 0; outgoing.identified = false;
         const newBench = bench.slice();
         newBench[idx] = outgoing;
         benchState[uid] = newBench;
@@ -2335,9 +2442,21 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         moveOf[uid] = await fetchMoveData(act.move);
     }
     const effOf = {};
+    // 看穿/識破/定身術(miracle eye/odor-sleuth/foresight)的正統效果之一：讓幽靈系不再免疫一般/格鬥、
+    // 讓惡屬性不再免疫超能力——這裡在算相剋倍率時，如果對方已經被「看穿」了就把0倍當成一般1倍
+    // (簡化：正統規則只有「使出看穿招式的那一方」看得穿，這裡簡化成對戰鬥中任何一方都算看穿)
+    function bypassIdentifyImmunity(moveType, defenderTypes) {
+        if ((moveType === 'normal' || moveType === 'fighting') && defenderTypes.includes('ghost')) return true;
+        if (moveType === 'psychic' && defenderTypes.includes('dark')) return true;
+        return false;
+    }
     for (const uid of moveUids) {
         const opponentUid = uid === uidA ? uidB : uidA;
-        effOf[uid] = await fetchTypeEffectiveness(moveOf[uid].type, displayOf[opponentUid].types);
+        let mult = await fetchTypeEffectiveness(moveOf[uid].type, displayOf[opponentUid].types);
+        if (mult === 0 && state[opponentUid].identified && bypassIdentifyImmunity(moveOf[uid].type, displayOf[opponentUid].types)) {
+            mult = 1;
+        }
+        effOf[uid] = mult;
     }
 
     // 天氣/場地：從房間資料帶過來的「這回合開始前」狀態，招式效果/回合結束的持續效果都會更新這份本地副本，
@@ -2406,11 +2525,18 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         }
         if (atk.status === 'sleep') {
             atk.statusTurns = Math.max(0, (atk.statusTurns || 0) - 1);
-            if (atk.statusTurns === 0) { atk.status = null; log.push(`${atkName} 醒過來了！`); }
-            else log.push(`${atkName} 正在沉睡中...`);
-            ev.blocked = 'sleep';
-            events.push(ev);
-            continue;
+            if (atk.statusTurns === 0) {
+                // 正統規則：睡眠回合數歸零的那一回合就會醒過來，而且當回合可以正常出招——
+                // 跟冰凍解凍是同一種處理方式(fall-through、不continue)，先前這裡少了這段，
+                // 一律把醒來那一回合也整個擋住，這次順手一起修正
+                atk.status = null;
+                log.push(`${atkName} 醒過來了！`);
+            } else {
+                log.push(`${atkName} 正在沉睡中...`);
+                ev.blocked = 'sleep';
+                events.push(ev);
+                continue;
+            }
         }
         if (atk.status === 'paralysis' && rollChance(25)) {
             ev.blocked = 'paralysis';
@@ -2437,10 +2563,53 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             continue;
         }
 
+        // ---- 挑釁／折磨／定身法／封印／封聲／再來一次：這些「這一招現在不能用」的效果之前
+        // 完全沒做，這裡統一在扣PP之前擋掉——跟畏縮/冰凍那種「完全動不了」不同，這裡只是擋這
+        // 一招。正常情況下玩家在UI就選不到這些招式(renderBattleStage那邊也會同步擋)，這裡是
+        // 防呆，同時也是簡化：正統規則裡PP其實還是會被扣掉，這裡選擇比照畏縮/冰凍等既有的擋招
+        // 邏輯不消耗PP，維持這個引擎一致的行為 ----
+        if (atk.tauntTurns > 0 && move.power <= 0) {
+            ev.blocked = 'taunt';
+            log.push(`${atkName} 被挑釁了，無法使出變化招式！`);
+            events.push(ev);
+            continue;
+        }
+        if (atk.tormented && !move.isStruggle && atk.lastMoveUsed === move.name) {
+            ev.blocked = 'torment';
+            log.push(`${atkName} 因為受到折磨，不能連續使用同一招式！`);
+            events.push(ev);
+            continue;
+        }
+        if (atk.disableTurns > 0 && atk.disabledMove === move.name) {
+            ev.blocked = 'disable';
+            log.push(`${atkName} 的 ${move.nameZh} 被定身法封印了，無法使用！`);
+            events.push(ev);
+            continue;
+        }
+        if (atk.imprisonMoves && atk.imprisonMoves.includes(move.name)) {
+            ev.blocked = 'imprison';
+            log.push(`${atkName} 的 ${move.nameZh} 被封印了，無法使用！`);
+            events.push(ev);
+            continue;
+        }
+        if (atk.silencedTurns > 0 && SOUND_MOVES.has(move.name)) {
+            ev.blocked = 'silence';
+            log.push(`${atkName} 被封住了聲音，無法使出音波系招式！`);
+            events.push(ev);
+            continue;
+        }
+        if (atk.encoreTurns > 0 && atk.encoreMove && !move.isStruggle && move.name !== atk.encoreMove) {
+            ev.blocked = 'encore';
+            log.push(`${atkName} 被要求再來一次，只能使用 ${atk.encoreMove}！`);
+            events.push(ev);
+            continue;
+        }
+
         // ---- PP扣除：前面的異常狀態檢查都通過了，這一下才算「真的要出招」，開始扣PP。
         // 蓄力招式的「放」那一回合不再扣一次(蓄力那一回合已經扣過了)，掙扎無視PP ----
         const alreadyCharging = atk.chargingMove === move.name;
         if (!alreadyCharging && !move.isStruggle) consumePp(atk, move);
+        atk.lastMoveUsed = move.name; // 折磨/定身法/再來一次都要知道「上一個真正嘗試出招」是什麼
 
         // ---- 雙回合蓄力招式：第一回合只蓄力、不會真的打到對手；天氣符合的話可以省略蓄力
         // (例如日光烈焰在大晴天下直接放) ----
@@ -2500,7 +2669,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (move.target !== 'user' && move.target !== 'entire-field' && defVanished) {
             hit = false;
         } else if (move.accuracy != null) {
-            const netStage = Math.max(-6, Math.min(6, (atk.stages.acc || 0) - (def.stages.eva || 0)));
+            // 正統規則：被看穿/識破/定身術鎖定(identified)之後，閃避率等級一律當作0——
+            // 不管原本閃避堆了幾階，命中判定都不會再被閃避率影響
+            const defEvaStage = def.identified ? 0 : (def.stages.eva || 0);
+            const netStage = Math.max(-6, Math.min(6, (atk.stages.acc || 0) - defEvaStage));
             const chance = Math.max(0, Math.min(100, move.accuracy * accStageMult(netStage)));
             hit = rollChance(chance);
         }
@@ -2512,8 +2684,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         }
 
         // ---- 沒有效果(屬性免疫)：只對「有指定攻擊目標」的招式有意義，對自己生效/對整個場地生效的
-        // 招式(能力提升/回血/天氣/場地)不用管跟對手的屬性相剋 ----
-        if (move.target !== 'user' && move.target !== 'entire-field' && eff === 0) {
+        // 招式(能力提升/回血/天氣/場地)不用管跟對手的屬性相剋。這裡也一併處理草屬性對粉末/孢子系
+        // 招式的正統免疫(不看招式本身屬性，草屬性天生免疫所有粉塵類招式，Gen6之後的規則) ----
+        const powderBlocked = POWDER_MOVES.has(move.name) && displayOf[defenderUid].types.includes('grass');
+        if (move.target !== 'user' && move.target !== 'entire-field' && (eff === 0 || powderBlocked)) {
             ev.effectiveness = 0;
             ev.damage = 0;
             log.push(`${atkName} 使出 ${move.nameZh}，但是沒有效果...`);
@@ -2531,7 +2705,11 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
 
         const isStab = displayOf[attackerUid].types.includes(move.type);
         let totalDamage = 0, hitCount = 0, crit = false, fainted = false, subBroke = false;
-        let defSubActiveBeforeHit = false; // 這一下攻擊命中前，替身是否還在場——用來決定附加效果要不要被擋掉
+        // 這一下攻擊命中前，替身是否還在場——用來決定附加效果要不要被擋掉。這裡統一算(而不是
+        // 只在有威力的招式分支裡才算)，這樣挑釁/定身法/瞌睡這類純變化招式也能正確被替身擋下來
+        // (正統規則：替身除了擋傷害，也會擋大部分「直接對敵人生效」的變化招式效果，音波系招式
+        // 跟亡語之歌是例外，亡語之歌在下面自己的區塊會直接無視這個旗標)
+        let defSubActiveBeforeHit = def.substituteHp > 0 && !SOUND_MOVES.has(move.name);
 
         if (move.category === 'ohko' || OHKO_MOVES.has(move.name)) {
             totalDamage = def.currentHp;
@@ -2557,10 +2735,13 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         } else if (move.power > 0) {
             const hits = rollMultiHitCount(move.minHits, move.maxHits);
             const atkStat = atk.atk * statStageMult(atk.stages.atk);
-            const defStat = def.def * statStageMult(def.stages.def);
-            // 正統規則：音波系招式無視替身，直接打中本體(defSubActiveBeforeHit保持false，
-            // 後面的傷害/附加效果判斷都會照「沒有替身擋著」處理)
-            defSubActiveBeforeHit = def.substituteHp > 0 && !SOUND_MOVES.has(move.name);
+            let defStat = def.def * statStageMult(def.stages.def);
+            // 正統規則：沙暴天氣下岩石屬性的特防視為1.5倍——這個簡化版遊戲沒有拆物理/特殊防禦，
+            // 只對「傷害分類是特殊」的招式在沙暴天氣打岩石系寶可夢時加成防禦力
+            if (weatherState.type === 'sandstorm' && move.damageClass === 'special' && displayOf[defenderUid].types.includes('rock')) {
+                defStat *= 1.5;
+            }
+            // (defSubActiveBeforeHit已經在上面統一算過了，這裡不用再算一次)
             const wDmgMult = weatherDamageMult(weatherState.type, move.type);
             const tDmgMult = terrainDamageMult(terrainState.type, move.type, isGrounded(displayOf[attackerUid]), isGrounded(displayOf[defenderUid]));
             for (let i = 0; i < hits; i++) {
@@ -2620,13 +2801,17 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
         }
 
-        // ---- 吸血／反作用力(drain)：正值回攻擊方血、負值扣攻擊方血(可能因此自己也倒下) ----
+        // ---- 吸血／反作用力(drain)：正值回攻擊方血、負值扣攻擊方血(可能因此自己也倒下)。
+        // 治癒封印(heal-block)期間，「回血」的那一半會失效，但反作用力傷害還是正常生效 ----
         if (move.drain && totalDamage > 0 && !move.isStruggle) {
-            const drainAmt = Math.round(totalDamage * move.drain / 100);
+            const rawDrainAmt = Math.round(totalDamage * move.drain / 100);
+            const healBlocked = rawDrainAmt > 0 && atk.healBlockTurns > 0;
+            const drainAmt = healBlocked ? 0 : rawDrainAmt;
             atk.currentHp = Math.max(0, Math.min(atk.maxHp, atk.currentHp + drainAmt));
             ev.attackerHpAfter = atk.currentHp;
             ev.drainAmount = drainAmt;
-            if (drainAmt > 0) log.push(`${atkName} 吸收了 ${drainAmt} 點HP！`);
+            if (healBlocked) log.push(`${atkName} 被治癒封印了，沒辦法吸血回復！`);
+            else if (drainAmt > 0) log.push(`${atkName} 吸收了 ${drainAmt} 點HP！`);
             else if (drainAmt < 0) log.push(`${atkName} 受到反作用力，損失了 ${-drainAmt} 點HP！`);
             if (atk.currentHp <= 0 && drainAmt < 0) {
                 log.push(`${atkName} 倒下了！`);
@@ -2636,15 +2821,20 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
         }
 
-        // ---- 直接回血招式(跟吸血不同，這種不需要造成傷害，回血量是自己最大HP的固定%) ----
+        // ---- 直接回血招式(跟吸血不同，這種不需要造成傷害，回血量是自己最大HP的固定%)。
+        // 同樣會被治癒封印擋下來 ----
         if (move.healing) {
-            const before = atk.currentHp;
-            atk.currentHp = Math.max(0, Math.min(atk.maxHp, atk.currentHp + Math.round(atk.maxHp * move.healing / 100)));
-            const actualHeal = atk.currentHp - before;
-            if (actualHeal > 0) {
-                ev.selfHeal = actualHeal;
-                ev.attackerHpAfter = atk.currentHp;
-                log.push(`${atkName} 回復了 ${actualHeal} 點HP！`);
+            if (atk.healBlockTurns > 0) {
+                log.push(`${atkName} 被治癒封印了，沒辦法回復HP！`);
+            } else {
+                const before = atk.currentHp;
+                atk.currentHp = Math.max(0, Math.min(atk.maxHp, atk.currentHp + Math.round(atk.maxHp * move.healing / 100)));
+                const actualHeal = atk.currentHp - before;
+                if (actualHeal > 0) {
+                    ev.selfHeal = actualHeal;
+                    ev.attackerHpAfter = atk.currentHp;
+                    log.push(`${atkName} 回復了 ${actualHeal} 點HP！`);
+                }
             }
         }
 
@@ -2668,7 +2858,11 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                         log.push(`${ailmentTarget === atk ? atkName : defName} 扎根了！`);
                     }
                 } else if (move.ailment === 'leech-seed') {
-                    if (!ailmentTarget.seeded) {
+                    // 正統規則：草屬性天生免疫寄生種子(不看下種的招式是什麼屬性)
+                    const seedTargetTypes = (ailmentTarget === atk ? displayOf[attackerUid] : displayOf[defenderUid]).types || [];
+                    if (seedTargetTypes.includes('grass')) {
+                        log.push(`${ailmentTarget === atk ? atkName : defName} 是草屬性，免疫寄生種子！`);
+                    } else if (!ailmentTarget.seeded) {
                         ailmentTarget.seeded = true;
                         ailmentTarget.seederKey = attackerUid;
                         ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: 'leech-seed', statusNameZh: '寄生種子' };
@@ -2676,13 +2870,112 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     }
                 } else if (!ailmentTarget.status) {
                     const isToxic = move.name === 'toxic';
-                    ailmentTarget.status = move.ailment;
-                    ailmentTarget.statusTurns = move.ailment === 'sleep' ? (1 + Math.floor(Math.random() * 3)) : 0;
-                    ailmentTarget.toxicCounter = isToxic ? 1 : 0;
-                    ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: move.ailment, statusNameZh: STATUS_NAME_ZH[move.ailment] || move.ailment, toxic: isToxic };
-                    log.push(`${ailmentTarget === atk ? atkName : defName} ${isToxic ? '被劇毒侵蝕了！' : `陷入${STATUS_NAME_ZH[move.ailment] || move.ailment}狀態了！`}`);
+                    // 正統規則：特定屬性天生免疫特定的主要異常狀態(不看招式本身屬性)——
+                    // 火免疫燒傷、電免疫麻痺、冰免疫冰凍、毒/鋼免疫中毒與劇毒
+                    const ailTargetTypes = (ailmentTarget === atk ? displayOf[attackerUid] : displayOf[defenderUid]).types || [];
+                    const immuneTypesList = STATUS_TYPE_IMMUNITY[move.ailment];
+                    const typeImmune = immuneTypesList && immuneTypesList.some(ty => ailTargetTypes.includes(ty));
+                    if (typeImmune) {
+                        log.push(`${ailmentTarget === atk ? atkName : defName} 的屬性免疫了${isToxic ? '劇毒' : (STATUS_NAME_ZH[move.ailment] || move.ailment)}！`);
+                    } else {
+                        ailmentTarget.status = move.ailment;
+                        ailmentTarget.statusTurns = move.ailment === 'sleep' ? (1 + Math.floor(Math.random() * 3)) : 0;
+                        ailmentTarget.toxicCounter = isToxic ? 1 : 0;
+                        ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: move.ailment, statusNameZh: STATUS_NAME_ZH[move.ailment] || move.ailment, toxic: isToxic };
+                        log.push(`${ailmentTarget === atk ? atkName : defName} ${isToxic ? '被劇毒侵蝕了！' : `陷入${STATUS_NAME_ZH[move.ailment] || move.ailment}狀態了！`}`);
+                    }
                 }
             }
+        }
+
+        // ---- 這次新補齊的一整批之前完全沒做的狀態效果：挑釁/折磨/定身法/再來一次/封印/瞌睡/
+        // 惡夢/道具封印/治癒封印/束縛系/封聲，全部用招式名稱直接比對(不透過meta.ailment，理由
+        // 同上面常數表註解)，而且(亡語之歌除外)一樣會被替身擋下來 ----
+        if (!defSubActiveBeforeHit) {
+            if (TAUNT_MOVES.has(move.name)) {
+                if (!def.tauntTurns) {
+                    def.tauntTurns = 3;
+                    log.push(`${defName} 被挑釁了，接下來只能使出攻擊招式！`);
+                }
+            } else if (TORMENT_MOVES.has(move.name)) {
+                if (!def.tormented) {
+                    def.tormented = true;
+                    log.push(`${defName} 被折磨了，沒辦法連續使用同一招式！`);
+                }
+            } else if (DISABLE_MOVES.has(move.name)) {
+                if (!def.disableTurns && def.lastMoveUsed && def.lastMoveUsed !== 'struggle') {
+                    def.disabledMove = def.lastMoveUsed;
+                    def.disableTurns = 4;
+                    log.push(`${defName} 的招式被定身法封印了！`);
+                } else {
+                    log.push(`${atkName} 的定身法失敗了！`);
+                }
+            } else if (ENCORE_MOVES.has(move.name)) {
+                if (!def.encoreTurns && def.lastMoveUsed && def.lastMoveUsed !== 'struggle' && getMovePp(def, { name: def.lastMoveUsed }) > 0) {
+                    def.encoreMove = def.lastMoveUsed;
+                    def.encoreTurns = 3;
+                    log.push(`${defName} 被要求再來一次！`);
+                } else {
+                    log.push(`${atkName} 的再來一次失敗了！`);
+                }
+            } else if (IMPRISON_MOVES.has(move.name)) {
+                if (!def.imprisonMoves) {
+                    def.imprisonMoves = (atk.moves || []).slice();
+                    log.push(`${atkName} 封印住了雙方共通的招式！`);
+                }
+            } else if (YAWN_MOVES.has(move.name)) {
+                if (!def.drowsyTurns && !def.status) {
+                    def.drowsyTurns = 2;
+                    log.push(`${defName} 開始想睡覺了！`);
+                }
+            } else if (NIGHTMARE_MOVES.has(move.name)) {
+                if (def.status === 'sleep' && !def.nightmared) {
+                    def.nightmared = true;
+                    log.push(`${defName} 被拖進了惡夢裡！`);
+                } else {
+                    log.push(`${atkName} 的惡夢招式失敗了！`);
+                }
+            } else if (EMBARGO_MOVES.has(move.name)) {
+                if (!def.embargoTurns) {
+                    def.embargoTurns = 5;
+                    // 這個簡化版遊戲沒有戰鬥中道具系統，道具封印目前只留紀錄跟訊息，沒有實際效果可擋
+                    log.push(`${defName} 被道具封印了！`);
+                }
+            } else if (HEAL_BLOCK_MOVES.has(move.name)) {
+                if (!def.healBlockTurns) {
+                    def.healBlockTurns = 5;
+                    log.push(`${defName} 被治癒封印了，沒辦法回復HP！`);
+                }
+            } else if (IDENTIFY_MOVES.has(move.name)) {
+                if (!def.identified) {
+                    def.identified = true;
+                    log.push(`${atkName} 看穿了 ${defName}！`);
+                }
+            } else if (TRAP_MOVES[move.name]) {
+                const trapInfo = TRAP_MOVES[move.name];
+                const trapDefTypes = displayOf[defenderUid].types || [];
+                if (trapDefTypes.includes('ghost')) {
+                    // 正統規則：幽靈屬性天生免疫所有困住/無法逃跑效果，任何時候都能自由替換
+                    log.push(`${defName} 是幽靈屬性，不會被束縛住！`);
+                } else if (!def.trapped) {
+                    def.trapped = true;
+                    def.trapperKey = attackerUid;
+                    def.trapDamage = !trapInfo.pure;
+                    const tmin = trapInfo.min || 4, tmax = trapInfo.max || 5;
+                    def.trapTurns = tmin + Math.floor(Math.random() * (tmax - tmin + 1));
+                    log.push(`${defName} 被束縛住了，沒辦法替換寶可夢！`);
+                }
+            }
+        }
+        // 亡語之歌：正統規則會無視替身，場上雙方(不管有沒有直接被這招瞄準)都會被下倒數
+        if (PERISH_SONG_MOVES.has(move.name)) {
+            [atk, def].forEach(t => { if (!t.perishCount) t.perishCount = 3; });
+            log.push(`所有場上的寶可夢都被下了滅亡的倒數！`);
+        }
+        // 封聲(封喉飽拳)：這招本身也有傷害，上面的傷害段落已經處理過了，這裡只補封聲的附加效果
+        if (SILENCE_MOVES.has(move.name) && !defSubActiveBeforeHit) {
+            def.silencedTurns = 2;
+            log.push(`${defName} 被封住了聲音！`);
         }
 
         // ---- 能力等級變化(被替身擋下來時，對對方生效的部分不會套用) ----
@@ -2742,13 +3035,17 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (t.currentHp <= 0) continue;
 
             if (t.rooted) {
-                const heal = Math.max(1, Math.floor(t.maxHp / 16));
-                const before = t.currentHp;
-                t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
-                const actual = t.currentHp - before;
-                if (actual > 0) {
-                    log.push(`${nameOf[uid]} 因為扎根回復了 ${actual} 點HP！`);
-                    events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: actual, hpAfter: t.currentHp });
+                if (t.healBlockTurns > 0) {
+                    log.push(`${nameOf[uid]} 被治癒封印了，扎根沒辦法回血！`);
+                } else {
+                    const heal = Math.max(1, Math.floor(t.maxHp / 16));
+                    const before = t.currentHp;
+                    t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                    const actual = t.currentHp - before;
+                    if (actual > 0) {
+                        log.push(`${nameOf[uid]} 因為扎根回復了 ${actual} 點HP！`);
+                        events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: actual, hpAfter: t.currentHp });
+                    }
                 }
             }
 
@@ -2759,7 +3056,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 t.currentHp -= actualDrain;
                 log.push(`${nameOf[uid]} 被寄生種子吸取了 ${actualDrain} 點HP！`);
                 events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'leech-seed', damage: actualDrain, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
-                if (seeder && seeder.currentHp > 0 && actualDrain > 0) {
+                if (seeder && seeder.currentHp > 0 && actualDrain > 0 && !(seeder.healBlockTurns > 0)) {
                     const before = seeder.currentHp;
                     seeder.currentHp = Math.min(seeder.maxHp, seeder.currentHp + actualDrain);
                     const healed = seeder.currentHp - before;
@@ -2785,15 +3082,79 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (t.currentHp <= 0) continue;
 
             if (terrainState.type === 'grassy' && isGrounded(displayOf[uid])) {
-                const heal = Math.max(1, Math.floor(t.maxHp / 16));
-                const before = t.currentHp;
-                t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
-                const actual = t.currentHp - before;
-                if (actual > 0) {
-                    log.push(`${nameOf[uid]} 因為青草場地回復了 ${actual} 點HP！`);
-                    events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: actual, hpAfter: t.currentHp });
+                if (t.healBlockTurns > 0) {
+                    log.push(`${nameOf[uid]} 被治癒封印了，青草場地沒辦法回血！`);
+                } else {
+                    const heal = Math.max(1, Math.floor(t.maxHp / 16));
+                    const before = t.currentHp;
+                    t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                    const actual = t.currentHp - before;
+                    if (actual > 0) {
+                        log.push(`${nameOf[uid]} 因為青草場地回復了 ${actual} 點HP！`);
+                        events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: actual, hpAfter: t.currentHp });
+                    }
                 }
             }
+            if (t.currentHp <= 0) continue;
+
+            // ---- 這次新補齊的回合結束效果：束縛系纏繞傷害、惡夢、瞌睡轉睡眠、亡語之歌倒數 ----
+            if (t.trapped && t.trapDamage) {
+                const dmg = Math.max(1, Math.floor(t.maxHp / 8));
+                t.currentHp = Math.max(0, t.currentHp - dmg);
+                log.push(`${nameOf[uid]} 被束縛招式傷害，損失了 ${dmg} 點HP！`);
+                events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'trap', damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+            }
+            if (t.currentHp <= 0) continue;
+            if (t.trapped && t.trapTurns > 0) {
+                t.trapTurns -= 1;
+                if (t.trapTurns <= 0) { t.trapped = false; t.trapDamage = false; t.trapperKey = null; log.push(`${nameOf[uid]} 脫離束縛了！`); }
+            }
+
+            if (t.nightmared && t.status === 'sleep') {
+                const dmg = Math.max(1, Math.floor(t.maxHp / 4));
+                t.currentHp = Math.max(0, t.currentHp - dmg);
+                log.push(`${nameOf[uid]} 被惡夢折磨，損失了 ${dmg} 點HP！`);
+                events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'nightmare', damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+            } else if (t.nightmared && t.status !== 'sleep') {
+                t.nightmared = false; // 醒了之後惡夢自動解除
+            }
+            if (t.currentHp <= 0) continue;
+
+            if (t.drowsyTurns > 0) {
+                t.drowsyTurns -= 1;
+                if (t.drowsyTurns <= 0) {
+                    if (!t.status) {
+                        t.status = 'sleep';
+                        t.statusTurns = 1 + Math.floor(Math.random() * 3);
+                        log.push(`${nameOf[uid]} 想睡覺，睡著了！`);
+                        events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'sleep', damage: 0, hpAfter: t.currentHp, fainted: false });
+                    } else {
+                        log.push(`${nameOf[uid]} 很想睡，但已經有其他異常狀態了，撐住了！`);
+                    }
+                }
+            }
+
+            if (t.perishCount > 0) {
+                t.perishCount -= 1;
+                log.push(`${nameOf[uid]} 的滅亡倒數變成了 ${t.perishCount}！`);
+                if (t.perishCount <= 0) {
+                    t.currentHp = 0;
+                    log.push(`${nameOf[uid]} 因為滅亡之歌倒下了！`);
+                    events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'perish-song', damage: 0, hpAfter: 0, fainted: true });
+                }
+            }
+            if (t.currentHp <= 0) continue;
+
+            // ---- 純粹倒數、不會造成傷害或直接影響勝負的效果：挑釁/定身法/再來一次/封聲/
+            // 道具封印/治癒封印，時間到了就自動解除 ----
+            if (t.tauntTurns > 0) { t.tauntTurns -= 1; if (t.tauntTurns <= 0) log.push(`${nameOf[uid]} 的挑釁解除了！`); }
+            if (t.disableTurns > 0) { t.disableTurns -= 1; if (t.disableTurns <= 0) { log.push(`${nameOf[uid]} 的定身法解除了！`); t.disabledMove = null; } }
+            if (t.encoreTurns > 0) { t.encoreTurns -= 1; if (t.encoreTurns <= 0) { log.push(`${nameOf[uid]} 的再來一次解除了！`); t.encoreMove = null; } }
+            if (t.silencedTurns > 0) { t.silencedTurns -= 1; if (t.silencedTurns <= 0) log.push(`${nameOf[uid]} 的封聲解除了！`); }
+            if (t.healBlockTurns > 0) { t.healBlockTurns -= 1; if (t.healBlockTurns <= 0) log.push(`${nameOf[uid]} 的治癒封印解除了！`); }
+            if (t.embargoTurns > 0) { t.embargoTurns -= 1; if (t.embargoTurns <= 0) log.push(`${nameOf[uid]} 的道具封印解除了！`); }
         }
         // 兩邊都要檢查完才能判斷輸贏——任一方這時候HP歸零，先看牠還有沒有活著的候補寶可夢，
         // 有的話不會直接輸掉戰鬥，而是進入「強制替換」狀態
