@@ -93,6 +93,9 @@
     .gacha-sparkle-ring { position: absolute; inset: -14px; border-radius: 9999px; pointer-events: none; opacity: 0; }
     .gacha-sparkle-ring.show { animation: gachaSparkleRing 0.7s ease; }
     @keyframes gachaSparkleRing { 0%{opacity:0; transform:scale(0.3)} 40%{opacity:0.7; transform:scale(1.2)} 100%{opacity:0; transform:scale(1.9)} }
+    /* 寶可夢猜猜看：題目圖片先變成全黑剪影，選完答案(揭曉)後才淡出黑色濾鏡看到真正配色 */
+    .guess-silhouette { filter: brightness(0); transition: filter 0.35s ease; }
+    .guess-silhouette.revealed { filter: none; }
 </style>
 </head>
 <body class="min-h-screen pb-24">
@@ -130,6 +133,7 @@
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="box" onclick="switchTab('box')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/medal-box.png" class="w-4 h-4" style="image-rendering:pixelated">我的寶可夢</button>
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="idle" onclick="switchTab('idle')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/shell-bell.png" class="w-4 h-4" style="image-rendering:pixelated">放置牧場</button>
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="battle" onclick="switchTab('battle')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/types/generation-ix/scarlet-violet/small/2.png" class="w-4 h-4" style="image-rendering:pixelated">對戰</button>
+        <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="guess" onclick="switchTab('guess')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/heart-scale.png" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">小遊戲</button>
     </div>
 
     <!-- ===== 捕捉分頁 ===== -->
@@ -151,9 +155,29 @@
             <div id="party-list" class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-2"></div>
             <p id="party-empty-hint" class="text-xs text-gray-400">還沒有寶可夢加入隊伍，在下面的收藏庫點「加入隊伍」</p>
         </div>
-        <h3 class="font-bold mb-2 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/medal-box.png" class="w-5 h-5" style="image-rendering:pixelated">收藏庫</h3>
+        <div class="flex items-center justify-between mb-2">
+            <h3 class="font-bold flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/medal-box.png" class="w-5 h-5" style="image-rendering:pixelated">收藏庫</h3>
+            <button type="button" onclick="openBagModal()" class="text-xs bg-gray-100 px-3 py-1.5 rounded-full font-bold inline-flex items-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/bag.png" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">背包</button>
+        </div>
+        <div class="mb-3 space-y-2">
+            <input id="box-search-input" type="text" placeholder="搜尋暱稱/種類名字..." oninput="renderBoxTab()" class="w-full text-sm border border-gray-200 rounded-xl px-3 py-2">
+            <div class="flex flex-wrap gap-1.5 items-center">
+                <select id="box-sort-select" onchange="renderBoxTab()" class="text-xs border border-gray-200 rounded-full px-2.5 py-1.5 font-bold bg-white">
+                    <option value="default">預設排序</option>
+                    <option value="level-desc">等級：高到低</option>
+                    <option value="level-asc">等級：低到高</option>
+                    <option value="stars-desc">星級：高到低</option>
+                    <option value="stars-asc">星級：低到高</option>
+                </select>
+                <button type="button" id="box-filter-inParty" onclick="toggleBoxStatusFilter('inParty')" class="text-xs px-2.5 py-1.5 rounded-full font-bold bg-gray-100">隊伍中</button>
+                <button type="button" id="box-filter-placedForIdle" onclick="toggleBoxStatusFilter('placedForIdle')" class="text-xs px-2.5 py-1.5 rounded-full font-bold bg-gray-100">牧場中</button>
+                <button type="button" onclick="clearBoxFilters()" class="text-xs px-2.5 py-1.5 rounded-full text-gray-400 font-bold">清除篩選</button>
+            </div>
+            <div id="box-type-filter" class="flex flex-wrap gap-1"></div>
+        </div>
         <div id="box-list" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
         <p id="box-empty-hint" class="hidden text-center text-gray-400 py-16">還沒有任何寶可夢，先去捕捉分頁抓一隻吧</p>
+        <p id="box-filtered-empty-hint" class="hidden text-center text-gray-400 py-16">沒有符合篩選條件的寶可夢</p>
     </div>
 
     <!-- ===== 放置牧場 ===== -->
@@ -186,6 +210,11 @@
         </div>
         <div id="battle-room-view" class="hidden"></div>
     </div>
+
+    <!-- ===== 小遊戲：寶可夢猜猜看 ===== -->
+    <div id="tab-guess" class="tab-panel hidden">
+        <div id="guess-game-root"></div>
+    </div>
 </div>
 
 <!-- 抽到寶可夢彈窗 -->
@@ -216,6 +245,23 @@
      只要還有pendingMoveLearns沒處理完，就會一直排隊跳出來，直到全部決定完為止 -->
 <div id="learn-move-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) dismissLearnMoveModal()">
     <div class="bg-white rounded-3xl p-6 max-w-sm w-full text-center" id="learn-move-modal-content"></div>
+</div>
+
+<!-- 進化合併彈窗：手動進化時發現倉庫已經有一隻「進化後」的同種類，跳出來讓玩家自己選要保留哪一隻
+     本體(等級/經驗值/招式)。沒被保留的那隻會整份消失，只貢獻+1星給留下來的那隻，星級以外的東西都
+     拿不回來——所以這個彈窗刻意不用點背景空白處關掉(避免手滑誤觸造成無法回復的合併)，一定要按按鈕 -->
+<div id="evolve-merge-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl p-6 max-w-sm w-full text-center" id="evolve-merge-modal-content"></div>
+</div>
+
+<!-- 背包彈窗：顯示目前持有的所有道具/莓果數量(全部靠寶可夢猜猜看小遊戲獲得，見handlePokemonGuessClaim) -->
+<div id="bag-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeBagModal()">
+    <div class="bg-white rounded-3xl p-6 max-w-sm w-full max-h-[85vh] overflow-y-auto" id="bag-modal-content"></div>
+</div>
+
+<!-- 使用道具彈窗(從寶可夢詳情頁點「使用道具」進來，針對某一隻寶可夢用經驗糖果/技能學習器) -->
+<div id="use-item-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeUseItemModal()">
+    <div class="bg-white rounded-3xl p-6 max-w-sm w-full" id="use-item-modal-content"></div>
 </div>
 
 <div id="toast-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center"></div>
@@ -361,6 +407,7 @@ function switchTab(name) {
     document.querySelectorAll('.tab-panel').forEach(el => el.classList.add('hidden'));
     document.getElementById('tab-' + name).classList.remove('hidden');
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
+    if (name === 'guess') renderGuessStartScreen();
 }
 
 // ============================================================
@@ -410,6 +457,13 @@ async function fetchSpeciesDisplay(speciesId, isShiny) {
         // 寶可夢PokéAPI沒有官方動圖素材——這幾個欄位在沒有動圖的情況下會是null，
         // 呼叫端(戰鬥畫面)要自己判斷null時退回上面已經有的靜態圖，不能直接假設一定有動圖
         const animated = data.sprites?.versions?.['generation-v']?.['black-white']?.animated;
+        // 圖鑑故事(flavor_text_entries)：PokéAPI每個語言都有一長串(每個遊戲版本各一筆敘述)，
+        // 官方中文只從Sun/Moon那一代才開始收錄，所以zh-Hant的entries通常比英文少很多，
+        // 這裡固定取「最後一筆」(資料排序上通常是最新收錄的版本)，同一隻寶可夢每次抓到的故事
+        // 就會固定不變，換頁/重新整理不會一直跳來跳去；換行符號(\f是遊戲對話框的換頁符)拿掉
+        // 才不會排版跑掉；極少數(通常是很新一代)還沒有官方中文敘述的物種，這裡就直接是空字串
+        const zhFlavorEntries = (speciesData.flavor_text_entries || []).filter(e => e.language && String(e.language.name).toLowerCase() === 'zh-hant');
+        const flavorTextZh = zhFlavorEntries.length ? zhFlavorEntries[zhFlavorEntries.length - 1].flavor_text.replace(/[\n\f\r]+/g, ' ') : '';
         const result = {
             nameZh: extractZhHantNameClient(speciesData.names, data.name),
             sprite: (shiny && artwork?.front_shiny) || artwork?.front_default || data.sprites?.front_default || '',
@@ -419,11 +473,12 @@ async function fetchSpeciesDisplay(speciesId, isShiny) {
             types,
             typesZh,
             isShiny: shiny,
+            flavorTextZh,
         };
         speciesCache.set(cacheKey, result);
         return result;
     } catch (err) {
-        return { nameZh: '???', sprite: '', spriteBack: '', spriteAnimated: null, spriteBackAnimated: null, types: [], typesZh: [], isShiny: shiny };
+        return { nameZh: '???', sprite: '', spriteBack: '', spriteAnimated: null, spriteBackAnimated: null, types: [], typesZh: [], isShiny: shiny, flavorTextZh: '' };
     }
 }
 const TYPE_COLORS = { normal:'#A8A878',fire:'#F08030',water:'#6890F0',electric:'#F8D030',grass:'#78C850',ice:'#98D8D8',fighting:'#C03028',poison:'#A040A0',ground:'#E0C068',flying:'#A890F0',psychic:'#F85888',bug:'#A8B820',rock:'#B8A038',ghost:'#705898',dragon:'#7038F8',dark:'#705848',steel:'#B8B8D0',fairy:'#EE99AC' };
@@ -640,17 +695,64 @@ function closeCatchModal() {
 
 // ============================================================
 // 我的寶可夢(收藏庫 + 隊伍)
+// ------------------------------------------------------------
+// 收藏庫的篩選/搜尋/排序全部是純前端運算(currentInstances本來就整包在瀏覽器裡了，不用
+// 每次篩選都重新打API)：屬性用多選(選好幾種屬性時，符合任一種就算，OR邏輯，跟隊伍中/
+// 牧場中這兩個狀態篩選彼此之間也是同一套OR邏輯)；名字搜尋比對「畫面上顯示的名字」
+// (暱稱/種類中文名)；等級/星級排序都只是簡單的.sort()，不影響currentInstances本身順序
 // ============================================================
+let boxSelectedTypes = new Set(); // 目前勾選的屬性篩選(可複選)
+let boxStatusFilters = { inParty: false, placedForIdle: false }; // 隊伍中/牧場中快速篩選
+const TYPE_NAME_ZH_STATIC = { normal:'一般',fire:'火',water:'水',electric:'電',grass:'草',ice:'冰',fighting:'格鬥',poison:'毒',ground:'地面',flying:'飛行',psychic:'超能力',bug:'蟲',rock:'岩石',ghost:'幽靈',dragon:'龍',dark:'惡',steel:'鋼',fairy:'妖精' };
+function toggleBoxTypeFilter(type) {
+    if (boxSelectedTypes.has(type)) boxSelectedTypes.delete(type); else boxSelectedTypes.add(type);
+    renderBoxTab();
+}
+function toggleBoxStatusFilter(key) {
+    boxStatusFilters[key] = !boxStatusFilters[key];
+    renderBoxTab();
+}
+function clearBoxFilters() {
+    boxSelectedTypes.clear();
+    boxStatusFilters = { inParty: false, placedForIdle: false };
+    const searchEl = document.getElementById('box-search-input'); if (searchEl) searchEl.value = '';
+    const sortEl = document.getElementById('box-sort-select'); if (sortEl) sortEl.value = 'default';
+    renderBoxTab();
+}
+// 屬性篩選chip只需要畫一次(不依賴任何寶可夢資料，18種屬性是固定的)，之後每次renderBoxTab
+// 只更新選取狀態(用dataset.rendered記錄畫過了沒，避免重複整包innerHTML蓋掉、丟失DOM節點)
+function renderBoxTypeFilterChipsOnce() {
+    const el = document.getElementById('box-type-filter');
+    if (!el || el.dataset.rendered) return;
+    el.dataset.rendered = '1';
+    el.innerHTML = Object.keys(TYPE_NAME_ZH_STATIC).map(t =>
+        `<button type="button" onclick="toggleBoxTypeFilter('${t}')" id="box-type-chip-${t}" class="text-[11px] px-2 py-1 rounded-full font-bold text-white" style="background:${TYPE_COLORS[t]}">${TYPE_NAME_ZH_STATIC[t]}</button>`
+    ).join('');
+}
+function syncBoxFilterChipStyles() {
+    Object.keys(TYPE_NAME_ZH_STATIC).forEach(t => {
+        const chip = document.getElementById('box-type-chip-' + t);
+        if (chip) chip.style.opacity = boxSelectedTypes.has(t) ? '1' : '0.32';
+    });
+    const partyBtn = document.getElementById('box-filter-inParty');
+    if (partyBtn) partyBtn.className = `text-xs px-2.5 py-1.5 rounded-full font-bold ${boxStatusFilters.inParty ? 'bg-red-100 text-red-600' : 'bg-gray-100'}`;
+    const idleBtn = document.getElementById('box-filter-placedForIdle');
+    if (idleBtn) idleBtn.className = `text-xs px-2.5 py-1.5 rounded-full font-bold ${boxStatusFilters.placedForIdle ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100'}`;
+}
 async function renderBoxTab() {
     const partyList = document.getElementById('party-list');
     const boxList = document.getElementById('box-list');
     const boxEmptyHint = document.getElementById('box-empty-hint');
+    const boxFilteredEmptyHint = document.getElementById('box-filtered-empty-hint');
     const partyEmptyHint = document.getElementById('party-empty-hint');
+    renderBoxTypeFilterChipsOnce();
+    syncBoxFilterChipStyles();
 
     if (currentInstances.length === 0) {
         boxList.innerHTML = '';
         partyList.innerHTML = '';
         boxEmptyHint.classList.remove('hidden');
+        boxFilteredEmptyHint.classList.add('hidden');
         partyEmptyHint.classList.remove('hidden');
         return;
     }
@@ -667,11 +769,41 @@ async function renderBoxTab() {
         return `<div class="bg-white rounded-xl card-shadow p-2 text-center cursor-pointer" onclick="openDetailModal('${inst.id}')">
             <img src="${d.sprite || ''}" class="w-14 h-14 mx-auto">
             <p class="text-[11px] font-bold truncate">${pokemonDisplayName(inst, d)}${inst.isShiny ? ' ' + shinyIconHtml('w-3 h-3') : ''}</p>
+            <p class="text-[10px] leading-none">${starsHtml(inst.stars)}</p>
             <p class="text-[10px] text-gray-400">Lv.${inst.level}</p>
         </div>`;
     }).join('');
 
-    boxList.innerHTML = currentInstances.map(inst => {
+    // ---- 套用搜尋/屬性/狀態篩選 ----
+    const searchTerm = (document.getElementById('box-search-input')?.value || '').trim().toLowerCase();
+    let filtered = currentInstances.filter(inst => {
+        const d = displayMap.get(inst.id) || {};
+        if (searchTerm) {
+            const name = pokemonDisplayName(inst, d).toLowerCase();
+            if (!name.includes(searchTerm)) return false;
+        }
+        if (boxSelectedTypes.size > 0) {
+            const types = d.types || [];
+            if (!types.some(t => boxSelectedTypes.has(t))) return false;
+        }
+        const wantInParty = boxStatusFilters.inParty, wantIdle = boxStatusFilters.placedForIdle;
+        if (wantInParty || wantIdle) {
+            const matchStatus = (wantInParty && inst.inParty) || (wantIdle && inst.placedForIdle);
+            if (!matchStatus) return false;
+        }
+        return true;
+    });
+
+    // ---- 套用排序 ----
+    const sortMode = document.getElementById('box-sort-select')?.value || 'default';
+    if (sortMode === 'level-desc') filtered = filtered.slice().sort((a, b) => (b.level || 1) - (a.level || 1));
+    else if (sortMode === 'level-asc') filtered = filtered.slice().sort((a, b) => (a.level || 1) - (b.level || 1));
+    else if (sortMode === 'stars-desc') filtered = filtered.slice().sort((a, b) => (b.stars || 0) - (a.stars || 0));
+    else if (sortMode === 'stars-asc') filtered = filtered.slice().sort((a, b) => (a.stars || 0) - (b.stars || 0));
+
+    boxFilteredEmptyHint.classList.toggle('hidden', filtered.length > 0);
+
+    boxList.innerHTML = filtered.map(inst => {
         const d = displayMap.get(inst.id) || {};
         return `<div class="bg-white rounded-xl card-shadow p-3 cursor-pointer" onclick="openDetailModal('${inst.id}')">
             <div class="flex items-center gap-2">
@@ -711,6 +843,7 @@ async function openDetailModal(instanceId) {
             <p class="text-xs text-gray-400 mb-1">${typeBadgesHtml(d.types, d.typesZh)}</p>
             <p class="text-xs text-gray-400">Lv.${inst.level} · EXP ${inst.exp} · 親密度 ${inst.friendship} · ${inst.flavor}口味</p>
         </div>
+        ${d.flavorTextZh ? `<p class="text-xs text-gray-500 bg-gray-50 rounded-xl p-3 mb-3 leading-relaxed">${d.flavorTextZh}</p>` : ''}
         <div class="grid grid-cols-4 gap-1 text-center text-xs mb-3">
             <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">HP</p><p class="font-bold">${maxHpOf(inst)}</p></div>
             <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">攻擊</p><p class="font-bold">${atkOf(inst)}</p></div>
@@ -725,7 +858,10 @@ async function openDetailModal(instanceId) {
             <button onclick="toggleParty('${inst.id}')" class="text-sm py-2 rounded-xl font-bold ${inst.inParty ? 'bg-red-100 text-red-600' : 'bg-gray-100'}">${inst.inParty ? '移出隊伍' : '加入隊伍'}</button>
             <button onclick="toggleIdlePlacement('${inst.id}')" class="text-sm py-2 rounded-xl font-bold ${inst.placedForIdle ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100'}">${inst.placedForIdle ? '牽出牧場' : '放進牧場'}</button>
         </div>
-        <button onclick="openFeedModal('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-green-100 text-green-700 mb-2 inline-flex items-center justify-center gap-1.5"><img src="${berrySpriteUrl('oran')}" class="w-4 h-4" style="image-rendering:pixelated">餵樹果</button>
+        <div class="grid grid-cols-2 gap-2 mb-2">
+            <button onclick="openFeedModal('${inst.id}')" class="text-sm py-2 rounded-xl font-bold bg-green-100 text-green-700 inline-flex items-center justify-center gap-1.5"><img src="${berrySpriteUrl('oran')}" class="w-4 h-4" style="image-rendering:pixelated">餵樹果</button>
+            <button onclick="openUseItemModal('${inst.id}')" class="text-sm py-2 rounded-xl font-bold bg-blue-100 text-blue-700 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('heart-scale')}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">使用道具</button>
+        </div>
         ${evoInfo.canEvolve
             ? `<button onclick="evolvePokemon('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('rare-candy')}" class="w-4 h-4" style="image-rendering:pixelated">進化成 ${evoInfo.nextName}！</button>`
             : (evoInfo.nextName ? `<p class="text-xs text-gray-400 text-center mb-2 flex items-center justify-center gap-1">${evoInfo.itemSprite ? `<img src="${evoInfo.itemSprite}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span>${evoInfo.hint || ''}</span></p>` : '')}
@@ -804,11 +940,11 @@ function closeLearnMoveModal() {
     // 一路跳到全部pendingMoveLearns都處理完為止(currentInstances由onSnapshot即時同步，這裡拿到的一定是最新資料)
     setTimeout(checkPendingMoveLearns, 200);
 }
-async function resolvePendingMoveLearn(instanceId, newMovesArray) {
+async function resolvePendingMoveLearn(instanceId, newMovesArray, extraFields) {
     const inst = currentInstances.find(i => i.id === instanceId);
     if (!inst) { closeLearnMoveModal(); return; }
     const remainingPending = (inst.pendingMoveLearns || []).slice(1);
-    const updateFields = { pendingMoveLearns: remainingPending };
+    const updateFields = { pendingMoveLearns: remainingPending, ...(extraFields || {}) };
     if (newMovesArray) updateFields.moves = newMovesArray;
     try {
         await db.collection('pokemonInstances').doc(instanceId).update(updateFields);
@@ -827,8 +963,14 @@ function replaceMoveWithNew(instanceId, replaceIdx) {
     const inst = currentInstances.find(i => i.id === instanceId);
     if (!inst || !inst.pendingMoveLearns || !inst.pendingMoveLearns[0]) { closeLearnMoveModal(); return; }
     const newMoves = (inst.moves || []).slice();
+    const replacedMoveName = newMoves[replaceIdx];
     newMoves[replaceIdx] = inst.pendingMoveLearns[0].name;
-    resolvePendingMoveLearn(instanceId, newMoves);
+    // 被換掉的舊招式記錄進forgottenMoves，之後可以用「技能學習器」道具學回來(見openUseItemModal)——
+    // 用Set去重是為了避免同一招被記錄好幾次(例如反覆學了又換掉同一招)，上限留20筆避免無限累積
+    const forgottenSet = new Set(inst.forgottenMoves || []);
+    if (replacedMoveName) forgottenSet.add(replacedMoveName);
+    const newForgotten = [...forgottenSet].slice(-20);
+    resolvePendingMoveLearn(instanceId, newMoves, { forgottenMoves: newForgotten });
 }
 function skipLearnMove(instanceId) {
     resolvePendingMoveLearn(instanceId, null);
@@ -899,50 +1041,215 @@ async function fetchBerryNameZh(berryName) {
         return berryName;
     }
 }
+// 莓果現在是有限庫存(靠「寶可夢猜猜看」小遊戲獲得，見handlePokemonGuessClaim)，不再無限隨便餵——
+// 這裡只列出「玩家目前真的持有」的莓果種類跟數量，持有0顆的莓果直接不會出現在清單裡
 async function openFeedModal(instanceId) {
     const content = document.getElementById('detail-modal-content');
     content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
-    const berryNames = await Promise.all(COMMON_BERRIES.map(fetchBerryNameZh));
+    const ownedBerries = COMMON_BERRIES.filter(b => (currentPlayerData?.berries || {})[b] > 0);
+    if (ownedBerries.length === 0) {
+        content.innerHTML = `
+            <h3 class="font-bold mb-3 text-center flex items-center justify-center gap-1.5"><img src="${berrySpriteUrl('oran')}" class="w-5 h-5" style="image-rendering:pixelated">選一顆樹果餵食</h3>
+            <p class="text-sm text-gray-400 text-center py-6">目前身上沒有任何莓果，去玩「小遊戲」分頁的寶可夢猜猜看賺一些吧！</p>
+            <button onclick="switchTab('guess')" class="w-full text-sm py-2 rounded-xl font-bold bg-green-100 text-green-700 mb-2">前往小遊戲</button>
+            <button onclick="openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm">返回</button>
+        `;
+        return;
+    }
+    const berryNames = await Promise.all(ownedBerries.map(fetchBerryNameZh));
     content.innerHTML = `
         <h3 class="font-bold mb-3 text-center flex items-center justify-center gap-1.5"><img src="${berrySpriteUrl('oran')}" class="w-5 h-5" style="image-rendering:pixelated">選一顆樹果餵食</h3>
         <div class="grid grid-cols-4 gap-2 mb-3">
-            ${COMMON_BERRIES.map((b, idx) => `<button onclick="feedBerry('${instanceId}','${b}')" class="text-xs bg-gray-50 hover:bg-green-50 rounded-lg p-2 flex flex-col items-center gap-1">
+            ${ownedBerries.map((b, idx) => `<button onclick="feedBerry('${instanceId}','${b}')" class="text-xs bg-gray-50 hover:bg-green-50 rounded-lg p-2 flex flex-col items-center gap-1 relative">
+                <span class="absolute top-0.5 right-1 text-[10px] font-black text-green-600">x${(currentPlayerData.berries || {})[b]}</span>
                 <img src="${berrySpriteUrl(b)}" class="w-8 h-8" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
                 <span>${berryNames[idx]}</span>
             </button>`).join('')}
         </div>
-        <p class="text-xs text-gray-400 text-center mb-3">口味跟寶可夢喜好對上的話，親密度加成比較多</p>
+        <p class="text-xs text-gray-400 text-center mb-3">口味跟寶可夢喜好對上的話，親密度加成比較多；每餵一顆會消耗一顆庫存</p>
         <button onclick="openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm">返回</button>
     `;
 }
-const berryFlavorCache = new Map();
 async function feedBerry(instanceId, berryName) {
     try {
-        const inst = currentInstances.find(i => i.id === instanceId);
-        if (!inst) return;
-        let flavors = berryFlavorCache.get(berryName);
-        if (!flavors) {
-            const res = await fetch(`https://pokeapi.co/api/v2/berry/${berryName}`);
-            const data = await res.json();
-            // PokéAPI的flavors是甜(sweet)/酸(sour)/苦(bitter)/辣(spicy)+澀(dry)這幾種口味的強度組合，
-            // 這裡簡化只取強度最高的那個當作這顆樹果的「主要口味」
-            const flavorMap = { sweet: '甜', sour: '酸', bitter: '苦', spicy: '辣', dry: '澀' };
-            let best = null, bestPotency = -1;
-            (data.flavors || []).forEach(f => {
-                if (f.potency > bestPotency) { bestPotency = f.potency; best = flavorMap[f.flavor.name] || null; }
-            });
-            flavors = best;
-            berryFlavorCache.set(berryName, flavors);
-        }
-        const isMatch = flavors === inst.flavor;
-        const gain = isMatch ? 15 : 5;
-        const newFriendship = Math.min(255, (inst.friendship || 0) + gain);
-        await db.collection('pokemonInstances').doc(instanceId).update({ friendship: newFriendship });
-        showToast(isMatch ? `牠很喜歡這個口味！親密度+${gain}` : `親密度+${gain}`);
+        const result = await callWorker('pokemon_feed_berry', { instanceId, berryName });
+        showToast(result.isMatch ? `牠很喜歡這個口味！親密度+${result.gain}` : `親密度+${result.gain}`);
         openDetailModal(instanceId);
     } catch (err) {
         showToast('餵食失敗：' + err.message);
+        openFeedModal(instanceId);
     }
+}
+
+// ============================================================
+// 背包/道具系統：items跟berries都存在pokemonPlayers文件裡(跟coins同一份文件，client完全不能
+// 直接寫，見firestore.rules)，全部靠「寶可夢猜猜看」小遊戲的獎勵取得(見handlePokemonGuessClaim)。
+// 這裡的currentPlayerData是playerUnsub那個onSnapshot即時同步的，庫存增減不用手動重抓
+// ============================================================
+const POKEMON_EVOLUTION_STONES = ['fire-stone','water-stone','thunder-stone','leaf-stone','moon-stone','sun-stone','shiny-stone','dusk-stone','dawn-stone','ice-stone'];
+const SPECIAL_ITEM_NAME_ZH = { 'rare-candy': '經驗糖果', 'move-reminder': '技能學習器' };
+const genericItemNameZhCache = new Map();
+async function fetchGenericItemNameZh(itemSlug) {
+    if (SPECIAL_ITEM_NAME_ZH[itemSlug]) return SPECIAL_ITEM_NAME_ZH[itemSlug];
+    if (genericItemNameZhCache.has(itemSlug)) return genericItemNameZhCache.get(itemSlug);
+    try {
+        const res = await fetch(`https://pokeapi.co/api/v2/item/${itemSlug}`);
+        const data = await res.json();
+        const zh = extractZhHantNameClient(data.names, itemSlug);
+        genericItemNameZhCache.set(itemSlug, zh);
+        return zh;
+    } catch (err) {
+        genericItemNameZhCache.set(itemSlug, itemSlug);
+        return itemSlug;
+    }
+}
+// 技能學習器不是PokéAPI真實存在的道具，借用「心之鱗片(heart-scale)」的圖示——正版遊戲裡
+// 心之鱗片本來就是「找NPC學回忘記招式」的交換代幣，意象上很貼切
+function itemSpriteForKey(key) { return key === 'move-reminder' ? itemSpriteUrl('heart-scale') : itemSpriteUrl(key); }
+
+async function openBagModal() {
+    const modal = document.getElementById('bag-modal');
+    const content = document.getElementById('bag-modal-content');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+
+    const items = currentPlayerData?.items || {};
+    const berries = currentPlayerData?.berries || {};
+    const itemKeys = Object.keys(items).filter(k => items[k] > 0);
+    const berryKeys = Object.keys(berries).filter(k => berries[k] > 0);
+
+    if (itemKeys.length === 0 && berryKeys.length === 0) {
+        content.innerHTML = `
+            <h3 class="font-bold text-lg mb-3 text-center">🎒 背包</h3>
+            <p class="text-sm text-gray-400 text-center py-8">背包目前是空的，去玩「小遊戲」分頁的寶可夢猜猜看賺一些道具/莓果吧！</p>
+            <button onclick="closeBagModal(); switchTab('guess');" class="w-full bg-green-100 text-green-700 py-2 rounded-xl font-bold text-sm mb-2">前往小遊戲</button>
+            <button onclick="closeBagModal()" class="w-full text-gray-400 text-sm">關閉</button>
+        `;
+        return;
+    }
+
+    const itemNames = await Promise.all(itemKeys.map(fetchGenericItemNameZh));
+    const berryNames = await Promise.all(berryKeys.map(fetchBerryNameZh));
+
+    content.innerHTML = `
+        <h3 class="font-bold text-lg mb-3 text-center">🎒 背包</h3>
+        ${itemKeys.length > 0 ? `
+            <p class="text-xs text-gray-400 mb-1.5">道具</p>
+            <div class="grid grid-cols-4 gap-2 mb-3">
+                ${itemKeys.map((k, idx) => `<div class="text-xs bg-gray-50 rounded-lg p-2 flex flex-col items-center gap-1 relative">
+                    <span class="absolute top-0.5 right-1 text-[10px] font-black text-purple-600">x${items[k]}</span>
+                    <img src="${itemSpriteForKey(k)}" class="w-8 h-8" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+                    <span class="text-center leading-tight">${itemNames[idx]}</span>
+                </div>`).join('')}
+            </div>` : ''}
+        ${berryKeys.length > 0 ? `
+            <p class="text-xs text-gray-400 mb-1.5">莓果</p>
+            <div class="grid grid-cols-4 gap-2 mb-3">
+                ${berryKeys.map((k, idx) => `<div class="text-xs bg-gray-50 rounded-lg p-2 flex flex-col items-center gap-1 relative">
+                    <span class="absolute top-0.5 right-1 text-[10px] font-black text-green-600">x${berries[k]}</span>
+                    <img src="${berrySpriteUrl(k)}" class="w-8 h-8" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+                    <span class="text-center leading-tight">${berryNames[idx]}</span>
+                </div>`).join('')}
+            </div>` : ''}
+        <p class="text-xs text-gray-400 text-center mb-2">經驗糖果/技能學習器/進化石要到寶可夢詳情頁的「使用道具」使用；莓果要到「餵樹果」使用</p>
+        <button onclick="closeBagModal()" class="w-full text-gray-400 text-sm">關閉</button>
+    `;
+}
+function closeBagModal() {
+    document.getElementById('bag-modal').classList.add('hidden');
+    document.getElementById('bag-modal').classList.remove('flex');
+}
+
+// ---------- 使用道具(針對某一隻寶可夢)：經驗糖果、技能學習器 ----------
+async function openUseItemModal(instanceId) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst) return;
+    const modal = document.getElementById('use-item-modal');
+    const content = document.getElementById('use-item-modal-content');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+
+    const items = currentPlayerData?.items || {};
+    const rareCandyCount = items['rare-candy'] || 0;
+    const moveReminderCount = items['move-reminder'] || 0;
+    const forgottenMoves = inst.forgottenMoves || [];
+
+    let forgottenMovesHtml = '';
+    if (moveReminderCount > 0 && forgottenMoves.length > 0) {
+        const moveDisplays = await Promise.all(forgottenMoves.map(fetchMoveData));
+        forgottenMovesHtml = `
+            <p class="text-xs text-gray-400 mb-1.5 mt-3">技能學習器：選一招學回來(持有x${moveReminderCount})</p>
+            <div class="space-y-1.5 mb-2">
+                ${forgottenMoves.map((m, idx) => `<button onclick="useMoveReminder('${instanceId}','${m}')" class="w-full bg-gray-50 hover:bg-blue-50 rounded-xl p-2 flex items-center gap-1.5 text-left">
+                    ${moveDisplays[idx].typeIcon ? `<img src="${moveDisplays[idx].typeIcon}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}
+                    <span class="text-sm font-bold">${moveDisplays[idx].nameZh}</span>
+                </button>`).join('')}
+            </div>
+        `;
+    }
+
+    content.innerHTML = `
+        <h3 class="font-bold text-lg mb-3 text-center">對${pokemonDisplayName(inst, await fetchSpeciesDisplay(inst.speciesId, inst.isShiny))}使用道具</h3>
+        ${rareCandyCount > 0 ? `<button onclick="useRareCandy('${instanceId}')" class="w-full bg-purple-100 text-purple-700 rounded-xl p-3 flex items-center gap-2 mb-2">
+            <img src="${itemSpriteUrl('rare-candy')}" class="w-8 h-8" style="image-rendering:pixelated">
+            <span class="text-sm font-bold flex-1 text-left">經驗糖果(持有x${rareCandyCount})</span>
+            <span class="text-xs text-gray-400">給予經驗值</span>
+        </button>` : ''}
+        ${moveReminderCount > 0 && forgottenMoves.length === 0 ? `<p class="text-xs text-gray-400 mb-2">這隻目前沒有忘記過任何招式，技能學習器暫時用不到</p>` : ''}
+        ${forgottenMovesHtml}
+        ${rareCandyCount === 0 && moveReminderCount === 0 ? `<p class="text-sm text-gray-400 text-center py-6">目前身上沒有可以用的道具，去玩「小遊戲」分頁賺一些吧！</p>` : ''}
+        <button onclick="openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm mt-1">返回</button>
+    `;
+}
+function closeUseItemModal() {
+    document.getElementById('use-item-modal').classList.add('hidden');
+    document.getElementById('use-item-modal').classList.remove('flex');
+}
+async function useRareCandy(instanceId) {
+    const beforeLevel = currentInstances.find(i => i.id === instanceId)?.level || 1;
+    try {
+        const result = await callWorker('pokemon_use_rare_candy', { instanceId });
+        showToast(result.newLevel > beforeLevel ? `使用了經驗糖果！升到Lv.${result.newLevel}了！` : '使用了經驗糖果！');
+        openDetailModal(instanceId);
+    } catch (err) {
+        showToast('使用失敗：' + err.message);
+    }
+}
+async function useMoveReminder(instanceId, moveName, replaceIdx) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst) return;
+    if ((inst.moves || []).length >= 4 && replaceIdx === undefined) {
+        showMoveReminderReplacePicker(instanceId, moveName);
+        return;
+    }
+    try {
+        await callWorker('pokemon_use_move_reminder', { instanceId, moveName, replaceIndex: replaceIdx });
+        showToast('學回來了！');
+        openDetailModal(instanceId);
+    } catch (err) {
+        showToast('使用失敗：' + err.message);
+    }
+}
+async function showMoveReminderReplacePicker(instanceId, moveName) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst) return;
+    const content = document.getElementById('use-item-modal-content');
+    content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+    const newMoveData = await fetchMoveData(moveName);
+    const currentMoveDisplays = await Promise.all((inst.moves || []).map(fetchMoveData));
+    content.innerHTML = `
+        <p class="font-bold text-center mb-1">學回「${newMoveData.nameZh}」</p>
+        <p class="text-xs text-gray-400 text-center mb-3">招式已經滿4招了，要換掉哪一招？</p>
+        <div class="space-y-1.5 mb-2">
+            ${(inst.moves || []).map((m, idx) => `<button onclick="useMoveReminder('${instanceId}','${moveName}',${idx})" class="w-full bg-gray-50 hover:bg-red-50 rounded-xl p-2 flex items-center gap-1.5 text-left">
+                ${currentMoveDisplays[idx].typeIcon ? `<img src="${currentMoveDisplays[idx].typeIcon}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}
+                <span class="text-sm font-bold">換掉「${currentMoveDisplays[idx].nameZh}」</span>
+            </button>`).join('')}
+        </div>
+        <button onclick="openUseItemModal('${instanceId}')" class="w-full text-gray-400 text-sm">取消</button>
+    `;
 }
 
 // ---------- 進化 ----------
@@ -998,13 +1305,25 @@ async function checkEvolutionEligibility(inst) {
         const detail = next.evolution_details?.[0] || {};
         const minLevel = detail.min_level || null;
         const minFriendship = detail.min_happiness || null;
-        let canEvolve = true, hint = '', itemSprite = null;
+        let canEvolve = true, hint = '', itemSprite = null, requiresItemName = null;
         if (minLevel && inst.level < minLevel) { canEvolve = false; hint = `等級到${minLevel}才能進化(目前Lv.${inst.level})`; }
         else if (minFriendship && (inst.friendship || 0) < minFriendship) { canEvolve = false; hint = `親密度要到${minFriendship}才能進化(目前${inst.friendship || 0})`; }
-        else if (detail.item) { canEvolve = false; const itemZh = await fetchItemNameZh(detail.item.url); hint = `需要道具「${itemZh || detail.item.name}」才能進化(這個功能還沒開放)`; itemSprite = itemSpriteUrl(detail.item.name); }
+        else if (detail.item) {
+            const itemZh = await fetchItemNameZh(detail.item.url);
+            itemSprite = itemSpriteUrl(detail.item.name);
+            // 進化石(POKEMON_EVOLUTION_STONES)有支援用背包裡的道具觸發進化——其他種類的進化道具
+            // (換手道具、頭目蝸牛的prism-scale之類)目前還沒有對應的取得管道，維持「還沒開放」
+            if (POKEMON_EVOLUTION_STONES.includes(detail.item.name)) {
+                const owned = (currentPlayerData?.items || {})[detail.item.name] || 0;
+                if (owned > 0) { canEvolve = true; requiresItemName = detail.item.name; hint = `使用「${itemZh || detail.item.name}」進化`; }
+                else { canEvolve = false; hint = `需要道具「${itemZh || detail.item.name}」才能進化(目前沒有，去玩小遊戲賺一個試試)`; }
+            } else {
+                canEvolve = false; hint = `需要道具「${itemZh || detail.item.name}」才能進化(這個功能還沒開放)`;
+            }
+        }
         else if (!minLevel && !minFriendship && !detail.item) { canEvolve = inst.level >= 16; hint = `等級到16才能進化(目前Lv.${inst.level})`; }
         const nextNameZh = await fetchSpeciesNameZhByUrl(next.species.url);
-        return { canEvolve, nextName: nextNameZh || next.species.name, nextSpeciesUrl: next.species.url, hint, itemSprite };
+        return { canEvolve, nextName: nextNameZh || next.species.name, nextSpeciesUrl: next.species.url, hint, itemSprite, requiresItemName };
     } catch (err) {
         return { canEvolve: false, nextName: null };
     }
@@ -1027,23 +1346,115 @@ async function evolvePokemon(instanceId) {
         const nextNameZh = extractZhHantNameClient(speciesData.names, pokemonData.name);
         const baseStats = {};
         (pokemonData.stats || []).forEach(s => { baseStats[s.stat.name] = s.base_stat; });
+        const nextInfo = {
+            nextSpeciesId, nextSpeciesName: pokemonData.name, nextSpeciesNameZh: nextNameZh,
+            baseHp: baseStats.hp || inst.baseHp, baseAtk: baseStats.attack || inst.baseAtk,
+            baseDef: baseStats.defense || inst.baseDef, baseSpd: baseStats.speed || inst.baseSpd,
+            requiresItemName: evoInfo.requiresItemName || null,
+        };
+
+        // 進化前先檢查倉庫裡是不是已經有一隻「進化後」的同種類——有的話不能直接進化變出第二隻，
+        // 要跳出來讓玩家自己選要保留哪一隻本體(見showEvolveMergeModal)。要注意這裡比對的是
+        // 「別隻」(i.id !== instanceId)，不然這隻自己一定會被抓成「重複」
+        const duplicate = currentInstances.find(i => i.id !== instanceId && Number(i.speciesId) === nextSpeciesId);
+        if (duplicate) {
+            showEvolveMergeModal(inst, duplicate, nextInfo);
+            return;
+        }
+
+        // 需要進化石道具的話，一定要透過worker扣掉背包裡的道具，不能直接client端寫Firestore
+        // (items欄位只有worker能寫，見firestore.rules的pokemonPlayers)
+        if (nextInfo.requiresItemName) {
+            await callWorker('pokemon_evolve_with_item', {
+                instanceId, itemName: nextInfo.requiresItemName,
+                nextSpeciesId: nextInfo.nextSpeciesId, nextSpeciesName: nextInfo.nextSpeciesName, nextSpeciesNameZh: nextInfo.nextSpeciesNameZh,
+                baseHp: nextInfo.baseHp, baseAtk: nextInfo.baseAtk, baseDef: nextInfo.baseDef, baseSpd: nextInfo.baseSpd,
+            });
+            showToast(`進化成功！變成了${nextInfo.nextSpeciesNameZh}`);
+            closeDetailModal();
+            return;
+        }
+
         // 暱稱目前沒有另外的自訂改名功能，孵化時預設一律等於中文種類名，所以進化這裡也直接
         // 同步更新暱稱成新的中文名——不然畫面會變成「皮卡丘進化成雷丘，但暱稱還顯示皮卡丘」這種怪狀況
         await db.collection('pokemonInstances').doc(instanceId).update({
-            speciesId: nextSpeciesId,
-            speciesName: pokemonData.name,
-            speciesNameZh: nextNameZh,
-            nickname: nextNameZh,
-            baseHp: baseStats.hp || inst.baseHp,
-            baseAtk: baseStats.attack || inst.baseAtk,
-            baseDef: baseStats.defense || inst.baseDef,
-            baseSpd: baseStats.speed || inst.baseSpd,
+            speciesId: nextInfo.nextSpeciesId,
+            speciesName: nextInfo.nextSpeciesName,
+            speciesNameZh: nextInfo.nextSpeciesNameZh,
+            nickname: nextInfo.nextSpeciesNameZh,
+            baseHp: nextInfo.baseHp,
+            baseAtk: nextInfo.baseAtk,
+            baseDef: nextInfo.baseDef,
+            baseSpd: nextInfo.baseSpd,
         });
-        showToast(`進化成功！變成了${nextNameZh}`);
+        showToast(`進化成功！變成了${nextInfo.nextSpeciesNameZh}`);
         closeDetailModal();
     } catch (err) {
         showToast('進化失敗：' + err.message);
     }
+}
+
+// ============================================================
+// 進化合併：進化前發現倉庫已經有同種類，跳出來讓玩家自己選要保留哪一隻本體(等級/經驗值/招式)。
+// 消失的那隻只會把+1星貢獻給留下來的那隻，星級以外的東西全部一起拿不回來——這牽涉到「刪除自己
+// 的一筆資料」，Firestore規則(見firestore.rules的pokemonInstances)完全擋掉client端直接刪除，
+// 所以最終寫入(含刪除)一定要透過worker的pokemon_evolve_merge動作、用伺服器端權限完成，
+// 不能直接db.update/delete
+// ============================================================
+let pendingEvolveMergeInfo = null; // 暫存這次進化目標種類的資料(species/base stats)，給合併彈窗的按鈕用
+async function showEvolveMergeModal(evolvingInst, duplicateInst, nextInfo) {
+    pendingEvolveMergeInfo = nextInfo;
+    const modal = document.getElementById('evolve-merge-modal');
+    const content = document.getElementById('evolve-merge-modal-content');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+
+    const evolvingDisplay = await fetchSpeciesDisplay(nextInfo.nextSpeciesId, evolvingInst.isShiny);
+    const duplicateDisplay = await fetchSpeciesDisplay(duplicateInst.speciesId, duplicateInst.isShiny);
+
+    const optionCard = (label, inst, display, keepId) => `
+        <button onclick="resolveEvolveMerge('${evolvingInst.id}', '${duplicateInst.id}', '${keepId}')"
+            class="w-full bg-gray-50 hover:bg-red-50 rounded-xl p-3 flex items-center gap-2 text-left mb-2">
+            <img src="${display.sprite}" class="w-14 h-14 shrink-0">
+            <span class="min-w-0">
+                <span class="block text-sm font-bold">${label}</span>
+                <span class="block text-xs text-gray-400">Lv.${inst.level} · ${starsHtml(inst.stars)}</span>
+            </span>
+        </button>`;
+
+    content.innerHTML = `
+        <p class="font-black text-base mb-1">進化後會跟已經擁有的重複！</p>
+        <p class="text-gray-500 text-sm mb-3">倉庫裡已經有一隻${duplicateDisplay.nameZh}了，要保留哪一隻本體？<br>沒被保留的那隻會消失，只把+1星貢獻給留下來的那隻(等級、練的招式都拿不回來)</p>
+        ${optionCard(`留下這次要進化的這隻(進化成${evolvingDisplay.nameZh})`, evolvingInst, evolvingDisplay, evolvingInst.id)}
+        ${optionCard('留下倉庫原本的這隻', duplicateInst, duplicateDisplay, duplicateInst.id)}
+        <button onclick="closeEvolveMergeModal()" class="w-full text-gray-400 text-sm mt-1">先不要，取消進化</button>
+    `;
+}
+function closeEvolveMergeModal() {
+    document.getElementById('evolve-merge-modal').classList.add('hidden');
+    document.getElementById('evolve-merge-modal').classList.remove('flex');
+    pendingEvolveMergeInfo = null;
+}
+async function resolveEvolveMerge(evolvingInstanceId, duplicateInstanceId, keepInstanceId) {
+    const nextInfo = pendingEvolveMergeInfo;
+    if (!nextInfo) { closeEvolveMergeModal(); return; }
+    try {
+        await callWorker('pokemon_evolve_merge', {
+            evolvingInstanceId, duplicateInstanceId, keepInstanceId,
+            nextSpeciesId: nextInfo.nextSpeciesId, nextSpeciesName: nextInfo.nextSpeciesName,
+            nextSpeciesNameZh: nextInfo.nextSpeciesNameZh,
+            baseHp: nextInfo.baseHp, baseAtk: nextInfo.baseAtk, baseDef: nextInfo.baseDef, baseSpd: nextInfo.baseSpd,
+            consumeItemName: nextInfo.requiresItemName || null,
+        });
+        showToast(keepInstanceId === evolvingInstanceId
+            ? `進化成功！變成了${nextInfo.nextSpeciesNameZh}，並合併吸收了重複的那隻`
+            : '已經合併吸收，倉庫原本那隻星級+1');
+    } catch (err) {
+        showToast('合併失敗：' + err.message);
+    }
+    closeEvolveMergeModal();
+    closeDetailModal();
 }
 
 // ============================================================
@@ -1076,6 +1487,7 @@ async function renderIdleTab() {
         <div class="bg-white rounded-xl card-shadow p-3 text-center cursor-pointer" onclick="openDetailModal('${inst.id}')">
             <img src="${displays[idx].sprite}" class="w-14 h-14 mx-auto">
             <p class="text-xs font-bold truncate">${pokemonDisplayName(inst, displays[idx])}</p>
+            <p class="text-[10px] leading-none">${starsHtml(inst.stars)}</p>
             <p class="text-[10px] text-gray-400">Lv.${inst.level}</p>
         </div>
     `).join('');
@@ -1999,7 +2411,11 @@ async function playBattleEvents(events, ctx) {
             if (hpText) hpText.textContent = `${Math.max(0, ev.hpAfter)}/${maxHp}`;
             await sleep(500);
             if (ev.fainted) {
-                const ball = document.getElementById(isMe ? 'pokeball-me' : 'pokeball-opp');
+                // 野生寶可夢倒下不用收進精靈球(牠本來就不是任何人的寶可夢，沒有球可以收)，
+                // 只有對戰雙方(自己或PvP對手)真正擁有的寶可夢才要播放收回球裡的動畫——
+                // 野生對戰裡「opp」這一側固定就是那隻野生寶可夢，isMe===false時才會是牠倒下
+                const isWildFainting = currentRoomIsWild && !isMe;
+                const ball = isWildFainting ? null : document.getElementById(isMe ? 'pokeball-me' : 'pokeball-opp');
                 el.classList.add('faint-drop');
                 if (ball) { ball.classList.remove('pokeball-recall'); void ball.offsetWidth; ball.classList.add('pokeball-recall'); }
                 await sleep(550);
@@ -2141,7 +2557,10 @@ async function playBattleEvents(events, ctx) {
 
         if (ev.fainted) {
             const stillThere = document.getElementById(isMeAttacking ? 'sprite-opp' : 'sprite-me');
-            const ball = document.getElementById(isMeAttacking ? 'pokeball-opp' : 'pokeball-me');
+            // 野生對戰的「opp」固定是那隻野生寶可夢，牠倒下不用收進球裡(不是任何人的寶可夢)——
+            // 只有isMeAttacking===false(我方倒下)或PvP對手倒下才需要球的收回動畫
+            const isWildFainting = currentRoomIsWild && isMeAttacking;
+            const ball = isWildFainting ? null : document.getElementById(isMeAttacking ? 'pokeball-opp' : 'pokeball-me');
             if (stillThere) stillThere.classList.add('faint-drop');
             if (ball) { ball.classList.remove('pokeball-recall'); void ball.offsetWidth; ball.classList.add('pokeball-recall'); }
             await sleep(550);
@@ -3516,6 +3935,210 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             });
         });
     } catch (err) { console.warn('結算回合失敗', err.message); }
+}
+
+// ============================================================
+// 小遊戲：寶可夢猜猜看(參考使用者附件pokeguess_pokeapi.html改寫)
+// ------------------------------------------------------------
+// 跟附件原本的版本最大的差異：附件是完全client端自己出題、自己對答案的單機小遊戲，
+// 「答對幾題」全部由前端自己說了算，打開瀏覽器主控台就能偽造滿分去騙道具獎勵。這裡改成
+// 每一題的正確答案由worker決定並存進pokemonGuessSessions文件(client完全讀不到那個集合)，
+// 提交答案時worker只比對它自己存的資料，玩家沒辦法直接偽造「答對次數」，最後能拿到幾個
+// 道具也是由worker依照它自己算出的correctCount決定，不是信任前端回報的分數。
+// 題目/選項名稱全部用fetchSpeciesDisplay抓官方中文譯名(跟收藏庫等其他地方同一套邏輯)，
+// 確保不管抽到全國圖鑑裡哪一隻，畫面上看到的都是中文
+// ============================================================
+let guessState = null;
+const GUESS_TOTAL_ROUNDS = 10;
+
+function renderGuessStartScreen() {
+    // 如果已經在玩到一半(切分頁再切回來)，直接接著顯示目前這一題，不要整個重新開局
+    if (guessState && !guessState.finished) { renderGuessRound(); return; }
+    const root = document.getElementById('guess-game-root');
+    if (!root) return;
+    root.innerHTML = `
+        <div class="bg-white rounded-2xl card-shadow overflow-hidden">
+            <div class="p-5 text-center bg-gradient-to-br from-red-500 to-orange-500 text-white">
+                <p class="text-xl font-black mb-1">⚡ 寶可夢猜猜看</p>
+                <p class="text-xs opacity-90">看剪影猜出正確的寶可夢，題目來自PokéAPI全國圖鑑</p>
+            </div>
+            <div class="p-6 text-center">
+                <p class="text-sm text-gray-500 mb-4 leading-relaxed">共10題，每題4選1。答對的題數越多，結束後領到的道具越多：<br>
+                    1~4題 → 1個道具・5~7題 → 2個道具・8~10題(全對) → 3個道具<br>
+                    道具可能是經驗糖果、技能學習器、各種莓果，運氣好還會拿到稀有的進化石！</p>
+                <button onclick="startGuessGame()" id="guess-start-btn" class="bg-red-500 text-white px-8 py-3 rounded-full font-bold">開始遊戲</button>
+            </div>
+        </div>
+    `;
+}
+
+async function startGuessGame() {
+    const btn = document.getElementById('guess-start-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '出題中...'; }
+    try {
+        const result = await callWorker('pokemon_guess_start');
+        guessState = {
+            sessionId: result.sessionId,
+            rounds: result.rounds,
+            roundIndex: 0,
+            correctCount: 0,
+            score: 0,
+            streak: 0,
+            answered: false,
+            finished: false,
+        };
+        renderGuessRound();
+    } catch (err) {
+        showToast('開始遊戲失敗：' + err.message);
+        if (btn) { btn.disabled = false; btn.textContent = '開始遊戲'; }
+    }
+}
+
+async function renderGuessRound() {
+    const root = document.getElementById('guess-game-root');
+    if (!root || !guessState) return;
+    const round = guessState.rounds[guessState.roundIndex];
+    root.innerHTML = `
+        <div class="bg-white rounded-2xl card-shadow overflow-hidden">
+            <div class="p-4 bg-gradient-to-br from-red-500 to-orange-500 text-white flex items-center justify-between">
+                <div>
+                    <p class="text-lg font-black">⚡ 寶可夢猜猜看</p>
+                    <p class="text-xs opacity-90">第 ${guessState.roundIndex + 1} 題 / ${GUESS_TOTAL_ROUNDS}　🔥連續答對 ${guessState.streak}</p>
+                </div>
+                <p class="text-xl font-black bg-white/20 rounded-xl px-3 py-1.5">🏆 ${guessState.score}</p>
+            </div>
+            <div class="p-6 text-center">
+                <img id="guess-pokemon-img" class="guess-silhouette w-40 h-40 mx-auto mb-3" src="">
+                <p class="font-bold mb-4">這是哪一隻寶可夢？</p>
+                <div id="guess-answers" class="grid grid-cols-2 gap-2 mb-3"></div>
+                <p id="guess-message" class="min-h-[24px] font-bold"></p>
+                <button id="guess-next-btn" onclick="guessNextRound()" class="hidden bg-gray-800 text-white px-6 py-2 rounded-full font-bold mt-2">下一題 ➜</button>
+            </div>
+        </div>
+    `;
+    guessState.answered = false;
+
+    const displays = await Promise.all(round.choiceSpeciesIds.map(id => fetchSpeciesDisplay(id, false)));
+    const targetIdx = round.choiceSpeciesIds.indexOf(round.targetSpeciesId);
+    const img = document.getElementById('guess-pokemon-img');
+    if (img) img.src = (targetIdx >= 0 && displays[targetIdx]?.sprite) || '';
+
+    const answersEl = document.getElementById('guess-answers');
+    if (answersEl) {
+        answersEl.innerHTML = round.choiceSpeciesIds.map((id, idx) =>
+            `<button onclick="answerGuessRound(${id})" id="guess-answer-${id}" class="text-sm font-bold bg-gray-100 hover:bg-gray-200 rounded-xl py-3">${displays[idx].nameZh}</button>`
+        ).join('');
+    }
+}
+
+async function answerGuessRound(chosenSpeciesId) {
+    if (!guessState || guessState.answered) return;
+    guessState.answered = true;
+    document.querySelectorAll('#guess-answers button').forEach(b => b.disabled = true);
+    const img = document.getElementById('guess-pokemon-img');
+    if (img) img.classList.add('revealed');
+
+    let result;
+    try {
+        result = await callWorker('pokemon_guess_answer', { sessionId: guessState.sessionId, roundIndex: guessState.roundIndex, chosenSpeciesId });
+    } catch (err) {
+        showToast('提交答案失敗：' + err.message);
+        guessState.answered = false;
+        document.querySelectorAll('#guess-answers button').forEach(b => b.disabled = false);
+        return;
+    }
+
+    const chosenBtn = document.getElementById('guess-answer-' + chosenSpeciesId);
+    const correctBtn = document.getElementById('guess-answer-' + result.correctSpeciesId);
+    const msg = document.getElementById('guess-message');
+    if (result.correct) {
+        guessState.streak++;
+        const gain = 100 + (guessState.streak - 1) * 25;
+        guessState.score += gain;
+        guessState.correctCount++;
+        if (chosenBtn) chosenBtn.className = 'text-sm font-bold rounded-xl py-3 bg-green-200 text-green-800';
+        if (msg) { msg.textContent = `🎉 答對了！+${gain}分`; msg.style.color = '#16a34a'; }
+    } else {
+        guessState.streak = 0;
+        if (chosenBtn) chosenBtn.className = 'text-sm font-bold rounded-xl py-3 bg-red-200 text-red-800';
+        if (correctBtn) correctBtn.className = 'text-sm font-bold rounded-xl py-3 bg-green-200 text-green-800';
+        if (msg) { msg.textContent = '❌ 答錯了！'; msg.style.color = '#dc2626'; }
+    }
+    const nextBtn = document.getElementById('guess-next-btn');
+    if (nextBtn) nextBtn.classList.remove('hidden');
+}
+
+function guessNextRound() {
+    if (!guessState) return;
+    guessState.roundIndex++;
+    if (guessState.roundIndex >= GUESS_TOTAL_ROUNDS) {
+        guessState.finished = true;
+        renderGuessResultScreen();
+        return;
+    }
+    renderGuessRound();
+}
+
+function renderGuessResultScreen() {
+    const root = document.getElementById('guess-game-root');
+    if (!root || !guessState) return;
+    root.innerHTML = `
+        <div class="bg-white rounded-2xl card-shadow overflow-hidden">
+            <div class="p-5 text-center bg-gradient-to-br from-red-500 to-orange-500 text-white">
+                <p class="text-xl font-black mb-1">🏁 遊戲結束！</p>
+                <p class="text-sm opacity-90">答對 ${guessState.correctCount} / ${GUESS_TOTAL_ROUNDS} 題　總分 ${guessState.score}</p>
+            </div>
+            <div class="p-6 text-center">
+                <button onclick="claimGuessReward()" id="guess-claim-btn" class="bg-yellow-500 text-white px-8 py-3 rounded-full font-bold">領取道具獎勵</button>
+            </div>
+        </div>
+    `;
+}
+
+async function claimGuessReward() {
+    const btn = document.getElementById('guess-claim-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '領取中...'; }
+    try {
+        const result = await callWorker('pokemon_guess_claim', { sessionId: guessState.sessionId });
+        await renderGuessRewardScreen(result);
+    } catch (err) {
+        showToast('領取失敗：' + err.message);
+        if (btn) { btn.disabled = false; btn.textContent = '領取道具獎勵'; }
+    }
+}
+
+async function renderGuessRewardScreen(result) {
+    const root = document.getElementById('guess-game-root');
+    if (!root) return;
+    const rewards = result.rewards || [];
+    let rewardsHtml;
+    if (rewards.length > 0) {
+        const names = await Promise.all(rewards.map(r => r.type === 'berry' ? fetchBerryNameZh(r.key) : fetchGenericItemNameZh(r.key)));
+        rewardsHtml = `<div class="grid grid-cols-3 gap-2 my-4">
+            ${rewards.map((r, idx) => `<div class="bg-gray-50 rounded-xl p-3 flex flex-col items-center gap-1">
+                <img src="${r.type === 'berry' ? berrySpriteUrl(r.key) : itemSpriteForKey(r.key)}" class="w-10 h-10" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+                <span class="text-xs font-bold text-center leading-tight">${names[idx]}</span>
+            </div>`).join('')}
+        </div>`;
+    } else {
+        rewardsHtml = '<p class="text-sm text-gray-400 my-4">這次答對題數不夠，沒有拿到道具，再試一次看看！</p>';
+    }
+    root.innerHTML = `
+        <div class="bg-white rounded-2xl card-shadow overflow-hidden">
+            <div class="p-5 text-center bg-gradient-to-br from-yellow-400 to-orange-500 text-white">
+                <p class="text-xl font-black mb-1">🎁 獲得獎勵！</p>
+                <p class="text-sm opacity-90">答對 ${result.correctCount} / ${GUESS_TOTAL_ROUNDS} 題</p>
+            </div>
+            <div class="p-6 text-center">
+                ${rewardsHtml}
+                <button onclick="resetGuessGame()" class="bg-red-500 text-white px-6 py-2 rounded-full font-bold">再玩一次</button>
+            </div>
+        </div>
+    `;
+}
+function resetGuessGame() {
+    guessState = null;
+    renderGuessStartScreen();
 }
 </script>
 </body>
