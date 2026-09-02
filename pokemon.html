@@ -44,15 +44,9 @@
     .dmg-popup { position: absolute; font-weight: 900; font-size: 1.05rem; text-shadow: 0 1px 3px rgba(255,255,255,0.9); pointer-events: none; animation: dmgPopup 0.9s ease forwards; white-space: nowrap; }
     @keyframes dmgPopup { 0%{transform:translateY(0);opacity:0} 15%{opacity:1} 100%{transform:translateY(-30px);opacity:0} }
 
-    /* ---- 轉蛋機抽球動畫：樂透滾球／球彈出／捕捉式晃動／畫面閃光 ---- */
+    /* ---- 捕捉抽球動畫：搜尋循環／球彈出／捕捉式晃動／畫面閃光 ---- */
     .gacha-idle-bob { animation: gachaIdleBob 1.6s ease-in-out infinite; }
     @keyframes gachaIdleBob { 0%,100%{transform:translateY(0) rotate(-2deg)} 50%{transform:translateY(-4px) rotate(2deg)} }
-    .gacha-spin-viewport { width: 76px; height: 76px; overflow: hidden; margin: 0 auto; position: relative; border-radius: 14px; background: #f3f4f6; border: 3px solid #e5e7eb; }
-    .gacha-spin-viewport::before, .gacha-spin-viewport::after { content: ''; position: absolute; left: 50%; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; z-index: 2; transform: translateX(-50%); }
-    .gacha-spin-viewport::before { top: -1px; border-top: 8px solid #ef4444; }
-    .gacha-spin-viewport::after { bottom: -1px; border-bottom: 8px solid #ef4444; }
-    .gacha-spin-strip { display: flex; height: 100%; }
-    .gacha-spin-strip img { width: 76px; height: 76px; flex: 0 0 76px; image-rendering: pixelated; padding: 8px; box-sizing: border-box; }
     .ball-pop-in { animation: ballPopIn 0.45s cubic-bezier(0.34,1.56,0.64,1); }
     @keyframes ballPopIn { 0%{transform:scale(0.4) translateY(10px); opacity:0} 60%{transform:scale(1.18) translateY(-4px); opacity:1} 100%{transform:scale(1) translateY(0); opacity:1} }
     .ball-capture-shake { animation: ballCaptureShake 1.1s ease-in-out; transform-origin: 50% 85%; }
@@ -91,8 +85,8 @@
 
 <!-- 未登入提示 -->
 <div id="logged-out-view" class="max-w-5xl mx-auto px-4 py-20 text-center">
-    <p class="text-6xl mb-4">🥚</p>
-    <p class="text-gray-500 mb-4">登入之後才能開始養成、抽蛋、對戰喔</p>
+    <p class="text-6xl mb-4">🎯</p>
+    <p class="text-gray-500 mb-4">登入之後才能開始養成、捕捉、對戰喔</p>
     <button onclick="loginUser()" class="bg-red-500 text-white px-5 py-2 rounded-full font-bold">用Google登入</button>
 </div>
 
@@ -101,25 +95,21 @@
 
     <!-- 分頁導覽 -->
     <div class="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-4 px-4">
-        <button class="tab-btn active shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100" data-tab="gacha" onclick="switchTab('gacha')">🥚 扭蛋</button>
+        <button class="tab-btn active shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100" data-tab="gacha" onclick="switchTab('gacha')">🎯 捕捉</button>
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100" data-tab="box" onclick="switchTab('box')">📦 我的寶可夢</button>
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100" data-tab="idle" onclick="switchTab('idle')">🏕️ 放置牧場</button>
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100" data-tab="battle" onclick="switchTab('battle')">⚔️ 對戰</button>
     </div>
 
-    <!-- ===== 扭蛋分頁 ===== -->
+    <!-- ===== 捕捉分頁 ===== -->
     <div id="tab-gacha" class="tab-panel">
-        <p class="text-sm text-gray-500 mb-4">轉蛋機裡裝了五種球，球的種類決定這次抓到的寶可夢多稀有——抽下去馬上就知道是哪一隻，保證不會跟你已經抓過的重複！(而且每一種球抽到的寶可夢都有機率是閃光版～)</p>
+        <p class="text-sm text-gray-500 mb-4">花費代幣就會出動捕捉一隻寶可夢，馬上就知道抓到誰、保證不會跟你已經抓過的重複！(而且有機率捕捉到閃光版～)</p>
         <div class="bg-white rounded-2xl card-shadow p-6 text-center max-w-xs mx-auto mb-4 relative overflow-hidden">
             <div id="gacha-machine-area" class="mb-3">
                 <img id="gacha-idle-ball" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" class="w-20 h-20 mx-auto gacha-idle-bob" style="image-rendering:pixelated">
             </div>
             <p class="font-bold text-yellow-600 mb-4">🪙 1000 / 次</p>
-            <button id="gacha-draw-btn" onclick="drawPokemon()" class="w-full bg-red-500 text-white py-2.5 rounded-xl font-bold">轉一下！</button>
-        </div>
-        <div class="bg-white rounded-2xl card-shadow p-4 max-w-xs mx-auto">
-            <h3 class="font-bold text-sm mb-2 text-center">🎯 球的種類與機率</h3>
-            <div id="gacha-tier-list" class="space-y-1.5 text-xs"></div>
+            <button id="gacha-draw-btn" onclick="drawPokemon()" class="w-full bg-red-500 text-white py-2.5 rounded-xl font-bold">開始捕捉！</button>
         </div>
     </div>
 
@@ -132,7 +122,7 @@
         </div>
         <h3 class="font-bold mb-2">📦 收藏庫</h3>
         <div id="box-list" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
-        <p id="box-empty-hint" class="hidden text-center text-gray-400 py-16">還沒有任何寶可夢，先去扭蛋分頁抽一隻吧</p>
+        <p id="box-empty-hint" class="hidden text-center text-gray-400 py-16">還沒有任何寶可夢，先去捕捉分頁抓一隻吧</p>
     </div>
 
     <!-- ===== 放置牧場 ===== -->
@@ -405,32 +395,23 @@ function defOf(instance) { return statAtLevel(instance.baseDef, instance.level, 
 function spdOf(instance) { return statAtLevel(instance.baseSpd, instance.level, false); }
 
 // ============================================================
-// 扭蛋——轉蛋機裡有5種球，依權重骰出球的種類，再依球對應的稀有度池子抽一隻寶可夢
+// 捕捉——伺服器依5種球的權重骰出這次用哪種球、再依球對應的稀有度池子選一隻寶可夢
 // (球種/機率/池子判定完全在Worker端算好，前端只負責把伺服器回傳的ballType/instance
-// 播成「樂透滾球→球彈出→球晃動(像捕捉特效)→畫面閃光→公布抽到誰」這一整套動畫)
+// 播成「搜尋中(球快速循環切換)→慢慢停在正確的球→球晃動(捕捉特效)→畫面閃光→公布捕捉到誰」的動畫。
+// 重點：動畫最後停格用的球種一律直接取自伺服器回傳的result.ballType，不是動畫自己算/猜的，
+// 這樣才能保證「動畫顯示的球」跟「最後真的抓到什麼稀有度」100%對得上，不會出現動畫停在
+// 高級球、結果卻公布抓到精靈球等級寶可夢的矛盾情況)
 // ============================================================
 const GACHA_BALL_SPRITE_BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/';
 const GACHA_BALL_TIERS = [
-    { key: 'poke', nameZh: '精靈球', weight: 80, desc: '一般機率寶可夢', color: '#ef4444' },
-    { key: 'great', nameZh: '超級球', weight: 10, desc: '稍強寶可夢', color: '#3b82f6' },
-    { key: 'ultra', nameZh: '高級球', weight: 8, desc: '強力寶可夢', color: '#f59e0b' },
-    { key: 'master', nameZh: '大師球', weight: 1, desc: '神獸/幻獸寶可夢', color: '#a855f7' },
-    { key: 'beast', nameZh: '究極球', weight: 1, desc: '「究極異獸」寶可夢', color: '#eab308' },
+    { key: 'poke', nameZh: '精靈球', color: '#ef4444' },
+    { key: 'great', nameZh: '超級球', color: '#3b82f6' },
+    { key: 'ultra', nameZh: '高級球', color: '#f59e0b' },
+    { key: 'master', nameZh: '大師球', color: '#a855f7' },
+    { key: 'beast', nameZh: '究極球', color: '#eab308' },
 ];
 function gachaBallSprite(key) { return GACHA_BALL_SPRITE_BASE + key + '-ball.png'; }
-function renderGachaTierList() {
-    const el = document.getElementById('gacha-tier-list');
-    if (!el) return;
-    el.innerHTML = GACHA_BALL_TIERS.map(t => `
-        <div class="flex items-center gap-2">
-            <img src="${gachaBallSprite(t.key)}" class="w-6 h-6 shrink-0" style="image-rendering:pixelated">
-            <span class="font-bold shrink-0">${t.nameZh}</span>
-            <span class="text-gray-400 flex-1 truncate">${t.desc}</span>
-            <span class="font-bold shrink-0" style="color:${t.color}">${t.weight}%</span>
-        </div>
-    `).join('');
-}
-renderGachaTierList();
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 let gachaAnimating = false;
 async function drawPokemon() {
@@ -440,73 +421,64 @@ async function drawPokemon() {
     btn.disabled = true;
     btn.classList.add('opacity-50');
     try {
-        // 網路請求跟「開場滾球動畫」同時開始跑，動畫至少播好播滿，避免網路太快動畫還沒跑完就結束、
-        // 也避免網路慢的時候動畫早早停在原地乾等
-        const [result] = await Promise.all([
-            callWorker('pokemon_gacha_draw'),
-            playGachaSpinAnimation(null), // 還不知道結果，先用隨機球滾動效果撐場面
-        ]);
-        await playGachaRevealSequence(result.ballType, result.ballNameZh, result.instance);
+        // 伺服器請求跟「還在搜尋」的循環動畫同時開始，結果一回來就讓循環動畫收斂、
+        // 精準停在伺服器回傳的球種上——不會有動畫自己先猜一個結果、跟真正結果對不上的問題
+        await playCaptureRevealSequence(callWorker('pokemon_gacha_draw'));
     } catch (err) {
-        showToast('抽獎失敗：' + err.message);
+        showToast('捕捉失敗：' + err.message);
     } finally {
         gachaAnimating = false;
         btn.disabled = false;
         btn.classList.remove('opacity-50');
     }
 }
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// 「樂透滾球」開場動畫：轉蛋機主畫面上的球快速抖動/旋轉，暗示機器正在運轉抽選——
-// targetKey給null時純粹撐場面(還在等伺服器回應)，不需要準確停在哪一種球上
-async function playGachaSpinAnimation(targetKey) {
-    const idleBall = document.getElementById('gacha-idle-ball');
-    if (!idleBall) return;
-    idleBall.classList.add('ball-capture-shake');
-    await sleep(700);
-    idleBall.classList.remove('ball-capture-shake');
-}
-
-// 開獎彈窗：滾球轉輪(像樂透那樣快速跑過各種球、慢下來停在抽到的球) → 球彈出定格 →
-// 球晃動(捕捉特效感) → 畫面閃光 → 公布抓到的寶可夢
-async function playGachaRevealSequence(ballType, ballNameZh, instance) {
+// 開獎彈窗：球圖示快速循環切換(搜尋中) → 拿到伺服器結果後逐漸變慢、停在result.ballType →
+// 球彈出定格+晃動(捕捉特效感) → 畫面閃光 → 公布捕捉到的寶可夢
+async function playCaptureRevealSequence(resultPromise) {
     const modal = document.getElementById('catch-modal');
     const content = document.getElementById('catch-modal-content');
     modal.classList.remove('hidden');
     modal.classList.add('flex');
-
-    const tierInfo = GACHA_BALL_TIERS.find(t => t.key === ballType) || GACHA_BALL_TIERS[0];
-    const order = GACHA_BALL_TIERS.map(t => t.key);
-    const REPEATS = 7; // 滾輪重複播幾輪球的序列，輪數愈多滾動感愈長
-    const strip = [];
-    for (let i = 0; i < REPEATS; i++) strip.push(...order);
-    // 讓滾輪最後停在「倒數第二輪」裡對應ballType的那一格，後面留一輪的緩衝，
-    // 視覺上才會有「滾過去、慢慢停下來剛好對到」的感覺
-    const landIndex = (REPEATS - 2) * order.length + order.indexOf(ballType);
-
     content.innerHTML = `
-        <p class="text-gray-400 text-sm mb-3">轉蛋機轉動中...</p>
-        <div class="gacha-spin-viewport">
-            <div id="gacha-spin-strip" class="gacha-spin-strip">
-                ${strip.map(k => `<img src="${gachaBallSprite(k)}" style="image-rendering:pixelated">`).join('')}
-            </div>
+        <p class="text-gray-400 text-sm mb-3">搜尋野生寶可夢中...</p>
+        <div class="relative w-24 h-24 mx-auto">
+            <img id="gacha-spin-ball" src="${gachaBallSprite('poke')}" class="w-24 h-24 ball-pop-in" style="image-rendering:pixelated">
         </div>
     `;
-    const stripEl = document.getElementById('gacha-spin-strip');
-    // 先讓瀏覽器畫出起始位置(translateX(0))，下一個frame再套用transition+終點位置，
-    // 這樣CSS transition才抓得到「從0滾到終點」的動畫，而不是瞬間跳過去
-    stripEl.style.transform = 'translateX(0px)';
-    await new Promise(requestAnimationFrame);
-    stripEl.style.transition = 'transform 2.1s cubic-bezier(0.13,0.75,0.13,1)';
-    stripEl.style.transform = `translateX(-${landIndex * 76}px)`;
-    await sleep(2200);
+    const order = GACHA_BALL_TIERS.map(t => t.key);
+    const spinBall = document.getElementById('gacha-spin-ball');
+    let cycling = true;
+    let cycleIdx = 0;
+    // 還沒拿到伺服器結果之前，球的圖示快速循環切換，純粹是「搜尋中」的視覺效果，
+    // 這個階段完全不代表任何結果，所以不需要、也不會去猜最後會停在哪一種球
+    const cycleLoop = (async () => {
+        while (cycling) {
+            cycleIdx = (cycleIdx + 1) % order.length;
+            spinBall.src = gachaBallSprite(order[cycleIdx]);
+            await sleep(90);
+        }
+    })();
 
-    // 滾輪停住後，把畫面換成「抽到的那顆球」單獨顯示、彈出+晃動(捕捉特效感)
+    const result = await resultPromise;
+    const tierInfo = GACHA_BALL_TIERS.find(t => t.key === result.ballType) || GACHA_BALL_TIERS[0];
+
+    // 伺服器結果回來後，先讓循環迴圈自然收尾，再接手播「逐漸變慢、最後停在正確球種」的收斂動畫——
+    // 收斂序列的最後一格強制就是result.ballType，所以動畫停格跟實際捕捉結果永遠一致
+    cycling = false;
+    await cycleLoop;
+    const settleSteps = [order[(cycleIdx + 1) % order.length], order[(cycleIdx + 2) % order.length], result.ballType, result.ballType];
+    for (let i = 0; i < settleSteps.length; i++) {
+        spinBall.src = gachaBallSprite(settleSteps[i]);
+        await sleep(120 + i * 90); // 愈到後面切換間隔愈長，模擬慢慢停下來
+    }
+    spinBall.src = gachaBallSprite(result.ballType); // 保底：畫面上顯示的一定是伺服器回傳的正確球種
+
     content.innerHTML = `
-        <p class="font-bold mb-3" style="color:${tierInfo.color}">🎯 抽到了${ballNameZh || tierInfo.nameZh}！</p>
+        <p class="font-bold mb-3" style="color:${tierInfo.color}">🎯 用${result.ballNameZh || tierInfo.nameZh}捕捉中！</p>
         <div class="relative w-24 h-24 mx-auto">
             <div class="gacha-sparkle-ring show" style="background:radial-gradient(circle, ${tierInfo.color}55, transparent 70%)"></div>
-            <img id="gacha-landed-ball" src="${gachaBallSprite(ballType)}" class="w-24 h-24 ball-pop-in" style="image-rendering:pixelated">
+            <img id="gacha-landed-ball" src="${gachaBallSprite(result.ballType)}" class="w-24 h-24 ball-pop-in" style="image-rendering:pixelated">
         </div>
     `;
     await sleep(500);
@@ -521,11 +493,11 @@ async function playGachaRevealSequence(ballType, ballNameZh, instance) {
     flashEl.classList.add('flash');
     await sleep(280);
 
-    await showCatchResult(instance, { ballType, ballNameZh: ballNameZh || tierInfo.nameZh });
+    await showCatchResult(result.instance, { ballType: result.ballType, ballNameZh: result.ballNameZh || tierInfo.nameZh });
 }
 
 // welcome=true時是「新玩家第一次登入拿到免費初始寶可夢」的情境，文字/標題會不一樣；
-// ballType/ballNameZh有給的話(扭蛋抽到)會多顯示「用哪種球抓到的」
+// ballType/ballNameZh有給的話(捕捉抓到)會多顯示「用哪種球抓到的」
 async function showCatchResult(instance, opts) {
     const welcome = !!(opts && opts.welcome);
     const ballType = opts && opts.ballType;
@@ -1043,7 +1015,7 @@ async function rollWildOpponent(playerLevel) {
     // 難度跟著玩家帶去的這隻寶可夢等級走，上下浮動3級，等級太低會被夾到至少1級
     const targetLevel = Math.max(1, playerLevel + Math.floor(Math.random() * 7) - 3);
     let speciesId = null, speciesData = null;
-    // 野生對戰不會遇到神獸/幻獸(那些留給扭蛋才有意義)，最多重抽40次找一隻普通的
+    // 野生對戰不會遇到神獸/幻獸(那些留給捕捉才有意義)，最多重抽40次找一隻普通的
     for (let i = 0; i < 40; i++) {
         const candidateId = 1 + Math.floor(Math.random() * 1025);
         const res = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${candidateId}`);
