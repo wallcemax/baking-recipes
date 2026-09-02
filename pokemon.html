@@ -133,7 +133,7 @@
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="box" onclick="switchTab('box')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/medal-box.png" class="w-4 h-4" style="image-rendering:pixelated">我的寶可夢</button>
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="battle" onclick="switchTab('battle')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/types/generation-ix/scarlet-violet/small/2.png" class="w-4 h-4" style="image-rendering:pixelated">對戰</button>
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="gacha" onclick="switchTab('gacha')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" class="w-4 h-4" style="image-rendering:pixelated">捕捉</button>
-        <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="guess" onclick="switchTab('guess')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/heart-scale.png" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">小遊戲</button>
+        <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="guess" onclick="switchTab('guess')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/heart-scale.png" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">猜猜看</button>
     </div>
 
     <!-- ===== 捕捉分頁 ===== -->
@@ -259,9 +259,14 @@
     <div class="bg-white rounded-3xl p-6 max-w-sm w-full max-h-[85vh] overflow-y-auto" id="bag-modal-content"></div>
 </div>
 
-<!-- 使用道具彈窗(從寶可夢詳情頁點「使用道具」進來，針對某一隻寶可夢用經驗糖果/技能學習器) -->
+<!-- 使用道具彈窗(從寶可夢詳情頁點「使用道具」進來，針對某一隻寶可夢用經驗糖果/招式學習器) -->
 <div id="use-item-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeUseItemModal()">
     <div class="bg-white rounded-3xl p-6 max-w-sm w-full" id="use-item-modal-content"></div>
+</div>
+
+<!-- 裝備道具彈窗(從寶可夢詳情頁點「裝備道具」進來，讓寶可夢帶上對戰道具/莓果上場，見openEquipModal) -->
+<div id="equip-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeEquipModal()">
+    <div class="bg-white rounded-3xl p-6 max-w-sm w-full max-h-[85vh] overflow-y-auto" id="equip-modal-content"></div>
 </div>
 
 <div id="toast-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center"></div>
@@ -801,7 +806,8 @@ async function renderBoxTab() {
 
     partyList.innerHTML = partyMembers.map(inst => {
         const d = displayMap.get(inst.id) || {};
-        return `<div class="bg-white rounded-xl card-shadow p-2 text-center cursor-pointer" onclick="openDetailModal('${inst.id}')">
+        return `<div class="bg-white rounded-xl card-shadow p-2 text-center cursor-pointer relative" onclick="openDetailModal('${inst.id}')">
+            ${heldItemBadgeHtml(inst)}
             <img src="${d.sprite || ''}" class="w-14 h-14 mx-auto">
             <p class="text-[11px] font-bold truncate">${pokemonDisplayName(inst, d)}${inst.isShiny ? ' ' + shinyIconHtml('w-3 h-3') : ''}</p>
             <p class="text-[10px] leading-none">${starsHtml(inst.stars)}</p>
@@ -840,7 +846,8 @@ async function renderBoxTab() {
 
     boxList.innerHTML = filtered.map(inst => {
         const d = displayMap.get(inst.id) || {};
-        return `<div class="bg-white rounded-xl card-shadow p-3 cursor-pointer" onclick="openDetailModal('${inst.id}')">
+        return `<div class="bg-white rounded-xl card-shadow p-3 cursor-pointer relative" onclick="openDetailModal('${inst.id}')">
+            ${heldItemBadgeHtml(inst)}
             <div class="flex items-center gap-2">
                 <img src="${d.sprite || ''}" class="w-14 h-14">
                 <div class="min-w-0">
@@ -870,6 +877,7 @@ async function openDetailModal(instanceId) {
     const d = await fetchSpeciesDisplay(inst.speciesId, inst.isShiny);
     const evoInfo = await checkEvolutionEligibility(inst);
     const moveDisplays = await Promise.all((inst.moves || []).map(fetchMoveData));
+    const heldItemNameZh = inst.heldItem ? await fetchGenericItemNameZh(inst.heldItem) : null;
     content.innerHTML = `
         <div class="text-center mb-3">
             <img src="${d.sprite}" class="w-44 h-44 mx-auto">
@@ -877,6 +885,7 @@ async function openDetailModal(instanceId) {
             <p class="text-sm mb-0.5">${starsHtml(inst.stars)}</p>
             <p class="text-xs text-gray-400 mb-1">${typeBadgesHtml(d.types, d.typesZh)}</p>
             <p class="text-xs text-gray-400">Lv.${inst.level} · EXP ${inst.exp} · 親密度 ${inst.friendship} · ${inst.flavor}口味</p>
+            ${inst.heldItem ? `<p class="text-xs text-blue-600 mt-1 inline-flex items-center gap-1"><img src="${POKEMON_BERRY_LIST.includes(inst.heldItem) ? berrySpriteUrl(inst.heldItem) : itemSpriteForKey(inst.heldItem)}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">攜帶著${heldItemNameZh}</p>` : ''}
         </div>
         ${d.flavorTextZh ? `<p class="text-xs text-gray-500 bg-gray-50 rounded-xl p-3 mb-3 leading-relaxed">${d.flavorTextZh}</p>` : ''}
         <div class="grid grid-cols-4 gap-1 text-center text-xs mb-3">
@@ -897,6 +906,7 @@ async function openDetailModal(instanceId) {
             <button onclick="openFeedModal('${inst.id}')" class="text-sm py-2 rounded-xl font-bold bg-green-100 text-green-700 inline-flex items-center justify-center gap-1.5"><img src="${berrySpriteUrl('oran')}" class="w-4 h-4" style="image-rendering:pixelated">餵樹果</button>
             <button onclick="openUseItemModal('${inst.id}')" class="text-sm py-2 rounded-xl font-bold bg-blue-100 text-blue-700 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('heart-scale')}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">使用道具</button>
         </div>
+        <button onclick="openEquipModal('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-indigo-100 text-indigo-700 inline-flex items-center justify-center gap-1.5 mb-2"><img src="${itemSpriteUrl('life-orb')}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">${inst.heldItem ? '更換裝備道具' : '裝備道具'}</button>
         ${evoInfo.canEvolve
             ? `<button onclick="evolvePokemon('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('rare-candy')}" class="w-4 h-4" style="image-rendering:pixelated">進化成 ${evoInfo.nextName}！</button>`
             : (evoInfo.nextName ? `<p class="text-xs text-gray-400 text-center mb-2 flex items-center justify-center gap-1">${evoInfo.itemSprite ? `<img src="${evoInfo.itemSprite}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span>${evoInfo.hint || ''}</span></p>` : '')}
@@ -1000,7 +1010,7 @@ function replaceMoveWithNew(instanceId, replaceIdx) {
     const newMoves = (inst.moves || []).slice();
     const replacedMoveName = newMoves[replaceIdx];
     newMoves[replaceIdx] = inst.pendingMoveLearns[0].name;
-    // 被換掉的舊招式記錄進forgottenMoves，之後可以用「技能學習器」道具學回來(見openUseItemModal)——
+    // 被換掉的舊招式記錄進forgottenMoves，之後可以用「招式學習器」道具學回來(見openUseItemModal)——
     // 用Set去重是為了避免同一招被記錄好幾次(例如反覆學了又換掉同一招)，上限留20筆避免無限累積
     const forgottenSet = new Set(inst.forgottenMoves || []);
     if (replacedMoveName) forgottenSet.add(replacedMoveName);
@@ -1056,7 +1066,54 @@ function shinyIconHtml(sizeClass) {
     return `<img src="${itemSpriteUrl('shiny-stone')}" class="${sizeClass || 'w-3.5 h-3.5'} inline-block align-middle" style="image-rendering:pixelated">`;
 }
 // ---------- 餵樹果(親密度系統) ----------
-const COMMON_BERRIES = ['oran','pecha','cheri','chesto','rawst','aspear','leppa','sitrus','figy','wiki','mago','aguav','iapapa'];
+// 這份清單跟worker.js的POKEMON_BERRY_LIST是同一份(client沒辦法import server的常數，只能各自
+// 維護一份一樣的)：原本13種常見莓果 + 這次新增的4種(persim/lum/liechi/petaya) + 18種屬性抗性莓果，
+// 全部都能拿來餵食(換親密度)，也全部都能拿去裝備(見openEquipModal)——莓果的中文名稱一律靠
+// fetchBerryNameZh現查zh-Hant翻譯，不用另外寫死
+const COMMON_BERRIES = [
+    'oran','pecha','cheri','chesto','rawst','aspear','leppa','sitrus','figy','wiki','mago','aguav','iapapa',
+    'persim','lum','liechi','petaya',
+    'occa','passho','rindo','wacan','yache','chople','kebia','shuca','coba','payapa','tanga','charti','kasib','haban','colbur','babiri','roseli','chilan',
+];
+// 每種莓果的效果簡短說明(給裝備彈窗顯示用)，實際觸發邏輯在resolveBattleRound裡(回合結束被動
+// 效果區塊/STATUS_CURE_BERRY解異常區塊/屬性抗性莓果傷害減半區塊，詳見對戰段落)
+const BERRY_EFFECT_ZH = {
+    'oran': '低於50%血量時，自動吃掉回復10點HP',
+    'pecha': '中毒時自動吃掉，解除中毒',
+    'cheri': '麻痺時自動吃掉，解除麻痺',
+    'chesto': '睡眠時自動吃掉，解除睡眠',
+    'rawst': '灼傷時自動吃掉，解除灼傷',
+    'aspear': '冰凍時自動吃掉，解除冰凍',
+    'leppa': '招式PP歸零時自動吃掉，回復該招式10點PP',
+    'sitrus': '低於50%血量時，自動吃掉回復1/4最大HP',
+    'figy': '低於25%血量時，自動吃掉回復1/8最大HP',
+    'wiki': '低於25%血量時，自動吃掉回復1/8最大HP',
+    'mago': '低於25%血量時，自動吃掉回復1/8最大HP',
+    'aguav': '低於25%血量時，自動吃掉回復1/8最大HP',
+    'iapapa': '低於25%血量時，自動吃掉回復1/8最大HP',
+    'persim': '混亂時自動吃掉，解除混亂',
+    'lum': '中任何異常狀態(含混亂)時自動吃掉，解除該狀態',
+    'liechi': '低於25%血量時，自動吃掉，攻擊提升1階',
+    'petaya': '低於25%血量時，自動吃掉，攻擊提升1階',
+    'occa': '受到效果絕佳的火屬性招式攻擊時，自動吃掉，傷害減半',
+    'passho': '受到效果絕佳的水屬性招式攻擊時，自動吃掉，傷害減半',
+    'rindo': '受到效果絕佳的草屬性招式攻擊時，自動吃掉，傷害減半',
+    'wacan': '受到效果絕佳的電屬性招式攻擊時，自動吃掉，傷害減半',
+    'yache': '受到效果絕佳的冰屬性招式攻擊時，自動吃掉，傷害減半',
+    'chople': '受到效果絕佳的格鬥屬性招式攻擊時，自動吃掉，傷害減半',
+    'kebia': '受到效果絕佳的毒屬性招式攻擊時，自動吃掉，傷害減半',
+    'shuca': '受到效果絕佳的地面屬性招式攻擊時，自動吃掉，傷害減半',
+    'coba': '受到效果絕佳的飛行屬性招式攻擊時，自動吃掉，傷害減半',
+    'payapa': '受到效果絕佳的超能力屬性招式攻擊時，自動吃掉，傷害減半',
+    'tanga': '受到效果絕佳的蟲屬性招式攻擊時，自動吃掉，傷害減半',
+    'charti': '受到效果絕佳的岩石屬性招式攻擊時，自動吃掉，傷害減半',
+    'kasib': '受到效果絕佳的幽靈屬性招式攻擊時，自動吃掉，傷害減半',
+    'haban': '受到效果絕佳的龍屬性招式攻擊時，自動吃掉，傷害減半',
+    'colbur': '受到效果絕佳的惡屬性招式攻擊時，自動吃掉，傷害減半',
+    'babiri': '受到效果絕佳的鋼屬性招式攻擊時，自動吃掉，傷害減半',
+    'roseli': '受到效果絕佳的妖精屬性招式攻擊時，自動吃掉，傷害減半',
+    'chilan': '受到一般屬性招式攻擊時(不論剋不剋)，自動吃掉，傷害減半',
+};
 // 樹果本身的PokéAPI資料(/berry/{name})沒有直接附中文名稱，中文名稱要另外跟連結的道具
 // (item)資料要——每種樹果對應到一個同名的道具(例如oran莓對應道具oran-berry)，那份資料
 // 裡才有names陣列可以抓zh-Hant翻譯
@@ -1085,8 +1142,8 @@ async function openFeedModal(instanceId) {
     if (ownedBerries.length === 0) {
         content.innerHTML = `
             <h3 class="font-bold mb-3 text-center flex items-center justify-center gap-1.5"><img src="${berrySpriteUrl('oran')}" class="w-5 h-5" style="image-rendering:pixelated">選一顆樹果餵食</h3>
-            <p class="text-sm text-gray-400 text-center py-6">目前身上沒有任何莓果，去玩「小遊戲」分頁的寶可夢猜猜看賺一些吧！</p>
-            <button onclick="switchTab('guess')" class="w-full text-sm py-2 rounded-xl font-bold bg-green-100 text-green-700 mb-2">前往小遊戲</button>
+            <p class="text-sm text-gray-400 text-center py-6">目前身上沒有任何莓果，去玩「猜猜看」分頁賺一些吧！</p>
+            <button onclick="switchTab('guess')" class="w-full text-sm py-2 rounded-xl font-bold bg-green-100 text-green-700 mb-2">前往猜猜看</button>
             <button onclick="openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm">返回</button>
         `;
         return;
@@ -1122,7 +1179,60 @@ async function feedBerry(instanceId, berryName) {
 // 這裡的currentPlayerData是playerUnsub那個onSnapshot即時同步的，庫存增減不用手動重抓
 // ============================================================
 const POKEMON_EVOLUTION_STONES = ['fire-stone','water-stone','thunder-stone','leaf-stone','moon-stone','sun-stone','shiny-stone','dusk-stone','dawn-stone','ice-stone'];
-const SPECIAL_ITEM_NAME_ZH = { 'rare-candy': '經驗糖果', 'move-reminder': '技能學習器' };
+// 神奇糖果的正確效果是「不看EXP、直接升1級」，經驗糖果拆成XS~XL五階、各自給固定EXP——
+// 這兩份鑰匙都要跟worker.js的EXP_CANDY_AMOUNTS/rollGuessReward保持一致
+const EXP_CANDY_AMOUNTS = { 'exp-candy-xs': 50, 'exp-candy-s': 100, 'exp-candy-m': 150, 'exp-candy-l': 300, 'exp-candy-xl': 500 };
+const EXP_CANDY_KEYS = Object.keys(EXP_CANDY_AMOUNTS);
+// ---- 對戰攜帶道具：15種「裝備後長期生效」的道具(不含樹果)，效果實作在resolveBattleRound——
+// 這份清單跟worker.js的POKEMON_HELD_EQUIPMENT_ITEMS要保持一致，worker那邊拿來當掉落獎池，
+// 這裡拿來畫裝備彈窗的分類 ----
+const POKEMON_HELD_EQUIPMENT_ITEMS = [
+    'life-orb', 'rocky-helmet', 'assault-vest',
+    'shell-bell', 'leftovers', 'eviolite', 'lagging-tail', 'quick-claw', 'wide-lens', 'zoom-lens',
+    'bright-powder', 'mental-herb', 'focus-sash', 'scope-lens', 'kings-rock',
+];
+// 屬性強化道具/屬性抗性莓果：跟worker.js的同名常數一一對應，client這裡主要拿來畫裝備彈窗的
+// 分類跟戰鬥引擎查表用(哪個道具對應哪個屬性)
+const POKEMON_TYPE_BOOST_ITEM = {
+    normal: 'silk-scarf', fire: 'charcoal', water: 'mystic-water', grass: 'miracle-seed',
+    electric: 'magnet', ice: 'never-melt-ice', fighting: 'black-belt', poison: 'poison-barb',
+    ground: 'soft-sand', flying: 'sharp-beak', psychic: 'twisted-spoon', bug: 'silver-powder',
+    rock: 'hard-stone', ghost: 'spell-tag', dragon: 'dragon-fang', dark: 'black-glasses',
+    steel: 'metal-coat', fairy: 'fairy-feather',
+};
+const POKEMON_TYPE_BOOST_ITEM_LIST = Object.values(POKEMON_TYPE_BOOST_ITEM);
+const POKEMON_TYPE_RESIST_BERRY = {
+    normal: 'chilan', fire: 'occa', water: 'passho', grass: 'rindo', electric: 'wacan', ice: 'yache',
+    fighting: 'chople', poison: 'kebia', ground: 'shuca', flying: 'coba', psychic: 'payapa',
+    bug: 'tanga', rock: 'charti', ghost: 'kasib', dragon: 'haban', dark: 'colbur',
+    steel: 'babiri', fairy: 'roseli',
+};
+// 反查表(道具/莓果代號 -> 對應的屬性)，戰鬥引擎判斷「這個屬性強化道具/抗性莓果是不是配對到這次招式的屬性」時用
+const TYPE_BOOST_ITEM_TO_TYPE = Object.fromEntries(Object.entries(POKEMON_TYPE_BOOST_ITEM).map(([ty, key]) => [key, ty]));
+const TYPE_RESIST_BERRY_TO_TYPE = Object.fromEntries(Object.entries(POKEMON_TYPE_RESIST_BERRY).map(([ty, key]) => [key, ty]));
+// 裝備道具的效果簡短說明(給裝備彈窗顯示用)，取自使用者附檔——莓果類的效果文字則寫在
+// BERRY_EFFECT_ZH(見上面COMMON_BERRIES定義後)
+const HELD_ITEM_EFFECT_ZH = {
+    'life-orb': '攻擊招式傷害+30%，但每次成功造成傷害後自身扣1/10最大HP',
+    'rocky-helmet': '被物理招式打中時，反彈對方1/6最大HP',
+    'assault-vest': '特防(防禦)提升50%',
+    'shell-bell': '攻擊命中造成傷害時，回復該傷害1/8的HP',
+    'leftovers': '每回合結束回復1/16最大HP',
+    'eviolite': '防禦提升50%',
+    'lagging-tail': '同優先度時必定最後出招',
+    'quick-claw': '每回合20%機率無視速度、優先出招',
+    'wide-lens': '所有招式命中率提升10%',
+    'zoom-lens': '比對方慢出招時，命中率額外提升20%',
+    'bright-powder': '讓對手瞄準自己的招式命中率降低10%',
+    'mental-herb': '中了挑釁/定身法/再來一次/治癒封印時，自動解除(一次性)',
+    'focus-sash': '滿血時被打到必定會死的攻擊，保留1點HP生還(一次性)',
+    'scope-lens': '會心一擊機率提升1階',
+    'kings-rock': '攻擊命中時，額外10%機率讓對方畏縮',
+};
+const SPECIAL_ITEM_NAME_ZH = {
+    'move-reminder': '招式學習器', 'rare-candy': '神奇糖果',
+    'exp-candy-xs': '經驗糖果XS', 'exp-candy-s': '經驗糖果S', 'exp-candy-m': '經驗糖果M', 'exp-candy-l': '經驗糖果L', 'exp-candy-xl': '經驗糖果XL',
+};
 const genericItemNameZhCache = new Map();
 async function fetchGenericItemNameZh(itemSlug) {
     if (SPECIAL_ITEM_NAME_ZH[itemSlug]) return SPECIAL_ITEM_NAME_ZH[itemSlug];
@@ -1138,9 +1248,16 @@ async function fetchGenericItemNameZh(itemSlug) {
         return itemSlug;
     }
 }
-// 技能學習器不是PokéAPI真實存在的道具，借用「心之鱗片(heart-scale)」的圖示——正版遊戲裡
+// 招式學習器不是PokéAPI真實存在的道具，借用「心之鱗片(heart-scale)」的圖示——正版遊戲裡
 // 心之鱗片本來就是「找NPC學回忘記招式」的交換代幣，意象上很貼切
 function itemSpriteForKey(key) { return key === 'move-reminder' ? itemSpriteUrl('heart-scale') : itemSpriteUrl(key); }
+// 卡片右上角的裝備道具小圖示(收藏庫/隊伍/牧場卡片共用)：inst.heldItem有值就顯示，莓果跟一般
+// 道具的圖示網址規則不一樣，要先判斷是不是莓果
+function heldItemBadgeHtml(inst) {
+    if (!inst.heldItem) return '';
+    const src = POKEMON_BERRY_LIST.includes(inst.heldItem) ? berrySpriteUrl(inst.heldItem) : itemSpriteForKey(inst.heldItem);
+    return `<img src="${src}" class="w-4 h-4 absolute top-1 right-1 z-10" style="image-rendering:pixelated" onerror="this.style.display='none'" title="裝備中">`;
+}
 
 async function openBagModal() {
     const modal = document.getElementById('bag-modal');
@@ -1157,8 +1274,8 @@ async function openBagModal() {
     if (itemKeys.length === 0 && berryKeys.length === 0) {
         content.innerHTML = `
             <h3 class="font-bold text-lg mb-3 text-center">🎒 背包</h3>
-            <p class="text-sm text-gray-400 text-center py-8">背包目前是空的，去玩「小遊戲」分頁的寶可夢猜猜看賺一些道具/莓果吧！</p>
-            <button onclick="closeBagModal(); switchTab('guess');" class="w-full bg-green-100 text-green-700 py-2 rounded-xl font-bold text-sm mb-2">前往小遊戲</button>
+            <p class="text-sm text-gray-400 text-center py-8">背包目前是空的，去玩「猜猜看」分頁賺一些道具/莓果吧！</p>
+            <button onclick="closeBagModal(); switchTab('guess');" class="w-full bg-green-100 text-green-700 py-2 rounded-xl font-bold text-sm mb-2">前往猜猜看</button>
             <button onclick="closeBagModal()" class="w-full text-gray-400 text-sm">關閉</button>
         `;
         return;
@@ -1187,7 +1304,7 @@ async function openBagModal() {
                     <span class="text-center leading-tight">${berryNames[idx]}</span>
                 </div>`).join('')}
             </div>` : ''}
-        <p class="text-xs text-gray-400 text-center mb-2">經驗糖果/技能學習器/進化石要到寶可夢詳情頁的「使用道具」使用；莓果要到「餵樹果」使用</p>
+        <p class="text-xs text-gray-400 text-center mb-2">經驗糖果/招式學習器/進化石要到寶可夢詳情頁的「使用道具」使用；莓果要到「餵樹果」使用；對戰攜帶道具/莓果要到「裝備道具」給寶可夢帶上場</p>
         <button onclick="closeBagModal()" class="w-full text-gray-400 text-sm">關閉</button>
     `;
 }
@@ -1196,7 +1313,7 @@ function closeBagModal() {
     document.getElementById('bag-modal').classList.remove('flex');
 }
 
-// ---------- 使用道具(針對某一隻寶可夢)：經驗糖果、技能學習器 ----------
+// ---------- 使用道具(針對某一隻寶可夢)：經驗糖果、招式學習器 ----------
 async function openUseItemModal(instanceId) {
     const inst = currentInstances.find(i => i.id === instanceId);
     if (!inst) return;
@@ -1209,13 +1326,14 @@ async function openUseItemModal(instanceId) {
     const items = currentPlayerData?.items || {};
     const rareCandyCount = items['rare-candy'] || 0;
     const moveReminderCount = items['move-reminder'] || 0;
+    const ownedExpCandyKeys = EXP_CANDY_KEYS.filter(k => (items[k] || 0) > 0);
     const forgottenMoves = inst.forgottenMoves || [];
 
     let forgottenMovesHtml = '';
     if (moveReminderCount > 0 && forgottenMoves.length > 0) {
         const moveDisplays = await Promise.all(forgottenMoves.map(fetchMoveData));
         forgottenMovesHtml = `
-            <p class="text-xs text-gray-400 mb-1.5 mt-3">技能學習器：選一招學回來(持有x${moveReminderCount})</p>
+            <p class="text-xs text-gray-400 mb-1.5 mt-3">招式學習器：選一招學回來(持有x${moveReminderCount})</p>
             <div class="space-y-1.5 mb-2">
                 ${forgottenMoves.map((m, idx) => `<button onclick="useMoveReminder('${instanceId}','${m}')" class="w-full bg-gray-50 hover:bg-blue-50 rounded-xl p-2 flex items-center gap-1.5 text-left">
                     ${moveDisplays[idx].typeIcon ? `<img src="${moveDisplays[idx].typeIcon}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}
@@ -1224,17 +1342,23 @@ async function openUseItemModal(instanceId) {
             </div>
         `;
     }
+    const expCandyNames = await Promise.all(ownedExpCandyKeys.map(fetchGenericItemNameZh));
 
     content.innerHTML = `
         <h3 class="font-bold text-lg mb-3 text-center">對${pokemonDisplayName(inst, await fetchSpeciesDisplay(inst.speciesId, inst.isShiny))}使用道具</h3>
-        ${rareCandyCount > 0 ? `<button onclick="useRareCandy('${instanceId}')" class="w-full bg-purple-100 text-purple-700 rounded-xl p-3 flex items-center gap-2 mb-2">
+        ${rareCandyCount > 0 ? `<button onclick="useExpItem('${instanceId}','rare-candy')" class="w-full bg-purple-100 text-purple-700 rounded-xl p-3 flex items-center gap-2 mb-2">
             <img src="${itemSpriteUrl('rare-candy')}" class="w-8 h-8" style="image-rendering:pixelated">
-            <span class="text-sm font-bold flex-1 text-left">經驗糖果(持有x${rareCandyCount})</span>
-            <span class="text-xs text-gray-400">給予經驗值</span>
+            <span class="text-sm font-bold flex-1 text-left">神奇糖果(持有x${rareCandyCount})</span>
+            <span class="text-xs text-gray-400">直接升1級</span>
         </button>` : ''}
-        ${moveReminderCount > 0 && forgottenMoves.length === 0 ? `<p class="text-xs text-gray-400 mb-2">這隻目前沒有忘記過任何招式，技能學習器暫時用不到</p>` : ''}
+        ${ownedExpCandyKeys.map((k, idx) => `<button onclick="useExpItem('${instanceId}','${k}')" class="w-full bg-orange-100 text-orange-700 rounded-xl p-3 flex items-center gap-2 mb-2">
+            <img src="${itemSpriteUrl(k)}" class="w-8 h-8" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+            <span class="text-sm font-bold flex-1 text-left">${expCandyNames[idx]}(持有x${items[k]})</span>
+            <span class="text-xs text-gray-400">+${EXP_CANDY_AMOUNTS[k]} EXP</span>
+        </button>`).join('')}
+        ${moveReminderCount > 0 && forgottenMoves.length === 0 ? `<p class="text-xs text-gray-400 mb-2">這隻目前沒有忘記過任何招式，招式學習器暫時用不到</p>` : ''}
         ${forgottenMovesHtml}
-        ${rareCandyCount === 0 && moveReminderCount === 0 ? `<p class="text-sm text-gray-400 text-center py-6">目前身上沒有可以用的道具，去玩「小遊戲」分頁賺一些吧！</p>` : ''}
+        ${rareCandyCount === 0 && moveReminderCount === 0 && ownedExpCandyKeys.length === 0 ? `<p class="text-sm text-gray-400 text-center py-6">目前身上沒有可以用的道具，去玩「猜猜看」分頁賺一些吧！</p>` : ''}
         <button onclick="closeUseItemModal(); openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm mt-1">返回</button>
     `;
 }
@@ -1251,13 +1375,16 @@ function closeUseItemModal() {
 // 舊版本沒有任何防呆，會真的送出好幾個請求、吃掉好幾顆糖果/學習器——跟牧場「連點收取」
 // 是同一種bug，這裡用同一套in-flight旗標擋掉(見collectIdle的idleCollectInFlight)
 let useItemInFlight = false;
-async function useRareCandy(instanceId) {
+// itemKey是'rare-candy'(神奇糖果，直接升1級)或'exp-candy-xs'~'exp-candy-xl'(經驗糖果五階，給固定EXP)之一，
+// 統一呼叫同一支worker動作(pokemon_use_exp_item)，跟worker.js的handlePokemonUseExpItem對應
+async function useExpItem(instanceId, itemKey) {
     if (useItemInFlight) return;
     useItemInFlight = true;
     const beforeLevel = currentInstances.find(i => i.id === instanceId)?.level || 1;
+    const itemNameZh = await fetchGenericItemNameZh(itemKey);
     try {
-        const result = await callWorker('pokemon_use_rare_candy', { instanceId });
-        showToast(result.newLevel > beforeLevel ? `使用了經驗糖果！升到Lv.${result.newLevel}了！` : '使用了經驗糖果！');
+        const result = await callWorker('pokemon_use_exp_item', { instanceId, itemKey });
+        showToast(result.newLevel > beforeLevel ? `使用了${itemNameZh}！升到Lv.${result.newLevel}了！` : `使用了${itemNameZh}！`);
         closeUseItemModal();
         openDetailModal(instanceId);
     } catch (err) {
@@ -1304,6 +1431,112 @@ async function showMoveReminderReplacePicker(instanceId, moveName) {
         </div>
         <button onclick="openUseItemModal('${instanceId}')" class="w-full text-gray-400 text-sm">取消</button>
     `;
+}
+
+// ============================================================
+// 裝備道具：讓寶可夢攜帶對戰道具或莓果上場，效果在resolveBattleRound裡實作(見對戰段落)。
+// 同一時間只能裝一個，換裝備時worker會自動把舊的還回背包(見handlePokemonEquipItem)。
+// 道具/莓果的中文名稱靠fetchGenericItemNameZh/fetchBerryNameZh現查，效果簡短說明則分別取自
+// HELD_ITEM_EFFECT_ZH(定義於前面)/BERRY_EFFECT_ZH(定義於COMMON_BERRIES旁)
+// ============================================================
+async function openEquipModal(instanceId) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst) return;
+    const modal = document.getElementById('equip-modal');
+    const content = document.getElementById('equip-modal-content');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+
+    const items = currentPlayerData?.items || {};
+    const berries = currentPlayerData?.berries || {};
+    const ownedEquipKeys = POKEMON_HELD_EQUIPMENT_ITEMS.filter(k => (items[k] || 0) > 0);
+    const ownedTypeBoostKeys = POKEMON_TYPE_BOOST_ITEM_LIST.filter(k => (items[k] || 0) > 0);
+    const ownedBerryKeys = COMMON_BERRIES.filter(k => (berries[k] || 0) > 0);
+    const equipDisplayKeys = [...ownedEquipKeys, ...ownedTypeBoostKeys];
+
+    const heldItem = inst.heldItem || null;
+    const heldIsBerry = heldItem && POKEMON_BERRY_LIST.includes(heldItem);
+    const heldName = heldItem ? await fetchGenericItemNameZh(heldItem) : null;
+
+    const equipNames = await Promise.all(equipDisplayKeys.map(fetchGenericItemNameZh));
+    const berryNames = await Promise.all(ownedBerryKeys.map(fetchBerryNameZh));
+
+    const currentHeldHtml = heldItem ? `
+        <div class="bg-yellow-50 rounded-xl p-3 flex items-center gap-2 mb-3">
+            <img src="${heldIsBerry ? berrySpriteUrl(heldItem) : itemSpriteForKey(heldItem)}" class="w-10 h-10" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+            <div class="min-w-0 flex-1">
+                <p class="text-xs text-gray-400">目前裝備中</p>
+                <p class="text-sm font-bold truncate">${heldName}</p>
+            </div>
+            <button onclick="unequipItemAction('${instanceId}')" class="text-xs bg-white text-gray-500 px-2.5 py-1.5 rounded-full font-bold shrink-0">卸下</button>
+        </div>
+    ` : `<p class="text-xs text-gray-400 text-center mb-3">目前沒有裝備任何道具</p>`;
+
+    const equipSectionHtml = equipDisplayKeys.length > 0 ? `
+        <p class="text-xs text-gray-400 mb-1.5">對戰攜帶道具</p>
+        <div class="space-y-1.5 mb-3">
+            ${equipDisplayKeys.map((k, idx) => `<button onclick="equipItemAction('${instanceId}','${k}')" class="w-full bg-gray-50 hover:bg-blue-50 rounded-xl p-2 flex items-center gap-2 text-left ${heldItem === k ? 'ring-2 ring-blue-400' : ''}">
+                <img src="${itemSpriteForKey(k)}" class="w-8 h-8 shrink-0" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+                <span class="min-w-0 flex-1">
+                    <span class="block text-sm font-bold">${equipNames[idx]}<span class="text-xs text-gray-400 font-normal">　x${items[k]}</span></span>
+                    ${HELD_ITEM_EFFECT_ZH[k] ? `<span class="block text-[11px] text-gray-400 leading-snug">${HELD_ITEM_EFFECT_ZH[k]}</span>` : (TYPE_BOOST_ITEM_TO_TYPE[k] ? `<span class="block text-[11px] text-gray-400 leading-snug">攜帶後，${TYPE_NAME_ZH_STATIC?.[TYPE_BOOST_ITEM_TO_TYPE[k]] || TYPE_BOOST_ITEM_TO_TYPE[k]}屬性招式威力提升20%</span>` : '')}
+                </span>
+            </button>`).join('')}
+        </div>
+    ` : '';
+
+    const berrySectionHtml = ownedBerryKeys.length > 0 ? `
+        <p class="text-xs text-gray-400 mb-1.5">莓果(裝備後對戰中依情況自動觸發，用掉就消失)</p>
+        <div class="grid grid-cols-4 gap-2 mb-3">
+            ${ownedBerryKeys.map((k, idx) => `<button onclick="equipItemAction('${instanceId}','${k}')" title="${BERRY_EFFECT_ZH[k] || ''}" class="text-xs bg-gray-50 hover:bg-green-50 rounded-lg p-2 flex flex-col items-center gap-1 relative ${heldItem === k ? 'ring-2 ring-green-400' : ''}">
+                <span class="absolute top-0.5 right-1 text-[10px] font-black text-green-600">x${berries[k]}</span>
+                <img src="${berrySpriteUrl(k)}" class="w-8 h-8" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+                <span class="text-center leading-tight">${berryNames[idx]}</span>
+                ${BERRY_EFFECT_ZH[k] ? `<span class="block text-[10px] text-gray-400 leading-snug text-center">${BERRY_EFFECT_ZH[k]}</span>` : ''}
+            </button>`).join('')}
+        </div>
+    ` : '';
+
+    content.innerHTML = `
+        <h3 class="font-bold text-lg mb-3 text-center">裝備道具</h3>
+        ${currentHeldHtml}
+        ${equipSectionHtml}
+        ${berrySectionHtml}
+        ${equipDisplayKeys.length === 0 && ownedBerryKeys.length === 0 ? `<p class="text-sm text-gray-400 text-center py-6">目前身上沒有可以裝備的道具/莓果，去玩「猜猜看」分頁賺一些吧！</p>` : ''}
+        <button onclick="closeEquipModal(); openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm mt-1">返回</button>
+    `;
+}
+function closeEquipModal() {
+    document.getElementById('equip-modal').classList.add('hidden');
+    document.getElementById('equip-modal').classList.remove('flex');
+}
+let equipItemInFlight = false;
+async function equipItemAction(instanceId, itemKey) {
+    if (equipItemInFlight) return;
+    equipItemInFlight = true;
+    try {
+        await callWorker('pokemon_equip_item', { instanceId, itemKey });
+        showToast('裝備成功！');
+        openEquipModal(instanceId);
+    } catch (err) {
+        showToast('裝備失敗：' + err.message);
+    } finally {
+        equipItemInFlight = false;
+    }
+}
+async function unequipItemAction(instanceId) {
+    if (equipItemInFlight) return;
+    equipItemInFlight = true;
+    try {
+        await callWorker('pokemon_unequip_item', { instanceId });
+        showToast('已經卸下裝備');
+        openEquipModal(instanceId);
+    } catch (err) {
+        showToast('卸下失敗：' + err.message);
+    } finally {
+        equipItemInFlight = false;
+    }
 }
 
 // ---------- 進化 ----------
@@ -1370,7 +1603,7 @@ async function checkEvolutionEligibility(inst) {
             if (POKEMON_EVOLUTION_STONES.includes(detail.item.name)) {
                 const owned = (currentPlayerData?.items || {})[detail.item.name] || 0;
                 if (owned > 0) { canEvolve = true; requiresItemName = detail.item.name; hint = `使用「${itemZh || detail.item.name}」進化`; }
-                else { canEvolve = false; hint = `需要道具「${itemZh || detail.item.name}」才能進化(目前沒有，去玩小遊戲賺一個試試)`; }
+                else { canEvolve = false; hint = `需要道具「${itemZh || detail.item.name}」才能進化(目前沒有，去玩猜猜看賺一個試試)`; }
             } else {
                 canEvolve = false; hint = `需要道具「${itemZh || detail.item.name}」才能進化(這個功能還沒開放)`;
             }
@@ -1541,7 +1774,8 @@ async function renderIdleTab() {
     const displays = await Promise.all(placed.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
     if (myToken !== idleRenderToken) return; // 半路已經有更新的render觸發了，這次放棄、不動DOM
     list.innerHTML = placed.map((inst, idx) => `
-        <div class="bg-white rounded-xl card-shadow p-3 text-center cursor-pointer" onclick="openDetailModal('${inst.id}')">
+        <div class="bg-white rounded-xl card-shadow p-3 text-center cursor-pointer relative" onclick="openDetailModal('${inst.id}')">
+            ${heldItemBadgeHtml(inst)}
             <img src="${displays[idx].sprite}" class="w-14 h-14 mx-auto">
             <p class="text-xs font-bold truncate">${pokemonDisplayName(inst, displays[idx])}</p>
             <p class="text-[10px] leading-none">${starsHtml(inst.stars)}</p>
@@ -1567,6 +1801,11 @@ async function collectIdle() {
             showToastWithIcon(itemSpriteUrl('amulet-coin'), `收到 ${result.earned}${expMsg}！`);
         } else {
             showToast('目前還沒有可以收取的代幣/經驗值');
+        }
+        // 屬性強化道具(對應屬性寶可夢)/莓果(草屬性寶可夢)的牧場隨機掉落——見worker.js的settleIdleEarnings
+        const drops = result.drops || [];
+        if (drops.length > 0) {
+            setTimeout(() => showToastWithIcon(itemSpriteUrl('poke-ball'), `牧場的寶可夢還撿到了 ${drops.length} 個道具/莓果！`), 1200);
         }
     } catch (err) {
         showToast('收取失敗：' + err.message);
@@ -2039,15 +2278,21 @@ async function submitWildBattleStart() {
 // ---------- 對戰房間內畫面 ----------
 let currentBattleRoomId = null;
 let currentRoomIsWild = false; // submitMove要知道現在是打野生的(自己算AI招式)還是PvP(要等對方送出)
+// 這場對戰裡，已經同步過「持有道具被消耗」回真正pokemonInstances文件的instanceId，避免同一場
+// 對戰onSnapshot觸發好幾次時重複寫入——見下面的syncConsumedHeldItems
+let battleItemSyncedInstanceIds = new Set();
 function watchRoom(roomId) {
     currentBattleRoomId = roomId;
     battleShowSwitchPicker = false;
+    battleItemSyncedInstanceIds = new Set();
     document.getElementById('battle-lobby-view').classList.add('hidden');
     document.getElementById('battle-room-view').classList.remove('hidden');
     if (roomDetailUnsub) roomDetailUnsub();
     roomDetailUnsub = db.collection('pokemonBattleRooms').doc(roomId).onSnapshot(async snap => {
         if (!snap.exists) { leaveRoomView(); showToast('對方離開了房間'); return; }
-        await renderRoomView({ id: snap.id, ...snap.data() });
+        const roomData = snap.data();
+        syncConsumedHeldItems(roomData);
+        await renderRoomView({ id: snap.id, ...roomData });
     });
 }
 function leaveRoomView() {
@@ -2057,6 +2302,28 @@ function leaveRoomView() {
     lastRenderedRoom = null;
     document.getElementById('battle-lobby-view').classList.remove('hidden');
     document.getElementById('battle-room-view').classList.add('hidden');
+}
+// 對戰中如果我方寶可夢的持有道具/莓果被動觸發消耗掉了(見resolveBattleRound裡對heldItem的各種
+// 消耗邏輯)，battleState.teams/bench裡那份「這場對戰用的暫時副本」的heldItem會變成null，但這
+// 不會自動同步回真正的pokemonInstances文件——這裡負責比對「我自己」的寶可夢在對戰中的heldItem
+// 是不是從有變沒有，有的話代表道具真的被消耗了，直接寫回真正的instance文件。heldItem本來就是
+// firestore.rules開放owner直接寫的欄位(不影響代幣經濟)，不用繞worker。只處理我自己的寶可夢，
+// 對方(PvP對手或野生寶可夢)的道具狀態不會被這裡動到
+function syncConsumedHeldItems(roomData) {
+    const myUid = auth.currentUser && auth.currentUser.uid;
+    if (!myUid || !roomData || !roomData.battleState) return;
+    const active = roomData.battleState.teams ? roomData.battleState.teams[myUid] : null;
+    const bench = (roomData.battleState.bench && roomData.battleState.bench[myUid]) || [];
+    const members = [active, ...bench].filter(Boolean);
+    members.forEach(m => {
+        if (!m.instanceId || m.heldItem) return; // 對戰裡目前還有帶著，不用同步
+        if (battleItemSyncedInstanceIds.has(m.instanceId)) return;
+        const realInst = currentInstances.find(i => i.id === m.instanceId);
+        if (realInst && realInst.heldItem) {
+            battleItemSyncedInstanceIds.add(m.instanceId);
+            db.collection('pokemonInstances').doc(m.instanceId).update({ heldItem: null }).catch(() => {});
+        }
+    });
 }
 async function forfeitRoom(roomId) {
     try { await db.collection('pokemonBattleRooms').doc(roomId).delete(); } catch (err) {}
@@ -2646,6 +2913,7 @@ function buildTeamDataFromInstData(instanceId, inst, nickname) {
         spd: Math.floor(statAtLevel(inst.baseSpd, inst.level, false) * mult),
         moves: inst.moves && inst.moves.length ? inst.moves : ['tackle'],
         isShiny: !!inst.isShiny,
+        heldItem: inst.heldItem || null, // 攜帶道具/莓果，效果見resolveBattleRound裡的持有道具邏輯區塊
     };
 }
 
@@ -3256,8 +3524,26 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (moveA.priority !== moveB.priority) {
             order = moveA.priority > moveB.priority ? [uidA, uidB] : [uidB, uidA];
         } else {
-            const spdA = effectiveSpeed(uidA), spdB = effectiveSpeed(uidB);
-            order = spdA === spdB ? (Math.random() < 0.5 ? [uidA, uidB] : [uidB, uidA]) : (spdA > spdB ? [uidA, uidB] : [uidB, uidA]);
+            // ---- 持有道具對出招順序的影響：先制之爪(quick-claw，20%機率無視速度搶先)、
+            // 後攻尾巴(lagging-tail，同優先度必定最後出招)——這兩個只在「優先度相同」時才有意義，
+            // 蓋掉一般速度比較的結果。先制之爪的判定放最前面，兩邊都觸發或都沒觸發才看後攻尾巴，
+            // 都沒有這兩種道具的話才照原本的速度比較
+            const quickA = state[uidA].heldItem === 'quick-claw' && rollChance(20);
+            const quickB = state[uidB].heldItem === 'quick-claw' && rollChance(20);
+            if (quickA && !quickB) { order = [uidA, uidB]; log.push(`${nameOf[uidA] || state[uidA].nickname} 的先制之爪發動了！`); }
+            else if (quickB && !quickA) { order = [uidB, uidA]; log.push(`${nameOf[uidB] || state[uidB].nickname} 的先制之爪發動了！`); }
+            else {
+                const laggingA = state[uidA].heldItem === 'lagging-tail';
+                const laggingB = state[uidB].heldItem === 'lagging-tail';
+                if (laggingA && !laggingB) {
+                    order = [uidB, uidA];
+                } else if (laggingB && !laggingA) {
+                    order = [uidA, uidB];
+                } else {
+                    const spdA = effectiveSpeed(uidA), spdB = effectiveSpeed(uidB);
+                    order = spdA === spdB ? (Math.random() < 0.5 ? [uidA, uidB] : [uidB, uidA]) : (spdA > spdB ? [uidA, uidB] : [uidB, uidA]);
+                }
+            }
         }
     } else {
         order = moveUids.slice(); // 這回合0或1個人真的出招(另一方在換寶可夢)，不用排序
@@ -3387,7 +3673,15 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // ---- PP扣除：前面的異常狀態檢查都通過了，這一下才算「真的要出招」，開始扣PP。
         // 蓄力招式的「放」那一回合不再扣一次(蓄力那一回合已經扣過了)，掙扎無視PP ----
         const alreadyCharging = atk.chargingMove === move.name;
-        if (!alreadyCharging && !move.isStruggle) consumePp(atk, move);
+        if (!alreadyCharging && !move.isStruggle) {
+            consumePp(atk, move);
+            // 蘋野果(leppa)：某一招PP用到0的時候自動吃掉，補回10點PP(一次性)
+            if (atk.heldItem === 'leppa' && getMovePp(atk, move) <= 0) {
+                atk.movePp[move.name] = Math.min(move.pp || 10, 10);
+                atk.heldItem = null;
+                log.push(`${atkName} 的蘋野果發動了，${move.nameZh}的PP恢復了！`);
+            }
+        }
         atk.lastMoveUsed = move.name; // 折磨/定身法/再來一次都要知道「上一個真正嘗試出招」是什麼
 
         // ---- 雙回合蓄力招式：第一回合只蓄力、不會真的打到對手；天氣符合的話可以省略蓄力
@@ -3452,7 +3746,14 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             // 不管原本閃避堆了幾階，命中判定都不會再被閃避率影響
             const defEvaStage = def.identified ? 0 : (def.stages.eva || 0);
             const netStage = Math.max(-6, Math.min(6, (atk.stages.acc || 0) - defEvaStage));
-            const chance = Math.max(0, Math.min(100, move.accuracy * accStageMult(netStage)));
+            let chance = Math.max(0, Math.min(100, move.accuracy * accStageMult(netStage)));
+            // 持有道具對命中率的影響：廣角鏡(wide-lens，一律+10%)、放大鏡(zoom-lens，後攻時額外
+            // +20%，要等order算完才知道「這回合誰後攻」，所以這裡直接查order)、光粉(bright-powder，
+            // 讓對手的命中率降10%，算在「防禦方持有」)。三個可以疊加，全部用乘的
+            if (atk.heldItem === 'wide-lens') chance *= 1.1;
+            if (atk.heldItem === 'zoom-lens' && order.indexOf(attackerUid) > order.indexOf(defenderUid)) chance *= 1.2;
+            if (def.heldItem === 'bright-powder') chance *= 0.9;
+            chance = Math.max(0, Math.min(100, chance));
             hit = rollChance(chance);
         }
         if (!hit) {
@@ -3489,18 +3790,31 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // (正統規則：替身除了擋傷害，也會擋大部分「直接對敵人生效」的變化招式效果，音波系招式
         // 跟亡語之歌是例外，亡語之歌在下面自己的區塊會直接無視這個旗標)
         let defSubActiveBeforeHit = def.substituteHp > 0 && !SOUND_MOVES.has(move.name);
+        // 氣勢披帶(focus-sash)：記錄「這下攻擊之前，防禦方是不是滿血」——只有滿血狀態下被打到
+        // 會死的攻擊，才會觸發保留1點HP生還(一次性)。放在這裡統一算，OHKO/固定傷害/一般傷害
+        // 三種分支都要用到
+        const defWasFullHp = def.currentHp === def.maxHp;
+        function tryFocusSash() {
+            if (defWasFullHp && def.currentHp <= 0 && def.heldItem === 'focus-sash') {
+                def.currentHp = 1;
+                def.heldItem = null;
+                log.push(`${defName} 的氣勢披帶發動了，驚險地保留了1點HP！`);
+                return true;
+            }
+            return false;
+        }
 
         if (move.category === 'ohko' || OHKO_MOVES.has(move.name)) {
             totalDamage = def.currentHp;
             hitCount = 1;
             def.currentHp = 0;
-            fainted = true;
+            fainted = !tryFocusSash();
             log.push(`${atkName} 使出 ${move.nameZh}，一擊必殺！`);
         } else if (FIXED_DAMAGE_MOVES[move.name]) {
             totalDamage = Math.max(0, Math.min(def.currentHp, FIXED_DAMAGE_MOVES[move.name](atk, def)));
             hitCount = totalDamage > 0 ? 1 : 0;
             def.currentHp = Math.max(0, def.currentHp - totalDamage);
-            fainted = def.currentHp <= 0;
+            fainted = def.currentHp <= 0 && !tryFocusSash();
             if (totalDamage > 0) log.push(`${atkName} 使出 ${move.nameZh}，造成 ${totalDamage} 點傷害！`);
             else log.push(`${atkName} 使出 ${move.nameZh}，但是沒有效果...`);
         } else if (WEATHER_MOVES[move.name]) {
@@ -3520,16 +3834,38 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (weatherState.type === 'sandstorm' && move.damageClass === 'special' && displayOf[defenderUid].types.includes('rock')) {
                 defStat *= 1.5;
             }
+            // 持有道具對防禦的影響：突擊背心(assault-vest)跟進化奇石(eviolite)都是防禦+50%——
+            // 這個簡化版引擎沒有拆物理/特殊防禦，兩個道具在這裡效果一樣(進化奇石正版只對「還能
+            // 繼續進化」的寶可夢生效，這裡簡化成不檢查進化階段，裝了就有加成)
+            if (def.heldItem === 'assault-vest' || def.heldItem === 'eviolite') defStat *= 1.5;
             // (defSubActiveBeforeHit已經在上面統一算過了，這裡不用再算一次)
             const wDmgMult = weatherDamageMult(weatherState.type, move.type);
             const tDmgMult = terrainDamageMult(terrainState.type, move.type, isGrounded(displayOf[attackerUid]), isGrounded(displayOf[defenderUid]));
+            // 持有道具對傷害的影響：屬性強化道具(裝備跟招式屬性相符+20%)、生命寶珠(life-orb，
+            // 不分屬性一律+30%，但會反傷，見下面)
+            const typeBoostKey = POKEMON_TYPE_BOOST_ITEM[move.type];
+            const itemDmgMult = (atk.heldItem && atk.heldItem === typeBoostKey ? 1.2 : 1) * (atk.heldItem === 'life-orb' ? 1.3 : 1);
+            // 焦點鏡(scope-lens)：會心一擊機率+1階
+            const effectiveCritRate = (move.critRate || 0) + (atk.heldItem === 'scope-lens' ? 1 : 0);
+            // 屬性抗性莓果：被剋到(或chilan抗一般屬性，不分剋不剋)的那一下傷害減半，一次性——
+            // 只在多段攻擊的「第一次」符合條件的那下觸發，觸發後道具就消失了，後面的攻次不會再減
+            let resistBerryConsumed = false;
             for (let i = 0; i < hits; i++) {
                 if (def.currentHp <= 0) break;
                 if (defSubActiveBeforeHit && def.substituteHp <= 0) break; // 替身已經被打破了，連續攻擊剩下的次數不會再打到本體
-                const isCrit = rollChance(critChance(move.critRate) * 100);
+                const isCrit = rollChance(critChance(effectiveCritRate) * 100);
                 if (isCrit) crit = true;
                 let dmg = computeDamage(atk.level, atkStat, defStat, move.power, eff, isStab, isCrit ? 1.5 : 1);
-                dmg = Math.max(1, Math.floor(dmg * wDmgMult * tDmgMult));
+                dmg = Math.max(1, Math.floor(dmg * wDmgMult * tDmgMult * itemDmgMult));
+                if (!resistBerryConsumed) {
+                    const resistType = TYPE_RESIST_BERRY_TO_TYPE[def.heldItem];
+                    if (resistType && resistType === move.type && (eff > 1 || def.heldItem === 'chilan')) {
+                        dmg = Math.max(1, Math.floor(dmg / 2));
+                        resistBerryConsumed = true;
+                        log.push(`${defName} 的${def.heldItem === 'chilan' ? '燈籠果' : '抗性莓果'}發動了，傷害減半！`);
+                        def.heldItem = null;
+                    }
+                }
                 if (defSubActiveBeforeHit) {
                     // 用defSubActiveBeforeHit(而不是即時的def.substituteHp>0)判斷要不要打替身——
                     // 音波系招式即使替身還在，也一律直接打本體，不會被替身吸收
@@ -3542,12 +3878,34 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 totalDamage += dmg;
                 hitCount++;
             }
-            fainted = def.currentHp <= 0; // 替身在的話本體血量沒變，不會倒下
+            fainted = def.currentHp <= 0 && !tryFocusSash(); // 替身在的話本體血量沒變，不會倒下
             const effTxt = eff > 1 ? '，效果絕佳！' : eff < 1 ? '，效果不理想...' : '';
             const subTxt = defSubActiveBeforeHit ? '(打在替身上)' : '';
             if (hitCount > 1) log.push(`${atkName} 使出 ${move.nameZh}，打中了 ${hitCount} 次，總共造成 ${totalDamage} 點傷害${subTxt}${effTxt}${crit ? '(會心一擊！)' : ''}`);
             else log.push(`${atkName} 使出 ${move.nameZh}，造成 ${totalDamage} 點傷害${subTxt}${effTxt}${crit ? '，會心一擊！' : ''}`);
             if (subBroke) log.push(`${defName} 的替身消失了！`);
+            // 生命寶珠(life-orb)反傷：只要有造成傷害就扣攻擊方1/10最大HP，跟招式本身有沒有命中
+            // /有沒有效果無關(這裡totalDamage>0已經隱含命中且有效果)
+            if (totalDamage > 0 && atk.heldItem === 'life-orb') {
+                const recoil = Math.max(1, Math.floor(atk.maxHp / 10));
+                atk.currentHp = Math.max(0, atk.currentHp - recoil);
+                log.push(`${atkName} 因為生命寶珠，反彈了 ${recoil} 點傷害！`);
+                if (atk.currentHp <= 0) { log.push(`${atkName} 倒下了！`); handleFaint(attackerUid); }
+            }
+            // 凸凸頭盔(rocky-helmet)：物理招式打中(不含替身)時，攻擊方被反彈1/6最大HP
+            if (totalDamage > 0 && !defSubActiveBeforeHit && move.damageClass === 'physical' && def.heldItem === 'rocky-helmet' && atk.currentHp > 0) {
+                const helmetDmg = Math.max(1, Math.floor(atk.maxHp / 6));
+                atk.currentHp = Math.max(0, atk.currentHp - helmetDmg);
+                log.push(`${atkName} 被 ${defName} 的凸凸頭盔反彈了 ${helmetDmg} 點傷害！`);
+                if (atk.currentHp <= 0) { log.push(`${atkName} 倒下了！`); handleFaint(attackerUid); }
+            }
+            // 貝殼之鈴(shell-bell)：攻擊命中造成傷害時，回復該傷害1/8的HP(受治癒封印影響)
+            if (totalDamage > 0 && atk.heldItem === 'shell-bell' && atk.currentHp > 0 && !(atk.healBlockTurns > 0)) {
+                const shellHeal = Math.max(1, Math.floor(totalDamage / 8));
+                const before = atk.currentHp;
+                atk.currentHp = Math.min(atk.maxHp, atk.currentHp + shellHeal);
+                if (atk.currentHp > before) log.push(`${atkName} 的貝殼之鈴發動了，回復了 ${atk.currentHp - before} 點HP！`);
+            }
         } else {
             // 招式本身沒有威力(純變化/狀態招式)，傷害留在0——底下的回血/異常狀態/能力等級
             // 區塊才是這種招式真正的效果
@@ -3560,6 +3918,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         ev.hitCount = hitCount;
         ev.crit = crit;
         ev.defenderHpAfter = def.currentHp;
+        ev.attackerHpAfter = atk.currentHp; // 讓生命寶珠反傷/凸凸頭盔反彈/貝殼之鈴回血都能即時反映在攻擊方HP條動畫上
         ev.fainted = fainted;
         ev.hitSubstitute = defSubActiveBeforeHit;
         ev.subBroken = subBroke;
@@ -3629,6 +3988,12 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                         ailmentTarget.confusedTurns = 1 + Math.floor(Math.random() * 4);
                         ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: 'confusion', statusNameZh: STATUS_NAME_ZH.confusion };
                         log.push(`${ailmentTarget === atk ? atkName : defName} 陷入混亂了！`);
+                        // 柿仔果(persim)/奇怪果(lum)：中了混亂立刻自動吃掉解除(一次性)
+                        if (ailmentTarget.heldItem === 'persim' || ailmentTarget.heldItem === 'lum') {
+                            ailmentTarget.confusedTurns = 0;
+                            log.push(`${ailmentTarget === atk ? atkName : defName} 自動吃下了手上的莓果，解除了混亂！`);
+                            ailmentTarget.heldItem = null;
+                        }
                     }
                 } else if (move.ailment === 'ingrain') {
                     if (!ailmentTarget.rooted) {
@@ -3662,6 +4027,16 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                         ailmentTarget.toxicCounter = isToxic ? 1 : 0;
                         ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: move.ailment, statusNameZh: STATUS_NAME_ZH[move.ailment] || move.ailment, toxic: isToxic };
                         log.push(`${ailmentTarget === atk ? atkName : defName} ${isToxic ? '被劇毒侵蝕了！' : `陷入${STATUS_NAME_ZH[move.ailment] || move.ailment}狀態了！`}`);
+                        // 對應的解異常莓果(cheri解麻痺/chesto解睡眠/pecha解中毒/rawst解燒傷/aspear解冰凍)
+                        // 或奇怪果(lum，什麼異常狀態都能解)：中了異常狀態立刻自動吃掉解除(一次性)
+                        const cureBerry = STATUS_CURE_BERRY[move.ailment];
+                        if (ailmentTarget.heldItem === cureBerry || ailmentTarget.heldItem === 'lum') {
+                            ailmentTarget.status = null;
+                            ailmentTarget.statusTurns = 0;
+                            ailmentTarget.toxicCounter = 0;
+                            log.push(`${ailmentTarget === atk ? atkName : defName} 自動吃下了手上的莓果，解除了${isToxic ? '劇毒' : (STATUS_NAME_ZH[move.ailment] || move.ailment)}！`);
+                            ailmentTarget.heldItem = null;
+                        }
                     }
                 }
             }
@@ -3672,7 +4047,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 同上面常數表註解)，而且(亡語之歌除外)一樣會被替身擋下來 ----
         if (!defSubActiveBeforeHit) {
             if (TAUNT_MOVES.has(move.name)) {
-                if (!def.tauntTurns) {
+                if (def.heldItem === 'mental-herb') {
+                    log.push(`${defName} 的心靈香草發動了，抵擋了挑釁！`);
+                    def.heldItem = null;
+                } else if (!def.tauntTurns) {
                     def.tauntTurns = 3;
                     log.push(`${defName} 被挑釁了，接下來只能使出攻擊招式！`);
                 }
@@ -3682,7 +4060,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     log.push(`${defName} 被折磨了，沒辦法連續使用同一招式！`);
                 }
             } else if (DISABLE_MOVES.has(move.name)) {
-                if (!def.disableTurns && def.lastMoveUsed && def.lastMoveUsed !== 'struggle') {
+                if (def.heldItem === 'mental-herb') {
+                    log.push(`${defName} 的心靈香草發動了，抵擋了定身法！`);
+                    def.heldItem = null;
+                } else if (!def.disableTurns && def.lastMoveUsed && def.lastMoveUsed !== 'struggle') {
                     def.disabledMove = def.lastMoveUsed;
                     def.disableTurns = 4;
                     log.push(`${defName} 的招式被定身法封印了！`);
@@ -3690,7 +4071,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     log.push(`${atkName} 的定身法失敗了！`);
                 }
             } else if (ENCORE_MOVES.has(move.name)) {
-                if (!def.encoreTurns && def.lastMoveUsed && def.lastMoveUsed !== 'struggle' && getMovePp(def, { name: def.lastMoveUsed }) > 0) {
+                if (def.heldItem === 'mental-herb') {
+                    log.push(`${defName} 的心靈香草發動了，抵擋了再來一次！`);
+                    def.heldItem = null;
+                } else if (!def.encoreTurns && def.lastMoveUsed && def.lastMoveUsed !== 'struggle' && getMovePp(def, { name: def.lastMoveUsed }) > 0) {
                     def.encoreMove = def.lastMoveUsed;
                     def.encoreTurns = 3;
                     log.push(`${defName} 被要求再來一次！`);
@@ -3721,7 +4105,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     log.push(`${defName} 被道具封印了！`);
                 }
             } else if (HEAL_BLOCK_MOVES.has(move.name)) {
-                if (!def.healBlockTurns) {
+                if (def.heldItem === 'mental-herb') {
+                    log.push(`${defName} 的心靈香草發動了，抵擋了治癒封印！`);
+                    def.heldItem = null;
+                } else if (!def.healBlockTurns) {
                     def.healBlockTurns = 5;
                     log.push(`${defName} 被治癒封印了，沒辦法回復HP！`);
                 }
@@ -3778,9 +4165,12 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         }
 
         // ---- 畏縮：只有「這回合對方還沒出招」才有意義(先攻方讓後攻方這回合直接動不了)，
-        // 被替身擋下來時不會畏縮 ----
-        if (move.flinchChance > 0 && def.currentHp > 0 && !defSubActiveBeforeHit && order.indexOf(defenderUid) > order.indexOf(attackerUid)) {
-            if (rollChance(move.flinchChance)) def.flinched = true;
+        // 被替身擋下來時不會畏縮。王者之證(kings-rock)：攻擊命中且有造成傷害時，額外+10%畏縮機率
+        // (跟招式本身的畏縮機率相加，不是覆蓋) ----
+        const kingsRockBonus = (totalDamage > 0 && atk.heldItem === 'kings-rock') ? 10 : 0;
+        const effectiveFlinchChance = (move.flinchChance || 0) + kingsRockBonus;
+        if (effectiveFlinchChance > 0 && def.currentHp > 0 && !defSubActiveBeforeHit && order.indexOf(defenderUid) > order.indexOf(attackerUid)) {
+            if (rollChance(effectiveFlinchChance)) def.flinched = true;
         }
 
         events.push(ev);
@@ -3873,6 +4263,40 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                         events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: actual, hpAfter: t.currentHp });
                     }
                 }
+            }
+            if (t.currentHp <= 0) continue;
+
+            // ---- 持有道具/莓果的回合結束被動效果：剩飯(leftovers，每回合回1/16)、殘血系莓果
+            // (oran/sitrus/figy家族回血，liechi/petaya殘血提升攻擊)——統一放在這裡結算(而不是
+            // 傷害發生的當下)，代表這些效果一回合只會觸發一次，用「這回合結束時的HP」判斷 ----
+            if (t.heldItem === 'leftovers' && !(t.healBlockTurns > 0)) {
+                const heal = Math.max(1, Math.floor(t.maxHp / 16));
+                const before = t.currentHp;
+                t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                if (t.currentHp > before) {
+                    log.push(`${nameOf[uid]} 的剩飯發動了，回復了 ${t.currentHp - before} 點HP！`);
+                    events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                }
+            }
+            if (t.heldItem && !(t.healBlockTurns > 0) && (t.heldItem === 'oran' || t.heldItem === 'sitrus') && t.currentHp <= t.maxHp * 0.5) {
+                const heal = t.heldItem === 'oran' ? 10 : Math.round(t.maxHp * 0.25);
+                const before = t.currentHp;
+                t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                log.push(`${nameOf[uid]} 自動吃下了手上的莓果，回復了 ${t.currentHp - before} 點HP！`);
+                events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                t.heldItem = null;
+            } else if (t.heldItem && ['figy', 'wiki', 'mago', 'aguav', 'iapapa'].includes(t.heldItem) && !(t.healBlockTurns > 0) && t.currentHp <= t.maxHp * 0.25) {
+                const heal = Math.max(1, Math.round(t.maxHp / 8));
+                const before = t.currentHp;
+                t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                log.push(`${nameOf[uid]} 自動吃下了手上的莓果，回復了 ${t.currentHp - before} 點HP！`);
+                events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                t.heldItem = null;
+            } else if (t.heldItem && (t.heldItem === 'liechi' || t.heldItem === 'petaya') && t.currentHp <= t.maxHp * 0.25) {
+                const before = t.stages.atk || 0;
+                t.stages.atk = Math.min(6, before + 1);
+                if (t.stages.atk !== before) log.push(`${nameOf[uid]} 自動吃下了手上的莓果，攻擊上升了！`);
+                t.heldItem = null;
             }
             if (t.currentHp <= 0) continue;
 
@@ -4007,6 +4431,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
 // ============================================================
 let guessState = null;
 const GUESS_TOTAL_ROUNDS = 10;
+const GUESS_GAME_COST = 50; // 玩一次猜猜看要扣的寶可幣，worker端(handlePokemonGuessStart)才是真正扣款的地方，這裡只是給畫面顯示用
 
 function renderGuessStartScreen() {
     // 如果已經在玩到一半(切分頁再切回來)，直接接著顯示目前這一題，不要整個重新開局
@@ -4022,8 +4447,9 @@ function renderGuessStartScreen() {
             <div class="p-6 text-center">
                 <p class="text-sm text-gray-500 mb-4 leading-relaxed">共10題，每題4選1。答對的題數越多，結束後領到的道具越多：<br>
                     1~4題 → 1個道具・5~7題 → 2個道具・8~10題(全對) → 3個道具<br>
-                    道具可能是經驗糖果、技能學習器、各種莓果，運氣好還會拿到稀有的進化石！</p>
-                <button onclick="startGuessGame()" id="guess-start-btn" class="bg-red-500 text-white px-8 py-3 rounded-full font-bold">開始遊戲</button>
+                    道具可能是經驗糖果、招式學習器、各種莓果、對戰攜帶道具，運氣好還會拿到稀有的進化石或神奇糖果！</p>
+                <p class="text-xs text-gray-400 mb-3 inline-flex items-center gap-1"><img src="${itemSpriteUrl('amulet-coin')}" class="w-4 h-4" style="image-rendering:pixelated">每玩一次要花費 ${GUESS_GAME_COST} 寶可幣</p>
+                <button onclick="startGuessGame()" id="guess-start-btn" class="bg-red-500 text-white px-8 py-3 rounded-full font-bold">開始遊戲(${GUESS_GAME_COST}💰)</button>
             </div>
         </div>
     `;
@@ -4034,6 +4460,7 @@ async function startGuessGame() {
     if (btn) { btn.disabled = true; btn.textContent = '出題中...'; }
     try {
         const result = await callWorker('pokemon_guess_start');
+        if (typeof result.coins === 'number') showToastWithIcon(itemSpriteUrl('amulet-coin'), `花費${GUESS_GAME_COST}寶可幣，開始遊戲！`);
         guessState = {
             sessionId: result.sessionId,
             rounds: result.rounds,
