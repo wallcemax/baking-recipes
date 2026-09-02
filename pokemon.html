@@ -103,8 +103,12 @@
     <!-- ===== 對戰 ===== -->
     <div id="tab-battle" class="tab-panel hidden">
         <div id="battle-lobby-view">
+            <div class="bg-white rounded-2xl card-shadow p-4 mb-4 text-center">
+                <p class="text-sm text-gray-500 mb-3">練等最快的方式：找野生寶可夢單挑！不用等朋友，隨時可以打，贏了一樣有代幣跟經驗值獎勵</p>
+                <button onclick="openWildBattleModal()" class="bg-green-600 text-white px-5 py-2 rounded-full font-bold text-sm">🐾 挑戰野生寶可夢</button>
+            </div>
             <div class="flex gap-2 mb-4">
-                <button onclick="openCreateRoomModal()" class="bg-red-500 text-white px-4 py-2 rounded-xl font-bold text-sm">➕ 開一個房間</button>
+                <button onclick="openCreateRoomModal()" class="bg-red-500 text-white px-4 py-2 rounded-xl font-bold text-sm">➕ 開一個房間(跟朋友連線對戰)</button>
             </div>
             <h3 class="font-bold mb-2">目前開放的房間</h3>
             <div id="room-list" class="space-y-2"></div>
@@ -780,10 +784,10 @@ async function cancelRoom(roomId) {
     await db.collection('pokemonBattleRooms').doc(roomId).delete();
 }
 
-// roomModalMode決定「建立房間」彈窗這次是拿來開新房間、還是加入別人的房間——這兩個情境
-// 共用同一個彈窗UI(選寶可夢的介面一模一樣)，用一個狀態變數切換行為，比動態改onclick屬性
-// 穩定：改onclick字串的寫法如果使用者中途按取消，下次打開彈窗容易殘留上一次沒清乾淨的狀態
-let roomModalMode = 'create'; // 'create' | 'join'
+// roomModalMode決定「建立房間」彈窗這次是拿來開新房間、加入別人的房間、還是出發打野生寶可夢——
+// 這三種情境共用同一個彈窗UI(選寶可夢的介面一模一樣)，用一個狀態變數切換行為，比動態改onclick
+// 屬性穩定：改onclick字串的寫法如果使用者中途按取消，下次打開彈窗容易殘留上一次沒清乾淨的狀態
+let roomModalMode = 'create'; // 'create' | 'join' | 'wild'
 let pendingRoomInstanceId = null;
 let pendingJoinRoomId = null;
 function openCreateRoomModal() {
@@ -798,12 +802,24 @@ function openCreateRoomModal() {
     document.getElementById('create-room-modal').classList.remove('hidden');
     document.getElementById('create-room-modal').classList.add('flex');
 }
+function openWildBattleModal() {
+    const party = currentInstances.filter(i => i.inParty);
+    if (party.length === 0) { showToast('要先在「我的寶可夢」把至少一隻加入隊伍才能對戰'); return; }
+    roomModalMode = 'wild';
+    pendingRoomInstanceId = null;
+    document.getElementById('create-room-name').classList.add('hidden');
+    document.getElementById('create-room-submit-btn').textContent = '出發挑戰！';
+    renderPartyPicker('create-room-party-picker', party, (id) => { pendingRoomInstanceId = id; });
+    document.getElementById('create-room-modal').classList.remove('hidden');
+    document.getElementById('create-room-modal').classList.add('flex');
+}
 function closeCreateRoomModal() {
     document.getElementById('create-room-modal').classList.add('hidden');
     document.getElementById('create-room-modal').classList.remove('flex');
 }
 async function submitRoomModal() {
     if (roomModalMode === 'join') await submitJoinRoom();
+    else if (roomModalMode === 'wild') await submitWildBattleStart();
     else await submitCreateRoom();
 }
 async function renderPartyPicker(containerId, party, onPick) {
@@ -884,8 +900,102 @@ async function submitJoinRoom() {
     }
 }
 
+// ---------- 挑戰野生寶可夢(練等用，單機不需要等對手) ----------
+// 野生對戰刻意重複使用pokemonBattleRooms這個集合、跟pokemonBattleRooms一樣的畫面渲染/出招/
+// 結算邏輯，只是memberUids只有自己一個人、對手那一側用固定的'wild'字串當作key(不是真的uid)，
+// 而且建立的時候status直接是'battling'(不用像跟朋友對戰那樣先等對方加入)。這樣贏了以後
+// 領獎勵(pokemon_battle_report_result)可以完全沿用，不用另外寫一套Worker動作
+async function rollWildOpponent(playerLevel) {
+    // 難度跟著玩家帶去的這隻寶可夢等級走，上下浮動3級，等級太低會被夾到至少1級
+    const targetLevel = Math.max(1, playerLevel + Math.floor(Math.random() * 7) - 3);
+    let speciesId = null, speciesData = null;
+    // 野生對戰不會遇到神獸/幻獸(那些留給扭蛋才有意義)，最多重抽40次找一隻普通的
+    for (let i = 0; i < 40; i++) {
+        const candidateId = 1 + Math.floor(Math.random() * 1025);
+        const res = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${candidateId}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data.is_legendary || data.is_mythical) continue;
+        speciesId = candidateId;
+        speciesData = data;
+        break;
+    }
+    if (!speciesId) throw new Error('找不到野生寶可夢，再試一次');
+    const pokemonRes = await fetch(`https://pokeapi.co/api/v2/pokemon/${speciesId}`);
+    const pokemonData = await pokemonRes.json();
+    const baseStats = {};
+    (pokemonData.stats || []).forEach(s => { baseStats[s.stat.name] = s.base_stat; });
+    const nameZh = extractZhHantNameClient(speciesData.names, pokemonData.name);
+    // 招式挑「這個等級應該已經學過的招式裡，學習等級最高的4招」，比單純挑最前面4招更符合
+    // 這隻野生寶可夢實際的等級強度
+    const levelMoves = (pokemonData.moves || [])
+        .map(m => {
+            const detail = (m.version_group_details || []).find(d => d.move_learn_method?.name === 'level-up');
+            return detail ? { name: m.move.name, level: detail.level_learned_at } : null;
+        })
+        .filter(Boolean)
+        .filter(m => m.level <= targetLevel)
+        .sort((a, b) => b.level - a.level);
+    const moves = [];
+    for (const mv of levelMoves) {
+        if (!moves.includes(mv.name)) moves.push(mv.name);
+        if (moves.length >= 4) break;
+    }
+    if (moves.length === 0) moves.push('tackle');
+    const maxHp = statAtLevel(baseStats.hp || 45, targetLevel, true);
+    return {
+        speciesId,
+        nickname: `野生的${nameZh}`,
+        level: targetLevel,
+        maxHp,
+        currentHp: maxHp,
+        atk: statAtLevel(baseStats.attack || 45, targetLevel, false),
+        def: statAtLevel(baseStats.defense || 45, targetLevel, false),
+        spd: statAtLevel(baseStats.speed || 45, targetLevel, false),
+        moves,
+    };
+}
+async function submitWildBattleStart() {
+    if (!pendingRoomInstanceId) { showToast('先選一隻寶可夢'); return; }
+    const inst = currentInstances.find(i => i.id === pendingRoomInstanceId);
+    if (!inst) return;
+    closeCreateRoomModal();
+    showToast('野生寶可夢出現了...');
+    try {
+        const wildTeam = await rollWildOpponent(inst.level);
+        const myDisplay = await fetchSpeciesDisplay(inst.speciesId);
+        const myUid = auth.currentUser.uid;
+        const myTeam = {
+            instanceId: inst.id,
+            speciesId: inst.speciesId,
+            nickname: pokemonDisplayName(inst, myDisplay),
+            level: inst.level,
+            maxHp: statAtLevel(inst.baseHp, inst.level, true),
+            currentHp: statAtLevel(inst.baseHp, inst.level, true),
+            atk: statAtLevel(inst.baseAtk, inst.level, false),
+            def: statAtLevel(inst.baseDef, inst.level, false),
+            spd: statAtLevel(inst.baseSpd, inst.level, false),
+            moves: inst.moves && inst.moves.length ? inst.moves : ['tackle'],
+        };
+        const roomRef = db.collection('pokemonBattleRooms').doc();
+        await roomRef.set({
+            hostUid: myUid,
+            memberUids: [myUid],
+            isWild: true,
+            status: 'battling',
+            battleState: { teams: { [myUid]: myTeam, wild: wildTeam }, round: 1, log: [] },
+            pendingMoves: {},
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        watchRoom(roomRef.id);
+    } catch (err) {
+        showToast('遇到野生寶可夢失敗：' + err.message);
+    }
+}
+
 // ---------- 對戰房間內畫面 ----------
 let currentBattleRoomId = null;
+let currentRoomIsWild = false; // submitMove要知道現在是打野生的(自己算AI招式)還是PvP(要等對方送出)
 function watchRoom(roomId) {
     currentBattleRoomId = roomId;
     document.getElementById('battle-lobby-view').classList.add('hidden');
@@ -910,6 +1020,7 @@ async function forfeitRoom(roomId) {
 async function renderRoomView(room) {
     const container = document.getElementById('battle-room-view');
     const myUid = auth.currentUser.uid;
+    currentRoomIsWild = !!room.isWild;
     if (room.status === 'waiting') {
         container.innerHTML = `<div class="bg-white rounded-2xl card-shadow p-8 text-center">
             <p class="text-4xl mb-3">⏳</p>
@@ -926,7 +1037,7 @@ async function renderRoomView(room) {
     }
     if (!room.battleState) { container.innerHTML = `<p class="text-center text-gray-400 py-10">載入中...</p>`; return; }
 
-    const opponentUid = room.memberUids.find(u => u !== myUid);
+    const opponentUid = room.isWild ? 'wild' : room.memberUids.find(u => u !== myUid);
     const myTeam = room.battleState.teams[myUid];
     const oppTeam = room.battleState.teams[opponentUid];
     const myDisplay = await fetchSpeciesDisplay(myTeam.speciesId);
@@ -1043,6 +1154,7 @@ function computeDamage(attackerLevel, attackerAtk, defenderDef, power, typeEff, 
 }
 
 async function submitMove(moveName) {
+    if (currentRoomIsWild) return submitWildMove(moveName);
     const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
     const myUid = auth.currentUser.uid;
     let roomDataAfter = null;
@@ -1065,6 +1177,32 @@ async function submitMove(moveName) {
     if (roomDataAfter.pendingMoves[opponentUid]) {
         await resolveBattleRound(roomRef, roomDataAfter, myUid, opponentUid);
     }
+}
+
+// 野生對戰的AI很單純：從牠的招式裡隨機選一個，不用什麼策略判斷——這是休閒練等用的功能，
+// 刻意不做得太刁鑽。跟PvP的submitMove不一樣的地方：不用等對方送出招式(AI「送出」是
+// 這裡當場決定的)，把雙方的招式一次寫進pendingMoves後，直接呼叫resolveBattleRound結算，
+// 沿用一模一樣的傷害計算/回合結算邏輯
+async function submitWildMove(moveName) {
+    const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
+    const myUid = auth.currentUser.uid;
+    let roomDataAfter = null;
+    try {
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(roomRef);
+            const data = snap.data();
+            if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
+            const wildMoves = (data.battleState.teams.wild && data.battleState.teams.wild.moves) || ['tackle'];
+            const aiMoveName = wildMoves[Math.floor(Math.random() * wildMoves.length)];
+            const pending = { [myUid]: moveName, wild: aiMoveName };
+            tx.update(roomRef, { pendingMoves: pending });
+            roomDataAfter = { ...data, pendingMoves: pending };
+        });
+    } catch (err) {
+        showToast(err.message);
+        return;
+    }
+    await resolveBattleRound(roomRef, roomDataAfter, myUid, 'wild');
 }
 
 async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
