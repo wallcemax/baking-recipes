@@ -109,6 +109,7 @@
             <div id="coin-display" class="hidden items-center gap-1.5 bg-yellow-50 border border-yellow-300 rounded-full px-3 py-1 text-sm font-bold text-yellow-700">
                 <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/amulet-coin.png" class="w-4 h-4" style="image-rendering:pixelated"> <span id="coin-value">0</span>
             </div>
+            <button id="sfx-toggle-btn" type="button" onclick="toggleSfxMute()" class="w-8 h-8 shrink-0 rounded-full bg-gray-100 flex items-center justify-center text-base" title="音效開關">🔊</button>
             <div id="login-area">
                 <button id="login-btn" class="text-sm bg-red-500 text-white px-3 py-1.5 rounded-full font-bold">登入</button>
                 <img id="user-avatar" class="hidden w-8 h-8 rounded-full cursor-pointer" onclick="logoutUser()" title="點擊登出">
@@ -321,7 +322,200 @@ function showToastWithIcon(iconSrc, message) {
     item.innerHTML = `<img src="${iconSrc}" class="w-4 h-4" style="image-rendering:pixelated">${message}`;
     container.appendChild(item);
     setTimeout(() => item.remove(), 3200);
+    SFX.notify();
 }
+
+// ============================================================
+// 音效系統
+// ------------------------------------------------------------
+// 兩種音源分開處理：
+//   1. 寶可夢「叫聲」：PokéAPI真的有現成素材(PokeAPI/cries這個GitHub repo，跟這個網站到處在用
+//      的PokeAPI/sprites是同一個組織、同樣的hotlink方式)，直接抓真實錄音來源播放。
+//   2. 攻擊命中/按鈕點擊/勝利...這類「通用」音效：PokéAPI本身沒有提供，網路上也找不到不用
+//      金鑰、能放心直接嵌入公開網頁長期使用的免費音效API。這裡改用瀏覽器原生的Web Audio API
+//      即時合成——用振盪器(音高/音色)疊加簡單的音量包絡(attack/decay)做成一個個短提示音，
+//      不倚賴任何外部連結，音檔也不用擔心哪天失效或版權問題。為了讓合成音跟寶可夢叫聲搭得
+//      起來(使用者的要求)，音量刻意壓低柔和(叫聲當主角)、音色走清脆的鐘聲/木琴質感(三角波
+//      為主，正弦波輔助)，避免刺耳的方波蜂鳴音，聽起來才會像同一套遊戲的音效，不會突兀。
+// ============================================================
+const SFX = (() => {
+    let ctx = null;
+    let master = null;
+    let muted = localStorage.getItem('pokemonSfxMuted') === '1';
+    const cryCache = new Map(); // speciesId -> HTMLAudioElement，重複播放同一隻不用重新建立元素
+
+    function ensureCtx() {
+        if (ctx) return ctx;
+        try {
+            ctx = new (window.AudioContext || window.webkitAudioContext)();
+            master = ctx.createGain();
+            master.gain.value = 0.55; // 整體音量壓低，當提示音用，不搶主角(視覺動畫+叫聲)的風采
+            const comp = ctx.createDynamicsCompressor(); // 避免好幾個音效疊在一起時爆音
+            master.connect(comp);
+            comp.connect(ctx.destination);
+        } catch (err) { ctx = null; }
+        return ctx;
+    }
+    // 大部分瀏覽器要求AudioContext一定要在使用者手勢(點擊/觸摸)之後才能真的發聲，這裡在第一次
+    // 點擊時偷偷resume一次，之後整個session都不用再管——玩家一進遊戲通常就會先點登入/分頁按鈕，
+    // 不會感覺到任何延遲或空白
+    let unlocked = false;
+    function unlock() {
+        if (unlocked) return;
+        unlocked = true;
+        const c = ensureCtx();
+        if (c && c.state === 'suspended') c.resume().catch(() => {});
+    }
+    document.addEventListener('pointerdown', unlock, { once: true, capture: true });
+    document.addEventListener('keydown', unlock, { once: true, capture: true });
+
+    function isMuted() { return muted; }
+    function setMuted(v) {
+        muted = !!v;
+        localStorage.setItem('pokemonSfxMuted', muted ? '1' : '0');
+    }
+
+    // ---- 音量包絡(ADSR的簡化版：只有attack+decay，短促的提示音用不到sustain/release拖尾) ----
+    function envGain(t0, attack, decay, peak) {
+        const c = ensureCtx();
+        const g = c.createGain();
+        g.gain.setValueAtTime(0, t0);
+        g.gain.linearRampToValueAtTime(peak, t0 + attack);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + attack + decay);
+        g.connect(master);
+        return g;
+    }
+    // 單一個音符：可選擇音高滑音(glideTo)做出「咻」的上滑/下滑效果(勝利音效上揚、倒下音效下墜)
+    function tone({ freq, dur = 0.16, type = 'triangle', vol = 0.16, glideTo = null, delay = 0 }) {
+        const c = ensureCtx();
+        if (!c || muted) return;
+        const t0 = c.currentTime + delay;
+        const osc = c.createOscillator();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, t0);
+        if (glideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, glideTo), t0 + dur);
+        const g = envGain(t0, Math.min(0.02, dur * 0.15), dur, vol);
+        osc.connect(g);
+        osc.start(t0);
+        osc.stop(t0 + dur + 0.05);
+    }
+    // 好幾個音同時響：做出「和弦」的豐富感，勝利/升級這種慶祝音效用
+    function chord(freqs, opts = {}) {
+        freqs.forEach(f => tone({ ...opts, freq: f }));
+    }
+    // 一串音符依序響：勝利號角、升級音效、抽獎揭曉的「叮咚叮咚」都是這種
+    function arpeggio(freqs, { noteDur = 0.14, gap = 0.09, type = 'triangle', vol = 0.16 } = {}) {
+        freqs.forEach((f, i) => tone({ freq: f, dur: noteDur, type, vol, delay: i * gap }));
+    }
+    // 短促的濾波白噪音：模擬「打擊感」(命中/沒有效果那種悶悶的撞擊聲)，純音高沒辦法做出這種
+    // 質感，一定要靠噪音經過帶通/低通濾波器塑形
+    function noiseHit({ dur = 0.1, vol = 0.18, filterType = 'bandpass', freq = 900, Q = 1.2, delay = 0 }) {
+        const c = ensureCtx();
+        if (!c || muted) return;
+        const t0 = c.currentTime + delay;
+        const bufferSize = Math.max(1, Math.floor(c.sampleRate * dur));
+        const buffer = c.createBuffer(1, bufferSize, c.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+        const src = c.createBufferSource();
+        src.buffer = buffer;
+        const filt = c.createBiquadFilter();
+        filt.type = filterType;
+        filt.frequency.value = freq;
+        filt.Q.value = Q;
+        const g = envGain(t0, 0.002, dur, vol);
+        src.connect(filt);
+        filt.connect(g);
+        src.start(t0);
+        src.stop(t0 + dur + 0.02);
+    }
+
+    // ---- 寶可夢叫聲：PokeAPI/cries這個repo，跟站上其他地方用PokeAPI/sprites同一種hotlink方式 ----
+    const CRY_BASE = 'https://raw.githubusercontent.com/PokeAPI/cries/main/cries/pokemon/latest/';
+    function cry(speciesId, volume = 0.7) {
+        if (muted || !speciesId) return;
+        unlock();
+        let audio = cryCache.get(speciesId);
+        if (!audio) {
+            audio = new Audio(`${CRY_BASE}${speciesId}.ogg`);
+            audio.preload = 'auto';
+            cryCache.set(speciesId, audio);
+        }
+        audio.volume = volume;
+        audio.currentTime = 0;
+        audio.play().catch(() => {}); // 抓不到/瀏覽器擋自動播放都靜靜失敗，不影響遊戲本身
+    }
+
+    // ---- 高階、語意化的音效目錄：呼叫端只要知道「發生了什麼事」，不用管底層怎麼合成 ----
+    return {
+        isMuted, setMuted, cry,
+        click() { noiseHit({ dur: 0.02, vol: 0.05, filterType: 'highpass', freq: 2500, Q: 0.8 }); },
+        notify() { tone({ freq: 1200, dur: 0.07, type: 'sine', vol: 0.06 }); },
+        confirm() { tone({ freq: 700, dur: 0.09, type: 'triangle', vol: 0.14, glideTo: 950 }); },
+        error() { tone({ freq: 160, dur: 0.16, type: 'square', vol: 0.1 }); },
+        hit(effectiveness) {
+            // effectiveness: 'super' | 'normal' | 'weak' | 'immune'
+            if (effectiveness === 'immune') { tone({ freq: 220, dur: 0.12, type: 'sine', vol: 0.08 }); return; }
+            if (effectiveness === 'super') {
+                noiseHit({ dur: 0.09, vol: 0.24, filterType: 'bandpass', freq: 1500, Q: 1.4 });
+                tone({ freq: 320, dur: 0.12, type: 'triangle', vol: 0.14, glideTo: 620, delay: 0.01 });
+                tone({ freq: 1800, dur: 0.08, type: 'sine', vol: 0.07, delay: 0.05 });
+            } else if (effectiveness === 'weak') {
+                noiseHit({ dur: 0.09, vol: 0.14, filterType: 'lowpass', freq: 450, Q: 0.9 });
+                tone({ freq: 160, dur: 0.1, type: 'triangle', vol: 0.09, delay: 0.01 });
+            } else {
+                noiseHit({ dur: 0.08, vol: 0.2, filterType: 'bandpass', freq: 800, Q: 1.2 });
+                tone({ freq: 200, dur: 0.1, type: 'triangle', vol: 0.12, delay: 0.01 });
+            }
+        },
+        critical() {
+            this.hit('super');
+            tone({ freq: 1500, dur: 0.06, type: 'triangle', vol: 0.1, delay: 0.09 });
+            tone({ freq: 2000, dur: 0.06, type: 'triangle', vol: 0.08, delay: 0.14 });
+        },
+        miss() {
+            noiseHit({ dur: 0.16, vol: 0.1, filterType: 'highpass', freq: 1800, Q: 0.6 });
+            tone({ freq: 500, dur: 0.14, type: 'sine', vol: 0.07, glideTo: 260 });
+        },
+        faint() { tone({ freq: 480, dur: 0.5, type: 'sine', vol: 0.16, glideTo: 110 }); },
+        statusApplied() { arpeggio([440, 370], { noteDur: 0.13, gap: 0.1, type: 'triangle', vol: 0.11 }); },
+        statUp() { arpeggio([523, 659], { noteDur: 0.1, gap: 0.08, type: 'triangle', vol: 0.13 }); },
+        statDown() { arpeggio([523, 392], { noteDur: 0.12, gap: 0.09, type: 'triangle', vol: 0.13 }); },
+        heal() { tone({ freq: 300, dur: 0.32, type: 'sine', vol: 0.14, glideTo: 620 }); },
+        victory() { arpeggio([523, 659, 784, 1047], { noteDur: 0.16, gap: 0.12, type: 'triangle', vol: 0.17 }); },
+        defeat() { arpeggio([392, 330, 294, 220], { noteDur: 0.22, gap: 0.16, type: 'sine', vol: 0.14 }); },
+        levelUp() { arpeggio([659, 784, 988, 1319], { noteDur: 0.1, gap: 0.08, type: 'triangle', vol: 0.16 }); },
+        coin() {
+            tone({ freq: 988, dur: 0.05, type: 'square', vol: 0.09 });
+            tone({ freq: 1319, dur: 0.12, type: 'square', vol: 0.11, delay: 0.05 });
+        },
+        itemGet() { arpeggio([784, 988], { noteDur: 0.13, gap: 0.1, type: 'triangle', vol: 0.14 }); },
+        sparkle() {
+            arpeggio([659, 831, 988, 1245], { noteDur: 0.1, gap: 0.07, type: 'triangle', vol: 0.13 });
+            noiseHit({ dur: 0.25, vol: 0.05, filterType: 'highpass', freq: 4000, Q: 0.4, delay: 0.02 });
+        },
+        guessCorrect() { arpeggio([659, 880], { noteDur: 0.11, gap: 0.09, type: 'triangle', vol: 0.16 }); },
+        guessWrong() { tone({ freq: 180, dur: 0.18, type: 'square', vol: 0.11 }); },
+    };
+})();
+function toggleSfxMute() {
+    SFX.setMuted(!SFX.isMuted());
+    const btn = document.getElementById('sfx-toggle-btn');
+    if (btn) btn.textContent = SFX.isMuted() ? '🔇' : '🔊';
+    if (!SFX.isMuted()) SFX.confirm();
+}
+document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('sfx-toggle-btn');
+    if (btn) btn.textContent = SFX.isMuted() ? '🔇' : '🔊';
+});
+// 全站按鈕點擊音效：用事件代理(capture階段，在body上聽一個監聽器)統一處理，而不是每個按鈕的
+// onclick都手動加一行SFX.click()——這個網站的按鈕有好幾百個(分頁切換、彈窗、道具、對戰指令...)，
+// 事件代理才不用逐一去改，之後新增的按鈕也會自動有音效。音效開關本身的按鈕跳過(不然切換
+// 靜音的瞬間又補一聲點擊音，體驗怪怪的，它自己在toggleSfxMute()裡已經有播確認音了)
+document.body.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (btn && btn.id !== 'sfx-toggle-btn' && !btn.disabled) SFX.click();
+}, true);
 
 // ---------- 呼叫Worker(寶可幣/隨機性相關的動作用這個) ----------
 async function callWorker(action, extra = {}) {
@@ -647,6 +841,7 @@ async function playCaptureRevealSequence(resultPromise) {
     flashEl.classList.remove('flash');
     void flashEl.offsetWidth; // 強制reflow，讓同一個class可以連續觸發動畫
     flashEl.classList.add('flash');
+    SFX.sparkle();
     await sleep(280);
 
     // 抽到重複的種類的話，worker那邊不會建立新的一筆，而是讓倉庫裡原本那隻吸收掉、星級+1——
@@ -668,6 +863,8 @@ async function showDuplicateAbsorbedResult(result) {
     modal.classList.add('flex');
     const display = await fetchSpeciesDisplay(result.speciesId, result.isShiny);
     const isMaxed = result.newStars >= 5;
+    SFX.cry(result.speciesId);
+    setTimeout(() => SFX.itemGet(), 300);
     content.innerHTML = `
         <img src="${display.sprite}" class="w-32 h-32 mx-auto mb-2">
         <p class="font-black text-lg mb-1">${result.absorbedSpeciesNameZh || display.nameZh}</p>
@@ -690,6 +887,7 @@ async function showCatchResult(instance, opts) {
     modal.classList.remove('hidden');
     modal.classList.add('flex');
     const display = await fetchSpeciesDisplay(instance.speciesId, instance.isShiny);
+    SFX.cry(instance.speciesId);
     content.innerHTML = `
         <img src="${itemSpriteUrl('premier-ball')}" class="w-14 h-14 mx-auto mb-2" style="image-rendering:pixelated">
         <p class="text-gray-500 mb-2">${welcome ? '歡迎來到寶可夢世界！這是你的第一隻夥伴：' : '恭喜抓到了！'}</p>
@@ -1166,9 +1364,11 @@ async function feedBerry(instanceId, berryName) {
     try {
         const result = await callWorker('pokemon_feed_berry', { instanceId, berryName });
         showToast(result.isMatch ? `牠很喜歡這個口味！親密度+${result.gain}` : `親密度+${result.gain}`);
+        SFX.heal();
         openDetailModal(instanceId);
     } catch (err) {
         showToast('餵食失敗：' + err.message);
+        SFX.error();
         openFeedModal(instanceId);
     }
 }
@@ -1385,10 +1585,12 @@ async function useExpItem(instanceId, itemKey) {
     try {
         const result = await callWorker('pokemon_use_exp_item', { instanceId, itemKey });
         showToast(result.newLevel > beforeLevel ? `使用了${itemNameZh}！升到Lv.${result.newLevel}了！` : `使用了${itemNameZh}！`);
+        result.newLevel > beforeLevel ? SFX.levelUp() : SFX.confirm();
         closeUseItemModal();
         openDetailModal(instanceId);
     } catch (err) {
         showToast('使用失敗：' + err.message);
+        SFX.error();
     } finally {
         useItemInFlight = false;
     }
@@ -1405,10 +1607,12 @@ async function useMoveReminder(instanceId, moveName, replaceIdx) {
     try {
         await callWorker('pokemon_use_move_reminder', { instanceId, moveName, replaceIndex: replaceIdx });
         showToast('學回來了！');
+        SFX.itemGet();
         closeUseItemModal();
         openDetailModal(instanceId);
     } catch (err) {
         showToast('使用失敗：' + err.message);
+        SFX.error();
     } finally {
         useItemInFlight = false;
     }
@@ -1518,9 +1722,11 @@ async function equipItemAction(instanceId, itemKey) {
     try {
         await callWorker('pokemon_equip_item', { instanceId, itemKey });
         showToast('裝備成功！');
+        SFX.itemGet();
         openEquipModal(instanceId);
     } catch (err) {
         showToast('裝備失敗：' + err.message);
+        SFX.error();
     } finally {
         equipItemInFlight = false;
     }
@@ -1531,9 +1737,11 @@ async function unequipItemAction(instanceId) {
     try {
         await callWorker('pokemon_unequip_item', { instanceId });
         showToast('已經卸下裝備');
+        SFX.confirm();
         openEquipModal(instanceId);
     } catch (err) {
         showToast('卸下失敗：' + err.message);
+        SFX.error();
     } finally {
         equipItemInFlight = false;
     }
@@ -1658,6 +1866,8 @@ async function evolvePokemon(instanceId) {
                 baseHp: nextInfo.baseHp, baseAtk: nextInfo.baseAtk, baseDef: nextInfo.baseDef, baseSpd: nextInfo.baseSpd,
             });
             showToast(`進化成功！變成了${nextInfo.nextSpeciesNameZh}`);
+            SFX.levelUp();
+            setTimeout(() => SFX.cry(nextInfo.nextSpeciesId), 300);
             closeDetailModal();
             return;
         }
@@ -1675,9 +1885,12 @@ async function evolvePokemon(instanceId) {
             baseSpd: nextInfo.baseSpd,
         });
         showToast(`進化成功！變成了${nextInfo.nextSpeciesNameZh}`);
+        SFX.levelUp();
+        setTimeout(() => SFX.cry(nextInfo.nextSpeciesId), 300);
         closeDetailModal();
     } catch (err) {
         showToast('進化失敗：' + err.message);
+        SFX.error();
     }
 }
 
@@ -1737,8 +1950,10 @@ async function resolveEvolveMerge(evolvingInstanceId, duplicateInstanceId, keepI
         showToast(keepInstanceId === evolvingInstanceId
             ? `進化成功！變成了${nextInfo.nextSpeciesNameZh}，並合併吸收了重複的那隻`
             : '已經合併吸收，倉庫原本那隻星級+1');
+        SFX.levelUp();
     } catch (err) {
         showToast('合併失敗：' + err.message);
+        SFX.error();
     }
     closeEvolveMergeModal();
     closeDetailModal();
@@ -1799,13 +2014,14 @@ async function collectIdle() {
         const expMsg = result.expGainedEach > 0 ? `，牧場寶可夢各 +${result.expGainedEach} EXP` : '';
         if (result.earned > 0 || result.expGainedEach > 0) {
             showToastWithIcon(itemSpriteUrl('amulet-coin'), `收到 ${result.earned}${expMsg}！`);
+            SFX.coin();
         } else {
             showToast('目前還沒有可以收取的代幣/經驗值');
         }
         // 屬性強化道具(對應屬性寶可夢)/莓果(草屬性寶可夢)的牧場隨機掉落——見worker.js的settleIdleEarnings
         const drops = result.drops || [];
         if (drops.length > 0) {
-            setTimeout(() => showToastWithIcon(itemSpriteUrl('poke-ball'), `牧場的寶可夢還撿到了 ${drops.length} 個道具/莓果！`), 1200);
+            setTimeout(() => { showToastWithIcon(itemSpriteUrl('poke-ball'), `牧場的寶可夢還撿到了 ${drops.length} 個道具/莓果！`); SFX.itemGet(); }, 1200);
         }
     } catch (err) {
         showToast('收取失敗：' + err.message);
@@ -2336,6 +2552,9 @@ let roomRenderToken = 0;
 // animatedResolvedRound：記錄每個房間「已經播過動畫的回合編號」，避免同一回合的攻擊動畫重播兩次，
 // 也避免玩家剛打開房間時把之前發生過的回合又重播一次
 let animatedResolvedRound = {};
+// battleEndSoundPlayed：跟animatedResolvedRound同樣的道理，戰鬥結束畫面onSnapshot可能觸發
+// 好幾次重繪(例如領獎勵那個await期間又fire一次)，勝利/落敗音效只想在第一次播，不然會連續重播
+let battleEndSoundPlayed = {};
 // lastRenderedRoom：最近一次renderRoomView拿到的房間資料快照——切換「替換寶可夢」選單這種
 // 純前端UI狀態不會觸發Firestore的onSnapshot，所以要靠這份快照手動重新呼叫renderRoomView
 let lastRenderedRoom = null;
@@ -2419,10 +2638,18 @@ async function renderRoomView(room) {
         if (myToken !== roomRenderToken) return;
     } else if (alreadyAnimated === undefined) {
         animatedResolvedRound[room.id] = resolvedRound != null ? resolvedRound : null;
+        // 第一次畫出這個對戰房間(還沒播過任何回合動畫)：雙方先發寶可夢的上場叫聲，跟正版遊戲一樣
+        // 一進對戰畫面就會聽到兩邊的叫聲
+        SFX.cry(myTeam.speciesId);
+        setTimeout(() => SFX.cry(oppTeam.speciesId), 400);
     }
 
     if (room.status === 'finished') {
         const won = room.winnerUid === myUid;
+        if (!battleEndSoundPlayed[room.id]) {
+            battleEndSoundPlayed[room.id] = true;
+            won ? SFX.victory() : SFX.defeat();
+        }
         if (won && !room.rewardClaimed) {
             try { const r = await callWorker('pokemon_battle_report_result', { roomId: room.id }); if (myToken === roomRenderToken) showToastWithIcon(itemSpriteUrl('amulet-coin'), `勝利獎勵：${r.coinsEarned} + EXP${r.expEarned}`); } catch (err) {}
         }
@@ -2658,6 +2885,7 @@ async function playBattleEvents(events, ctx) {
                 if (ball) { ball.classList.remove('pokeball-recall'); void ball.offsetWidth; ball.classList.add('pokeball-throw'); } // 精靈球丟出來，打開放出新寶可夢
                 void el.offsetWidth;
                 el.classList.add('switch-in');
+                if (ev.inSpeciesId) SFX.cry(ev.inSpeciesId); // 新寶可夢上場的瞬間播叫聲，跟正版遊戲的節奏一致
                 await sleep(500);
                 el.classList.remove('switch-in');
                 if (ball) ball.classList.remove('pokeball-throw');
@@ -2708,6 +2936,7 @@ async function playBattleEvents(events, ctx) {
             const maxHp = isMe ? ctx.myMaxHp : ctx.oppMaxHp;
             appendLog(`${ev.pokemonName} 回復了 ${ev.amount} 點HP！`);
             popupText(isMe ? 'popupwrap-me' : 'popupwrap-opp', `+${ev.amount}`, '#16a34a');
+            SFX.heal();
             if (el) { el.classList.remove('self-buff-glow'); void el.offsetWidth; el.classList.add('self-buff-glow'); }
             const pct = Math.max(0, Math.round(ev.hpAfter / maxHp * 100));
             if (bar) bar.style.width = pct + '%';
@@ -2730,11 +2959,13 @@ async function playBattleEvents(events, ctx) {
             void el.offsetWidth;
             el.classList.add('hit-flash-weak');
             popupText(isMe ? 'popupwrap-me' : 'popupwrap-opp', `-${ev.damage}`, endTurnColor);
+            SFX.hit('weak');
             const pct = Math.max(0, Math.round(ev.hpAfter / maxHp * 100));
             if (bar) bar.style.width = pct + '%';
             if (hpText) hpText.textContent = `${Math.max(0, ev.hpAfter)}/${maxHp}`;
             await sleep(500);
             if (ev.fainted) {
+                SFX.faint();
                 // 野生寶可夢倒下不用收進精靈球(牠本來就不是任何人的寶可夢，沒有球可以收)，
                 // 只有對戰雙方(自己或PvP對手)真正擁有的寶可夢才要播放收回球裡的動畫——
                 // 野生對戰裡「opp」這一側固定就是那隻野生寶可夢，isMe===false時才會是牠倒下
@@ -2780,9 +3011,12 @@ async function playBattleEvents(events, ctx) {
             void atkEl.offsetWidth;
             atkEl.classList.add('miss-shake');
             if (ev.blocked === 'confusion-self') {
+                SFX.hit('weak');
                 popupText(atkPopupId, `-${ev.confusionSelfDamage}`);
                 if (atkBar) atkBar.style.width = Math.max(0, Math.round(ev.attackerHpAfter / atkMaxHp * 100)) + '%';
                 if (atkHpText) atkHpText.textContent = `${Math.max(0, ev.attackerHpAfter)}/${atkMaxHp}`;
+            } else {
+                SFX.miss();
             }
             await sleep(550);
             continue;
@@ -2795,6 +3029,7 @@ async function playBattleEvents(events, ctx) {
             void atkEl.offsetWidth;
             atkEl.classList.add(isMeAttacking ? 'lunge-right' : 'lunge-left');
             await sleep(300);
+            SFX.miss();
             popupText(defPopupId, 'MISS', '#9ca3af', '0.8rem');
             await sleep(400);
             continue;
@@ -2837,6 +3072,11 @@ async function playBattleEvents(events, ctx) {
                 void defEl.offsetWidth;
                 const flashClass = ev.effectiveness === 0 ? 'miss-shake' : ev.effectiveness > 1 ? 'hit-flash-super' : ev.effectiveness < 1 ? 'hit-flash-weak' : 'hit-flash';
                 defEl.classList.add(flashClass);
+                if (ev.crit) SFX.critical();
+                else if (ev.effectiveness === 0) SFX.hit('immune');
+                else if (ev.effectiveness > 1) SFX.hit('super');
+                else if (ev.effectiveness < 1) SFX.hit('weak');
+                else SFX.hit('normal');
                 // 傷害數字彈出(連續攻擊會附上打中次數，會心一擊多補一行提示)
                 if (ev.effectiveness === 0) popupText(defPopupId, '沒有效果', '#9ca3af', '0.8rem');
                 else popupText(defPopupId, `-${ev.damage}${ev.hitCount > 1 ? ' (×' + ev.hitCount + ')' : ''}`, ev.effectiveness > 1 ? '#dc2626' : ev.effectiveness < 1 ? '#f59e0b' : '#374151');
@@ -2855,6 +3095,7 @@ async function playBattleEvents(events, ctx) {
             const amt = ev.selfHeal || ev.drainAmount;
             appendLog(`${ev.attackerName} ${amt > 0 ? '回復了' : '因反作用力損失了'} ${Math.abs(amt)} 點HP！`);
             popupText(atkPopupId, `${amt > 0 ? '+' : ''}${amt}`, amt > 0 ? '#16a34a' : '#dc2626');
+            if (amt > 0) SFX.heal(); else SFX.hit('weak');
             if (ev.attackerHpAfter != null) {
                 const pct = Math.max(0, Math.round(ev.attackerHpAfter / atkMaxHp * 100));
                 if (atkBar) atkBar.style.width = pct + '%';
@@ -2867,12 +3108,17 @@ async function playBattleEvents(events, ctx) {
         if (ev.ailmentApplied) {
             const targetIsMe = ev.ailmentApplied.onSelf ? isMeAttacking : !isMeAttacking;
             popupIcon(targetIsMe ? 'popupwrap-me' : 'popupwrap-opp', statusIconHtml(ev.ailmentApplied.status, 'w-6 h-6'));
+            SFX.statusApplied();
             await sleep(350);
         }
 
         // ---- 能力等級變化的上升/下降箭頭提示 ----
         if (ev.statChanges) {
             const targetWrapId = (ev.statChanges.onSelf ? isMeAttacking : !isMeAttacking) ? 'popupwrap-me' : 'popupwrap-opp';
+            const anyUp = ev.statChanges.changes.some(c => c.change > 0);
+            const anyDown = ev.statChanges.changes.some(c => c.change < 0);
+            if (anyUp) SFX.statUp();
+            if (anyDown) SFX.statDown();
             ev.statChanges.changes.forEach((c, idx) => {
                 setTimeout(() => popupText(targetWrapId, `${c.statNameZh}${c.change > 0 ? '▲' : '▼'}`, c.change > 0 ? '#16a34a' : '#dc2626', '0.75rem'), idx * 200);
             });
@@ -2880,6 +3126,7 @@ async function playBattleEvents(events, ctx) {
         }
 
         if (ev.fainted) {
+            SFX.faint();
             const stillThere = document.getElementById(isMeAttacking ? 'sprite-opp' : 'sprite-me');
             // 野生對戰的「opp」固定是那隻野生寶可夢，牠倒下不用收進球裡(不是任何人的寶可夢)——
             // 只有isMeAttacking===false(我方倒下)或PvP對手倒下才需要球的收回動畫
@@ -3149,6 +3396,14 @@ function critChance(critRateStage) {
 // 而且語意上很好懂——玩家看到樹果圖示大概就能猜到對應哪個異常狀態
 const STATUS_CURE_BERRY = { paralysis: 'cheri', poison: 'pecha', burn: 'rawst', sleep: 'chesto', freeze: 'aspear', confusion: 'persim' };
 const STATUS_NAME_ZH = { paralysis: '麻痺', poison: '中毒', burn: '燒傷', sleep: '睡眠', freeze: '冰凍', confusion: '混亂' };
+// PokéAPI的meta.ailment.name其實不是只有這5種主要異常狀態，還包含trap/infatuation/torment/
+// disable/yawn/nightmare/heal-block/embargo/perish-song這些「其他效果」也共用同一個ailment欄位。
+// 挑釁/折磨/定身法/瞌睡/惡夢/道具封印/治癒封印/亡語之歌/束縛系這些已經各自用招式名稱
+// (TAUNT_MOVES/TORMENT_MOVES/...)獨立實作了(見下面對應區塊)，著迷(infatuation，招式如「魅惑」)
+// 目前這個簡化版遊戲完全沒有實作。下面這條「附加主要異常狀態」的邏輯只認得住這5種，避免
+// 誤把'yawn'/'disable'/'torment'/'infatuation'這些英文字串直接寫進ailmentTarget.status
+// (導致該寶可夢之後永遠沒辦法再中麻痺/中毒/燒傷/睡眠/冰凍)，也避免log/圖示顯示出沒翻譯的英文
+const PRIMARY_STATUS_AILMENTS = new Set(['paralysis', 'poison', 'burn', 'sleep', 'freeze']);
 function statusIconHtml(statusKey, sizeClass) {
     const berry = STATUS_CURE_BERRY[statusKey];
     if (!berry) return '';
@@ -3351,6 +3606,8 @@ async function submitForcedSwitch(instanceId) {
                 pendingMoves: {},
             });
         });
+        const chosenInst = currentInstances.find(i => i.id === instanceId);
+        if (chosenInst) SFX.cry(chosenInst.speciesId);
     } catch (err) { showToast(err.message); }
 }
 
@@ -3461,15 +3718,15 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         const incoming = { ...freshBattleStatus(), ...chosen };
         const outName = state[uid].nickname;
         state[uid] = incoming;
-        return { outName, inName: incoming.nickname };
+        return { outName, inName: incoming.nickname, inSpeciesId: incoming.speciesId };
     }
     if (actionA && actionA.type === 'switch') {
         const info = performSwitch(uidA, actionA.instanceId);
-        if (info) { switchedA = true; log.push(`${info.outName} 被收回，換上了 ${info.inName}！`); events.push({ switchEvent: true, uid: uidA, outName: info.outName, inName: info.inName }); }
+        if (info) { switchedA = true; log.push(`${info.outName} 被收回，換上了 ${info.inName}！`); events.push({ switchEvent: true, uid: uidA, outName: info.outName, inName: info.inName, inSpeciesId: info.inSpeciesId }); }
     }
     if (actionB && actionB.type === 'switch') {
         const info = performSwitch(uidB, actionB.instanceId);
-        if (info) { switchedB = true; log.push(`${info.outName} 被收回，換上了 ${info.inName}！`); events.push({ switchEvent: true, uid: uidB, outName: info.outName, inName: info.inName }); }
+        if (info) { switchedB = true; log.push(`${info.outName} 被收回，換上了 ${info.inName}！`); events.push({ switchEvent: true, uid: uidB, outName: info.outName, inName: info.inName, inSpeciesId: info.inSpeciesId }); }
     }
 
     // 換人之後才抓「現在真正在場上」的種類資料——如果剛剛換過人，要用新上場那隻的speciesId查屬性
@@ -4012,7 +4269,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                         ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: 'leech-seed', statusNameZh: '寄生種子' };
                         log.push(`${ailmentTarget === atk ? atkName : defName} 被種下了寄生種子！`);
                     }
-                } else if (!ailmentTarget.status) {
+                } else if (PRIMARY_STATUS_AILMENTS.has(move.ailment) && !ailmentTarget.status) {
                     const isToxic = move.name === 'toxic';
                     // 正統規則：特定屬性天生免疫特定的主要異常狀態(不看招式本身屬性)——
                     // 火免疫燒傷、電免疫麻痺、冰免疫冰凍、毒/鋼免疫中毒與劇毒
@@ -4446,7 +4703,7 @@ function renderGuessStartScreen() {
             </div>
             <div class="p-6 text-center">
                 <p class="text-sm text-gray-500 mb-4 leading-relaxed">共10題，每題4選1。答對的題數越多，結束後領到的道具越多：<br>
-                    1~4題 → 1個道具・5~7題 → 2個道具・8~10題(全對) → 3個道具<br>
+                    1~4題 → 1個道具・5~7題 → 2個道具・8~9題 → 3個道具・10題全對 → 4個道具<br>
                     道具可能是經驗糖果、招式學習器、各種莓果、對戰攜帶道具，運氣好還會拿到稀有的進化石或神奇糖果！</p>
                 <p class="text-xs text-gray-400 mb-3 inline-flex items-center gap-1"><img src="${itemSpriteUrl('amulet-coin')}" class="w-4 h-4" style="image-rendering:pixelated">每玩一次要花費 ${GUESS_GAME_COST} 寶可幣</p>
                 <button onclick="startGuessGame()" id="guess-start-btn" class="bg-red-500 text-white px-8 py-3 rounded-full font-bold">開始遊戲(${GUESS_GAME_COST}💰)</button>
@@ -4542,12 +4799,15 @@ async function answerGuessRound(chosenSpeciesId) {
         guessState.correctCount++;
         if (chosenBtn) chosenBtn.className = 'text-sm font-bold rounded-xl py-3 bg-green-200 text-green-800';
         if (msg) { msg.textContent = `🎉 答對了！+${gain}分`; msg.style.color = '#16a34a'; }
+        SFX.guessCorrect();
     } else {
         guessState.streak = 0;
         if (chosenBtn) chosenBtn.className = 'text-sm font-bold rounded-xl py-3 bg-red-200 text-red-800';
         if (correctBtn) correctBtn.className = 'text-sm font-bold rounded-xl py-3 bg-green-200 text-green-800';
         if (msg) { msg.textContent = '❌ 答錯了！'; msg.style.color = '#dc2626'; }
+        SFX.guessWrong();
     }
+    setTimeout(() => SFX.cry(result.correctSpeciesId), 250); // 答案揭曉的同時讓玩家聽到牠真正的叫聲，答錯也聽得到、順便加深印象
     const nextBtn = document.getElementById('guess-next-btn');
     if (nextBtn) nextBtn.classList.remove('hidden');
 }
@@ -4566,6 +4826,7 @@ function guessNextRound() {
 function renderGuessResultScreen() {
     const root = document.getElementById('guess-game-root');
     if (!root || !guessState) return;
+    guessState.correctCount >= 5 ? SFX.victory() : SFX.guessWrong();
     root.innerHTML = `
         <div class="bg-white rounded-2xl card-shadow overflow-hidden">
             <div class="p-5 text-center bg-gradient-to-br from-red-500 to-orange-500 text-white">
@@ -4607,6 +4868,7 @@ async function renderGuessRewardScreen(result) {
     } else {
         rewardsHtml = '<p class="text-sm text-gray-400 my-4">這次答對題數不夠，沒有拿到道具，再試一次看看！</p>';
     }
+    if (rewards.length > 0) SFX.sparkle(); else SFX.guessWrong();
     root.innerHTML = `
         <div class="bg-white rounded-2xl card-shadow overflow-hidden">
             <div class="p-5 text-center bg-gradient-to-br from-yellow-400 to-orange-500 text-white">
