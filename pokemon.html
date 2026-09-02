@@ -43,6 +43,9 @@
     @keyframes fxBurst { 0%{opacity:0; transform:scale(0.4)} 30%{opacity:0.6; transform:scale(1.15)} 100%{opacity:0; transform:scale(1.7)} }
     .dmg-popup { position: absolute; font-weight: 900; font-size: 1.05rem; text-shadow: 0 1px 3px rgba(255,255,255,0.9); pointer-events: none; animation: dmgPopup 0.9s ease forwards; white-space: nowrap; }
     @keyframes dmgPopup { 0%{transform:translateY(0);opacity:0} 15%{opacity:1} 100%{transform:translateY(-30px);opacity:0} }
+    /* 對自己生效的招式(能力提升／回血／自我強化)：原地發光脈動，不像攻擊招式那樣撲向對手 */
+    .self-buff-glow { animation: selfBuffGlow 0.6s ease; }
+    @keyframes selfBuffGlow { 0%{filter:brightness(1)} 40%{filter:brightness(1.6) drop-shadow(0 0 8px #facc15)} 100%{filter:brightness(1)} }
 
     /* ---- 捕捉抽球動畫：搜尋循環／球彈出／捕捉式晃動／畫面閃光 ---- */
     .gacha-idle-bob { animation: gachaIdleBob 1.6s ease-in-out infinite; }
@@ -1223,7 +1226,7 @@ async function renderRoomView(room) {
         }
         if (myToken !== roomRenderToken) return;
         container.innerHTML = `<div class="bg-white rounded-2xl card-shadow p-8 text-center">
-            <img src="${itemSpriteUrl(won ? 'expert-belt' : 'revive')}" class="w-16 h-16 mx-auto mb-3" style="image-rendering:pixelated">
+            <img src="${itemSpriteUrl(won ? 'revive' : 'expert-belt')}" class="w-16 h-16 mx-auto mb-3" style="image-rendering:pixelated">
             <p class="text-xl font-black mb-4">${won ? '你贏了！' : '敗北了...'}</p>
             <button onclick="leaveRoomView()" class="bg-red-500 text-white px-6 py-2 rounded-full font-bold">返回大廳</button>
         </div>`;
@@ -1269,7 +1272,7 @@ async function renderBattleStage(container, ctx) {
         <div class="relative bg-gradient-to-b from-sky-100 to-emerald-50 rounded-2xl card-shadow p-4 mb-3 overflow-hidden" style="min-height:270px">
             <div class="absolute top-3 right-3 text-right" style="max-width:52%">
                 <div class="mb-1">
-                    <span class="text-sm font-bold">${oppTeam.nickname}${oppTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span>
+                    <span class="text-sm font-bold">${oppTeam.nickname}${oppTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(oppTeam)}
                     <div id="hptext-opp" class="text-xs text-gray-400">${oppTeam.currentHp}/${oppTeam.maxHp}</div>
                 </div>
                 <div class="w-28 ml-auto bg-gray-200 rounded-full h-2.5 mb-2 overflow-hidden">
@@ -1288,7 +1291,7 @@ async function renderBattleStage(container, ctx) {
                     <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-28 battle-sprite" style="image-rendering:pixelated">
                 </div>
                 <div class="mb-1">
-                    <span class="text-sm font-bold">${myTeam.nickname}${myTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span>
+                    <span class="text-sm font-bold">${myTeam.nickname}${myTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(myTeam)}
                     <div id="hptext-me" class="text-xs text-gray-400">${myTeam.currentHp}/${myTeam.maxHp}</div>
                 </div>
                 <div class="w-28 bg-gray-200 rounded-full h-2.5 overflow-hidden">
@@ -1306,70 +1309,194 @@ async function renderBattleStage(container, ctx) {
     `;
 }
 
-// 依序播放一回合裡發生的每一下攻擊：攻擊方衝刺、招式屬性色特效、受擊方依效果閃爍(一般/效果絕佳/效果不好/沒有效果)、
-// 傷害數字彈出、HP條隨之減少，倒下的話最後再補一個「掉落」動畫
+// 依序播放一回合裡發生的每一件事：出招前被異常狀態擋下來(畏縮/冰凍/睡眠/麻痺/混亂)、沒有命中、
+// 攻擊方衝刺+受擊方依效果閃爍+傷害數字彈出(含連續攻擊次數/會心一擊)、純自我強化招式的原地發光、
+// 吸血或回血的補血數字、附加異常狀態的圖示提示、能力等級升降箭頭、回合結束的中毒/燒傷持續傷害——
+// 對應resolveBattleRound算出來的每一種事件形狀，一一播出動畫
 async function playBattleEvents(events, ctx) {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const logBox = document.getElementById('battle-log-box');
+    const appendLog = text => {
+        if (!logBox) return;
+        const p = document.createElement('p');
+        p.textContent = text;
+        logBox.appendChild(p);
+        logBox.scrollTop = logBox.scrollHeight;
+    };
+    const popupText = (wrapId, text, color, fontSize) => {
+        const wrap = document.getElementById(wrapId);
+        if (!wrap) return;
+        const popup = document.createElement('div');
+        popup.className = 'dmg-popup';
+        popup.textContent = text;
+        popup.style.color = color || '#374151';
+        if (fontSize) popup.style.fontSize = fontSize;
+        wrap.appendChild(popup);
+        setTimeout(() => popup.remove(), 900);
+    };
+    const popupIcon = (wrapId, html) => {
+        const wrap = document.getElementById(wrapId);
+        if (!wrap) return;
+        const popup = document.createElement('div');
+        popup.className = 'dmg-popup';
+        popup.innerHTML = html;
+        wrap.appendChild(popup);
+        setTimeout(() => popup.remove(), 900);
+    };
+
     for (const ev of events) {
+        // ---- 回合結束的中毒/劇毒/燒傷持續傷害：沒有攻守方，單純扣某一邊的血 ----
+        if (ev.endTurnStatus) {
+            const isMe = ev.pokemonKey === ctx.myUid;
+            const el = document.getElementById(isMe ? 'sprite-me' : 'sprite-opp');
+            const bar = document.getElementById(isMe ? 'hpbar-me' : 'hpbar-opp');
+            const hpText = document.getElementById(isMe ? 'hptext-me' : 'hptext-opp');
+            const maxHp = isMe ? ctx.myMaxHp : ctx.oppMaxHp;
+            appendLog(`${ev.pokemonName} 因為${ev.status === 'burn' ? '燒傷' : '中毒'}損失了 ${ev.damage} 點HP！`);
+            if (!el) continue;
+            el.classList.remove('hit-flash-weak');
+            void el.offsetWidth;
+            el.classList.add('hit-flash-weak');
+            popupText(isMe ? 'popupwrap-me' : 'popupwrap-opp', `-${ev.damage}`, ev.status === 'burn' ? '#f97316' : '#a855f7');
+            const pct = Math.max(0, Math.round(ev.hpAfter / maxHp * 100));
+            if (bar) bar.style.width = pct + '%';
+            if (hpText) hpText.textContent = `${Math.max(0, ev.hpAfter)}/${maxHp}`;
+            await sleep(500);
+            if (ev.fainted) { el.classList.add('faint-drop'); await sleep(550); }
+            continue;
+        }
+
         const isMeAttacking = ev.attackerKey === ctx.myUid;
         const atkEl = document.getElementById(isMeAttacking ? 'sprite-me' : 'sprite-opp');
         const defEl = document.getElementById(isMeAttacking ? 'sprite-opp' : 'sprite-me');
         const defFx = document.getElementById(isMeAttacking ? 'fx-opp' : 'fx-me');
         const defBar = document.getElementById(isMeAttacking ? 'hpbar-opp' : 'hpbar-me');
         const defHpText = document.getElementById(isMeAttacking ? 'hptext-opp' : 'hptext-me');
-        const defPopupWrap = document.getElementById(isMeAttacking ? 'popupwrap-opp' : 'popupwrap-me');
-        const logBox = document.getElementById('battle-log-box');
+        const defPopupId = isMeAttacking ? 'popupwrap-opp' : 'popupwrap-me';
+        const atkBar = document.getElementById(isMeAttacking ? 'hpbar-me' : 'hpbar-opp');
+        const atkHpText = document.getElementById(isMeAttacking ? 'hptext-me' : 'hptext-opp');
+        const atkPopupId = isMeAttacking ? 'popupwrap-me' : 'popupwrap-opp';
+        const atkMaxHp = isMeAttacking ? ctx.myMaxHp : ctx.oppMaxHp;
         if (!atkEl || !defEl) return; // 畫面已經被切走了(玩家離開房間等)，安全中止剩下的動畫
 
-        if (logBox) {
-            const p = document.createElement('p');
-            p.textContent = ev.effectiveness === 0
-                ? `${ev.attackerName} 使出 ${ev.moveNameZh}，但是沒有效果...`
-                : `${ev.attackerName} 使出 ${ev.moveNameZh}，造成 ${ev.damage} 點傷害${ev.effectiveness > 1 ? '，效果絕佳！' : ev.effectiveness < 1 ? '，效果不理想...' : ''}`;
-            logBox.appendChild(p);
-            logBox.scrollTop = logBox.scrollHeight;
+        // ---- 出招前就被擋下來：不會真的攻擊到對手 ----
+        if (ev.blocked) {
+            const blockedText = {
+                flinch: `${ev.attackerName} 畏縮了，無法出招！`,
+                freeze: `${ev.attackerName} 被冰凍住了，無法動彈！`,
+                sleep: `${ev.attackerName} 正在沉睡中...`,
+                paralysis: `${ev.attackerName} 因為麻痺而無法動彈！`,
+                'confusion-self': `${ev.attackerName} 混亂中攻擊了自己，受到 ${ev.confusionSelfDamage} 點傷害！`,
+            }[ev.blocked] || `${ev.attackerName} 無法動彈！`;
+            appendLog(blockedText);
+            atkEl.classList.remove('miss-shake');
+            void atkEl.offsetWidth;
+            atkEl.classList.add('miss-shake');
+            if (ev.blocked === 'confusion-self') {
+                popupText(atkPopupId, `-${ev.confusionSelfDamage}`);
+                if (atkBar) atkBar.style.width = Math.max(0, Math.round(ev.attackerHpAfter / atkMaxHp * 100)) + '%';
+                if (atkHpText) atkHpText.textContent = `${Math.max(0, ev.attackerHpAfter)}/${atkMaxHp}`;
+            }
+            await sleep(550);
+            continue;
         }
 
-        // 攻擊方衝刺(往對手方向撲過去)
-        atkEl.classList.remove('lunge-right', 'lunge-left');
-        void atkEl.offsetWidth; // 強制reflow，讓同一個class能重新觸發animation
-        atkEl.classList.add(isMeAttacking ? 'lunge-right' : 'lunge-left');
-        await sleep(300);
-        if (!document.getElementById(isMeAttacking ? 'sprite-opp' : 'sprite-me')) return;
+        // ---- 沒有命中 ----
+        if (ev.missed) {
+            appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，但是沒有命中！`);
+            atkEl.classList.remove('lunge-right', 'lunge-left');
+            void atkEl.offsetWidth;
+            atkEl.classList.add(isMeAttacking ? 'lunge-right' : 'lunge-left');
+            await sleep(300);
+            popupText(defPopupId, 'MISS', '#9ca3af', '0.8rem');
+            await sleep(400);
+            continue;
+        }
 
-        // 招式屬性色的爆閃特效
-        if (defFx) {
-            const color = TYPE_COLORS[ev.moveType] || '#9ca3af';
-            defFx.style.background = `radial-gradient(circle, ${color}b0 0%, ${color}00 70%)`;
-            defFx.classList.remove('show');
-            void defFx.offsetWidth;
-            defFx.classList.add('show');
+        // ---- 純自我強化招式(能力提升/回血，沒有直接攻擊對手)：原地發光，不撲向對手 ----
+        const isSelfBuff = ev.moveTarget === 'user' && !ev.damage;
+        if (isSelfBuff) {
+            appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}！`);
+            atkEl.classList.remove('self-buff-glow');
+            void atkEl.offsetWidth;
+            atkEl.classList.add('self-buff-glow');
+            await sleep(300);
+        } else {
+            if (ev.damage > 0) {
+                appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，${ev.hitCount > 1 ? `打中了 ${ev.hitCount} 次，總共` : ''}造成 ${ev.damage} 點傷害${ev.effectiveness > 1 ? '，效果絕佳！' : ev.effectiveness < 1 ? '，效果不理想...' : ''}${ev.crit ? '，會心一擊！' : ''}`);
+            } else if (ev.effectiveness === 0) {
+                appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，但是沒有效果...`);
+            } else {
+                appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}！`);
+            }
+            // 攻擊方衝刺(往對手方向撲過去)
+            atkEl.classList.remove('lunge-right', 'lunge-left');
+            void atkEl.offsetWidth; // 強制reflow，讓同一個class能重新觸發animation
+            atkEl.classList.add(isMeAttacking ? 'lunge-right' : 'lunge-left');
+            await sleep(300);
+            if (!document.getElementById(isMeAttacking ? 'sprite-opp' : 'sprite-me')) return;
+
+            if (ev.damage > 0 || ev.effectiveness === 0) {
+                // 招式屬性色的爆閃特效
+                if (defFx) {
+                    const color = TYPE_COLORS[ev.moveType] || '#9ca3af';
+                    defFx.style.background = `radial-gradient(circle, ${color}b0 0%, ${color}00 70%)`;
+                    defFx.classList.remove('show');
+                    void defFx.offsetWidth;
+                    defFx.classList.add('show');
+                }
+                // 受擊方閃爍：效果絕佳/一般/不理想/沒有效果 各用不同特效
+                defEl.classList.remove('hit-flash', 'hit-flash-super', 'hit-flash-weak', 'miss-shake');
+                void defEl.offsetWidth;
+                const flashClass = ev.effectiveness === 0 ? 'miss-shake' : ev.effectiveness > 1 ? 'hit-flash-super' : ev.effectiveness < 1 ? 'hit-flash-weak' : 'hit-flash';
+                defEl.classList.add(flashClass);
+                // 傷害數字彈出(連續攻擊會附上打中次數，會心一擊多補一行提示)
+                if (ev.effectiveness === 0) popupText(defPopupId, '沒有效果', '#9ca3af', '0.8rem');
+                else popupText(defPopupId, `-${ev.damage}${ev.hitCount > 1 ? ' (×' + ev.hitCount + ')' : ''}`, ev.effectiveness > 1 ? '#dc2626' : ev.effectiveness < 1 ? '#f59e0b' : '#374151');
+                if (ev.crit) popupText(defPopupId, '會心一擊！', '#eab308', '0.7rem');
+                // HP條跟著扣血動畫(CSS的.hp-bar-fill本身就有width的transition)
+                const defMaxHp = isMeAttacking ? ctx.oppMaxHp : ctx.myMaxHp;
+                const pct = Math.max(0, Math.round(ev.defenderHpAfter / defMaxHp * 100));
+                if (defBar) defBar.style.width = pct + '%';
+                if (defHpText) defHpText.textContent = `${Math.max(0, ev.defenderHpAfter)}/${defMaxHp}`;
+                await sleep(550);
+            }
         }
-        // 受擊方閃爍：效果絕佳/一般/不理想/沒有效果 各用不同特效
-        defEl.classList.remove('hit-flash', 'hit-flash-super', 'hit-flash-weak', 'miss-shake');
-        void defEl.offsetWidth;
-        const flashClass = ev.effectiveness === 0 ? 'miss-shake' : ev.effectiveness > 1 ? 'hit-flash-super' : ev.effectiveness < 1 ? 'hit-flash-weak' : 'hit-flash';
-        defEl.classList.add(flashClass);
-        // 傷害數字彈出
-        if (defPopupWrap) {
-            const popup = document.createElement('div');
-            popup.className = 'dmg-popup';
-            if (ev.effectiveness === 0) { popup.textContent = '沒有效果'; popup.style.color = '#9ca3af'; popup.style.fontSize = '0.8rem'; }
-            else { popup.textContent = `-${ev.damage}`; popup.style.color = ev.effectiveness > 1 ? '#dc2626' : ev.effectiveness < 1 ? '#f59e0b' : '#374151'; }
-            defPopupWrap.appendChild(popup);
-            setTimeout(() => popup.remove(), 900);
+
+        // ---- 吸血／回血招式：在攻擊方自己這一側顯示回血數字跟血條增加 ----
+        if (ev.selfHeal || ev.drainAmount) {
+            const amt = ev.selfHeal || ev.drainAmount;
+            appendLog(`${ev.attackerName} ${amt > 0 ? '回復了' : '因反作用力損失了'} ${Math.abs(amt)} 點HP！`);
+            popupText(atkPopupId, `${amt > 0 ? '+' : ''}${amt}`, amt > 0 ? '#16a34a' : '#dc2626');
+            if (ev.attackerHpAfter != null) {
+                const pct = Math.max(0, Math.round(ev.attackerHpAfter / atkMaxHp * 100));
+                if (atkBar) atkBar.style.width = pct + '%';
+                if (atkHpText) atkHpText.textContent = `${Math.max(0, ev.attackerHpAfter)}/${atkMaxHp}`;
+            }
+            await sleep(400);
         }
-        // HP條跟著扣血動畫(CSS的.hp-bar-fill本身就有width的transition)
-        const defMaxHp = isMeAttacking ? ctx.oppMaxHp : ctx.myMaxHp;
-        const pct = Math.max(0, Math.round(ev.defenderHpAfter / defMaxHp * 100));
-        if (defBar) defBar.style.width = pct + '%';
-        if (defHpText) defHpText.textContent = `${Math.max(0, ev.defenderHpAfter)}/${defMaxHp}`;
-        await sleep(550);
+
+        // ---- 附加異常狀態的樹果小圖示提示(對應的文字已經在Firestore的log裡了，這裡只補圖示動畫) ----
+        if (ev.ailmentApplied) {
+            const targetIsMe = ev.ailmentApplied.onSelf ? isMeAttacking : !isMeAttacking;
+            popupIcon(targetIsMe ? 'popupwrap-me' : 'popupwrap-opp', statusIconHtml(ev.ailmentApplied.status, 'w-6 h-6'));
+            await sleep(350);
+        }
+
+        // ---- 能力等級變化的上升/下降箭頭提示 ----
+        if (ev.statChanges) {
+            const targetWrapId = (ev.statChanges.onSelf ? isMeAttacking : !isMeAttacking) ? 'popupwrap-me' : 'popupwrap-opp';
+            ev.statChanges.changes.forEach((c, idx) => {
+                setTimeout(() => popupText(targetWrapId, `${c.statNameZh}${c.change > 0 ? '▲' : '▼'}`, c.change > 0 ? '#16a34a' : '#dc2626', '0.75rem'), idx * 200);
+            });
+            await sleep(350 + ev.statChanges.changes.length * 200);
+        }
+
         if (ev.fainted) {
             const stillThere = document.getElementById(isMeAttacking ? 'sprite-opp' : 'sprite-me');
             if (stillThere) stillThere.classList.add('faint-drop');
             await sleep(550);
-        } else {
+        } else if (!isSelfBuff) {
             await sleep(150);
         }
     }
@@ -1411,6 +1538,11 @@ async function initBattleState(room) {
 
 // ---------- 招式/屬性資料(對戰結算用) ----------
 const moveDataCache = new Map();
+// PokéAPI的/move/{name}其實把「這招是不是會附加異常狀態/改變能力等級/吸血/回血/連續攻擊/
+// 會心率加成/畏縮率」這些效果都寫在meta欄位跟stat_changes欄位裡——過去這個遊戲只有抓power/type
+// 去算傷害，其他欄位完全沒用到，等於絕大多數招式的真正效果(變化招式、狀態招式、連續技...)
+// 在遊戲裡都被當成「無效果的普通攻擊」，這裡把meta能提供的欄位整批抓齊，讓resolveBattleRound
+// 可以真的照著每隻招式各自的效果去結算，而不是全部招式都套同一種傷害公式
 async function fetchMoveData(moveName) {
     if (moveDataCache.has(moveName)) return moveDataCache.get(moveName);
     const res = await fetch(`https://pokeapi.co/api/v2/move/${moveName}`);
@@ -1418,12 +1550,29 @@ async function fetchMoveData(moveName) {
     // 招式敘述：PokeAPI的language代碼是全小寫的'zh-hant'；文字裡常帶換行符號(遊戲對話框斷行用)，顯示時要拿掉
     const zhFlavorEntries = (data.flavor_text_entries || []).filter(e => e.language && String(e.language.name).toLowerCase() === 'zh-hant');
     const descZh = zhFlavorEntries.length ? zhFlavorEntries[zhFlavorEntries.length - 1].flavor_text.replace(/[\n\f\r]+/g, ' ') : '';
-    const ailmentName = data.meta && data.meta.ailment && data.meta.ailment.name !== 'none' ? data.meta.ailment.name : null;
+    const meta = data.meta || {};
+    const ailmentName = meta.ailment && meta.ailment.name !== 'none' ? meta.ailment.name : null;
     const result = {
         name: data.name, nameZh: extractZhHantNameClient(data.names, data.name),
-        power: data.power || 40, type: data.type.name, damageClass: data.damage_class?.name || 'physical',
+        power: data.power || 0, type: data.type.name, damageClass: data.damage_class?.name || 'physical',
         typeIcon: typeIconUrl(data.type.name),
-        descZh, ailment: ailmentName, ailmentChance: (data.meta && data.meta.ailment_chance) || 0,
+        descZh, ailment: ailmentName, ailmentChance: meta.ailment_chance || 0,
+        accuracy: data.accuracy, // null代表「一定命中」(像Swift那種招式)，不是0
+        priority: data.priority || 0, // 優先度高的招式(保護、先制拳...)不管速度快慢，一定先出招
+        target: data.target?.name || 'selected-pokemon', // 'user'代表對自己生效(自強化/回血招式)
+        category: meta.category?.name || 'damage', // damage/ailment/net-good-stats/heal/damage-ailment/damage-lower/damage-raise/damage-heal/ohko/swagger/unique...
+        drain: meta.drain || 0, // 傷害的百分比會反過來影響攻擊方血量：正值=吸血招式、負值=反作用力傷害
+        healing: meta.healing || 0, // 招式直接回復攻擊方「最大HP」的百分比(不是靠傷害吸的那種)
+        critRate: meta.crit_rate || 0, // 會心率加成階段(0=一般機率，數字愈大愈容易會心一擊)
+        flinchChance: meta.flinch_chance || 0,
+        statChance: meta.stat_chance || 0,
+        minHits: meta.min_hits || null,
+        maxHits: meta.max_hits || null,
+        // stat_changes的stat名稱(attack/defense/special-attack/special-defense/speed/accuracy/evasion)
+        // 對應到這個簡化版遊戲僅有的atk/def/spd三圍(沒有拆物理/特殊)，命中/閃避各自算獨立等級
+        statChanges: (data.stat_changes || [])
+            .map(sc => ({ change: sc.change, statKey: STAT_NAME_TO_STAGE_KEY[sc.stat.name] }))
+            .filter(sc => sc.statKey),
     };
     moveDataCache.set(moveName, result);
     return result;
@@ -1444,12 +1593,91 @@ async function fetchTypeEffectiveness(attackType, defendTypes) {
     });
     return mult;
 }
-function computeDamage(attackerLevel, attackerAtk, defenderDef, power, typeEff, isStab) {
+function computeDamage(attackerLevel, attackerAtk, defenderDef, power, typeEff, isStab, critMult) {
     if (typeEff === 0 || power <= 0) return 0;
     const base = ((2 * attackerLevel / 5 + 2) * power * (attackerAtk / defenderDef)) / 50 + 2;
     const rand = 0.85 + Math.random() * 0.15;
-    return Math.max(1, Math.floor(base * typeEff * (isStab ? 1.5 : 1) * rand));
+    return Math.max(1, Math.floor(base * typeEff * (isStab ? 1.5 : 1) * (critMult || 1) * rand));
 }
+
+// ============================================================
+// 對戰中的「暫時」狀態：異常狀態(麻痺/中毒/燒傷/睡眠/冰凍/混亂)、能力等級(攻/防/速/命中/閃避)、
+// 畏縮——這些只在一場對戰的battleState.teams物件裡有意義，對戰結束後就不管了，
+// 不會寫回pokemonInstances的永久資料(不像等級/EXP那樣需要長期保存)
+// ============================================================
+function freshBattleStatus() {
+    return { status: null, statusTurns: 0, toxicCounter: 0, stages: { atk: 0, def: 0, spd: 0, acc: 0, eva: 0 }, confusedTurns: 0, flinched: false };
+}
+// 能力等級(-6~+6)換算成倍率：官方公式，攻/防/速用同一張表
+function statStageMult(stage) {
+    const s = Math.max(-6, Math.min(6, stage || 0));
+    return s >= 0 ? (2 + s) / 2 : 2 / (2 - s);
+}
+// 命中/閃避的等級倍率用另一張稍微和緩的表(分母是3不是2)
+function accStageMult(stage) {
+    const s = Math.max(-6, Math.min(6, stage || 0));
+    return s >= 0 ? (3 + s) / 3 : 3 / (3 - s);
+}
+const STAT_NAME_TO_STAGE_KEY = {
+    attack: 'atk', 'special-attack': 'atk',
+    defense: 'def', 'special-defense': 'def',
+    speed: 'spd', accuracy: 'acc', evasion: 'eva',
+};
+const STAGE_KEY_ZH = { atk: '攻擊', def: '防禦', spd: '速度', acc: '命中率', eva: '閃避率' };
+// 固定傷害招式：傷害不是套一般公式算的，是官方規則寫死的經典特例(等級傷害/半血/指定傷害...)
+const FIXED_DAMAGE_MOVES = {
+    'seismic-toss': (atk, def) => atk.level,
+    'night-shade': (atk, def) => atk.level,
+    'dragon-rage': () => 40,
+    'sonic-boom': () => 20,
+    'super-fang': (atk, def) => Math.max(1, Math.floor(def.currentHp / 2)),
+    'endeavor': (atk, def) => Math.max(0, def.currentHp - atk.currentHp),
+    'final-gambit': (atk, def) => atk.currentHp,
+};
+// 一擊必殺招式：命中的話不管等級差，直接讓對方0血(這裡簡化成只看命中率骰不骰得中，
+// 不額外套用官方那套「等級差進一步降低命中率」的規則)
+const OHKO_MOVES = new Set(['fissure', 'horn-drill', 'guillotine', 'sheer-cold']);
+// 連續攻擊招式要打幾下：min/max都相同就直接固定次數，2~5次的經典連續技則照官方機率分布骰
+// (2下35%／3下35%／4下15%／5下15%)，其他min/max組合退回線性均勻分布
+function rollMultiHitCount(minHits, maxHits) {
+    if (!minHits && !maxHits) return 1;
+    if (!maxHits || minHits === maxHits) return minHits || maxHits || 1;
+    if (minHits === 2 && maxHits === 5) {
+        const r = Math.random();
+        if (r < 0.35) return 2;
+        if (r < 0.70) return 3;
+        if (r < 0.85) return 4;
+        return 5;
+    }
+    return minHits + Math.floor(Math.random() * (maxHits - minHits + 1));
+}
+// 會心一擊機率：crit_rate是PokéAPI給的「加成階段」，經典6階梯機率表，愈高愈容易會心一擊
+function critChance(critRateStage) {
+    const table = [1 / 24, 1 / 8, 1 / 2, 1, 1, 1];
+    const idx = Math.max(0, Math.min(5, critRateStage || 0));
+    return table[idx];
+}
+// 異常狀態圖示：PokéAPI沒有專門的「異常狀態」圖示，這裡改用「能治療那個異常狀態的樹果」
+// 道具圖示來代表(麻痺用食覆樹果、中毒用萬用樹果...)，一樣是真實存在的官方素材，
+// 而且語意上很好懂——玩家看到樹果圖示大概就能猜到對應哪個異常狀態
+const STATUS_CURE_BERRY = { paralysis: 'cheri', poison: 'pecha', burn: 'rawst', sleep: 'chesto', freeze: 'aspear', confusion: 'persim' };
+const STATUS_NAME_ZH = { paralysis: '麻痺', poison: '中毒', burn: '燒傷', sleep: '睡眠', freeze: '冰凍', confusion: '混亂' };
+function statusIconHtml(statusKey, sizeClass) {
+    const berry = STATUS_CURE_BERRY[statusKey];
+    if (!berry) return '';
+    return `<img src="${berrySpriteUrl(berry)}" class="${sizeClass || 'w-4 h-4'} inline-block align-middle" style="image-rendering:pixelated" title="${STATUS_NAME_ZH[statusKey] || statusKey}">`;
+}
+// 對戰畫面暱稱旁邊的異常狀態小徽章：主要異常狀態(麻痺/中毒/燒傷/睡眠/冰凍)跟混亂是各自獨立的
+// 兩條線(混亂可以跟中毒同時存在)，所以最多會同時顯示2個圖示
+function battleStatusBadgesHtml(team) {
+    if (!team) return '';
+    let html = '';
+    if (team.status) html += statusIconHtml(team.status, 'w-3.5 h-3.5');
+    if (team.confusedTurns > 0) html += statusIconHtml('confusion', 'w-3.5 h-3.5');
+    return html;
+}
+// 機率骰(chance是0~100的百分比數字)
+function rollChance(chancePct) { return Math.random() * 100 < chancePct; }
 
 async function submitMove(moveName) {
     if (currentRoomIsWild) return submitWildMove(moveName);
@@ -1503,12 +1731,19 @@ async function submitWildMove(moveName) {
     await resolveBattleRound(roomRef, roomDataAfter, myUid, 'wild');
 }
 
+// 結算一整個回合：不再只是單純比大小算傷害，而是完整跑過「出招前異常狀態檢查(畏縮/冰凍/睡眠/
+// 麻痺/混亂)→命中判定→傷害(含一擊必殺/固定傷害/連續攻擊/會心一擊)→吸血或反作用力→回血招式→
+// 附加異常狀態→能力等級變化→畏縮判定」，最後再處理「回合結束的中毒/劇毒/燒傷」持續傷害——
+// 這樣PokéAPI裡每個招式meta欄位描述的效果，才會真的反映在戰鬥結果裡，不是每招都當成
+// 「只有傷害」的普通攻擊
 async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     const moveNameA = roomData.pendingMoves[uidA];
     const moveNameB = roomData.pendingMoves[uidB];
     const teams = roomData.battleState.teams;
-    const teamA = { ...teams[uidA] };
-    const teamB = { ...teams[uidB] };
+    // 用freshBattleStatus()補齊欄位——這樣即使是「這場對戰剛開打、Firestore裡還沒有異常狀態/
+    // 能力等級資料」的第一回合，也不會因為缺欄位而在下面算stages.xxx的時候爆錯
+    const teamA = { ...freshBattleStatus(), ...teams[uidA] };
+    const teamB = { ...freshBattleStatus(), ...teams[uidB] };
     const [moveA, moveB] = await Promise.all([fetchMoveData(moveNameA), fetchMoveData(moveNameB)]);
     const displayA = await fetchSpeciesDisplay(teamA.speciesId, teamA.isShiny);
     const displayB = await fetchSpeciesDisplay(teamB.speciesId, teamB.isShiny);
@@ -1517,44 +1752,273 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         fetchTypeEffectiveness(moveB.type, displayA.types),
     ]);
 
-    // 速度快的先攻——這裡用「戰鬥開始當下算出的速度值」比較，簡化處理(不考慮中途變速的招式效果)
-    const order = teamA.spd >= teamB.spd ? [uidA, uidB] : [uidB, uidA];
-    const log = [];
-    const events = []; // 結構化的攻擊事件，給前端播放動畫用(誰打誰、什麼招式、效果好壞、扣血後剩多少)
-    const prevHpA = teamA.currentHp;
-    const prevHpB = teamB.currentHp;
     const state = { [uidA]: teamA, [uidB]: teamB };
     const moveOf = { [uidA]: moveA, [uidB]: moveB };
     const effOf = { [uidA]: effA, [uidB]: effB };
+    const displayOf = { [uidA]: displayA, [uidB]: displayB };
     const nameOf = { [uidA]: teamA.nickname, [uidB]: teamB.nickname };
 
+    // 出招順序：優先度高的先出手(不管速度，保護/先制拳那種招式就是這樣)，優先度相同再比
+    // 「有效速度」= 種族速度 × 能力等級倍率 × (麻痺的話再打對折，這是經典的麻痺副作用)
+    const effectiveSpeed = uid => {
+        const t = state[uid];
+        const base = t.spd * statStageMult(t.stages.spd);
+        return t.status === 'paralysis' ? base * 0.5 : base;
+    };
+    let order;
+    if (moveA.priority !== moveB.priority) {
+        order = moveA.priority > moveB.priority ? [uidA, uidB] : [uidB, uidA];
+    } else {
+        const spdA = effectiveSpeed(uidA), spdB = effectiveSpeed(uidB);
+        order = spdA === spdB ? (Math.random() < 0.5 ? [uidA, uidB] : [uidB, uidA]) : (spdA > spdB ? [uidA, uidB] : [uidB, uidA]);
+    }
+
+    const log = [];
+    const events = []; // 結構化的事件，給前端播放動畫用
+    const prevHpA = teamA.currentHp;
+    const prevHpB = teamB.currentHp;
     let winnerUid = null;
+
     for (const attackerUid of order) {
         const defenderUid = attackerUid === uidA ? uidB : uidA;
-        if (state[attackerUid].currentHp <= 0) continue; // 已經先手被打倒了，不能再出招
+        const atk = state[attackerUid];
+        const def = state[defenderUid];
+        if (atk.currentHp <= 0) continue; // 已經先手被打倒了，不能再出招
+        if (def.currentHp <= 0) break; // 對手這回合稍早已經被打倒，戰鬥已經結束
+
         const move = moveOf[attackerUid];
         const eff = effOf[attackerUid];
-        const isStab = displayA && (attackerUid === uidA ? displayA.types : displayB.types).includes(move.type);
-        const dmg = computeDamage(state[attackerUid].level, state[attackerUid].atk, state[defenderUid].def, move.power, eff, isStab);
-        state[defenderUid].currentHp = Math.max(0, state[defenderUid].currentHp - dmg);
-        const fainted = state[defenderUid].currentHp <= 0;
-        events.push({
+        const atkName = nameOf[attackerUid], defName = nameOf[defenderUid];
+        const ev = {
             attackerKey: attackerUid, defenderKey: defenderUid,
-            attackerName: nameOf[attackerUid], defenderName: nameOf[defenderUid],
-            moveName: move.name, moveNameZh: move.nameZh, moveType: move.type,
-            effectiveness: eff, isStab, damage: dmg,
-            defenderHpAfter: state[defenderUid].currentHp, fainted,
-        });
-        if (eff === 0) log.push(`${nameOf[attackerUid]} 使出 ${move.nameZh}，但是沒有效果...`);
-        else log.push(`${nameOf[attackerUid]} 使出 ${move.nameZh}，造成 ${dmg} 點傷害${eff > 1 ? '，效果絕佳！' : eff < 1 ? '，效果不理想...' : ''}`);
+            attackerName: atkName, defenderName: defName,
+            moveName: move.name, moveNameZh: move.nameZh, moveType: move.type, moveTarget: move.target,
+        };
+
+        // ---- 出招前檢查：畏縮／冰凍／睡眠／麻痺／混亂，任一個擋下來這回合就不會真的出招 ----
+        if (atk.flinched) {
+            atk.flinched = false;
+            ev.blocked = 'flinch';
+            log.push(`${atkName} 畏縮了，無法出招！`);
+            events.push(ev);
+            continue;
+        }
+        if (atk.status === 'freeze') {
+            if (rollChance(20)) {
+                atk.status = null;
+                log.push(`${atkName} 解凍了！`);
+            } else {
+                ev.blocked = 'freeze';
+                log.push(`${atkName} 被冰凍住了，無法動彈！`);
+                events.push(ev);
+                continue;
+            }
+        }
+        if (atk.status === 'sleep') {
+            atk.statusTurns = Math.max(0, (atk.statusTurns || 0) - 1);
+            if (atk.statusTurns === 0) { atk.status = null; log.push(`${atkName} 醒過來了！`); }
+            else log.push(`${atkName} 正在沉睡中...`);
+            ev.blocked = 'sleep';
+            events.push(ev);
+            continue;
+        }
+        if (atk.status === 'paralysis' && rollChance(25)) {
+            ev.blocked = 'paralysis';
+            log.push(`${atkName} 因為麻痺而無法動彈！`);
+            events.push(ev);
+            continue;
+        }
+        let confusionSelfHit = false;
+        if (atk.confusedTurns > 0) {
+            atk.confusedTurns -= 1;
+            if (atk.confusedTurns <= 0) log.push(`${atkName} 的混亂解除了！`);
+            else if (rollChance(33)) confusionSelfHit = true;
+        }
+        if (confusionSelfHit) {
+            // 混亂中打到自己：不看招式威力/屬性，用簡化版公式(威力40、無屬性加成、打自己的攻防)
+            const selfDmg = computeDamage(atk.level, atk.atk * statStageMult(atk.stages.atk), atk.def * statStageMult(atk.stages.def), 40, 1, false);
+            atk.currentHp = Math.max(0, atk.currentHp - selfDmg);
+            ev.blocked = 'confusion-self';
+            ev.confusionSelfDamage = selfDmg;
+            ev.attackerHpAfter = atk.currentHp;
+            log.push(`${atkName} 混亂中攻擊了自己，受到 ${selfDmg} 點傷害！`);
+            events.push(ev);
+            if (atk.currentHp <= 0) { log.push(`${atkName} 倒下了！`); winnerUid = defenderUid; break; }
+            continue;
+        }
+
+        // ---- 命中判定：move.accuracy是null代表一定命中，否則要看命中率/閃避率等級調整過的機率 ----
+        let hit = true;
+        if (move.accuracy != null) {
+            const netStage = Math.max(-6, Math.min(6, (atk.stages.acc || 0) - (def.stages.eva || 0)));
+            const chance = Math.max(0, Math.min(100, move.accuracy * accStageMult(netStage)));
+            hit = rollChance(chance);
+        }
+        if (!hit) {
+            ev.missed = true;
+            log.push(`${atkName} 使出 ${move.nameZh}，但是沒有命中！`);
+            events.push(ev);
+            continue;
+        }
+
+        // ---- 沒有效果(屬性免疫)：只對「有指定攻擊目標」的招式有意義，對自己生效的招式
+        // (能力提升/回血)不用管跟對手的屬性相剋 ----
+        if (move.target !== 'user' && eff === 0) {
+            ev.effectiveness = 0;
+            ev.damage = 0;
+            log.push(`${atkName} 使出 ${move.nameZh}，但是沒有效果...`);
+            events.push(ev);
+            continue;
+        }
+
+        const isStab = displayOf[attackerUid].types.includes(move.type);
+        let totalDamage = 0, hitCount = 0, crit = false, fainted = false;
+
+        if (move.category === 'ohko' || OHKO_MOVES.has(move.name)) {
+            totalDamage = def.currentHp;
+            hitCount = 1;
+            def.currentHp = 0;
+            fainted = true;
+            log.push(`${atkName} 使出 ${move.nameZh}，一擊必殺！`);
+        } else if (FIXED_DAMAGE_MOVES[move.name]) {
+            totalDamage = Math.max(0, Math.min(def.currentHp, FIXED_DAMAGE_MOVES[move.name](atk, def)));
+            hitCount = totalDamage > 0 ? 1 : 0;
+            def.currentHp = Math.max(0, def.currentHp - totalDamage);
+            fainted = def.currentHp <= 0;
+            if (totalDamage > 0) log.push(`${atkName} 使出 ${move.nameZh}，造成 ${totalDamage} 點傷害！`);
+            else log.push(`${atkName} 使出 ${move.nameZh}，但是沒有效果...`);
+        } else if (move.power > 0) {
+            const hits = rollMultiHitCount(move.minHits, move.maxHits);
+            const atkStat = atk.atk * statStageMult(atk.stages.atk);
+            const defStat = def.def * statStageMult(def.stages.def);
+            for (let i = 0; i < hits; i++) {
+                if (def.currentHp <= 0) break;
+                const isCrit = rollChance(critChance(move.critRate) * 100);
+                if (isCrit) crit = true;
+                const dmg = computeDamage(atk.level, atkStat, defStat, move.power, eff, isStab, isCrit ? 1.5 : 1);
+                def.currentHp = Math.max(0, def.currentHp - dmg);
+                totalDamage += dmg;
+                hitCount++;
+            }
+            fainted = def.currentHp <= 0;
+            const effTxt = eff > 1 ? '，效果絕佳！' : eff < 1 ? '，效果不理想...' : '';
+            if (hitCount > 1) log.push(`${atkName} 使出 ${move.nameZh}，打中了 ${hitCount} 次，總共造成 ${totalDamage} 點傷害${effTxt}${crit ? '(會心一擊！)' : ''}`);
+            else log.push(`${atkName} 使出 ${move.nameZh}，造成 ${totalDamage} 點傷害${effTxt}${crit ? '，會心一擊！' : ''}`);
+        } else {
+            // 招式本身沒有威力(純變化/狀態招式)，傷害留在0——底下的回血/異常狀態/能力等級
+            // 區塊才是這種招式真正的效果
+            log.push(`${atkName} 使出 ${move.nameZh}！`);
+        }
+
+        ev.effectiveness = eff;
+        ev.isStab = isStab;
+        ev.damage = totalDamage;
+        ev.hitCount = hitCount;
+        ev.crit = crit;
+        ev.defenderHpAfter = def.currentHp;
+        ev.fainted = fainted;
+
+        // ---- 吸血／反作用力(drain)：正值回攻擊方血、負值扣攻擊方血(可能因此自己也倒下) ----
+        if (move.drain && totalDamage > 0) {
+            const drainAmt = Math.round(totalDamage * move.drain / 100);
+            atk.currentHp = Math.max(0, Math.min(atk.maxHp, atk.currentHp + drainAmt));
+            ev.attackerHpAfter = atk.currentHp;
+            ev.drainAmount = drainAmt;
+            if (drainAmt > 0) log.push(`${atkName} 吸收了 ${drainAmt} 點HP！`);
+            else if (drainAmt < 0) log.push(`${atkName} 受到反作用力，損失了 ${-drainAmt} 點HP！`);
+            if (atk.currentHp <= 0 && drainAmt < 0) {
+                log.push(`${atkName} 倒下了！`);
+                winnerUid = defenderUid;
+                events.push(ev);
+                break;
+            }
+        }
+
+        // ---- 直接回血招式(跟吸血不同，這種不需要造成傷害，回血量是自己最大HP的固定%) ----
+        if (move.healing) {
+            const before = atk.currentHp;
+            atk.currentHp = Math.max(0, Math.min(atk.maxHp, atk.currentHp + Math.round(atk.maxHp * move.healing / 100)));
+            const actualHeal = atk.currentHp - before;
+            if (actualHeal > 0) {
+                ev.selfHeal = actualHeal;
+                ev.attackerHpAfter = atk.currentHp;
+                log.push(`${atkName} 回復了 ${actualHeal} 點HP！`);
+            }
+        }
+
+        // ---- 附加異常狀態 ----
+        if (move.ailment && (move.target === 'user' || eff !== 0)) {
+            const chance = move.category === 'ailment' ? 100 : (move.ailmentChance || 0);
+            if (chance > 0 && rollChance(chance)) {
+                const ailmentTarget = move.target === 'user' ? atk : def;
+                if (move.ailment === 'confusion') {
+                    if (!ailmentTarget.confusedTurns) {
+                        ailmentTarget.confusedTurns = 1 + Math.floor(Math.random() * 4);
+                        ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: 'confusion', statusNameZh: STATUS_NAME_ZH.confusion };
+                        log.push(`${ailmentTarget === atk ? atkName : defName} 陷入混亂了！`);
+                    }
+                } else if (!ailmentTarget.status) {
+                    const isToxic = move.name === 'toxic';
+                    ailmentTarget.status = move.ailment;
+                    ailmentTarget.statusTurns = move.ailment === 'sleep' ? (1 + Math.floor(Math.random() * 3)) : 0;
+                    ailmentTarget.toxicCounter = isToxic ? 1 : 0;
+                    ev.ailmentApplied = { onSelf: ailmentTarget === atk, status: move.ailment, statusNameZh: STATUS_NAME_ZH[move.ailment] || move.ailment, toxic: isToxic };
+                    log.push(`${ailmentTarget === atk ? atkName : defName} ${isToxic ? '被劇毒侵蝕了！' : `陷入${STATUS_NAME_ZH[move.ailment] || move.ailment}狀態了！`}`);
+                }
+            }
+        }
+
+        // ---- 能力等級變化 ----
+        if (move.statChanges && move.statChanges.length) {
+            const chance = (move.category === 'net-good-stats' || move.category === 'swagger') ? 100 : (move.statChance || 100);
+            if (rollChance(chance)) {
+                const statTarget = move.target === 'user' ? atk : def;
+                const applied = [];
+                move.statChanges.forEach(sc => {
+                    const before = statTarget.stages[sc.statKey] || 0;
+                    const after = Math.max(-6, Math.min(6, before + sc.change));
+                    statTarget.stages[sc.statKey] = after;
+                    if (after !== before) applied.push({ statKey: sc.statKey, statNameZh: STAGE_KEY_ZH[sc.statKey], change: sc.change });
+                });
+                if (applied.length) {
+                    ev.statChanges = { onSelf: statTarget === atk, changes: applied };
+                    const who = statTarget === atk ? atkName : defName;
+                    applied.forEach(a => log.push(`${who} 的${a.statNameZh}${a.change > 0 ? '上升了！' : '下降了！'}`));
+                }
+            }
+        }
+
+        // ---- 畏縮：只有「這回合對方還沒出招」才有意義(先攻方讓後攻方這回合直接動不了) ----
+        if (move.flinchChance > 0 && def.currentHp > 0 && order.indexOf(defenderUid) > order.indexOf(attackerUid)) {
+            if (rollChance(move.flinchChance)) def.flinched = true;
+        }
+
+        events.push(ev);
         if (fainted) {
-            log.push(`${nameOf[defenderUid]} 倒下了！`);
+            log.push(`${defName} 倒下了！`);
             winnerUid = attackerUid;
             break;
         }
     }
 
-    const status = winnerUid ? 'finished' : 'battling';
+    // ---- 回合結束的異常狀態傷害(中毒/劇毒/燒傷)：還沒分出勝負才會結算 ----
+    if (!winnerUid) {
+        for (const uid of order) {
+            const t = state[uid];
+            if (t.currentHp <= 0 || (t.status !== 'poison' && t.status !== 'burn')) continue;
+            const isToxic = t.status === 'poison' && t.toxicCounter > 0;
+            const pct = t.status === 'burn' ? 6.25 : (isToxic ? Math.min(25, 6.25 * t.toxicCounter) : 12.5);
+            const dmg = Math.max(1, Math.floor(t.maxHp * pct / 100));
+            t.currentHp = Math.max(0, t.currentHp - dmg);
+            if (isToxic) t.toxicCounter += 1;
+            const label = t.status === 'burn' ? '燒傷' : (isToxic ? '劇毒' : '中毒');
+            log.push(`${nameOf[uid]} 因為${label}損失了 ${dmg} 點HP！`);
+            events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: t.status, damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+            if (t.currentHp <= 0) { log.push(`${nameOf[uid]} 倒下了！`); winnerUid = order.find(u => u !== uid); }
+        }
+    }
+
+    const finalStatus = winnerUid ? 'finished' : 'battling';
     const winnerInstanceId = winnerUid ? state[winnerUid].instanceId : null;
     const resolvedRoundNum = roomData.battleState.round || 1;
 
@@ -1573,7 +2037,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 'battleState.lastRoundPrevHp': { [uidA]: prevHpA, [uidB]: prevHpB },
                 'battleState.resolvedRound': resolvedRoundNum,
                 pendingMoves: {},
-                status,
+                status: finalStatus,
                 winnerUid: winnerUid || null,
                 winnerInstanceId: winnerInstanceId || null,
             });
