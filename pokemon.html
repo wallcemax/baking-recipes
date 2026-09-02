@@ -63,29 +63,11 @@
 
     <!-- ===== 扭蛋分頁 ===== -->
     <div id="tab-gacha" class="tab-panel">
-        <p class="text-sm text-gray-500 mb-4">用寶可幣抽蛋，蛋裡到底孵出哪一隻要等孵化那一刻才會知道！</p>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div class="bg-white rounded-2xl card-shadow p-5 text-center">
-                <p class="text-4xl mb-2">🥚</p>
-                <p class="font-bold mb-1">普通蛋</p>
-                <p class="text-xs text-gray-400 mb-3">不會孵出神獸/幻獸</p>
-                <p class="font-bold text-yellow-600 mb-3">🪙 100</p>
-                <button onclick="drawEgg('normal')" class="w-full bg-gray-700 text-white py-2 rounded-xl font-bold text-sm">抽一顆</button>
-            </div>
-            <div class="bg-white rounded-2xl card-shadow p-5 text-center border-2 border-blue-300">
-                <p class="text-4xl mb-2">🥚✨</p>
-                <p class="font-bold mb-1">高級蛋</p>
-                <p class="text-xs text-gray-400 mb-3">15%機率孵出神獸</p>
-                <p class="font-bold text-yellow-600 mb-3">🪙 500</p>
-                <button onclick="drawEgg('great')" class="w-full bg-blue-500 text-white py-2 rounded-xl font-bold text-sm">抽一顆</button>
-            </div>
-            <div class="bg-white rounded-2xl card-shadow p-5 text-center border-2 border-purple-400">
-                <p class="text-4xl mb-2">🥚🌟</p>
-                <p class="font-bold mb-1">神獸蛋</p>
-                <p class="text-xs text-gray-400 mb-3">保證孵出神獸/幻獸</p>
-                <p class="font-bold text-yellow-600 mb-3">🪙 3000</p>
-                <button onclick="drawEgg('legendary')" class="w-full bg-purple-600 text-white py-2 rounded-xl font-bold text-sm">抽一顆</button>
-            </div>
+        <p class="text-sm text-gray-500 mb-4">全國圖鑑每一隻都有機會抽到(神獸/幻獸機率低很多)，蛋裡到底孵出哪一隻要等孵化那一刻才會知道，而且保證不會跟你已經抓過的重複！</p>
+        <div class="bg-white rounded-2xl card-shadow p-6 text-center max-w-xs mx-auto">
+            <p class="text-5xl mb-3">🥚</p>
+            <p class="font-bold text-yellow-600 mb-4">🪙 1000 / 顆</p>
+            <button onclick="drawEgg()" class="w-full bg-red-500 text-white py-2.5 rounded-xl font-bold">抽一顆蛋</button>
         </div>
     </div>
 
@@ -247,6 +229,9 @@ auth.onAuthStateChanged(user => {
         document.getElementById('coin-display').classList.remove('hidden');
         document.getElementById('coin-display').classList.add('flex');
         startListeners(user.uid);
+        // 第一次登入的玩家會在這裡拿到開局代幣+一顆馬上能孵化的免費蛋(已經玩過的話這裡什麼都不會發生)。
+        // 不用等這個呼叫完成才繼續——上面的onSnapshot監聽已經在運作了，Worker寫入完成後畫面會自己更新
+        callWorker('pokemon_init_player').catch(err => console.warn('初始化玩家資料失敗：', err.message));
     } else {
         document.getElementById('logged-out-view').classList.remove('hidden');
         document.getElementById('main-view').classList.add('hidden');
@@ -284,31 +269,60 @@ function switchTab(name) {
 
 // ============================================================
 // PokéAPI 資料快取(同一隻/同一招式，這次連線期間只抓一次)
+// ------------------------------------------------------------
+// PokéAPI的names欄位(每個語言一筆{name, language:{name:'zh-Hant'/'en'/...}})裡本來就有
+// 官方繁體中文翻譯(寶可夢從Sun/Moon那一代開始官方就有中文版)，直接抓這個用，不用自己
+// 維護一份翻譯對照表——涵蓋種類名稱、招式名稱、屬性名稱都適用
 // ============================================================
-const speciesCache = new Map(); // speciesId -> {name, sprite, types:[...]}
+function extractZhHantNameClient(namesArray, fallback) {
+    const entry = (namesArray || []).find(n => n.language && n.language.name === 'zh-Hant');
+    return entry ? entry.name : (fallback || '???');
+}
+const typeZhCache = new Map(); // 英文屬性代號(electric) -> 中文名稱(電)，18種屬性很快就會全部快取到
+async function fetchTypeNameZh(typeSlug) {
+    if (typeZhCache.has(typeSlug)) return typeZhCache.get(typeSlug);
+    try {
+        const res = await fetch(`https://pokeapi.co/api/v2/type/${typeSlug}`);
+        const data = await res.json();
+        const zh = extractZhHantNameClient(data.names, typeSlug);
+        typeZhCache.set(typeSlug, zh);
+        return zh;
+    } catch (err) {
+        return typeSlug;
+    }
+}
+const speciesCache = new Map(); // speciesId -> {nameZh, sprite, types(英文代號，算屬性相剋用), typesZh(中文，顯示用)}
 async function fetchSpeciesDisplay(speciesId) {
     if (speciesCache.has(speciesId)) return speciesCache.get(speciesId);
     try {
-        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${speciesId}`);
-        const data = await res.json();
+        const [pokemonRes, speciesRes] = await Promise.all([
+            fetch(`https://pokeapi.co/api/v2/pokemon/${speciesId}`),
+            fetch(`https://pokeapi.co/api/v2/pokemon-species/${speciesId}`),
+        ]);
+        const data = await pokemonRes.json();
+        const speciesData = await speciesRes.json();
+        const types = (data.types || []).map(t => t.type.name);
+        const typesZh = await Promise.all(types.map(fetchTypeNameZh));
         const result = {
-            name: data.name,
+            nameZh: extractZhHantNameClient(speciesData.names, data.name),
             sprite: data.sprites?.other?.['official-artwork']?.front_default || data.sprites?.front_default || '',
             spriteBack: data.sprites?.back_default || data.sprites?.front_default || '',
-            types: (data.types || []).map(t => t.type.name),
+            types,
+            typesZh,
         };
         speciesCache.set(speciesId, result);
         return result;
     } catch (err) {
-        return { name: '???', sprite: '', spriteBack: '', types: [] };
+        return { nameZh: '???', sprite: '', spriteBack: '', types: [], typesZh: [] };
     }
 }
 const TYPE_COLORS = { normal:'#A8A878',fire:'#F08030',water:'#6890F0',electric:'#F8D030',grass:'#78C850',ice:'#98D8D8',fighting:'#C03028',poison:'#A040A0',ground:'#E0C068',flying:'#A890F0',psychic:'#F85888',bug:'#A8B820',rock:'#B8A038',ghost:'#705898',dragon:'#7038F8',dark:'#705848',steel:'#B8B8D0',fairy:'#EE99AC' };
-function typeBadgesHtml(types) {
-    return (types || []).map(t => `<span class="type-badge" style="background:${TYPE_COLORS[t] || '#999'}">${t}</span>`).join(' ');
+function typeBadgesHtml(typesEnglish, typesZh) {
+    return (typesEnglish || []).map((t, idx) => `<span class="type-badge" style="background:${TYPE_COLORS[t] || '#999'}">${(typesZh && typesZh[idx]) || t}</span>`).join(' ');
 }
 function pokemonDisplayName(instance) {
-    return instance.nickname && instance.nickname !== instance.speciesName ? `${instance.nickname}(${instance.speciesName})` : (instance.nickname || instance.speciesName || '???');
+    const zh = instance.nickname || instance.speciesNameZh || instance.speciesName || '???';
+    return zh;
 }
 function statAtLevel(base, level, isHp) {
     // 簡化版的等級成長公式(不套用個體值/努力值/性格加成那套完整規則)，符合遊戲附件描述的
@@ -324,9 +338,9 @@ function spdOf(instance) { return statAtLevel(instance.baseSpd, instance.level, 
 // ============================================================
 // 扭蛋
 // ============================================================
-async function drawEgg(tier) {
+async function drawEgg() {
     try {
-        await callWorker('pokemon_gacha_draw', { tier });
+        await callWorker('pokemon_gacha_draw');
         showToast('抽到一顆蛋了！去「蛋窩」分頁看看');
         switchTab('eggs');
     } catch (err) {
@@ -351,11 +365,10 @@ function renderEggTab() {
     emptyHint.classList.add('hidden');
     badge.textContent = currentEggs.length;
     badge.classList.remove('hidden');
-    const tierEmoji = { normal: '🥚', great: '🥚✨', legendary: '🥚🌟' };
     list.innerHTML = currentEggs.map(egg => {
         const ready = Date.now() >= Number(egg.hatchAt);
         return `<div class="bg-white rounded-2xl card-shadow p-4 text-center" data-hatch-at="${egg.hatchAt}" data-egg-id="${egg.id}">
-            <p class="text-5xl mb-2 ${ready ? 'egg-shake' : ''}">${tierEmoji[egg.tier] || '🥚'}</p>
+            <p class="text-5xl mb-2 ${ready ? 'egg-shake' : ''}">🥚</p>
             <p class="text-xs text-gray-400 mb-2 egg-countdown">${ready ? '孵化準備好了！' : '計算中...'}</p>
             ${ready
                 ? `<button onclick="collectEgg('${egg.id}')" class="w-full bg-green-500 text-white py-1.5 rounded-xl font-bold text-sm">孵化！</button>`
@@ -399,8 +412,8 @@ async function showHatchResult(instance) {
         <p class="text-5xl mb-2">🎉</p>
         <p class="text-gray-500 mb-2">恭喜孵化！</p>
         <img src="${display.sprite}" class="w-32 h-32 mx-auto mb-2">
-        <p class="font-black text-lg mb-1">${display.name}</p>
-        <p class="mb-3">${typeBadgesHtml(display.types)}</p>
+        <p class="font-black text-lg mb-1">${display.nameZh}</p>
+        <p class="mb-3">${typeBadgesHtml(display.types, display.typesZh)}</p>
         ${instance.isLegendary ? '<p class="text-purple-600 font-bold mb-2">✨ 傳說/幻之寶可夢！✨</p>' : ''}
         <button onclick="closeHatchModal()" class="bg-red-500 text-white px-6 py-2 rounded-full font-bold">太好了！</button>
     `;
@@ -451,7 +464,7 @@ async function renderBoxTab() {
                 <div class="min-w-0">
                     <p class="text-sm font-bold truncate">${pokemonDisplayName(inst)}</p>
                     <p class="text-xs text-gray-400">Lv.${inst.level} · ${inst.flavor}口味</p>
-                    <div class="flex gap-1 mt-0.5">${typeBadgesHtml(d.types)}</div>
+                    <div class="flex gap-1 mt-0.5">${typeBadgesHtml(d.types, d.typesZh)}</div>
                 </div>
             </div>
             <div class="flex gap-1 mt-2">
@@ -473,11 +486,12 @@ async function openDetailModal(instanceId) {
 
     const d = await fetchSpeciesDisplay(inst.speciesId);
     const evoInfo = await checkEvolutionEligibility(inst);
+    const moveDisplays = await Promise.all((inst.moves || []).map(fetchMoveData));
     content.innerHTML = `
         <div class="text-center mb-3">
             <img src="${d.sprite}" class="w-28 h-28 mx-auto">
             <p class="font-black text-lg">${pokemonDisplayName(inst)}</p>
-            <p class="text-xs text-gray-400 mb-1">${typeBadgesHtml(d.types)}</p>
+            <p class="text-xs text-gray-400 mb-1">${typeBadgesHtml(d.types, d.typesZh)}</p>
             <p class="text-xs text-gray-400">Lv.${inst.level} · EXP ${inst.exp} · 親密度 ${inst.friendship} · ${inst.flavor}口味</p>
         </div>
         <div class="grid grid-cols-4 gap-1 text-center text-xs mb-3">
@@ -487,7 +501,7 @@ async function openDetailModal(instanceId) {
             <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">速度</p><p class="font-bold">${spdOf(inst)}</p></div>
         </div>
         <p class="text-xs text-gray-400 mb-1">目前招式</p>
-        <p class="text-sm mb-3">${(inst.moves || []).join('、')}</p>
+        <p class="text-sm mb-3">${moveDisplays.map(m => m.nameZh).join('、')}</p>
         <div class="grid grid-cols-2 gap-2 mb-2">
             <button onclick="toggleParty('${inst.id}')" class="text-sm py-2 rounded-xl font-bold ${inst.inParty ? 'bg-red-100 text-red-600' : 'bg-gray-100'}">${inst.inParty ? '移出隊伍' : '加入隊伍'}</button>
             <button onclick="toggleIdlePlacement('${inst.id}')" class="text-sm py-2 rounded-xl font-bold ${inst.placedForIdle ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100'}">${inst.placedForIdle ? '牽出牧場' : '放進牧場'}</button>
@@ -521,12 +535,33 @@ async function toggleIdlePlacement(instanceId) {
 
 // ---------- 餵樹果(親密度系統) ----------
 const COMMON_BERRIES = ['oran','pecha','cheri','chesto','rawst','aspear','leppa','sitrus','figy','wiki','mago','aguav','iapapa'];
+// 樹果本身的PokéAPI資料(/berry/{name})沒有直接附中文名稱，中文名稱要另外跟連結的道具
+// (item)資料要——每種樹果對應到一個同名的道具(例如oran莓對應道具oran-berry)，那份資料
+// 裡才有names陣列可以抓zh-Hant翻譯
+const berryNameZhCache = new Map();
+async function fetchBerryNameZh(berryName) {
+    if (berryNameZhCache.has(berryName)) return berryNameZhCache.get(berryName);
+    try {
+        const berryRes = await fetch(`https://pokeapi.co/api/v2/berry/${berryName}`);
+        const berryData = await berryRes.json();
+        const itemRes = await fetch(berryData.item.url);
+        const itemData = await itemRes.json();
+        const zh = extractZhHantNameClient(itemData.names, berryName);
+        berryNameZhCache.set(berryName, zh);
+        return zh;
+    } catch (err) {
+        berryNameZhCache.set(berryName, berryName);
+        return berryName;
+    }
+}
 async function openFeedModal(instanceId) {
     const content = document.getElementById('detail-modal-content');
+    content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+    const berryNames = await Promise.all(COMMON_BERRIES.map(fetchBerryNameZh));
     content.innerHTML = `
         <h3 class="font-bold mb-3 text-center">🍓 選一顆樹果餵食</h3>
         <div class="grid grid-cols-4 gap-2 mb-3">
-            ${COMMON_BERRIES.map(b => `<button onclick="feedBerry('${instanceId}','${b}')" class="text-xs bg-gray-50 hover:bg-green-50 rounded-lg p-2">${b}莓</button>`).join('')}
+            ${COMMON_BERRIES.map((b, idx) => `<button onclick="feedBerry('${instanceId}','${b}')" class="text-xs bg-gray-50 hover:bg-green-50 rounded-lg p-2">${berryNames[idx]}</button>`).join('')}
         </div>
         <p class="text-xs text-gray-400 text-center mb-3">口味跟寶可夢喜好對上的話，親密度加成比較多</p>
         <button onclick="openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm">返回</button>
@@ -564,6 +599,28 @@ async function feedBerry(instanceId, berryName) {
 
 // ---------- 進化 ----------
 const evolutionChainCache = new Map();
+const speciesNameZhByUrlCache = new Map();
+async function fetchSpeciesNameZhByUrl(url) {
+    if (speciesNameZhByUrlCache.has(url)) return speciesNameZhByUrlCache.get(url);
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        const zh = extractZhHantNameClient(data.names, data.name);
+        speciesNameZhByUrlCache.set(url, zh);
+        return zh;
+    } catch (err) { return null; }
+}
+const itemNameZhCache = new Map();
+async function fetchItemNameZh(url) {
+    if (itemNameZhCache.has(url)) return itemNameZhCache.get(url);
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        const zh = extractZhHantNameClient(data.names, data.name);
+        itemNameZhCache.set(url, zh);
+        return zh;
+    } catch (err) { return null; }
+}
 async function checkEvolutionEligibility(inst) {
     try {
         const species = await (async () => {
@@ -596,9 +653,10 @@ async function checkEvolutionEligibility(inst) {
         let canEvolve = true, hint = '';
         if (minLevel && inst.level < minLevel) { canEvolve = false; hint = `等級到${minLevel}才能進化(目前Lv.${inst.level})`; }
         else if (minFriendship && (inst.friendship || 0) < minFriendship) { canEvolve = false; hint = `親密度要到${minFriendship}才能進化(目前${inst.friendship || 0})`; }
-        else if (detail.item) { canEvolve = false; hint = `需要道具「${detail.item.name}」才能進化(這個功能還沒開放)`; }
+        else if (detail.item) { canEvolve = false; const itemZh = await fetchItemNameZh(detail.item.url); hint = `需要道具「${itemZh || detail.item.name}」才能進化(這個功能還沒開放)`; }
         else if (!minLevel && !minFriendship && !detail.item) { canEvolve = inst.level >= 16; hint = `等級到16才能進化(目前Lv.${inst.level})`; }
-        return { canEvolve, nextName: next.species.name, nextSpeciesUrl: next.species.url, hint };
+        const nextNameZh = await fetchSpeciesNameZhByUrl(next.species.url);
+        return { canEvolve, nextName: nextNameZh || next.species.name, nextSpeciesUrl: next.species.url, hint };
     } catch (err) {
         return { canEvolve: false, nextName: null };
     }
@@ -612,19 +670,28 @@ async function evolvePokemon(instanceId) {
         const nextIdMatch = evoInfo.nextSpeciesUrl.match(/\/(\d+)\/?$/);
         const nextSpeciesId = nextIdMatch ? Number(nextIdMatch[1]) : null;
         if (!nextSpeciesId) throw new Error('抓不到進化後的種類編號');
-        const pokemonRes = await fetch(`https://pokeapi.co/api/v2/pokemon/${nextSpeciesId}`);
+        const [pokemonRes, speciesRes] = await Promise.all([
+            fetch(`https://pokeapi.co/api/v2/pokemon/${nextSpeciesId}`),
+            fetch(`https://pokeapi.co/api/v2/pokemon-species/${nextSpeciesId}`),
+        ]);
         const pokemonData = await pokemonRes.json();
+        const speciesData = await speciesRes.json();
+        const nextNameZh = extractZhHantNameClient(speciesData.names, pokemonData.name);
         const baseStats = {};
         (pokemonData.stats || []).forEach(s => { baseStats[s.stat.name] = s.base_stat; });
+        // 暱稱目前沒有另外的自訂改名功能，孵化時預設一律等於中文種類名，所以進化這裡也直接
+        // 同步更新暱稱成新的中文名——不然畫面會變成「皮卡丘進化成雷丘，但暱稱還顯示皮卡丘」這種怪狀況
         await db.collection('pokemonInstances').doc(instanceId).update({
             speciesId: nextSpeciesId,
             speciesName: pokemonData.name,
+            speciesNameZh: nextNameZh,
+            nickname: nextNameZh,
             baseHp: baseStats.hp || inst.baseHp,
             baseAtk: baseStats.attack || inst.baseAtk,
             baseDef: baseStats.defense || inst.baseDef,
             baseSpd: baseStats.speed || inst.baseSpd,
         });
-        showToast(`進化成功！變成了${pokemonData.name}`);
+        showToast(`進化成功！變成了${nextNameZh}`);
         closeDetailModal();
     } catch (err) {
         showToast('進化失敗：' + err.message);
@@ -695,7 +762,7 @@ async function renderRoomList() {
                 <img src="${displays[idx].sprite}" class="w-10 h-10">
                 <div>
                     <p class="text-sm font-bold">${room.roomName || '無名房間'}</p>
-                    <p class="text-xs text-gray-400">房主的 ${room.hostNickname || displays[idx].name}</p>
+                    <p class="text-xs text-gray-400">房主的 ${room.hostNickname || displays[idx].nameZh}</p>
                 </div>
             </div>
             ${room.hostUid === auth.currentUser?.uid
@@ -874,6 +941,7 @@ async function renderRoomView(room) {
     }
 
     const myMoveSubmitted = !!(room.pendingMoves && room.pendingMoves[myUid]);
+    const myMoveDisplays = myMoveSubmitted ? [] : await Promise.all((myTeam.moves || []).map(fetchMoveData));
     container.innerHTML = `
         <div class="bg-white rounded-2xl card-shadow p-4 mb-3">
             <div class="flex justify-between items-center mb-1">
@@ -896,7 +964,7 @@ async function renderRoomView(room) {
         </div>
         ${myMoveSubmitted
             ? `<p class="text-center text-gray-400 py-4">已送出招式，等待對手...</p>`
-            : `<div class="grid grid-cols-2 gap-2">${(myTeam.moves || []).map(m => `<button onclick="submitMove('${m}')" class="bg-red-50 hover:bg-red-100 text-red-700 rounded-xl py-3 text-sm font-bold">${m}</button>`).join('')}</div>`}
+            : `<div class="grid grid-cols-2 gap-2">${myMoveDisplays.map(m => `<button onclick="submitMove('${m.name}')" class="bg-red-50 hover:bg-red-100 text-red-700 rounded-xl py-3 text-sm font-bold">${m.nameZh}</button>`).join('')}</div>`}
         <button onclick="forfeitRoom('${room.id}')" class="w-full text-xs text-gray-400 mt-3 underline">投降離開</button>
     `;
 }
@@ -940,7 +1008,7 @@ async function fetchMoveData(moveName) {
     if (moveDataCache.has(moveName)) return moveDataCache.get(moveName);
     const res = await fetch(`https://pokeapi.co/api/v2/move/${moveName}`);
     const data = await res.json();
-    const result = { name: data.name, power: data.power || 40, type: data.type.name, damageClass: data.damage_class?.name || 'physical' };
+    const result = { name: data.name, nameZh: extractZhHantNameClient(data.names, data.name), power: data.power || 40, type: data.type.name, damageClass: data.damage_class?.name || 'physical' };
     moveDataCache.set(moveName, result);
     return result;
 }
@@ -1023,8 +1091,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         const isStab = displayA && (attackerUid === uidA ? displayA.types : displayB.types).includes(move.type);
         const dmg = computeDamage(state[attackerUid].level, state[attackerUid].atk, state[defenderUid].def, move.power, eff, isStab);
         state[defenderUid].currentHp = Math.max(0, state[defenderUid].currentHp - dmg);
-        if (eff === 0) log.push(`${nameOf[attackerUid]} 使出 ${move.name}，但是沒有效果...`);
-        else log.push(`${nameOf[attackerUid]} 使出 ${move.name}，造成 ${dmg} 點傷害${eff > 1 ? '，效果絕佳！' : eff < 1 ? '，效果不理想...' : ''}`);
+        if (eff === 0) log.push(`${nameOf[attackerUid]} 使出 ${move.nameZh}，但是沒有效果...`);
+        else log.push(`${nameOf[attackerUid]} 使出 ${move.nameZh}，造成 ${dmg} 點傷害${eff > 1 ? '，效果絕佳！' : eff < 1 ? '，效果不理想...' : ''}`);
         if (state[defenderUid].currentHp <= 0) {
             log.push(`${nameOf[defenderUid]} 倒下了！`);
             winnerUid = attackerUid;
