@@ -139,7 +139,7 @@
 
     <!-- ===== 捕捉分頁 ===== -->
     <div id="tab-gacha" class="tab-panel hidden">
-        <p class="text-sm text-gray-500 mb-4">花費代幣就會出動捕捉一隻寶可夢，馬上就知道抓到誰、保證不會跟你已經抓過的重複！(而且有機率捕捉到閃光版～)</p>
+        <p class="text-sm text-gray-500 mb-4">花費代幣就會出動捕捉一隻寶可夢，馬上就知道抓到誰！如果抽到已經擁有的種類，不會變成多一隻，而是讓倉庫裡原本那隻直接星級+1、數值提升(而且有機率捕捉到閃光版～)</p>
         <div class="bg-white rounded-2xl card-shadow p-6 text-center max-w-xs mx-auto mb-4 relative overflow-hidden">
             <div id="gacha-machine-area" class="mb-3">
                 <img id="gacha-idle-ball" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" class="w-20 h-20 mx-auto gacha-idle-bob" style="image-rendering:pixelated">
@@ -349,25 +349,32 @@ const SFX = (() => {
         try {
             ctx = new (window.AudioContext || window.webkitAudioContext)();
             master = ctx.createGain();
-            master.gain.value = 0.55; // 整體音量壓低，當提示音用，不搶主角(視覺動畫+叫聲)的風采
+            master.gain.value = 0.7; // 整體音量壓低，當提示音用，不搶主角(視覺動畫+叫聲)的風采，但也不能小聲到聽不見
             const comp = ctx.createDynamicsCompressor(); // 避免好幾個音效疊在一起時爆音
             master.connect(comp);
             comp.connect(ctx.destination);
         } catch (err) { ctx = null; }
         return ctx;
     }
-    // 大部分瀏覽器要求AudioContext一定要在使用者手勢(點擊/觸摸)之後才能真的發聲，這裡在第一次
-    // 點擊時偷偷resume一次，之後整個session都不用再管——玩家一進遊戲通常就會先點登入/分頁按鈕，
-    // 不會感覺到任何延遲或空白
-    let unlocked = false;
+    // 大部分瀏覽器要求AudioContext一定要在「使用者手勢」(點擊/觸摸/按鍵)當下同步呼叫resume()才會
+    // 真的解鎖發聲——如果resume()是從別的地方(例如onAuthStateChanged、onSnapshot這類非同步callback)
+    // 呼叫的，瀏覽器會直接忽略，AudioContext永遠卡在suspended狀態、之後所有合成音效都變成完全沒聲音
+    // (但用<audio>播放的寶可夢叫聲不受影響，因為那是另一套播放機制，不需要AudioContext)。
+    // 這裡踩過的雷：cry()這種会自動被非使用者手勢觸發的函式(例如剛登入、Firestore onSnapshot
+    // 自動把使用者帶回還在進行中的對戰房間時就會自動播叫聲)如果先呼叫了unlock()，
+    // 若unlock()做成「只執行一次」的開關，這一次非手勢觸發的resume()嘗試會失敗、
+    // 而且把「只執行一次」的機會浪費掉，等到玩家真的點擊畫面時，unlock()卻因為
+    // 「已經執行過一次了」而不再重試，AudioContext就永遠沒有機會真正解鎖。
+    // 修正做法：unlock()不設「只做一次」的開關，改成每次使用者手勢(點擊/按鍵)都重新檢查一次
+    // 「現在是不是還卡在suspended」，是的話就再試著resume一次——已經成功解鎖過的話這裡幾乎零成本
+    // (只是讀一次c.state)，不會影響效能，但可以確保只要玩家「真的」點過一次畫面，就一定會解鎖成功，
+    // 不會被稍早那些非使用者手勢觸發的呼叫卡死
     function unlock() {
-        if (unlocked) return;
-        unlocked = true;
         const c = ensureCtx();
         if (c && c.state === 'suspended') c.resume().catch(() => {});
     }
-    document.addEventListener('pointerdown', unlock, { once: true, capture: true });
-    document.addEventListener('keydown', unlock, { once: true, capture: true });
+    document.addEventListener('pointerdown', unlock, { capture: true });
+    document.addEventListener('keydown', unlock, { capture: true });
 
     function isMuted() { return muted; }
     function setMuted(v) {
@@ -1320,14 +1327,20 @@ async function fetchBerryNameZh(berryName) {
     if (berryNameZhCache.has(berryName)) return berryNameZhCache.get(berryName);
     try {
         const berryRes = await fetch(`https://pokeapi.co/api/v2/berry/${berryName}`);
+        if (!berryRes.ok) throw new Error(`berry API回傳${berryRes.status}`);
         const berryData = await berryRes.json();
         const itemRes = await fetch(berryData.item.url);
+        if (!itemRes.ok) throw new Error(`item API回傳${itemRes.status}`);
         const itemData = await itemRes.json();
         const zh = extractZhHantNameClient(itemData.names, berryName);
+        // 只有「真的查到zh-Hant翻譯」才快取起來——如果PokéAPI真的沒有這個語言的翻譯，
+        // extractZhHantNameClient內部的fallback也會回傳原始英文代號，這種情況不特別擋，
+        // 但下面「失敗」的分支(網路逾時/連線被擋/PokéAPI暫時吃不消同時一大堆請求打過去，
+        // 打背包一次要查十幾種道具+莓果，很容易撞到PokéAPI的速率限制)絕對不能快取，
+        // 不然這次沒查到，就會卡在「永遠顯示英文代號」，玩家重新整理甚至重開背包都救不回來
         berryNameZhCache.set(berryName, zh);
         return zh;
     } catch (err) {
-        berryNameZhCache.set(berryName, berryName);
         return berryName;
     }
 }
@@ -1439,12 +1452,14 @@ async function fetchGenericItemNameZh(itemSlug) {
     if (genericItemNameZhCache.has(itemSlug)) return genericItemNameZhCache.get(itemSlug);
     try {
         const res = await fetch(`https://pokeapi.co/api/v2/item/${itemSlug}`);
+        if (!res.ok) throw new Error(`item API回傳${res.status}`);
         const data = await res.json();
         const zh = extractZhHantNameClient(data.names, itemSlug);
+        // 跟fetchBerryNameZh同樣的道理：查失敗(逾時/被PokéAPI速率限制擋掉)的話不能寫進快取，
+        // 不然這一次沒查到就會卡住，永遠顯示英文代號，重開背包也救不回來——只有真的查成功才快取
         genericItemNameZhCache.set(itemSlug, zh);
         return zh;
     } catch (err) {
-        genericItemNameZhCache.set(itemSlug, itemSlug);
         return itemSlug;
     }
 }
