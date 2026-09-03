@@ -81,7 +81,7 @@
     @keyframes gachaIdleBob { 0%,100%{transform:translateY(0) rotate(-2deg)} 50%{transform:translateY(-4px) rotate(2deg)} }
     .ball-pop-in { animation: ballPopIn 0.45s cubic-bezier(0.34,1.56,0.64,1); }
     @keyframes ballPopIn { 0%{transform:scale(0.4) translateY(10px); opacity:0} 60%{transform:scale(1.18) translateY(-4px); opacity:1} 100%{transform:scale(1) translateY(0); opacity:1} }
-    .ball-capture-shake { animation: ballCaptureShake 1.7s ease-in-out; transform-origin: 50% 85%; }
+    .ball-capture-shake { animation: ballCaptureShake 3s ease-in-out; transform-origin: 50% 85%; }
     @keyframes ballCaptureShake {
         0%,100% { transform: rotate(0deg); }
         6% { transform: rotate(-22deg); } 13% { transform: rotate(17deg); } 20% { transform: rotate(-22deg); } 27% { transform: rotate(0deg); }
@@ -1045,7 +1045,7 @@ async function playCaptureRevealSequence(resultPromise) {
     await sleep(500);
     const landedBall = document.getElementById('gacha-landed-ball');
     if (landedBall) landedBall.classList.add('ball-capture-shake');
-    await sleep(1700); // 要跟上面.ball-capture-shake的CSS動畫時長(1.7s)一致，不然畫面會提前跳到下一步、動畫播到一半被切掉
+    await sleep(3000); // 要跟上面.ball-capture-shake的CSS動畫時長(3s)一致，不然畫面會提前跳到下一步、動畫播到一半被切掉
 
     // 畫面閃光，象徵寶可夢從球裡蹦出來
     const flashEl = document.getElementById('gacha-flash-overlay');
@@ -3210,7 +3210,14 @@ async function renderRoomView(room) {
     const shouldAnimate = !!(events && events.length && resolvedRound != null && alreadyAnimated !== undefined && alreadyAnimated !== resolvedRound);
 
     if (shouldAnimate) {
-        animatedResolvedRound[room.id] = resolvedRound; // 先標記起來，避免重複觸發
+        // 這裡故意不在一開始就標記animatedResolvedRound——如果一開始就標記，等一下這輪動畫
+        // 播到一半被更新的onSnapshot取代掉(isStale中止)時，接手的那個新render會看到
+        // 「這輪animatedResolvedRound已經標過了」，誤以為這輪已經播過動畫，直接跳過整段
+        // renderBattleStage+playBattleEvents，逕自往下顯示「戰鬥結束」的最終畫面——玩家會看到
+        // HP條瞬間變成0、對手直接消失，完全沒有慢慢扣血的動畫(這正是「一擊打倒有時候沒有動畫」
+        // 的成因，最常發生在單一回合就把對方打倒、戰鬥狀態瞬間變成finished，onSnapshot很容易
+        // 在動畫播完前就連續觸發第二次)。改成動畫真的完整播完(沒有被中止)才標記，這樣即使中途
+        // 被取代，接手的新render也會自己重新判斷「這輪還沒播過」而正常播放，不會被錯誤跳過
         const prevHp = room.battleState.lastRoundPrevHp || {};
         const startHpMe = prevHp[myUid] != null ? prevHp[myUid] : myTeam.currentHp;
         const startHpOpp = prevHp[opponentUid] != null ? prevHp[opponentUid] : oppTeam.currentHp;
@@ -3241,6 +3248,7 @@ async function renderRoomView(room) {
             token: myToken, // 讓playBattleEvents自己能判斷「這輪動畫播到一半時，是不是已經被更新的render取代掉了」
         });
         if (myToken !== roomRenderToken) return;
+        animatedResolvedRound[room.id] = resolvedRound; // 動畫真的完整播完(沒有中途被取代)才標記，理由見上面的註解
     } else if (alreadyAnimated === undefined) {
         animatedResolvedRound[room.id] = resolvedRound != null ? resolvedRound : null;
         // 第一次畫出這個對戰房間(還沒播過任何回合動畫)：雙方先發寶可夢的上場叫聲，跟正版遊戲一樣
@@ -3921,6 +3929,15 @@ const HEAL_BLOCK_MOVES = new Set(['heal-block']);
 const PERISH_SONG_MOVES = new Set(['perish-song']);
 const SILENCE_MOVES = new Set(['throat-chop']); // 這招本身還有威力，是「有傷害+附加封聲」的招式
 const IDENTIFY_MOVES = new Set(['miracle-eye', 'odor-sleuth', 'foresight']);
+// 自我替換招式：正統規則裡這些招式的重點效果就是「用完之後把自己換下場」(接棒/送出去/教訓/
+// 等等再戰是有傷害或附加效果+換人；瞬間移動/接力棒是純換人)——這批之前完全沒實作，招式本身
+// 其他效果(傷害/能力變化/場地)照樣會生效，但玩家完全感覺不到「用了應該要換人」，等於看起來
+// 「完全沒作用」(這正是玩家回報瞬間移動沒反應的成因)。沿用「被打倒被迫換人」同一套
+// awaitingSwitch/switch picker機制，見resolveBattleRound裡的使用處
+const SELF_SWITCH_MOVES = new Set(['u-turn', 'volt-switch', 'baton-pass', 'parting-shot', 'teleport', 'flip-turn', 'chilly-reception', 'shed-tail']);
+// 強制對方換人招式：命中且沒有把對方直接打倒的話，會強制對方換下場(換誰上來還是由對方/AI決定，
+// 不是這招自己指定)——龍尾/圓環摔角本身還有傷害，先前已經會扣血，只是少了「強制換人」這一步
+const FORCE_SWITCH_MOVES = new Set(['roar', 'whirlwind', 'dragon-tail', 'circle-throw']);
 // 束縛系招式：min/max是正統規則的持續回合數(大部分官方資料庫都有記載，這裡取比較新版本的數字)，
 // pure:true代表這招本身沒有威力(只是單純困住，像盯住/封鎖/蜘蛛網那種)，沒有pure的則是「有傷害
 // 又會困住」的纏繞系招式，回合結束時還會額外扣血
@@ -5169,6 +5186,27 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             handleFaint(defenderUid);
             break;
         }
+
+        // ---- 自我替換招式：招式本身其他效果(傷害/能力變化)已經在上面處理完了，這裡補上
+        // 「用完自動換人」——沒有候補寶可夢的話就只是純粹發動其他效果，沒有東西可換 ----
+        if (SELF_SWITCH_MOVES.has(move.name) && atk.currentHp > 0) {
+            const aliveBench = (benchState[attackerUid] || []).filter(b => b.currentHp > 0);
+            if (aliveBench.length > 0) {
+                atk.mustSwitch = true;
+                if (!awaitingSwitchFinal.includes(attackerUid)) awaitingSwitchFinal.push(attackerUid);
+                log.push(`${atkName} 要換人了！`);
+            }
+        }
+        // ---- 強制對方換人招式：命中且沒有把對方打倒的話，強制對方換下場(換誰上來還是由
+        // 對方/AI自己決定) ----
+        if (FORCE_SWITCH_MOVES.has(move.name) && def.currentHp > 0) {
+            const aliveDefBench = (benchState[defenderUid] || []).filter(b => b.currentHp > 0);
+            if (aliveDefBench.length > 0) {
+                def.mustSwitch = true;
+                if (!awaitingSwitchFinal.includes(defenderUid)) awaitingSwitchFinal.push(defenderUid);
+                log.push(`${defName} 被強制換下場了！`);
+            }
+        }
     }
 
     // ---- 回合結束的持續效果：中毒/劇毒/燒傷、扎根回血(這就是原本回報的bug——扎根完全沒有
@@ -5360,16 +5398,23 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (t.embargoTurns > 0) { t.embargoTurns -= 1; if (t.embargoTurns <= 0) log.push(`${nameOf[uid]} 的道具封印解除了！`); }
         }
         // 兩邊都要檢查完才能判斷輸贏——任一方這時候HP歸零，先看牠還有沒有活著的候補寶可夢，
-        // 有的話不會直接輸掉戰鬥，而是進入「強制替換」狀態
-        const awaitingSwitch = [];
+        // 有的話不會直接輸掉戰鬥，而是進入「強制替換」狀態。
+        // 這裡從awaitingSwitchFinal(不是空陣列)開始接手，是因為前面出招階段可能已經記錄過
+        // 「自我替換/強制對方換人」的請求(SELF_SWITCH_MOVES/FORCE_SWITCH_MOVES)——如果直接歸零
+        // 重算，那些請求會被這裡的HP歸零檢查整個蓋掉(用了瞬間移動/接棒卻沒有真的換到人)
+        const awaitingSwitch = awaitingSwitchFinal.slice();
         for (const uid of [uidA, uidB]) {
             if (state[uid].currentHp <= 0) {
                 const aliveBench = (benchState[uid] || []).filter(b => b.currentHp > 0);
                 if (aliveBench.length > 0) {
                     state[uid].mustSwitch = true;
-                    awaitingSwitch.push(uid);
+                    if (!awaitingSwitch.includes(uid)) awaitingSwitch.push(uid);
                 } else if (!winnerUid) {
                     winnerUid = uid === uidA ? uidB : uidA;
+                    // 這一側其實已經被團滅了，先前記錄的自願/強制換人請求(如果剛好是同一個uid)
+                    // 就不用再處理，戰鬥直接結束
+                    const deadIdx = awaitingSwitch.indexOf(uid);
+                    if (deadIdx !== -1) awaitingSwitch.splice(deadIdx, 1);
                 }
             }
         }
