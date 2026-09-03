@@ -547,6 +547,15 @@ const SFX = (() => {
         },
         guessCorrect() { arpeggio([659, 880], { noteDur: 0.11, gap: 0.09, type: 'triangle', vol: 0.16 }); },
         guessWrong() { tone({ freq: 180, dur: 0.18, type: 'square', vol: 0.11 }); },
+        // 捕捉動畫：球圖示快速循環切換(搜尋中/收斂中)時，每換一次圖示就給一個很輕的「嗒」聲，
+        // 呼應畫面上球在跑的節奏——玩家反映球在跑的時候完全沒聲音感覺很空
+        ballSpin() { noiseHit({ dur: 0.03, vol: 0.05, filterType: 'bandpass', freq: 2200, Q: 2.5 }); },
+        // 捕捉動畫：最後球在原地晃動(ballCaptureShake)那3秒，配合CSS動畫的3次搖晃節奏各給一聲
+        // 悶悶的「咚」，模擬正版遊戲球晃動時的手感
+        ballShake() {
+            noiseHit({ dur: 0.08, vol: 0.14, filterType: 'lowpass', freq: 500, Q: 1.1 });
+            tone({ freq: 140, dur: 0.09, type: 'sine', vol: 0.08, delay: 0.005 });
+        },
         // 給BGM模組借用同一顆AudioContext(共用同一次的使用者手勢解鎖)，不用另外開一個
         // AudioContext、也不用再解鎖一次——名稱故意加底線，提醒這是內部共用介面，不是給一般
         // 呼叫端用的音效函式
@@ -579,7 +588,7 @@ document.addEventListener('DOMContentLoaded', () => {
 const BGM = (() => {
     let muted = localStorage.getItem('pokemonBgmMuted') === '1';
     let musicGain = null;
-    const TARGET_VOL = 0.27; // 玩家反映背景音樂太小聲，從0.16調大——SFX的master是0.7，這裡還是刻意留在明顯偏低的範圍，不會蓋過音效/叫聲
+    const TARGET_VOL = 0.35; // 玩家持續反映背景音樂太小聲，從0.16→0.27→這次再調到0.35——SFX的master是0.7，這裡還是刻意留在明顯偏低的範圍，不會蓋過音效/叫聲
     function ctx() { return SFX._ctx(); }
     function ensureBus() {
         const c = ctx();
@@ -601,11 +610,12 @@ const BGM = (() => {
     }
 
     // 播放一個音符：三角波為主(比正弦圓潤、比方波柔和)，音量走「快速淡入→維持→指數淡出」的
-    // 包絡，避免每個音符開始/結束時的喀啦聲(click)
-    function playNote(freq, startTime, dur, vol, type) {
+    // 包絡，避免每個音符開始/結束時的喀啦聲(click)——destGain是「這個音符要接到哪個音量節點」，
+    // 由呼叫端(scheduleOneLoop)傳進來，一定是某一次play()專屬的sessionGain，不是共用的masterBus
+    // (原因見下面play()的註解)
+    function playNote(freq, startTime, dur, vol, type, destGain) {
         const c = ctx();
-        const g = ensureBus();
-        if (!c || !g || !freq) return; // freq是0/null代表休止符，不用真的發聲
+        if (!c || !destGain || !freq) return; // freq是0/null代表休止符，不用真的發聲
         const osc = c.createOscillator();
         osc.type = type || 'triangle';
         osc.frequency.setValueAtTime(freq, startTime);
@@ -615,7 +625,7 @@ const BGM = (() => {
         env.gain.linearRampToValueAtTime(vol * 0.55, startTime + dur * 0.7);
         env.gain.exponentialRampToValueAtTime(0.0001, startTime + dur + 0.03);
         osc.connect(env);
-        env.connect(g);
+        env.connect(destGain);
         osc.start(startTime);
         osc.stop(startTime + dur + 0.05);
     }
@@ -625,18 +635,23 @@ const BGM = (() => {
                 C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00, A4: 440.00, B4: 493.88,
                 C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99 };
 
-    // 大廳/牧場/抽蛋/猜猜看等一般畫面用的配樂：C大調、輕快、原創的8步旋律迴圈+4步貝斯，
-    // 聽起來悠閒逛街的步調，跟正版遊戲的「大自然/城鎮」配樂調性類似，但完全是自己寫的旋律
+    // 大廳/牧場/抽蛋/猜猜看等一般畫面用的配樂：C大調、輕快、原創的16步旋律迴圈+8步貝斯，
+    // 聽起來悠閒逛街的步調，跟正版遊戲的「大自然/城鎮」配樂調性類似，但完全是自己寫的旋律。
+    // 玩家反映這首不夠好聽——原本貝斯是每個和弦一顆長音撐4拍、有點單調，這次改成「根音+五度」
+    // 的走路貝斯(oom-pah)，聽起來更有精神、不會死板(順便修正一個之前沒發現的小bug：原本旋律
+    // 最後一顆音是1.5拍，總拍數其實是16.5拍，跟貝斯的16拍對不起來，每次循環都會悄悄錯開0.5拍，
+    // 這次順便改成整數拍，兩軌重新對齊)
     const TRACK_MENU = {
         beatDur: 0.34, // 每拍0.34秒，換算約每分鐘176個八分音符(不到90 BPM，悠閒不趕)
         melody: [
             [N.C4, 1, 0.11], [N.E4, 1, 0.1], [N.G4, 1, 0.11], [N.E4, 1, 0.1],
             [N.F4, 1, 0.11], [N.A4, 1, 0.1], [N.G4, 1, 0.11], [N.E4, 1, 0.1],
             [N.D4, 1, 0.11], [N.F4, 1, 0.1], [N.A4, 1, 0.11], [N.F4, 1, 0.1],
-            [N.G4, 1, 0.12], [N.E4, 1, 0.1], [N.D4, 1, 0.1], [N.C4, 1.5, 0.12],
+            [N.G4, 1, 0.12], [N.E4, 1, 0.1], [N.D4, 1, 0.1], [N.C4, 1, 0.12],
         ],
         bass: [
-            [N.C3, 4, 0.07], [N.F3, 4, 0.07], [N.G3, 4, 0.07], [N.C3, 4, 0.07],
+            [N.C3, 2, 0.07], [N.G3, 2, 0.06], [N.F3, 2, 0.07], [N.C4, 2, 0.06],
+            [N.G3, 2, 0.07], [N.D3, 2, 0.06], [N.C3, 2, 0.07], [N.G3, 2, 0.06],
         ],
     };
     // 對戰畫面用的配樂：A自然小調、旋律節奏有長短變化(不再是單調的四分音符直線)，
@@ -666,69 +681,156 @@ const BGM = (() => {
             [N.E3 / 2, 0.5, 0.1, 'square'], [N.E3 / 2, 0.5, 0.09, 'square'], [N.E3 / 2, 0.5, 0.1, 'square'], [N.E3 / 2, 0.5, 0.09, 'square'],
         ],
     };
-    const TRACKS = { menu: TRACK_MENU, battle: TRACK_BATTLE };
+
+    // ============================================================
+    // 連線對戰(PvP)專屬配樂 + 地區對戰9大地區各自專屬配樂：玩家反映「對戰音樂都一樣，PvP應該要有
+    // 自己的、9大地區也應該都不同」——與其手刻10首完整旋律(容易打錯音、也很難一眼核對每首拍數
+    // 有沒有對齊)，這裡寫一個小型「配樂產生器」：所有戰鬥配樂共用同一套節奏輪廓(跟上面TRACK_BATTLE
+    // 一模一樣的16拍旋律骨架、16拍貝斯骨架)，只換「調式(音階組成)」「根音」「速度」「貝斯音色/
+    // 音域」這幾個參數——同樣的骨架套進不同調式，聽起來就會有明顯不同的味道(小調/多利安/弗里吉安/
+    // 利地亞...)，又能保證每一首melody/bass的拍數一定對得起來(骨架本身拍數固定，不會因為手刻疏漏
+    // 而兜不起來)
+    const MODE = {
+        aeolian:       [0, 2, 3, 5, 7, 8, 10],  // 自然小調(跟原本TRACK_BATTLE同一種調式)
+        dorian:        [0, 2, 3, 5, 7, 9, 10],  // 比自然小調亮一點，帶點神秘感
+        phrygian:      [0, 1, 3, 5, 7, 8, 10],  // 降2音，陰暗/侵略感
+        harmonicMinor: [0, 2, 3, 5, 7, 8, 11],  // 升7音(導音)，比較有史詩/莊嚴感
+        mixolydian:    [0, 2, 4, 5, 7, 9, 10],  // 大調但降7音，明亮又不失分量
+        lydian:        [0, 2, 4, 6, 7, 9, 11],  // 升4音，飄逸/優雅
+        melodicMinor:  [0, 2, 3, 5, 7, 9, 11],  // 升6升7音，冒險/開闊感
+    };
+    // 旋律的節奏骨架(跟TRACK_BATTLE原本那16拍旋律的拍長排列完全一樣，只是這裡用「音階第幾級」
+    // 取代寫死的音高)：[degreeIndex(0~6), octaveShift, beats]，degreeIndex 0=主音...6=第7級
+    const BATTLE_MELODY_SHAPE = [
+        [0, 0, 1], [2, 0, 1], [4, 0, 0.5], [6, 0, 0.5], [0, 1, 1], [6, 0, 0.5], [4, 0, 0.5], [6, 0, 1],
+        [2, 1, 1], [1, 1, 0.5], [0, 1, 0.5], [6, 0, 1], [4, 0, 1], [3, 0, 0.5], [2, 0, 0.5], [1, 0, 1],
+        [2, 0, 1], [0, 0, 0.5], [1, 0, 0.5], [0, 0, 2],
+    ];
+    // 貝斯的和弦進行骨架：4個區塊各佔4拍(8顆八分音符)，對應i–III–VII–v的走向，一樣用音階級數表示
+    const BATTLE_BASS_DEGREE_BLOCKS = [0, 2, 6, 4];
+    // 把「音階第幾級+八度位移」換算成實際頻率：等律制公式，root是那個調式的主音頻率
+    function degFreq(rootFreq, scaleArr, degreeIndex, octaveShift) {
+        const semis = scaleArr[degreeIndex] + octaveShift * 12;
+        return rootFreq * Math.pow(2, semis / 12);
+    }
+    // 用共用骨架+指定的調式/根音/速度/貝斯音色，產生一首完整的戰鬥配樂
+    function buildBattleTrack({ root, mode, beatDur, bassOctave = -1, bassTimbre = 'square', volMul = 1 }) {
+        const scaleArr = MODE[mode];
+        const melody = BATTLE_MELODY_SHAPE.map(([d, o, beats], i) => {
+            const freq = degFreq(root, scaleArr, d, o);
+            const vol = Math.round((0.12 + (i % 2 === 0 ? 0.01 : 0)) * volMul * 1000) / 1000;
+            return [freq, beats, vol];
+        });
+        const bass = [];
+        BATTLE_BASS_DEGREE_BLOCKS.forEach(d => {
+            const freq = degFreq(root, scaleArr, d, bassOctave);
+            for (let i = 0; i < 8; i++) {
+                const vol = Math.round((i % 2 === 0 ? 0.1 : 0.09) * volMul * 1000) / 1000;
+                bass.push([freq, 0.5, vol, bassTimbre]);
+            }
+        });
+        return { beatDur, melody, bass };
+    }
+    // 連線對戰：跟所有地區對戰/野生對戰都不一樣的專屬配樂——比較高音域、最快的速度、最緊繃的
+    // 和聲調式，凸顯「真人對戰」的高張力
+    const TRACK_PVP = buildBattleTrack({ root: N.D4, mode: 'harmonicMinor', beatDur: 0.18, bassTimbre: 'sawtooth', volMul: 1.1 });
+    // 9大地區對戰各自的專屬配樂：關都沿用經典的自然小調(呼應原本的預設戰鬥配樂調性)，其餘8個
+    // 地區各自換一種調式/根音/速度/貝斯音色，讓每個地區打起來的感覺都不一樣
+    const REGION_TRACK_PARAMS = {
+        kanto:  { root: N.A3, mode: 'aeolian',       beatDur: 0.24, bassTimbre: 'square',   volMul: 1.00 },
+        johto:  { root: N.D3, mode: 'dorian',        beatDur: 0.26, bassTimbre: 'sine',      volMul: 0.95 },
+        hoenn:  { root: N.E3, mode: 'mixolydian',     beatDur: 0.23, bassTimbre: 'triangle',  volMul: 1.00 },
+        sinnoh: { root: N.G3, mode: 'harmonicMinor',  beatDur: 0.27, bassTimbre: 'sawtooth',  volMul: 1.05 },
+        unova:  { root: N.B3, mode: 'aeolian',        beatDur: 0.20, bassTimbre: 'square',    volMul: 1.00 },
+        kalos:  { root: N.C4, mode: 'lydian',         beatDur: 0.25, bassTimbre: 'sine',      volMul: 0.95 },
+        alola:  { root: N.F3, mode: 'mixolydian',     beatDur: 0.22, bassTimbre: 'triangle',  volMul: 1.00 },
+        galar:  { root: N.E3, mode: 'phrygian',       beatDur: 0.19, bassTimbre: 'sawtooth',  volMul: 1.10 },
+        paldea: { root: N.A3, mode: 'melodicMinor',   beatDur: 0.21, bassTimbre: 'square',    volMul: 1.00 },
+    };
+    const TRACKS = { menu: TRACK_MENU, battle: TRACK_BATTLE, pvp: TRACK_PVP };
+    Object.keys(REGION_TRACK_PARAMS).forEach(regionId => {
+        TRACKS['region_' + regionId] = buildBattleTrack(REGION_TRACK_PARAMS[regionId]);
+    });
 
     let currentName = null;
     let activeToken = 0; // 每次play()/stop()都換一個新token，舊迴圈排程時只要token對不上就自動停止接力
+    let sessionGain = null; // 目前這個token專屬的音量節點(見play()裡的說明)，stop()也要用它來淡出
 
     // 把一整輪(melody/bass兩條軌各自的全部音符)排進去，回傳這一輪總共佔用的時間(秒)，
-    // 給呼叫端算「下一輪要提前多久排」用
-    function scheduleOneLoop(trackDef, startTime) {
+    // 給呼叫端算「下一輪要提前多久排」用——destGain是這一整輪要接到哪個session專屬的音量節點
+    function scheduleOneLoop(trackDef, startTime, destGain) {
         let t = startTime;
         trackDef.melody.forEach(([freq, beats, vol]) => {
-            playNote(freq, t, beats * trackDef.beatDur * 0.92, vol, 'triangle');
+            playNote(freq, t, beats * trackDef.beatDur * 0.92, vol, 'triangle', destGain);
             t += beats * trackDef.beatDur;
         });
         let bt = startTime;
         trackDef.bass.forEach(([freq, beats, vol, type]) => {
-            playNote(freq, bt, beats * trackDef.beatDur * 0.85, vol, type || 'sine');
+            playNote(freq, bt, beats * trackDef.beatDur * 0.85, vol, type || 'sine', destGain);
             bt += beats * trackDef.beatDur;
         });
         const totalBeats = trackDef.melody.reduce((s, n) => s + n[1], 0);
         return totalBeats * trackDef.beatDur;
     }
-    function driveLoop(trackDef, token, nextStartTime) {
+    function driveLoop(trackDef, token, nextStartTime, destGain) {
         if (token !== activeToken) return; // 已經切換到別首/停止了，不用再排下去
         const c = ctx();
         if (!c) return;
-        const loopDur = scheduleOneLoop(trackDef, nextStartTime);
+        const loopDur = scheduleOneLoop(trackDef, nextStartTime, destGain);
         // 提前0.5秒(而不是等這一輪完全播完才排下一輪)排下一輪的音符，避免setTimeout本身的
         // 誤差導致兩輪銜接處出現破音的空拍——下一輪的音符時間本來就是用絕對的ctx.currentTime
         // 算出來的，就算這個setTimeout早一點/晚一點觸發，實際發聲的時間點都不會跑掉
         const delayMs = Math.max(50, (loopDur - 0.5) * 1000);
-        setTimeout(() => driveLoop(trackDef, token, nextStartTime + loopDur), delayMs);
+        setTimeout(() => driveLoop(trackDef, token, nextStartTime + loopDur, destGain), delayMs);
     }
 
     // 切換播放曲目：同一首正在播就不用重來；換曲子的話先把音量淡出，切完再淡入，
-    // 避免兩首歌的音符卡在同一個時間點同時響、聽起來很吵雜
+    // 避免兩首歌的音符卡在同一個時間點同時響、聽起來很吵雜。
+    // ---- 玩家反映「戰鬥結束回大廳後，戰鬥音樂沒有馬上停」：根本原因是scheduleOneLoop一次會把
+    // 「一整輪」的音符全部排給Web Audio(用未來的絕對時間)，driveLoop提前0.5秒排下一輪，所以切歌
+    // 的當下，舊曲目其實已經有將近兩輪(對戰配樂約7秒)的音符排在佇列裡等著播。原本這裡只用「淡出
+    // →切歌→淡入」同一顆共用的musicGain(masterBus)來處理，等新曲目淡入拉回原本音量時，舊曲目那些
+    // 還沒播完的音符也會被一起拉大聲，變成「舊音樂還沒真的結束，又被新音樂的淡入拖回來疊在一起」
+    // ——聽起來就像戰鬥音樂沒有馬上停。修法是每次play()都開一個全新的sessionGain(只接這次的音符)，
+    // 接在masterBus後面：舊的sessionGain只會被淡出、不會再被任何東西拉回去，新的sessionGain則是
+    // 從0開始獨立淡入，兩者完全不會互相干擾，靜音開關繼續控制masterBus就好
     function play(name) {
         if (muted && name === currentName) return;
         if (name === currentName) return;
         const trackDef = TRACKS[name];
         if (!trackDef) return;
         const c = ctx();
-        const g = ensureBus();
-        if (!c || !g) return;
+        const master = ensureBus();
+        if (!c || !master) return;
         activeToken++;
         const myToken = activeToken;
         currentName = name;
         const now = c.currentTime;
-        g.gain.cancelScheduledValues(now);
-        g.gain.setTargetAtTime(0, now, 0.12);
+
+        const oldGain = sessionGain;
+        if (oldGain) {
+            oldGain.gain.cancelScheduledValues(now);
+            oldGain.gain.setTargetAtTime(0, now, 0.12); // 舊曲目的殘留音符淡出後就永遠留在0，不會再被拉回來
+        }
+        const newGain = c.createGain();
+        newGain.gain.setValueAtTime(0, now);
+        newGain.connect(master);
+        sessionGain = newGain;
         setTimeout(() => {
             if (myToken !== activeToken) return;
             const c2 = ctx();
             if (!c2) return;
-            g.gain.cancelScheduledValues(c2.currentTime);
-            g.gain.setTargetAtTime(muted ? 0 : TARGET_VOL, c2.currentTime, 0.25);
-            driveLoop(trackDef, myToken, c2.currentTime + 0.05);
+            newGain.gain.cancelScheduledValues(c2.currentTime);
+            newGain.gain.setTargetAtTime(1, c2.currentTime, 0.25); // session自己的音量固定淡入到1，實際音量由masterBus的TARGET_VOL決定
+            driveLoop(trackDef, myToken, c2.currentTime + 0.05, newGain);
         }, 260);
     }
     function stop() {
         activeToken++;
         currentName = null;
         const c = ctx();
-        const g = musicGain;
+        const g = sessionGain;
+        sessionGain = null;
         if (c && g) g.gain.setTargetAtTime(0, c.currentTime, 0.2);
     }
 
@@ -1097,6 +1199,7 @@ async function playCaptureRevealSequence(resultPromise) {
         while (cycling) {
             cycleIdx = (cycleIdx + 1) % order.length;
             spinBall.src = gachaBallSprite(order[cycleIdx]);
+            SFX.ballSpin(); // 球在跑(圖示快速切換)配一個很輕的音效，不然畫面在動、完全沒聲音會很空
             await sleep(90);
         }
     })();
@@ -1111,6 +1214,7 @@ async function playCaptureRevealSequence(resultPromise) {
     const settleSteps = [order[(cycleIdx + 1) % order.length], order[(cycleIdx + 2) % order.length], result.ballType, result.ballType];
     for (let i = 0; i < settleSteps.length; i++) {
         spinBall.src = gachaBallSprite(settleSteps[i]);
+        SFX.ballSpin();
         await sleep(120 + i * 90); // 愈到後面切換間隔愈長，模擬慢慢停下來
     }
     spinBall.src = gachaBallSprite(result.ballType); // 保底：畫面上顯示的一定是伺服器回傳的正確球種
@@ -1125,6 +1229,11 @@ async function playCaptureRevealSequence(resultPromise) {
     await sleep(500);
     const landedBall = document.getElementById('gacha-landed-ball');
     if (landedBall) landedBall.classList.add('ball-capture-shake');
+    // 配合.ball-capture-shake這個CSS動畫本身的3次搖晃節奏(keyframe大約落在6%/40%/72%，
+    // 也就是3秒裡的0.18s/1.2s/2.16s)各補一聲「咚」，玩家反映球晃動時完全沒聲音感覺很奇怪
+    SFX.ballShake();
+    setTimeout(() => SFX.ballShake(), 1200);
+    setTimeout(() => SFX.ballShake(), 2160);
     await sleep(3000); // 要跟上面.ball-capture-shake的CSS動畫時長(3s)一致，不然畫面會提前跳到下一步、動畫播到一半被切掉
 
     // 畫面閃光，象徵寶可夢從球裡蹦出來
@@ -3244,6 +3353,14 @@ function toggleSwitchPicker(show) {
     if (lastRenderedRoom) renderRoomView(lastRenderedRoom);
 }
 
+// 選出這場對戰該播哪一首戰鬥配樂：地區對戰(有regionId)用該地區的專屬曲目、真人連線對戰(不是
+// isWild)用PvP專屬曲目、其餘(單純野生遭遇)用原本的通用戰鬥配樂——BGM.play()內部沒有這首曲目
+// 就會直接跳過，所以這裡查不到對應的region_xxx時安全地退回通用的'battle'
+function pickBattleBgmName(room) {
+    if (room.isGymBattle && room.regionId) return 'region_' + room.regionId;
+    if (!room.isWild) return 'pvp';
+    return 'battle';
+}
 async function renderRoomView(room) {
     const myToken = ++roomRenderToken;
     lastRenderedRoom = room;
@@ -3272,9 +3389,10 @@ async function renderRoomView(room) {
     }
     if (!room.battleState) { container.innerHTML = `<p class="text-center text-gray-400 py-10">載入中...</p>`; return; }
 
-    // 對戰畫面真的顯示出來了(不是等待/選秀中)，配樂切成對戰版本——play()本身會判斷「已經在播
-    // 同一首」就直接跳過，所以這裡每次重繪(每回合都會)都呼叫也沒關係，不會一直重新觸發
-    if (room.status === 'battling') BGM.play('battle');
+    // 對戰畫面真的顯示出來了(不是等待/選秀中)，配樂切成對戰版本——依這場對戰的類型(地區對戰/
+    // 連線對戰/野生對戰)挑對應的專屬曲目。play()本身會判斷「已經在播同一首」就直接跳過，所以
+    // 這裡每次重繪(每回合都會)都呼叫也沒關係，不會一直重新觸發
+    if (room.status === 'battling') BGM.play(pickBattleBgmName(room));
 
     const opponentUid = room.isWild ? 'wild' : room.memberUids.find(u => u !== myUid);
     const myTeam = room.battleState.teams[myUid];
@@ -3363,6 +3481,7 @@ async function renderRoomView(room) {
                 .then(r => {
                     battleFinishSummary[room.id].coinsEarned = r.coinsEarned;
                     battleFinishSummary[room.id].expEarned = r.expEarned;
+                    if (r.leveledUp) { battleFinishSummary[room.id].newLevel = r.newLevel; SFX.levelUp(); }
                     if (lastRenderedRoom && lastRenderedRoom.id === room.id) renderRoomView(lastRenderedRoom);
                 })
                 .catch(() => {});
@@ -3421,6 +3540,16 @@ async function renderBattleStage(container, ctx) {
             <p class="font-black text-lg ${finished.won ? 'text-green-600' : 'text-red-500'}">${finished.won ? '你贏了！' : '敗北了...'}</p>
             <p class="text-xs text-gray-400">即將自動返回大廳...</p>
         </div>`;
+    } else if (locked) {
+        // 動畫還在播放中(這回合的結果還沒真的演完)：不管等一下要不要換人，先維持「戰鬥中」的
+        // 佔位訊息——room.battleState.awaitingSwitch這種「這回合結算後」的狀態，是跟這回合的
+        // resolvedRound/lastRoundEvents同一次Firestore寫入就已經寫進去的，locked=true時傳進來
+        // 的room其實是「已經算好結果」的最新文件，只是畫面還在補播HP條慢慢扣、倒下動畫這些過程。
+        // 如果讓iMustSwitch/oppMustSwitchOnly這兩個判斷在locked時就先生效，玩家會在動畫都還沒
+        // 播完的時候，就先看到「寶可夢倒下了！選一隻上場」的提示，等於還沒看到過程就先爆雷結果，
+        // 很影響體驗(這正是玩家回報的成因)。等這裡的動畫真的播完、外層用locked:false重繪時，
+        // 才讓下面的iMustSwitch/oppMustSwitchOnly分支接手決定要顯示什麼
+        movesHtml = `<div class="h-full min-h-[110px] flex items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200"><p class="text-gray-400 text-sm flex items-center gap-1.5"><img src="${typeIconUrl('fighting')}" class="w-4 h-4" style="image-rendering:pixelated">戰鬥中...</p></div>`;
     } else if (iMustSwitch) {
         // 主動寶可夢倒下、還有候補活著：強制先選一隻上場，戰鬥還沒結束
         const aliveBench = myBench.filter(b => b.currentHp > 0);
@@ -3434,8 +3563,8 @@ async function renderBattleStage(container, ctx) {
                     <span class="block text-[10px] text-gray-400">Lv.${b.level} · ${b.currentHp}/${b.maxHp}</span>
                 </button>`).join('')}</div>
         </div>`;
-    } else if (locked || oppMustSwitchOnly) {
-        movesHtml = `<div class="h-full min-h-[110px] flex items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200"><p class="text-gray-400 text-sm flex items-center gap-1.5"><img src="${typeIconUrl('fighting')}" class="w-4 h-4" style="image-rendering:pixelated">${oppMustSwitchOnly ? '等待對方選擇下一隻寶可夢...' : '戰鬥中...'}</p></div>`;
+    } else if (oppMustSwitchOnly) {
+        movesHtml = `<div class="h-full min-h-[110px] flex items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200"><p class="text-gray-400 text-sm flex items-center gap-1.5"><img src="${typeIconUrl('fighting')}" class="w-4 h-4" style="image-rendering:pixelated">等待對方選擇下一隻寶可夢...</p></div>`;
     } else if (myMoveSubmitted) {
         movesHtml = `<div class="h-full min-h-[110px] flex items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200"><p class="text-gray-400 text-sm">已送出指令，等待對手...</p></div>`;
     } else if (battleShowSwitchPicker) {
@@ -3544,6 +3673,7 @@ async function renderBattleStage(container, ctx) {
                 ${(room.battleState.log || []).slice(-6).map(l => `<p>${l}</p>`).join('') || '<p>對戰開始！</p>'}
                 ${finished ? `<p class="font-bold ${finished.won ? 'text-green-600' : 'text-red-500'} pt-0.5">${finished.won ? '你贏了！' : '敗北了...'}</p>` : ''}
                 ${finished && finished.coinsEarned != null ? `<p class="font-bold text-yellow-600">勝利獎勵：代幣+${finished.coinsEarned}、EXP+${finished.expEarned}</p>` : ''}
+                ${finished && finished.newLevel ? `<p class="font-bold text-blue-600">升級了！Lv.${finished.newLevel}</p>` : ''}
                 ${finished && finished.gymRewardText ? `<p class="font-bold text-yellow-600">${finished.gymRewardText}</p>` : ''}
             </div>
             <div class="sm:w-3/5">${movesHtml}</div>
@@ -4009,6 +4139,11 @@ const HEAL_BLOCK_MOVES = new Set(['heal-block']);
 const PERISH_SONG_MOVES = new Set(['perish-song']);
 const SILENCE_MOVES = new Set(['throat-chop']); // 這招本身還有威力，是「有傷害+附加封聲」的招式
 const IDENTIFY_MOVES = new Set(['miracle-eye', 'odor-sleuth', 'foresight']);
+// 仿效：之前完全沒實作，招式本身沒有威力/沒有能力變化，什麼都沒做等於「用了完全沒反應」(玩家
+// 回報的成因)。正統機制是暫時把「仿效」這個招式格換成對方剛用過的招式(限定5PP)，換人下場後才
+// 恢復成仿效——這裡直接修改atk.moves陣列裡的那一格(記錄在mimicSlot裡)，換人時(performSwitch)
+// 會用mimicSlot把它換回來
+const MIMIC_MOVES = new Set(['mimic']);
 // 自我替換招式：正統規則裡這些招式的重點效果就是「用完之後把自己換下場」(接棒/送出去/教訓/
 // 等等再戰是有傷害或附加效果+換人；瞬間移動/接力棒是純換人)——這批之前完全沒實作，招式本身
 // 其他效果(傷害/能力變化/場地)照樣會生效，但玩家完全感覺不到「用了應該要換人」，等於看起來
@@ -4134,6 +4269,7 @@ function freshBattleStatus() {
         silencedTurns: 0, // 封聲(封喉飽拳)：這幾回合內不能使用音波系招式
         perishCount: 0, // 亡語之歌：倒數到0時直接昏厥，不管HP還剩多少
         identified: false, // 看穿/識破/定身術：閃避等級不再影響命中率，且會讓特定的屬性免疫失效
+        mimicSlot: null, // 仿效：{index, mimickedMove}，代表moves陣列裡第index格暫時被換成mimickedMove，換人會復原
     };
 }
 // 能力等級(-6~+6)換算成倍率：官方公式，攻/防/速用同一張表
@@ -4152,12 +4288,12 @@ const STAT_NAME_TO_STAGE_KEY = {
     speed: 'spd', accuracy: 'acc', evasion: 'eva',
 };
 const STAGE_KEY_ZH = { atk: '攻擊', def: '防禦', spd: '速度', acc: '命中率', eva: '閃避率' };
-// PokeAPI的move.target欄位除了'user'(純自己)以外，還有'user-and-allies'/'user-or-ally'這種
-// 「自己+隊友」的雙打語意(例如長嚎howl、生命之露life-dew、生氣蓬勃work-up這類)——這個遊戲沒有
-// 雙打/隊友機制，原本只認'user'一種寫法，導致這些招式被誤判成「不是打自己」而套用到對手身上
-// (幫對手加攻擊力這種離譜的錯，或是被對方的替身/保護/看穿檢查誤擋)，所以這裡統一擴充判斷範圍，
-// 全部視為「作用在自己身上」
-const SELF_TARGET_MOVE_TARGETS = new Set(['user', 'user-and-allies', 'user-or-ally']);
+// PokeAPI的move.target欄位除了'user'(純自己)以外，還有'user-and-allies'/'user-or-ally'/'ally'
+// 這種「自己+隊友」的雙打語意(例如長嚎howl、生命之露life-dew、生氣蓬勃work-up、裝飾decorate這類)
+// ——這個遊戲沒有雙打/隊友機制，原本只認'user'一種寫法，導致這些招式被誤判成「不是打自己」而套用
+// 到對手身上(幫對手加攻擊力這種離譜的錯，或是被對方的替身/保護/看穿檢查誤擋)，所以這裡統一擴充
+// 判斷範圍，全部視為「作用在自己身上」(單打模式下沒有隊友可以放，只好全部改成對自己生效)
+const SELF_TARGET_MOVE_TARGETS = new Set(['user', 'user-and-allies', 'user-or-ally', 'ally']);
 function isSelfTargetMove(target) { return SELF_TARGET_MOVE_TARGETS.has(target); }
 // 固定傷害招式：傷害不是套一般公式算的，是官方規則寫死的經典特例(等級傷害/半血/指定傷害...)
 const FIXED_DAMAGE_MOVES = {
@@ -4513,6 +4649,13 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         outgoing.healBlockTurns = 0; outgoing.embargoTurns = 0;
         outgoing.trapped = false; outgoing.trapTurns = 0; outgoing.trapperKey = null; outgoing.trapDamage = false;
         outgoing.silencedTurns = 0; outgoing.perishCount = 0; outgoing.identified = false;
+        // 仿效學到的招式也是「只在場上時才有意義」的暫時效果，換下場要把moves陣列裡那一格換回「仿效」
+        if (outgoing.mimicSlot && Array.isArray(outgoing.moves)) {
+            outgoing.moves = outgoing.moves.slice();
+            outgoing.moves[outgoing.mimicSlot.index] = 'mimic';
+            if (outgoing.movePp) { outgoing.movePp = { ...outgoing.movePp }; delete outgoing.movePp[outgoing.mimicSlot.mimickedMove]; }
+            outgoing.mimicSlot = null;
+        }
         const newBench = bench.slice();
         newBench[idx] = outgoing;
         benchState[uid] = newBench;
@@ -5285,6 +5428,22 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 def.mustSwitch = true;
                 if (!awaitingSwitchFinal.includes(defenderUid)) awaitingSwitchFinal.push(defenderUid);
                 log.push(`${defName} 被強制換下場了！`);
+            }
+        }
+        // ---- 仿效：暫時把「仿效」這一格換成對方剛用過的招式(對方這場還沒出招過、剛好也是
+        // 仿效、或自己招式表裡已經有這招時都會失敗，跟正統規則一樣) ----
+        if (MIMIC_MOVES.has(move.name) && atk.currentHp > 0) {
+            const targetMove = def.lastMoveUsed;
+            const mimicIdx = (atk.moves || []).indexOf('mimic');
+            if (!targetMove || targetMove === 'struggle' || targetMove === 'mimic' || mimicIdx === -1 || (atk.moves || []).includes(targetMove)) {
+                log.push(`${atkName} 的仿效失敗了！`);
+            } else {
+                atk.moves = atk.moves.slice();
+                atk.moves[mimicIdx] = targetMove;
+                atk.mimicSlot = { index: mimicIdx, mimickedMove: targetMove };
+                if (!atk.movePp) atk.movePp = {};
+                atk.movePp[targetMove] = 5; // 官方機制：仿效學到的招式固定只有5點PP
+                log.push(`${atkName} 仿效學會了 ${targetMove}！`);
             }
         }
     }
