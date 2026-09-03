@@ -110,14 +110,23 @@
 </head>
 <body class="min-h-screen pb-24">
 
-<!-- 頂部列：標題、代幣、登入狀態 -->
+<!-- 頂部列：標題、代幣、登入狀態
+     手機版寬度不夠塞下「← 遊戲場」+「寶可夢世界」標題+右側一整排圖示按鈕，以前這三塊都是
+     同一層的flex item、又沒有shrink-0/nowrap，寬度不夠時瀏覽器會硬把每塊裡的中文字擠著
+     換行(中文沒有空白字元、換行點很隨便，看起來就是字被攔腰切斷)。改法：
+     1. 左邊「返回連結+標題」包成一組，右邊「代幣/圖示/頭像」包成另一組，各自shrink-0+
+        whitespace-nowrap，文字不再被壓縮換行
+     2. 外層改成flex-wrap，真的窄到兩組放不下同一行時，右邊那組整組換到下一行(用ml-auto
+        貼齊右側)，而不是同一個標籤裡的文字被拆成兩截 -->
 <div class="sticky top-0 z-30 bg-white border-b card-shadow">
-    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-        <a href="game.html" class="text-sm text-gray-500 hover:text-gray-800">← 遊戲場</a>
-        <h1 class="text-xl font-black text-red-600 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" class="w-5 h-5" style="image-rendering:pixelated">寶可夢世界</h1>
-        <div class="flex items-center gap-3">
-            <div id="coin-display" class="hidden items-center gap-1.5 bg-yellow-50 border border-yellow-300 rounded-full px-3 py-1 text-sm font-bold text-yellow-700">
-                <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/amulet-coin.png" class="w-4 h-4" style="image-rendering:pixelated"> <span id="coin-value">0</span>
+    <div class="max-w-5xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-y-2">
+        <div class="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
+            <a href="game.html" class="text-sm text-gray-500 hover:text-gray-800 shrink-0 whitespace-nowrap">← 遊戲場</a>
+            <h1 class="text-lg sm:text-xl font-black text-red-600 flex items-center gap-1.5 shrink-0 whitespace-nowrap"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" class="w-5 h-5 shrink-0" style="image-rendering:pixelated">寶可夢世界</h1>
+        </div>
+        <div class="flex items-center gap-2 sm:gap-3 shrink-0 whitespace-nowrap ml-auto">
+            <div id="coin-display" class="hidden items-center gap-1.5 bg-yellow-50 border border-yellow-300 rounded-full px-2 sm:px-3 py-1 text-sm font-bold text-yellow-700 shrink-0">
+                <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/amulet-coin.png" class="w-4 h-4 shrink-0" style="image-rendering:pixelated"> <span id="coin-value">0</span>
             </div>
             <button id="sfx-toggle-btn" type="button" onclick="toggleSfxMute()" class="w-8 h-8 shrink-0 rounded-full bg-gray-100 flex items-center justify-center text-base" title="音效開關">🔊</button>
             <button id="bgm-toggle-btn" type="button" onclick="toggleBgmMute()" class="w-8 h-8 shrink-0 rounded-full bg-gray-100 flex items-center justify-center text-base" title="背景音樂開關">🎵</button>
@@ -126,7 +135,7 @@
                  pokemon_delete_account_data動作本身只認auth.uid、只會刪呼叫者自己的資料，
                  這裡的隱藏純粹是UI層面不要讓其他玩家誤觸/困惑，不是安全邊界 -->
             <button id="wipe-account-btn" type="button" onclick="openWipeAccountModal()" class="hidden w-8 h-8 shrink-0 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-base" title="清除帳號資料">🗑️</button>
-            <div id="login-area">
+            <div id="login-area" class="shrink-0">
                 <button id="login-btn" class="text-sm bg-red-500 text-white px-3 py-1.5 rounded-full font-bold">登入</button>
                 <img id="user-avatar" class="hidden w-8 h-8 rounded-full cursor-pointer" onclick="logoutUser()" title="點擊登出">
             </div>
@@ -208,7 +217,12 @@
             </div>
             <button id="idle-collect-btn" onclick="collectIdle()" class="bg-yellow-500 text-white px-6 py-2 rounded-full font-bold">收取</button>
         </div>
-        <h3 class="font-bold mb-2 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/shell-bell.png" class="w-5 h-5" style="image-rendering:pixelated">牧場裡的寶可夢(<span id="idle-placed-count">0</span>/10，點擊收藏庫的寶可夢卡片可以放進來/牽出去)</h3>
+        <!-- 這個標題本來直接把圖示跟文字/計數span全部放在同一個flex容器裡，結果flexbox把
+             「圖示」「span前的文字」「span」「span後的文字」各自拆成獨立的flex item，手機版
+             寬度不夠時每個item各自換行，變成「5」自己孤零零卡在一整行——修法是把圖示以外的
+             文字全部包進同一個span，flex容器底下就只剩「圖示」+「一整段文字」兩個item，
+             文字自己在同一個item裡正常換行，不會再被拆成一截一截的 -->
+        <h3 class="font-bold mb-2 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/shell-bell.png" class="w-5 h-5 shrink-0" style="image-rendering:pixelated"><span>牧場裡的寶可夢(<span id="idle-placed-count">0</span>/10，點擊收藏庫的寶可夢卡片可以放進來/牽出去)</span></h3>
         <div id="idle-placed-list" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
     </div>
 
