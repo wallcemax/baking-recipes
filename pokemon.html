@@ -110,6 +110,7 @@
                 <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/amulet-coin.png" class="w-4 h-4" style="image-rendering:pixelated"> <span id="coin-value">0</span>
             </div>
             <button id="sfx-toggle-btn" type="button" onclick="toggleSfxMute()" class="w-8 h-8 shrink-0 rounded-full bg-gray-100 flex items-center justify-center text-base" title="音效開關">🔊</button>
+            <button id="bgm-toggle-btn" type="button" onclick="toggleBgmMute()" class="w-8 h-8 shrink-0 rounded-full bg-gray-100 flex items-center justify-center text-base" title="背景音樂開關">🎵</button>
             <div id="login-area">
                 <button id="login-btn" class="text-sm bg-red-500 text-white px-3 py-1.5 rounded-full font-bold">登入</button>
                 <img id="user-avatar" class="hidden w-8 h-8 rounded-full cursor-pointer" onclick="logoutUser()" title="點擊登出">
@@ -439,7 +440,7 @@ const SFX = (() => {
 
     // ---- 寶可夢叫聲：PokeAPI/cries這個repo，跟站上其他地方用PokeAPI/sprites同一種hotlink方式 ----
     const CRY_BASE = 'https://raw.githubusercontent.com/PokeAPI/cries/main/cries/pokemon/latest/';
-    function cry(speciesId, volume = 0.7) {
+    function cry(speciesId, volume = 0.45) {
         if (muted || !speciesId) return;
         unlock();
         let audio = cryCache.get(speciesId);
@@ -503,6 +504,10 @@ const SFX = (() => {
         },
         guessCorrect() { arpeggio([659, 880], { noteDur: 0.11, gap: 0.09, type: 'triangle', vol: 0.16 }); },
         guessWrong() { tone({ freq: 180, dur: 0.18, type: 'square', vol: 0.11 }); },
+        // 給BGM模組借用同一顆AudioContext(共用同一次的使用者手勢解鎖)，不用另外開一個
+        // AudioContext、也不用再解鎖一次——名稱故意加底線，提醒這是內部共用介面，不是給一般
+        // 呼叫端用的音效函式
+        _ctx() { return ensureCtx(); },
     };
 })();
 function toggleSfxMute() {
@@ -514,7 +519,174 @@ function toggleSfxMute() {
 document.addEventListener('DOMContentLoaded', () => {
     const btn = document.getElementById('sfx-toggle-btn');
     if (btn) btn.textContent = SFX.isMuted() ? '🔇' : '🔊';
+    const bgmBtn = document.getElementById('bgm-toggle-btn');
+    if (bgmBtn) bgmBtn.textContent = BGM.isMuted() ? '🔇' : '🎵';
 });
+
+// ============================================================
+// 背景音樂(BGM)：PokéAPI本身沒有配樂資源(查過官方文件跟PokeAPI/cries這個repo，只有叫聲)，
+// 正版遊戲的配樂是任天堂/Game Freak的版權素材，沒有合法免費的API可以直接抓，所以這裡用
+// 跟SFX同一套Web Audio技術「自己合成」一段原創的循環配樂——不是採樣或改編任何正版寶可夢
+// 音樂的旋律，純粹寫一段8-bit風格、聽起來「像」寶可夢遊戲會有的配樂調性(大調/五聲音階、
+// 循環演奏)。跟SFX共用同一顆AudioContext(SFX._ctx())，不用另外處理使用者手勢解鎖。
+// 音樂用「提前排好整輪的音符時間、輪到快結束前再排下一輪」的方式循環(不是逐音符即時排程)，
+// 每一輪的音符時間都是相對ctx.currentTime算的絕對時間，所以就算setTimeout本身有一點誤差，
+// 音符本身的播放時間還是準的，不會因為JS計時器不精準就變得七零八落
+// ============================================================
+const BGM = (() => {
+    let muted = localStorage.getItem('pokemonBgmMuted') === '1';
+    let musicGain = null;
+    const TARGET_VOL = 0.16; // 背景音樂本來就要小聲鋪底，不能蓋過SFX/叫聲，比SFX的master(0.7)低很多
+    function ctx() { return SFX._ctx(); }
+    function ensureBus() {
+        const c = ctx();
+        if (!c) return null;
+        if (!musicGain) {
+            musicGain = c.createGain();
+            musicGain.gain.value = muted ? 0 : TARGET_VOL;
+            musicGain.connect(c.destination);
+        }
+        return musicGain;
+    }
+    function isMuted() { return muted; }
+    function setMuted(v) {
+        muted = !!v;
+        localStorage.setItem('pokemonBgmMuted', muted ? '1' : '0');
+        const g = ensureBus();
+        const c = ctx();
+        if (g && c) g.gain.setTargetAtTime(muted ? 0 : TARGET_VOL, c.currentTime, 0.15);
+    }
+
+    // 播放一個音符：三角波為主(比正弦圓潤、比方波柔和)，音量走「快速淡入→維持→指數淡出」的
+    // 包絡，避免每個音符開始/結束時的喀啦聲(click)
+    function playNote(freq, startTime, dur, vol, type) {
+        const c = ctx();
+        const g = ensureBus();
+        if (!c || !g || !freq) return; // freq是0/null代表休止符，不用真的發聲
+        const osc = c.createOscillator();
+        osc.type = type || 'triangle';
+        osc.frequency.setValueAtTime(freq, startTime);
+        const env = c.createGain();
+        env.gain.setValueAtTime(0, startTime);
+        env.gain.linearRampToValueAtTime(vol, startTime + Math.min(0.02, dur * 0.15));
+        env.gain.linearRampToValueAtTime(vol * 0.55, startTime + dur * 0.7);
+        env.gain.exponentialRampToValueAtTime(0.0001, startTime + dur + 0.03);
+        osc.connect(env);
+        env.connect(g);
+        osc.start(startTime);
+        osc.stop(startTime + dur + 0.05);
+    }
+
+    // 音符頻率表(A4=440標準音高)，兩軌配樂都從這裡取用
+    const N = { C3: 130.81, D3: 146.83, E3: 164.81, F3: 174.61, G3: 196.00, A3: 220.00, B3: 246.94,
+                C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00, A4: 440.00, B4: 493.88,
+                C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99 };
+
+    // 大廳/牧場/抽蛋/猜猜看等一般畫面用的配樂：C大調、輕快、原創的8步旋律迴圈+4步貝斯，
+    // 聽起來悠閒逛街的步調，跟正版遊戲的「大自然/城鎮」配樂調性類似，但完全是自己寫的旋律
+    const TRACK_MENU = {
+        beatDur: 0.34, // 每拍0.34秒，換算約每分鐘176個八分音符(不到90 BPM，悠閒不趕)
+        melody: [
+            [N.C4, 1, 0.11], [N.E4, 1, 0.1], [N.G4, 1, 0.11], [N.E4, 1, 0.1],
+            [N.F4, 1, 0.11], [N.A4, 1, 0.1], [N.G4, 1, 0.11], [N.E4, 1, 0.1],
+            [N.D4, 1, 0.11], [N.F4, 1, 0.1], [N.A4, 1, 0.11], [N.F4, 1, 0.1],
+            [N.G4, 1, 0.12], [N.E4, 1, 0.1], [N.D4, 1, 0.1], [N.C4, 1.5, 0.12],
+        ],
+        bass: [
+            [N.C3, 4, 0.07], [N.F3, 4, 0.07], [N.G3, 4, 0.07], [N.C3, 4, 0.07],
+        ],
+    };
+    // 對戰畫面用的配樂：A小調五聲音階、節奏更緊湊、貝斯改成一拍一顆的脈動(不是長音延續)，
+    // 營造對戰的緊張感——跟大廳配樂用同一套音色語言(三角波)，但調性/節奏完全不同，
+    // 一聽就能分辨「現在是不是在打架」
+    const TRACK_BATTLE = {
+        beatDur: 0.24, // 節奏更快(約125 BPM的八分音符)，比大廳配樂緊湊
+        melody: [
+            [N.A3, 1, 0.12], [N.C4, 1, 0.11], [N.D4, 1, 0.12], [N.E4, 1, 0.11],
+            [N.G4, 1, 0.13], [N.E4, 1, 0.11], [N.D4, 1, 0.11], [N.C4, 1, 0.11],
+            [N.A3, 1, 0.12], [N.C4, 1, 0.11], [N.E4, 1, 0.12], [N.G4, 1, 0.12],
+            [N.E4, 1, 0.11], [N.D4, 1, 0.11], [N.C4, 1, 0.1], [N.A3, 1, 0.12],
+        ],
+        bass: [
+            [N.A3 / 2, 1, 0.09, 'square'], [0, 1, 0], [N.A3 / 2, 1, 0.08, 'square'], [0, 1, 0],
+            [N.E3 / 2, 1, 0.09, 'square'], [0, 1, 0], [N.A3 / 2, 1, 0.08, 'square'], [0, 1, 0],
+            [N.A3 / 2, 1, 0.09, 'square'], [0, 1, 0], [N.A3 / 2, 1, 0.08, 'square'], [0, 1, 0],
+            [N.E3 / 2, 1, 0.09, 'square'], [0, 1, 0], [N.G3 / 2, 1, 0.08, 'square'], [0, 1, 0],
+        ],
+    };
+    const TRACKS = { menu: TRACK_MENU, battle: TRACK_BATTLE };
+
+    let currentName = null;
+    let activeToken = 0; // 每次play()/stop()都換一個新token，舊迴圈排程時只要token對不上就自動停止接力
+
+    // 把一整輪(melody/bass兩條軌各自的全部音符)排進去，回傳這一輪總共佔用的時間(秒)，
+    // 給呼叫端算「下一輪要提前多久排」用
+    function scheduleOneLoop(trackDef, startTime) {
+        let t = startTime;
+        trackDef.melody.forEach(([freq, beats, vol]) => {
+            playNote(freq, t, beats * trackDef.beatDur * 0.92, vol, 'triangle');
+            t += beats * trackDef.beatDur;
+        });
+        let bt = startTime;
+        trackDef.bass.forEach(([freq, beats, vol, type]) => {
+            playNote(freq, bt, beats * trackDef.beatDur * 0.85, vol, type || 'sine');
+            bt += beats * trackDef.beatDur;
+        });
+        const totalBeats = trackDef.melody.reduce((s, n) => s + n[1], 0);
+        return totalBeats * trackDef.beatDur;
+    }
+    function driveLoop(trackDef, token, nextStartTime) {
+        if (token !== activeToken) return; // 已經切換到別首/停止了，不用再排下去
+        const c = ctx();
+        if (!c) return;
+        const loopDur = scheduleOneLoop(trackDef, nextStartTime);
+        // 提前0.5秒(而不是等這一輪完全播完才排下一輪)排下一輪的音符，避免setTimeout本身的
+        // 誤差導致兩輪銜接處出現破音的空拍——下一輪的音符時間本來就是用絕對的ctx.currentTime
+        // 算出來的，就算這個setTimeout早一點/晚一點觸發，實際發聲的時間點都不會跑掉
+        const delayMs = Math.max(50, (loopDur - 0.5) * 1000);
+        setTimeout(() => driveLoop(trackDef, token, nextStartTime + loopDur), delayMs);
+    }
+
+    // 切換播放曲目：同一首正在播就不用重來；換曲子的話先把音量淡出，切完再淡入，
+    // 避免兩首歌的音符卡在同一個時間點同時響、聽起來很吵雜
+    function play(name) {
+        if (muted && name === currentName) return;
+        if (name === currentName) return;
+        const trackDef = TRACKS[name];
+        if (!trackDef) return;
+        const c = ctx();
+        const g = ensureBus();
+        if (!c || !g) return;
+        activeToken++;
+        const myToken = activeToken;
+        currentName = name;
+        const now = c.currentTime;
+        g.gain.cancelScheduledValues(now);
+        g.gain.setTargetAtTime(0, now, 0.12);
+        setTimeout(() => {
+            if (myToken !== activeToken) return;
+            const c2 = ctx();
+            if (!c2) return;
+            g.gain.cancelScheduledValues(c2.currentTime);
+            g.gain.setTargetAtTime(muted ? 0 : TARGET_VOL, c2.currentTime, 0.25);
+            driveLoop(trackDef, myToken, c2.currentTime + 0.05);
+        }, 260);
+    }
+    function stop() {
+        activeToken++;
+        currentName = null;
+        const c = ctx();
+        const g = musicGain;
+        if (c && g) g.gain.setTargetAtTime(0, c.currentTime, 0.2);
+    }
+
+    return { play, stop, isMuted, setMuted };
+})();
+function toggleBgmMute() {
+    BGM.setMuted(!BGM.isMuted());
+    const btn = document.getElementById('bgm-toggle-btn');
+    if (btn) btn.textContent = BGM.isMuted() ? '🔇' : '🎵';
+}
 // 全站按鈕點擊音效：用事件代理(capture階段，在body上聽一個監聽器)統一處理，而不是每個按鈕的
 // onclick都手動加一行SFX.click()——這個網站的按鈕有好幾百個(分頁切換、彈窗、道具、對戰指令...)，
 // 事件代理才不用逐一去改，之後新增的按鈕也會自動有音效。音效開關本身的按鈕跳過(不然切換
@@ -575,6 +747,11 @@ auth.onAuthStateChanged(user => {
         document.getElementById('coin-display').classList.remove('hidden');
         document.getElementById('coin-display').classList.add('flex');
         startListeners(user.uid);
+        // 一登入就開始播大廳配樂——這裡是onAuthStateChanged自動觸發的(不是使用者手勢)，
+        // AudioContext這時候多半還是suspended狀態，BGM.play()本身不會強制resume，
+        // 音符會先靜靜地排好，等玩家真的點一下畫面(見SFX.unlock())才會真正聽到聲音，
+        // 體驗上就是「一進遊戲背景音樂就已經在等你了」
+        BGM.play('menu');
         // 第一次登入的玩家會在這裡拿到開局代幣(3000)+一隻保底的免費初始寶可夢+一次真正的免費抽獎
         // (機率跟花錢抽的完全一樣，見ensurePokemonPlayerDoc)。isNew時直接把伺服器回傳的資料拿來
         // 顯示「歡迎獲得」畫面，不用另外等onSnapshot——這樣新玩家一登入就能馬上看到兩隻夥伴，體驗比較好。
@@ -2533,6 +2710,7 @@ function leaveRoomView() {
     lastRenderedRoom = null;
     document.getElementById('battle-lobby-view').classList.remove('hidden');
     document.getElementById('battle-room-view').classList.add('hidden');
+    BGM.play('menu'); // 離開對戰房間，配樂切回大廳版本
 }
 // 對戰中如果我方寶可夢的持有道具/莓果被動觸發消耗掉了(見resolveBattleRound裡對heldItem的各種
 // 消耗邏輯)，battleState.teams/bench裡那份「這場對戰用的暫時副本」的heldItem會變成null，但這
@@ -2607,6 +2785,10 @@ async function renderRoomView(room) {
     }
     if (!room.battleState) { container.innerHTML = `<p class="text-center text-gray-400 py-10">載入中...</p>`; return; }
 
+    // 對戰畫面真的顯示出來了(不是等待/選秀中)，配樂切成對戰版本——play()本身會判斷「已經在播
+    // 同一首」就直接跳過，所以這裡每次重繪(每回合都會)都呼叫也沒關係，不會一直重新觸發
+    if (room.status === 'battling') BGM.play('battle');
+
     const opponentUid = room.isWild ? 'wild' : room.memberUids.find(u => u !== myUid);
     const myTeam = room.battleState.teams[myUid];
     const oppTeam = room.battleState.teams[opponentUid];
@@ -2664,16 +2846,23 @@ async function renderRoomView(room) {
         if (!battleEndSoundPlayed[room.id]) {
             battleEndSoundPlayed[room.id] = true;
             won ? SFX.victory() : SFX.defeat();
+            BGM.play('menu'); // 戰鬥結束，配樂切回大廳版本(不用等玩家按「返回大廳」才切)
         }
-        if (won && !room.rewardClaimed) {
-            try { const r = await callWorker('pokemon_battle_report_result', { roomId: room.id }); if (myToken === roomRenderToken) showToastWithIcon(itemSpriteUrl('amulet-coin'), `勝利獎勵：${r.coinsEarned} + EXP${r.expEarned}`); } catch (err) {}
-        }
+        // 「你贏了/敗北了」畫面先馬上畫出來，不要等領獎勵那支API跑完才顯示——玩家戰鬥一結束
+        // 最想看到的是結果畫面，獎勵金幣/EXP用Toast另外補上就好，不用讓整個結算畫面卡在
+        // 那支API的網路來回時間後面(worker那邊要讀寫好幾份Firestore文件，串起來就是好幾百ms，
+        // 之前這裡用await擋住畫面渲染，玩家會覺得「戰鬥結束後要等很久才結算完畢」)
         if (myToken !== roomRenderToken) return;
         container.innerHTML = `<div class="bg-white rounded-2xl card-shadow p-8 text-center">
             <img src="${itemSpriteUrl(won ? 'revive' : 'expert-belt')}" class="w-16 h-16 mx-auto mb-3" style="image-rendering:pixelated">
             <p class="text-xl font-black mb-4">${won ? '你贏了！' : '敗北了...'}</p>
             <button onclick="leaveRoomView()" class="bg-red-500 text-white px-6 py-2 rounded-full font-bold">返回大廳</button>
         </div>`;
+        if (won && !room.rewardClaimed) {
+            callWorker('pokemon_battle_report_result', { roomId: room.id })
+                .then(r => { if (myToken === roomRenderToken) showToastWithIcon(itemSpriteUrl('amulet-coin'), `勝利獎勵：${r.coinsEarned} + EXP${r.expEarned}`); })
+                .catch(() => {});
+        }
         return;
     }
 
@@ -4807,7 +4996,16 @@ async function answerGuessRound(chosenSpeciesId) {
     const chosenBtn = document.getElementById('guess-answer-' + chosenSpeciesId);
     const correctBtn = document.getElementById('guess-answer-' + result.correctSpeciesId);
     const msg = document.getElementById('guess-message');
-    if (result.correct) {
+    if (result.alreadyAnswered) {
+        // 伺服器說這題「已經回答過」了(通常是網路逾時讓前端以為送失敗、玩家再按一次，
+        // 但其實第一次的請求早就成功送達、判定過了)——伺服器這種情況不會告訴我們當初判的是對是錯
+        // (只記錄「回答過了」跟正確答案，沒有另外存每一題的對錯)，所以這裡不能直接當「答錯」處理
+        // (以前的寫法會把這種情況誤判成紅色/答錯，明明玩家原本可能是答對的)，只中性地顯示
+        // 「已經回答過」，不動連勝/分數/答對題數(這些權威資料在伺服器那邊，已經算過了，這裡重複算
+        // 反而會跟伺服器記錄的correctCount對不上)
+        if (correctBtn) correctBtn.className = 'text-sm font-bold rounded-xl py-3 bg-green-200 text-green-800';
+        if (msg) { msg.textContent = 'ℹ️ 這題已經回答過了'; msg.style.color = '#6b7280'; }
+    } else if (result.correct) {
         guessState.streak++;
         const gain = 100 + (guessState.streak - 1) * 25;
         guessState.score += gain;
