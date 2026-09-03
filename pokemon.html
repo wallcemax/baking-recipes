@@ -4258,6 +4258,14 @@ const IDENTIFY_MOVES = new Set(['miracle-eye', 'odor-sleuth', 'foresight']);
 // 恢復成仿效——這裡直接修改atk.moves陣列裡的那一格(記錄在mimicSlot裡)，換人時(performSwitch)
 // 會用mimicSlot把它換回來
 const MIMIC_MOVES = new Set(['mimic']);
+// 變身：跟仿效一樣之前完全沒實作，招式本身沒有威力/沒有能力變化/沒有異常狀態，什麼都沒做
+// 等於「用了完全沒反應」(玩家回報的成因)。正統機制是把自己「變成」對方目前的樣子：種類/屬性
+// (這個簡化版遊戲的屬性是每回合直接用speciesId現查PokéAPI，改speciesId屬性就會自動跟著變，
+// 不用額外存types欄位)、當下的能力數值(攻/防/速，不含HP/等級)、當下的能力等級加成、
+// 對方現有的招式(每招固定5PP，跟仿效同樣的簡化)——但保留自己原本的HP/最大HP/等級/暱稱/
+// 異常狀態不變。換下場(performSwitch)時要復原成變身前的樣子，這裡先記錄「變身前的原始資料」
+// 在transformedInto裡，換人時比照mimicSlot的做法整批換回來
+const TRANSFORM_MOVES = new Set(['transform']);
 // 自我替換招式：正統規則裡這些招式的重點效果就是「用完之後把自己換下場」(接棒/送出去/教訓/
 // 等等再戰是有傷害或附加效果+換人；瞬間移動/接力棒是純換人)——這批之前完全沒實作，招式本身
 // 其他效果(傷害/能力變化/場地)照樣會生效，但玩家完全感覺不到「用了應該要換人」，等於看起來
@@ -4384,7 +4392,51 @@ function freshBattleStatus() {
         perishCount: 0, // 亡語之歌：倒數到0時直接昏厥，不管HP還剩多少
         identified: false, // 看穿/識破/定身術：閃避等級不再影響命中率，且會讓特定的屬性免疫失效
         mimicSlot: null, // 仿效：{index, mimickedMove}，代表moves陣列裡第index格暫時被換成mimickedMove，換人會復原
+        transformedInto: null, // 變身：{speciesId, isShiny, atk, def, spd, moves, movePp}，記錄「變身前」的原始資料，換人會復原(能力等級stages換人時本來就會歸零，不用另外存)
     };
+}
+// 一隻寶可夢從場上換下去時(不管是自願替換、還是被吼叫/咆哮/龍尾/圓環摔這類招式強制換下場)，
+// 要清掉哪些「只在場上才有意義」的暫時效果——能力等級/混亂/畏縮/蓄力/守住連續紀錄/扎根/
+// 寄生種子，還有這批「換人就解除」的揮發性狀態：挑釁/折磨/定身法/再來一次/封印/瞌睡/惡夢/
+// 治癒封印/道具封印/束縛/封聲/亡語倒數/看穿，以及仿效/變身要復原成原本的招式/樣子。
+// 抽成獨立函式是因為這套清理邏輯原本只寫在resolveBattleRound裡的performSwitch(自願替換)，
+// submitForcedSwitch(被強制換下場的那一方選新寶可夢上場)完全沒有套用同一套清理，甚至根本
+// 沒有把被換下去的寶可夢放回候補名單——這正是玩家回報「被吼叫轟下場以後，那隻寶可夢就再也
+// 不能上場了，像是死了一樣」的成因：牠既沒留在場上、也沒被放回候補，直接從整場戰鬥的名單裡
+// 憑空消失。currentHp<=0(真的倒下)的情況不會呼叫這裡，倒下的寶可夢本來就不該回到候補名單
+function resetVolatileForBench(battler) {
+    const outgoing = { ...battler };
+    outgoing.stages = { atk: 0, def: 0, spd: 0, acc: 0, eva: 0 };
+    outgoing.confusedTurns = 0; outgoing.flinched = false; outgoing.chargingMove = null;
+    outgoing.protectStreak = 0; outgoing.protectedThisTurn = false; outgoing.mustSwitch = false;
+    outgoing.rooted = false; outgoing.seeded = false; outgoing.seederKey = null; outgoing.substituteHp = 0;
+    outgoing.lastMoveUsed = null;
+    outgoing.tauntTurns = 0; outgoing.tormented = false;
+    outgoing.disabledMove = null; outgoing.disableTurns = 0;
+    outgoing.encoreMove = null; outgoing.encoreTurns = 0;
+    outgoing.imprisonMoves = null;
+    outgoing.drowsyTurns = 0; outgoing.nightmared = false;
+    outgoing.healBlockTurns = 0; outgoing.embargoTurns = 0;
+    outgoing.trapped = false; outgoing.trapTurns = 0; outgoing.trapperKey = null; outgoing.trapDamage = false;
+    outgoing.silencedTurns = 0; outgoing.perishCount = 0; outgoing.identified = false;
+    if (outgoing.mimicSlot && Array.isArray(outgoing.moves)) {
+        outgoing.moves = outgoing.moves.slice();
+        outgoing.moves[outgoing.mimicSlot.index] = 'mimic';
+        if (outgoing.movePp) { outgoing.movePp = { ...outgoing.movePp }; delete outgoing.movePp[outgoing.mimicSlot.mimickedMove]; }
+        outgoing.mimicSlot = null;
+    }
+    if (outgoing.transformedInto) {
+        const original = outgoing.transformedInto;
+        outgoing.speciesId = original.speciesId;
+        outgoing.isShiny = original.isShiny;
+        outgoing.atk = original.atk;
+        outgoing.def = original.def;
+        outgoing.spd = original.spd;
+        outgoing.moves = original.moves;
+        outgoing.movePp = original.movePp;
+        outgoing.transformedInto = null;
+    }
+    return outgoing;
 }
 // 能力等級(-6~+6)換算成倍率：官方公式，攻/防/速用同一張表
 function statStageMult(stage) {
@@ -4645,15 +4697,27 @@ async function submitForcedSwitch(instanceId) {
             const bench = (data.battleState.bench && data.battleState.bench[myUid]) || [];
             const chosen = bench.find(b => b.instanceId === instanceId && b.currentHp > 0);
             if (!chosen) throw new Error('這隻寶可夢沒辦法上場');
+            const outgoingTeam = data.battleState.teams[myUid];
+            // 換下場的原因分兩種：真的倒下(currentHp<=0，這隻這場戰鬥不能再上場，不放回候補)，
+            // 或是被吼叫/咆哮/龍尾/圓環摔這類招式強制換下場(currentHp還大於0，牠沒死，應該要能
+            // 放回候補名單、之後還能再被換上場)——以前這裡不分青紅皂白，兩種情況都直接把
+            // outgoingTeam丟掉、完全沒放回候補，被吼下場的寶可夢因此變成整場戰鬥都再也選不到，
+            // 玩家反映的「被吼叫轟下場以後就再也不能上場了，像是死了一樣」正是這個原因。
+            // resetVolatileForBench負責把換下場才要清掉的暫時效果(能力等級/混亂/仿效/變身...)
+            // 復原乾淨，跟自願替換(performSwitch)用的是同一套清理邏輯
+            const wasAlive = outgoingTeam && outgoingTeam.currentHp > 0;
+            let newBenchList = bench.filter(b => b.instanceId !== instanceId);
+            if (wasAlive) newBenchList = [...newBenchList, resetVolatileForBench(outgoingTeam)];
             const newTeams = { ...data.battleState.teams, [myUid]: { ...chosen, mustSwitch: false } };
-            const newBench = { ...data.battleState.bench, [myUid]: bench.filter(b => b.instanceId !== instanceId) };
+            const newBench = { ...data.battleState.bench, [myUid]: newBenchList };
             const newAwaiting = awaiting.filter(u => u !== myUid);
-            const outName = data.battleState.teams[myUid].nickname;
+            const outName = outgoingTeam ? outgoingTeam.nickname : null;
+            const outReasonTxt = outName ? `${outName} ${wasAlive ? '被換下場後' : '倒下後'}，` : '';
             tx.update(roomRef, {
                 'battleState.teams': newTeams,
                 'battleState.bench': newBench,
                 'battleState.awaitingSwitch': newAwaiting,
-                'battleState.log': firebase.firestore.FieldValue.arrayUnion(`${outName ? outName + '倒下後，' : ''}派出了 ${chosen.nickname}！`),
+                'battleState.log': firebase.firestore.FieldValue.arrayUnion(`${outReasonTxt}派出了 ${chosen.nickname}！`),
                 pendingMoves: {},
             });
         });
@@ -4744,32 +4808,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (idx === -1) return null; // 候補裡找不到(理論上不會發生，防禦性檢查)
         const chosen = bench[idx];
         // 被換下場的寶可夢：保留currentHp跟主要異常狀態(麻痺/中毒/燒傷/睡眠/冰凍——這些跟著
-        // 寶可夢本體走，換人也治不好)，但清掉能力等級/混亂/畏縮/蓄力/守住連續紀錄/扎根/寄生種子
-        // 這些「只在上場期間有意義」的暫時效果，之後才能再被换回來繼續戰鬥
-        const outgoing = { ...state[uid] };
-        outgoing.stages = { atk: 0, def: 0, spd: 0, acc: 0, eva: 0 };
-        outgoing.confusedTurns = 0; outgoing.flinched = false; outgoing.chargingMove = null;
-        outgoing.protectStreak = 0; outgoing.protectedThisTurn = false; outgoing.mustSwitch = false;
-        outgoing.rooted = false; outgoing.seeded = false; outgoing.seederKey = null; outgoing.substituteHp = 0;
-        // 這次新補的一批「換人就解除」揮發性效果：挑釁/折磨/定身法/再來一次/封印/瞌睡/惡夢/
-        // 治癒封印/道具封印/束縛/封聲/亡語倒數/看穿——正統規則裡這些全部都是「只在場上時才有意義」，
-        // 換下場(不管自願替換還是強制替換)就會清空，回到隊伍裡等於重新開始
-        outgoing.lastMoveUsed = null;
-        outgoing.tauntTurns = 0; outgoing.tormented = false;
-        outgoing.disabledMove = null; outgoing.disableTurns = 0;
-        outgoing.encoreMove = null; outgoing.encoreTurns = 0;
-        outgoing.imprisonMoves = null;
-        outgoing.drowsyTurns = 0; outgoing.nightmared = false;
-        outgoing.healBlockTurns = 0; outgoing.embargoTurns = 0;
-        outgoing.trapped = false; outgoing.trapTurns = 0; outgoing.trapperKey = null; outgoing.trapDamage = false;
-        outgoing.silencedTurns = 0; outgoing.perishCount = 0; outgoing.identified = false;
-        // 仿效學到的招式也是「只在場上時才有意義」的暫時效果，換下場要把moves陣列裡那一格換回「仿效」
-        if (outgoing.mimicSlot && Array.isArray(outgoing.moves)) {
-            outgoing.moves = outgoing.moves.slice();
-            outgoing.moves[outgoing.mimicSlot.index] = 'mimic';
-            if (outgoing.movePp) { outgoing.movePp = { ...outgoing.movePp }; delete outgoing.movePp[outgoing.mimicSlot.mimickedMove]; }
-            outgoing.mimicSlot = null;
-        }
+        // 寶可夢本體走，換人也治不好)，其餘「只在上場期間有意義」的暫時效果統一交給
+        // resetVolatileForBench清掉(自願替換/被強制換下場共用同一套清理，見該函式的說明)
+        const outgoing = resetVolatileForBench(state[uid]);
         const newBench = bench.slice();
         newBench[idx] = outgoing;
         benchState[uid] = newBench;
@@ -5558,6 +5599,31 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 if (!atk.movePp) atk.movePp = {};
                 atk.movePp[targetMove] = 5; // 官方機制：仿效學到的招式固定只有5點PP
                 log.push(`${atkName} 仿效學會了 ${targetMove}！`);
+            }
+        }
+        // ---- 變身：把自己變成對方目前的樣子(種類/當下能力數值/當下能力等級加成/對方現有招式，
+        // 每招固定5PP，跟仿效同樣的簡化)，但保留自己的HP/最大HP/等級/暱稱/異常狀態不變。
+        // 已經變身過的話不能再變身一次(避免二次變身把「變身前的原始資料」蓋掉，變回去時就回不到
+        // 真正原本的樣子了)，跟正統規則一樣算失敗 ----
+        if (TRANSFORM_MOVES.has(move.name) && atk.currentHp > 0) {
+            if (atk.transformedInto) {
+                log.push(`${atkName} 已經變身過了，這次變身失敗了！`);
+            } else {
+                atk.transformedInto = {
+                    speciesId: atk.speciesId, isShiny: atk.isShiny,
+                    atk: atk.atk, def: atk.def, spd: atk.spd,
+                    moves: atk.moves, movePp: atk.movePp ? { ...atk.movePp } : {},
+                };
+                atk.speciesId = def.speciesId;
+                atk.isShiny = def.isShiny;
+                atk.atk = def.atk;
+                atk.def = def.def;
+                atk.spd = def.spd;
+                atk.moves = (def.moves && def.moves.length ? def.moves : ['tackle']).slice();
+                atk.movePp = {};
+                atk.moves.forEach(mv => { atk.movePp[mv] = 5; }); // 官方機制：變身後每一招都只有5PP
+                atk.stages = { ...def.stages }; // 正統規則也會複製對方目前的能力等級加成(不含HP)
+                log.push(`${atkName} 變身成 ${defName} 了！`);
             }
         }
     }
