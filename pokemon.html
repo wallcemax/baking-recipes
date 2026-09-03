@@ -6187,18 +6187,23 @@ async function startPuzzleGame() {
     if (btn) { btn.disabled = true; btn.textContent = '出題中...'; }
     try {
         const result = await callWorker('pokemon_puzzle_start');
-        const display = await fetchSpeciesDisplay(result.speciesId, false);
+        // 計時器要盡量貼近伺服器的 createdAt 時間點開始跑，不然玩家看到的秒數
+        // 會跟伺服器判定的經過時間有落差(尤其是抓寶可夢圖片那段網路來回的時間)
         puzzleState = {
             sessionId: result.sessionId,
             speciesId: result.speciesId,
-            display,
+            display: null,
             tiles: puzzleLegalShuffle(),
             moves: 0,
             seconds: 0,
             timer: null,
-            started: false,
+            started: true,
             finished: false,
         };
+        puzzleStartTimer();
+        const display = await fetchSpeciesDisplay(result.speciesId, false);
+        if (!puzzleState || puzzleState.sessionId !== result.sessionId) return;
+        puzzleState.display = display;
         renderPuzzleBoard();
     } catch (err) {
         showToast('開始遊戲失敗：' + err.message);
@@ -6257,7 +6262,6 @@ function movePuzzleTile(pos) {
     if (!puzzleState || puzzleState.finished) return;
     const empty = puzzleState.tiles.indexOf(8);
     if (!puzzleNeighbors(empty).includes(pos)) return;
-    if (!puzzleState.started) { puzzleState.started = true; puzzleStartTimer(); }
     [puzzleState.tiles[empty], puzzleState.tiles[pos]] = [puzzleState.tiles[pos], puzzleState.tiles[empty]];
     puzzleState.moves++;
     SFX.tileMove();
