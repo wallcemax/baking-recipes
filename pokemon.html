@@ -5138,9 +5138,17 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
 
         // ---- 沒有效果(屬性免疫)：只對「有指定攻擊目標」的招式有意義，對自己生效/對整個場地生效的
         // 招式(能力提升/回血/天氣/場地)不用管跟對手的屬性相剋。這裡也一併處理草屬性對粉末/孢子系
-        // 招式的正統免疫(不看招式本身屬性，草屬性天生免疫所有粉塵類招式，Gen6之後的規則) ----
+        // 招式的正統免疫(不看招式本身屬性，草屬性天生免疫所有粉塵類招式，Gen6之後的規則)。
+        // 仿效/變身這兩招額外排除在這道屬性免疫檢查之外：牠們的PokéAPI資料target都是
+        // 'selected-pokemon'(要選一個對象)、type都是'normal'，如果套用一般的「一般屬性對幽靈
+        // 屬性沒有效果」規則，對到幽靈系寶可夢就會被這裡直接擋下來、玩家會看到「使出變身，但是
+        // 沒有效果...」——但正統規則裡仿效/變身根本不是「用屬性打過去」的招式，只是單純讀取/
+        // 複製對方的資料，不管對方是什麼屬性都一定會生效(除非被守住/替身擋下來，那是後面
+        // protectedThisTurn/substituteHp各自的判斷，跟這裡的屬性免疫是兩回事)，這正是玩家
+        // 回報「變身怎樣都說沒有效果」的成因 ----
         const powderBlocked = POWDER_MOVES.has(move.name) && displayOf[defenderUid].types.includes('grass');
-        if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && (eff === 0 || powderBlocked)) {
+        const bypassesTypeImmunity = TRANSFORM_MOVES.has(move.name) || MIMIC_MOVES.has(move.name);
+        if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && !bypassesTypeImmunity && (eff === 0 || powderBlocked)) {
             ev.effectiveness = 0;
             ev.damage = 0;
             log.push(`${atkName} 使出 ${move.nameZh}，但是沒有效果...`);
