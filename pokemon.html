@@ -496,18 +496,26 @@ const SFX = (() => {
         return g;
     }
     // 單一個音符：可選擇音高滑音(glideTo)做出「咻」的上滑/下滑效果(勝利音效上揚、倒下音效下墜)
+    // 整個函式包一層try/catch：這支函式被幾十個呼叫端(戰鬥/UI/捕捉動畫...)到處呼叫，如果某次
+    // WebAudio因為瀏覽器特殊狀況(例如context剛好在切換state、或某些瀏覽器的怪異限制)意外丟出
+    // 例外，又剛好是從一個async迴圈裡呼叫的(例如捕捉動畫「搜尋中」球圖示快速循環的cycleLoop)，
+    // 沒接住的例外會直接把那個迴圈整個中斷掉，畫面上的動畫就會卡在半路、玩家看起來就像是
+    // 「動畫變慢了/消失了」——這裡讓音效統一吃掉例外，跟cry()原本「播放失敗就靜靜失敗，不影響
+    // 遊戲本身」的設計理念一致，音效永遠不該有能力波及到視覺動畫或遊戲邏輯
     function tone({ freq, dur = 0.16, type = 'triangle', vol = 0.16, glideTo = null, delay = 0 }) {
-        const c = ensureCtx();
-        if (!c || muted) return;
-        const t0 = c.currentTime + delay;
-        const osc = c.createOscillator();
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, t0);
-        if (glideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, glideTo), t0 + dur);
-        const g = envGain(t0, Math.min(0.02, dur * 0.15), dur, vol);
-        osc.connect(g);
-        osc.start(t0);
-        osc.stop(t0 + dur + 0.05);
+        try {
+            const c = ensureCtx();
+            if (!c || muted) return;
+            const t0 = c.currentTime + delay;
+            const osc = c.createOscillator();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, t0);
+            if (glideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, glideTo), t0 + dur);
+            const g = envGain(t0, Math.min(0.02, dur * 0.15), dur, vol);
+            osc.connect(g);
+            osc.start(t0);
+            osc.stop(t0 + dur + 0.05);
+        } catch (err) { /* 靜靜失敗，音效問題不該讓呼叫端(可能是動畫迴圈)跟著中斷 */ }
     }
     // 好幾個音同時響：做出「和弦」的豐富感，勝利/升級這種慶祝音效用
     function chord(freqs, opts = {}) {
@@ -519,25 +527,30 @@ const SFX = (() => {
     }
     // 短促的濾波白噪音：模擬「打擊感」(命中/沒有效果那種悶悶的撞擊聲)，純音高沒辦法做出這種
     // 質感，一定要靠噪音經過帶通/低通濾波器塑形
+    // 跟上面tone()同樣的理由包一層try/catch(見tone()的註解)——noiseHit是click()/tileMove()/
+    // ballSpin()這類短促打擊音的共用底層，捕捉動畫「搜尋中」循環就是靠ballSpin()配音效，
+    // 音效本身絕對不能有能力把那個循環中斷掉
     function noiseHit({ dur = 0.1, vol = 0.18, filterType = 'bandpass', freq = 900, Q = 1.2, delay = 0 }) {
-        const c = ensureCtx();
-        if (!c || muted) return;
-        const t0 = c.currentTime + delay;
-        const bufferSize = Math.max(1, Math.floor(c.sampleRate * dur));
-        const buffer = c.createBuffer(1, bufferSize, c.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-        const src = c.createBufferSource();
-        src.buffer = buffer;
-        const filt = c.createBiquadFilter();
-        filt.type = filterType;
-        filt.frequency.value = freq;
-        filt.Q.value = Q;
-        const g = envGain(t0, 0.002, dur, vol);
-        src.connect(filt);
-        filt.connect(g);
-        src.start(t0);
-        src.stop(t0 + dur + 0.02);
+        try {
+            const c = ensureCtx();
+            if (!c || muted) return;
+            const t0 = c.currentTime + delay;
+            const bufferSize = Math.max(1, Math.floor(c.sampleRate * dur));
+            const buffer = c.createBuffer(1, bufferSize, c.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+            const src = c.createBufferSource();
+            src.buffer = buffer;
+            const filt = c.createBiquadFilter();
+            filt.type = filterType;
+            filt.frequency.value = freq;
+            filt.Q.value = Q;
+            const g = envGain(t0, 0.002, dur, vol);
+            src.connect(filt);
+            filt.connect(g);
+            src.start(t0);
+            src.stop(t0 + dur + 0.02);
+        } catch (err) { /* 靜靜失敗，音效問題不該讓呼叫端(可能是動畫迴圈)跟著中斷 */ }
     }
 
     // ---- 寶可夢叫聲：PokeAPI/cries這個repo，跟站上其他地方用PokeAPI/sprites同一種hotlink方式 ----
@@ -1231,6 +1244,12 @@ const GACHA_BALL_TIERS = [
     { key: 'beast', nameZh: '究極球', color: '#eab308' },
 ];
 function gachaBallSprite(key) { return GACHA_BALL_SPRITE_BASE + key + '-ball.png'; }
+// 預先把5種球的圖示都載入瀏覽器快取——playCaptureRevealSequence的「搜尋中」動畫會用90ms這麼
+// 短的間隔快速切換不同球種的圖示，如果每次切換才第一次跟GitHub要那張圖，網路慢一點的話
+// 圖片還沒載完瀏覽器畫面就不會更新，動畫看起來會卡頓、甚至像是停在某一張圖不動(玩家反映的
+// 「動畫變慢/消失了」)。頁面一載入就用new Image()把5張圖都預抓一次進瀏覽器快取(不用等使用者
+// 真的點下去抓寶可夢才臨時抓)，之後動畫裡改img.src都是瞬間顯示，不會再被網路延遲卡住
+GACHA_BALL_TIERS.forEach(t => { const img = new Image(); img.src = gachaBallSprite(t.key); });
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // 跟worker.js的POKEMON_GACHA_COST維持一致——這裡先在前端擋一次餘額不夠的情況，
