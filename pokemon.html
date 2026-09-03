@@ -897,44 +897,56 @@ const BGM = (() => {
     // ——聽起來就像戰鬥音樂沒有馬上停。修法是每次play()都開一個全新的sessionGain(只接這次的音符)，
     // 接在masterBus後面：舊的sessionGain只會被淡出、不會再被任何東西拉回去，新的sessionGain則是
     // 從0開始獨立淡入，兩者完全不會互相干擾，靜音開關繼續控制masterBus就好
+    // play()/stop()整個包一層try/catch：這兩支被renderRoomView這種戰鬥畫面重繪函式直接同步呼叫
+    // (不是在獨立的音效函式裡)，如果WebAudio意外丟出例外(跟tone()/noiseHit()同樣理由的瀏覽器
+    // 怪異狀況)又剛好沒被接住，會直接把呼叫端整個函式從那一行以後全部中斷掉——玩家因此回報過
+    // 「戰鬥結束後沒顯示代幣跟經驗」、「道館打贏一次以後還能再打一次才算過關」，因為BGM.play('menu')
+    // 剛好排在「你贏了」畫面跟真正發獎勵的程式碼中間，一旦意外拋出例外，後面領獎勵的那幾行
+    // 就永遠不會執行到。跟SFX的tone()/noiseHit()一樣，音樂播放失敗不該有能力波及到遊戲邏輯
     function play(name) {
-        if (muted && name === currentName) return;
-        if (name === currentName) return;
-        const trackDef = TRACKS[name];
-        if (!trackDef) return;
-        const c = ctx();
-        const master = ensureBus();
-        if (!c || !master) return;
-        activeToken++;
-        const myToken = activeToken;
-        currentName = name;
-        const now = c.currentTime;
+        try {
+            if (muted && name === currentName) return;
+            if (name === currentName) return;
+            const trackDef = TRACKS[name];
+            if (!trackDef) return;
+            const c = ctx();
+            const master = ensureBus();
+            if (!c || !master) return;
+            activeToken++;
+            const myToken = activeToken;
+            currentName = name;
+            const now = c.currentTime;
 
-        const oldGain = sessionGain;
-        if (oldGain) {
-            oldGain.gain.cancelScheduledValues(now);
-            oldGain.gain.setTargetAtTime(0, now, 0.12); // 舊曲目的殘留音符淡出後就永遠留在0，不會再被拉回來
-        }
-        const newGain = c.createGain();
-        newGain.gain.setValueAtTime(0, now);
-        newGain.connect(master);
-        sessionGain = newGain;
-        setTimeout(() => {
-            if (myToken !== activeToken) return;
-            const c2 = ctx();
-            if (!c2) return;
-            newGain.gain.cancelScheduledValues(c2.currentTime);
-            newGain.gain.setTargetAtTime(1, c2.currentTime, 0.25); // session自己的音量固定淡入到1，實際音量由masterBus的TARGET_VOL決定
-            driveLoop(trackDef, myToken, c2.currentTime + 0.05, newGain);
-        }, 260);
+            const oldGain = sessionGain;
+            if (oldGain) {
+                oldGain.gain.cancelScheduledValues(now);
+                oldGain.gain.setTargetAtTime(0, now, 0.12); // 舊曲目的殘留音符淡出後就永遠留在0，不會再被拉回來
+            }
+            const newGain = c.createGain();
+            newGain.gain.setValueAtTime(0, now);
+            newGain.connect(master);
+            sessionGain = newGain;
+            setTimeout(() => {
+                try {
+                    if (myToken !== activeToken) return;
+                    const c2 = ctx();
+                    if (!c2) return;
+                    newGain.gain.cancelScheduledValues(c2.currentTime);
+                    newGain.gain.setTargetAtTime(1, c2.currentTime, 0.25); // session自己的音量固定淡入到1，實際音量由masterBus的TARGET_VOL決定
+                    driveLoop(trackDef, myToken, c2.currentTime + 0.05, newGain);
+                } catch (err) { /* 靜靜失敗，理由見play()開頭的註解 */ }
+            }, 260);
+        } catch (err) { /* 靜靜失敗，理由見play()開頭的註解 */ }
     }
     function stop() {
-        activeToken++;
-        currentName = null;
-        const c = ctx();
-        const g = sessionGain;
-        sessionGain = null;
-        if (c && g) g.gain.setTargetAtTime(0, c.currentTime, 0.2);
+        try {
+            activeToken++;
+            currentName = null;
+            const c = ctx();
+            const g = sessionGain;
+            sessionGain = null;
+            if (c && g) g.gain.setTargetAtTime(0, c.currentTime, 0.2);
+        } catch (err) { /* 靜靜失敗，理由見play()開頭的註解 */ }
     }
 
     return { play, stop, isMuted, setMuted };
@@ -3594,27 +3606,39 @@ async function renderRoomView(room) {
             finished: battleFinishSummary[room.id],
         });
         if (myToken !== roomRenderToken) return;
+        // rewardSettled：這一局要結算的獎勵API(代幣/EXP、道館限定獎勵)全部收集成Promise陣列——
+        // 下面排「自動返回大廳」的計時器要等這些全部有結果(不管成功或失敗)才開始倒數。以前這裡
+        // 是固定4秒後不管三七二十一直接離開房間，但這幾支API要讀寫好幾份Firestore文件，實際跑完
+        // 常常比4秒還久(尤其網路狀況不好的時候)——玩家因此常常在代幣/EXP訊息還沒補上、甚至道館的
+        // clearedGyms都還沒真的寫進Firestore之前就已經被送回大廳，回報過「野生對戰結束後沒顯示
+        // 代幣跟經驗」、「道館打贏一次以後還能再打一次才算過關」，都是這個時間差造成的
+        const rewardSettled = [];
         if (won && !room.rewardClaimed && !rewardClaimAttempted[room.id + ':coin']) {
             rewardClaimAttempted[room.id + ':coin'] = true;
-            callWorker('pokemon_battle_report_result', { roomId: room.id })
+            rewardSettled.push(callWorker('pokemon_battle_report_result', { roomId: room.id })
                 .then(r => {
                     battleFinishSummary[room.id].coinsEarned = r.coinsEarned;
                     battleFinishSummary[room.id].expEarned = r.expEarned;
                     if (r.leveledUp) { battleFinishSummary[room.id].newLevel = r.newLevel; SFX.levelUp(); }
                     if (lastRenderedRoom && lastRenderedRoom.id === room.id) renderRoomView(lastRenderedRoom);
                 })
-                .catch(() => {});
+                .catch(() => {}));
         }
         if (won && room.isGymBattle && room.gymId && !isGymCleared(room.gymId) && !rewardClaimAttempted[room.id + ':gym']) {
             rewardClaimAttempted[room.id + ':gym'] = true;
-            claimGymReward(room.id, room.gymId);
+            rewardSettled.push(claimGymReward(room.id, room.gymId));
         }
-        // 過幾秒自動回大廳，不用玩家自己按按鈕——留一點時間讓玩家看得到戰績/獎勵訊息
+        // 留一點時間讓玩家看得到戰績/獎勵訊息，才自動回大廳，不用玩家自己按按鈕——等上面收集到的
+        // 獎勵API都settle了才開始倒數；額外包一層8秒上限(withTimeout)防止萬一API真的卡住不回應時，
+        // 玩家被永遠卡在戰鬥結束畫面回不了大廳
         if (!battleAutoLeaveScheduled[room.id]) {
             battleAutoLeaveScheduled[room.id] = true;
-            setTimeout(() => {
-                if (lastRenderedRoom && lastRenderedRoom.id === room.id) leaveRoomView();
-            }, 4000);
+            const withTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(r, ms))]);
+            withTimeout(Promise.all(rewardSettled), 8000).finally(() => {
+                setTimeout(() => {
+                    if (lastRenderedRoom && lastRenderedRoom.id === room.id) leaveRoomView();
+                }, 2500);
+            });
         }
         return;
     }
