@@ -3822,13 +3822,13 @@ async function renderBattleStage(container, ctx) {
         // resolveBattleRound那邊也有一份對應的伺服器端防呆檢查
         const encMove = await fetchMoveData(myTeam.encoreMove);
         movesHtml = `<button onclick="submitMove('${encMove.name}')" class="w-full h-full min-h-[110px] rounded-2xl text-white font-black text-lg active:scale-95 transition-transform" style="background:${TYPE_COLORS[encMove.type] || '#6b7280'}">
-            被要求再來一次：${encMove.nameZh}
+            被要求再來一次：${encMove.nameZh}${DAMAGE_CLASS_BADGE_PILL[encMove.damageClass] || ''}
         </button>`;
     } else if (myTeam.chargingMove) {
         // 雙回合蓄力招式：蓄力回合已經在上一輪動畫演過了，這一輪只能「釋放」，不能改選別的招式
         const chargeMove = await fetchMoveData(myTeam.chargingMove);
         movesHtml = `<button onclick="submitMove('${chargeMove.name}')" class="w-full h-full min-h-[110px] rounded-2xl text-white font-black text-lg active:scale-95 transition-transform" style="background:${TYPE_COLORS[chargeMove.type] || '#6b7280'}">
-            釋放蓄力：${chargeMove.nameZh}
+            釋放蓄力：${chargeMove.nameZh}${DAMAGE_CLASS_BADGE_PILL[chargeMove.damageClass] || ''}
         </button>`;
     } else {
         const myMoveDisplays = await Promise.all((myTeam.moves || []).map(fetchMoveData));
@@ -3843,7 +3843,7 @@ async function renderBattleStage(container, ctx) {
             movesHtml = `<div class="grid grid-cols-2 gap-2">${usableList.map(({ m, pp, blockReason }) => {
                 const disabled = pp <= 0 || !!blockReason;
                 return `<button ${disabled ? 'disabled' : ''} onclick="submitMove('${m.name}')" class="rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden ${disabled ? 'opacity-40' : ''}" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
-                    <span class="flex items-center gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 shrink-0" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span class="text-white text-sm font-black truncate">${m.nameZh}</span></span>
+                    <span class="flex items-center gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 shrink-0" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span class="text-white text-sm font-black truncate">${m.nameZh}</span>${DAMAGE_CLASS_BADGE_PILL[m.damageClass] || ''}</span>
                     <span class="block text-[0.6rem] text-white/85 mt-0.5 truncate">${blockReason || m.descZh || ' '}</span>
                     <span class="block text-[0.6rem] text-white/70 mt-0.5">PP ${pp}/${m.pp || '?'}</span>
                 </button>`;
@@ -4675,6 +4675,13 @@ const STAGE_KEY_ZH = { atk: '攻擊', def: '防禦', spAtk: '特攻', spDef: '�
 const DAMAGE_CLASS_BADGE = {
     physical: '<span class="text-[10px] text-orange-600 font-bold ml-1">物理</span>',
     special: '<span class="text-[10px] text-blue-600 font-bold ml-1">特殊</span>',
+};
+// 戰鬥畫面裡招式按鈕的底色是招式屬性色(TYPE_COLORS，深淺不一)，上面這組純文字顏色的徽章
+// 直接套用可能會有些屬性色背景對比度不夠(例如物理招式配上同樣偏橘的火屬性底色幾乎看不見)——
+// 這裡另外準備一組「實心底色+白字」的藥丸徽章，不管按鈕本身是什麼屬性色都能維持清楚的對比
+const DAMAGE_CLASS_BADGE_PILL = {
+    physical: '<span class="text-[9px] font-bold bg-orange-500 text-white px-1 py-0.5 rounded ml-1 shrink-0">物理</span>',
+    special: '<span class="text-[9px] font-bold bg-blue-500 text-white px-1 py-0.5 rounded ml-1 shrink-0">特殊</span>',
 };
 // PokeAPI的move.target欄位除了'user'(純自己)以外，還有'user-and-allies'/'user-or-ally'/'ally'
 // 這種「自己+隊友」的雙打語意(例如長嚎howl、生命之露life-dew、生氣蓬勃work-up、裝飾decorate這類)
