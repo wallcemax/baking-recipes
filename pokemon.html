@@ -97,6 +97,12 @@
     /* 寶可夢猜猜看：題目圖片先變成全黑剪影，選完答案(揭曉)後才淡出黑色濾鏡看到真正配色 */
     .guess-silhouette { filter: brightness(0); transition: filter 0.35s ease; }
     .guess-silhouette.revealed { filter: none; }
+    /* PokéSlide滑塊拼圖：3x3的格子，每一片用同一張官方立繪圖裁切background-position顯示對應的
+       那一小塊(300%300%的background-size，讓整張圖平分成3x3後，每一片剛好對到自己該顯示的區域) */
+    .puzzle-board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; aspect-ratio: 1; }
+    .puzzle-tile { position: relative; border: 0; border-radius: 10px; overflow: hidden; background-repeat: no-repeat; background-size: 300% 300%; cursor: pointer; transition: filter .12s, transform .12s; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.5); }
+    .puzzle-tile:active { filter: brightness(1.08); transform: scale(0.97); }
+    .puzzle-tile.puzzle-empty { background: #e2e8f0 !important; cursor: default; box-shadow: none; }
 </style>
 </head>
 <body class="min-h-screen pb-24">
@@ -142,6 +148,7 @@
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="battle" onclick="switchTab('battle')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/types/generation-ix/scarlet-violet/small/2.png" class="w-4 h-4" style="image-rendering:pixelated">對戰</button>
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="gacha" onclick="switchTab('gacha')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" class="w-4 h-4" style="image-rendering:pixelated">捕捉</button>
         <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="guess" onclick="switchTab('guess')"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/heart-scale.png" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">猜猜看</button>
+        <button class="tab-btn shrink-0 px-4 py-2 rounded-full text-sm font-bold bg-gray-100 inline-flex items-center gap-1.5" data-tab="puzzle" onclick="switchTab('puzzle')"><span class="w-4 h-4 inline-flex items-center justify-center text-sm leading-none">🧩</span>拼圖</button>
     </div>
 
     <!-- ===== 捕捉分頁 ===== -->
@@ -231,6 +238,11 @@
     <!-- ===== 小遊戲：寶可夢猜猜看 ===== -->
     <div id="tab-guess" class="tab-panel hidden">
         <div id="guess-game-root"></div>
+    </div>
+
+    <!-- ===== 小遊戲：PokéSlide滑塊拼圖 ===== -->
+    <div id="tab-puzzle" class="tab-panel hidden">
+        <div id="puzzle-game-root"></div>
     </div>
 </div>
 
@@ -547,6 +559,9 @@ const SFX = (() => {
         },
         guessCorrect() { arpeggio([659, 880], { noteDur: 0.11, gap: 0.09, type: 'triangle', vol: 0.16 }); },
         guessWrong() { tone({ freq: 180, dur: 0.18, type: 'square', vol: 0.11 }); },
+        // PokéSlide滑塊拼圖：每點一次拼圖片塊(移動一步)就給一個很短、清脆的「喀」聲，
+        // 跟純UI用的click()音色故意分開(頻率/濾波都不同)，讓玩家聽得出「這是遊戲裡的動作」
+        tileMove() { noiseHit({ dur: 0.035, vol: 0.1, filterType: 'bandpass', freq: 1600, Q: 3 }); tone({ freq: 900, dur: 0.03, type: 'square', vol: 0.05, delay: 0.005 }); },
         // 捕捉動畫：球圖示快速循環切換(搜尋中/收斂中)時，每換一次圖示就給一個很輕的「嗒」聲，
         // 呼應畫面上球在跑的節奏——玩家反映球在跑的時候完全沒聲音感覺很空
         ballSpin() { noiseHit({ dur: 0.03, vol: 0.05, filterType: 'bandpass', freq: 2200, Q: 2.5 }); },
@@ -1030,6 +1045,7 @@ function switchTab(name) {
     document.getElementById('tab-' + name).classList.remove('hidden');
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
     if (name === 'guess') renderGuessStartScreen();
+    if (name === 'puzzle') renderPuzzleStartScreen();
     // 地區對戰的地區格線現在併入「對戰」分頁裡面(#battle-lobby-view)，不再是獨立分頁，
     // 所以改成切到battle分頁時就重繪一次
     if (name === 'battle') renderRegionsTab();
@@ -5944,6 +5960,228 @@ async function renderGuessRewardScreen(result) {
 function resetGuessGame() {
     guessState = null;
     renderGuessStartScreen();
+}
+
+// ============================================================
+// 小遊戲：PokéSlide滑塊拼圖(玩家上傳preview.html原型，這裡整合進寶可夢世界的「拼圖」分頁)
+// ------------------------------------------------------------
+// 玩法完全免費(不扣代幣)，贏了才有的額外獎勵：1分鐘內解完+100代幣、100步內解完再+100代幣，
+// 兩個門檻都達成就是100+100=200(不是另外加碼)。防作弊分工比照猜猜看，但不完全一樣：
+//   - 拼哪一隻寶可夢(speciesId)由worker決定，跟猜猜看用同一個全國圖鑑池子(POKEMON_SPECIES_COUNT)，
+//     client端fetchSpeciesDisplay只是照著worker給的id去抓對應素材，抽到誰client做不了主
+//   - 「1分鐘內」由worker自己記錄開局時間(createdAt)，領獎時用「伺服器現在時間-createdAt」計算，
+//     不採信前端回報的秒數——打開主控台偽造不了「我1秒就解完」
+//   - 「100步內」的moves這個數字目前沒辦法在伺服器端重新驗證(除非把整個拼圖引擎搬到伺服器上跑，
+//     overkill)，worker端只做「1~2000的正整數」範圍檢查，外加一個3秒鐘的最短耗時門檻擋掉
+//     「開局後立刻回報」這種最陽春的濫用，跟這個網站其他地方的信任水位一致(戰鬥結算本來就整個
+//     是client算好才回報)——如果之後要拿出更高的防作弊要求，這裡是已知的相對薄弱點
+// 拼圖片塊完全沿用preview.html原型的做法：background-size:300% 300%讓同一張立繪依照
+// background-position切成3x3格顯示對應的那一小塊，不用真的裁切成9張小圖檔
+// ============================================================
+let puzzleState = null; // {sessionId, speciesId, display, tiles, moves, seconds, timer, started, finished}
+
+function renderPuzzleStartScreen() {
+    // 玩到一半切分頁再切回來，接著顯示目前這一局，不要整個重新開局(跟猜猜看guessState的作法一樣)
+    if (puzzleState && !puzzleState.finished) { renderPuzzleBoard(); return; }
+    const root = document.getElementById('puzzle-game-root');
+    if (!root) return;
+    root.innerHTML = `
+        <div class="bg-white rounded-2xl card-shadow overflow-hidden">
+            <div class="p-5 text-center bg-gradient-to-br from-red-500 to-orange-500 text-white">
+                <p class="text-xl font-black mb-1">🧩 PokéSlide滑塊拼圖</p>
+                <p class="text-xs opacity-90">把打亂的9宮格拼回完整的寶可夢，題目來自PokéAPI全國圖鑑</p>
+            </div>
+            <div class="p-6 text-center">
+                <p class="text-sm text-gray-500 mb-4 leading-relaxed">點擊跟空格相鄰的拼圖片塊即可移動，遊玩完全免費：<br>
+                    ⏱️ 1分鐘內解完 → 100代幣・超過1分鐘 → 50代幣<br>
+                    👣 100步內解完 → 100代幣・超過100步 → 50代幣<br>
+                    拼好至少拿100代幣，兩個條件都達成直接拿200代幣！<br>
+                    使用合法移動方式打亂，每一局都保證有解。</p>
+                <button onclick="startPuzzleGame()" id="puzzle-start-btn" class="bg-red-500 text-white px-8 py-3 rounded-full font-bold">開始遊戲</button>
+            </div>
+        </div>
+    `;
+}
+
+function puzzleNeighbors(pos) {
+    const r = Math.floor(pos / 3), c = pos % 3, a = [];
+    if (r > 0) a.push(pos - 3);
+    if (r < 2) a.push(pos + 3);
+    if (c > 0) a.push(pos - 1);
+    if (c < 2) a.push(pos + 1);
+    return a;
+}
+function puzzleSolved(tiles) { return tiles.every((v, i) => v === i); }
+function puzzleLegalShuffle() {
+    // 跟preview.html原型同一套演算法：從已解開的狀態開始，做120次「合法移動」(每次都跟空格
+    // 相鄰的格子交換，且不走回上一步剛換過的格子，避免一路來回互相抵銷)，保證打亂完一定有解——
+    // 不是隨機排列9個數字再檢查有沒有解，那種作法有一半機率會排出無解的組合
+    let tiles = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    let empty = 8, previous = -1;
+    for (let i = 0; i < 120; i++) {
+        const choices = puzzleNeighbors(empty).filter(x => x !== previous);
+        const pick = choices[Math.floor(Math.random() * choices.length)];
+        [tiles[empty], tiles[pick]] = [tiles[pick], tiles[empty]];
+        previous = empty; empty = pick;
+    }
+    if (puzzleSolved(tiles)) return puzzleLegalShuffle(); // 極小機率120步後剛好還原，重打一次
+    return tiles;
+}
+
+async function startPuzzleGame() {
+    const btn = document.getElementById('puzzle-start-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '出題中...'; }
+    try {
+        const result = await callWorker('pokemon_puzzle_start');
+        const display = await fetchSpeciesDisplay(result.speciesId, false);
+        puzzleState = {
+            sessionId: result.sessionId,
+            speciesId: result.speciesId,
+            display,
+            tiles: puzzleLegalShuffle(),
+            moves: 0,
+            seconds: 0,
+            timer: null,
+            started: false,
+            finished: false,
+        };
+        renderPuzzleBoard();
+    } catch (err) {
+        showToast('開始遊戲失敗：' + err.message);
+        if (btn) { btn.disabled = false; btn.textContent = '開始遊戲'; }
+    }
+}
+
+function puzzleFormatTime(s) {
+    return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+function puzzleStartTimer() {
+    puzzleStopTimer();
+    puzzleState.timer = setInterval(() => {
+        puzzleState.seconds++;
+        const el = document.getElementById('puzzle-time');
+        if (el) el.textContent = puzzleFormatTime(puzzleState.seconds);
+    }, 1000);
+}
+function puzzleStopTimer() {
+    if (puzzleState && puzzleState.timer) { clearInterval(puzzleState.timer); puzzleState.timer = null; }
+}
+
+function renderPuzzleBoard() {
+    const root = document.getElementById('puzzle-game-root');
+    if (!root || !puzzleState) return;
+    root.innerHTML = `
+        <div class="bg-white rounded-2xl card-shadow overflow-hidden">
+            <div class="p-4 bg-gradient-to-br from-red-500 to-orange-500 text-white flex items-center justify-between">
+                <div>
+                    <p class="text-lg font-black">🧩 PokéSlide滑塊拼圖</p>
+                    <p class="text-xs opacity-90">⏱️ <span id="puzzle-time">${puzzleFormatTime(puzzleState.seconds)}</span>　👣 <span id="puzzle-moves">${puzzleState.moves}</span> 步</p>
+                </div>
+            </div>
+            <div class="p-5">
+                <p class="text-center text-xs text-gray-400 mb-2">把圖片拼回完整的 ??? 吧！</p>
+                <div class="puzzle-board" id="puzzle-board"></div>
+                <p class="text-center text-xs text-gray-400 mt-3">點擊跟空格相鄰的片塊即可移動</p>
+            </div>
+        </div>
+    `;
+    puzzleRenderTiles();
+}
+
+function puzzleRenderTiles() {
+    const board = document.getElementById('puzzle-board');
+    if (!board || !puzzleState) return;
+    const { tiles, display } = puzzleState;
+    board.innerHTML = tiles.map((piece, pos) => {
+        if (piece === 8) return `<div class="puzzle-tile puzzle-empty"></div>`;
+        const bx = (piece % 3) * 50, by = Math.floor(piece / 3) * 50;
+        return `<button class="puzzle-tile" onclick="movePuzzleTile(${pos})" style="background-image:url('${display.sprite}');background-position:${bx}% ${by}%"></button>`;
+    }).join('');
+}
+
+function movePuzzleTile(pos) {
+    if (!puzzleState || puzzleState.finished) return;
+    const empty = puzzleState.tiles.indexOf(8);
+    if (!puzzleNeighbors(empty).includes(pos)) return;
+    if (!puzzleState.started) { puzzleState.started = true; puzzleStartTimer(); }
+    [puzzleState.tiles[empty], puzzleState.tiles[pos]] = [puzzleState.tiles[pos], puzzleState.tiles[empty]];
+    puzzleState.moves++;
+    SFX.tileMove();
+    const movesEl = document.getElementById('puzzle-moves');
+    if (movesEl) movesEl.textContent = puzzleState.moves;
+    puzzleRenderTiles();
+    if (puzzleSolved(puzzleState.tiles)) puzzleWin();
+}
+
+function puzzleWin() {
+    puzzleState.finished = true;
+    puzzleStopTimer();
+    SFX.cry(puzzleState.speciesId);
+    SFX.victory();
+    const root = document.getElementById('puzzle-game-root');
+    if (!root) return;
+    root.innerHTML = `
+        <div class="bg-white rounded-2xl card-shadow overflow-hidden">
+            <div class="p-5 text-center bg-gradient-to-br from-yellow-400 to-orange-500 text-white">
+                <p class="text-xl font-black mb-1">🎉 拼圖完成！</p>
+                <p class="text-sm opacity-90">是 ${puzzleState.display.nameZh}！</p>
+            </div>
+            <div class="p-6 text-center">
+                <img src="${puzzleState.display.sprite}" class="w-32 h-32 mx-auto mb-2">
+                <p class="font-bold text-lg mb-1">${puzzleState.display.nameZh}</p>
+                <p class="text-sm text-gray-500 mb-4">⏱️ ${puzzleFormatTime(puzzleState.seconds)}　👣 ${puzzleState.moves} 步</p>
+                <button onclick="claimPuzzleReward()" id="puzzle-claim-btn" class="bg-yellow-500 text-white px-8 py-3 rounded-full font-bold">領取獎勵</button>
+            </div>
+        </div>
+    `;
+}
+
+async function claimPuzzleReward() {
+    const btn = document.getElementById('puzzle-claim-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '領取中...'; }
+    try {
+        const result = await callWorker('pokemon_puzzle_claim', { sessionId: puzzleState.sessionId, moves: puzzleState.moves });
+        renderPuzzleRewardScreen(result);
+    } catch (err) {
+        showToast('領取失敗：' + err.message);
+        if (btn) { btn.disabled = false; btn.textContent = '領取獎勵'; }
+    }
+}
+
+function renderPuzzleRewardScreen(result) {
+    const root = document.getElementById('puzzle-game-root');
+    if (!root || !puzzleState) return;
+    const coinsEarned = result.coinsEarned || 0;
+    let detailHtml;
+    if (coinsEarned > 0) {
+        // 現在兩個門檻都是「達成拿100、沒達成也還有50的安慰獎」，所以這裡兩行一定都會顯示，
+        // 不會出現完全沒有任何一行的情況(最低也是50+50=100)
+        const lines = [
+            result.underTime ? '⏱️ 1分鐘內解完 → +100' : '⏱️ 超過1分鐘 → +50',
+            result.underMoves ? '👣 100步內解完 → +100' : '👣 超過100步 → +50',
+        ];
+        detailHtml = `<div class="bg-gray-50 rounded-xl p-4 my-4 text-left text-sm">${lines.map(l => `<p class="mb-1">${l}</p>`).join('')}<p class="font-black text-yellow-600 mt-2 pt-2 border-t border-gray-200">合計 +${coinsEarned} 💰</p></div>`;
+        SFX.coin();
+    } else {
+        detailHtml = '<p class="text-sm text-gray-400 my-4">這次沒有拿到任何獎勵，再試一次看看！</p>';
+    }
+    root.innerHTML = `
+        <div class="bg-white rounded-2xl card-shadow overflow-hidden">
+            <div class="p-5 text-center bg-gradient-to-br from-yellow-400 to-orange-500 text-white">
+                <p class="text-xl font-black mb-1">🎁 獲得獎勵！</p>
+                <p class="text-sm opacity-90">${puzzleState.display.nameZh}</p>
+            </div>
+            <div class="p-6 text-center">
+                ${detailHtml}
+                <button onclick="resetPuzzleGame()" class="bg-red-500 text-white px-6 py-2 rounded-full font-bold">再玩一次</button>
+            </div>
+        </div>
+    `;
+}
+function resetPuzzleGame() {
+    puzzleStopTimer();
+    puzzleState = null;
+    renderPuzzleStartScreen();
 }
 </script>
 </body>
