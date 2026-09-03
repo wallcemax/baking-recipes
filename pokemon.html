@@ -81,7 +81,7 @@
     @keyframes gachaIdleBob { 0%,100%{transform:translateY(0) rotate(-2deg)} 50%{transform:translateY(-4px) rotate(2deg)} }
     .ball-pop-in { animation: ballPopIn 0.45s cubic-bezier(0.34,1.56,0.64,1); }
     @keyframes ballPopIn { 0%{transform:scale(0.4) translateY(10px); opacity:0} 60%{transform:scale(1.18) translateY(-4px); opacity:1} 100%{transform:scale(1) translateY(0); opacity:1} }
-    .ball-capture-shake { animation: ballCaptureShake 1.1s ease-in-out; transform-origin: 50% 85%; }
+    .ball-capture-shake { animation: ballCaptureShake 1.7s ease-in-out; transform-origin: 50% 85%; }
     @keyframes ballCaptureShake {
         0%,100% { transform: rotate(0deg); }
         6% { transform: rotate(-22deg); } 13% { transform: rotate(17deg); } 20% { transform: rotate(-22deg); } 27% { transform: rotate(0deg); }
@@ -1045,7 +1045,7 @@ async function playCaptureRevealSequence(resultPromise) {
     await sleep(500);
     const landedBall = document.getElementById('gacha-landed-ball');
     if (landedBall) landedBall.classList.add('ball-capture-shake');
-    await sleep(1100);
+    await sleep(1700); // 要跟上面.ball-capture-shake的CSS動畫時長(1.7s)一致，不然畫面會提前跳到下一步、動畫播到一半被切掉
 
     // 畫面閃光，象徵寶可夢從球裡蹦出來
     const flashEl = document.getElementById('gacha-flash-overlay');
@@ -1857,9 +1857,12 @@ async function showMoveReminderReplacePicker(instanceId, moveName) {
         <p class="font-bold text-center mb-1">學回「${newMoveData.nameZh}」</p>
         <p class="text-xs text-gray-400 text-center mb-3">招式已經滿4招了，要換掉哪一招？</p>
         <div class="space-y-1.5 mb-2">
-            ${(inst.moves || []).map((m, idx) => `<button onclick="useMoveReminder('${instanceId}','${moveName}',${idx})" class="w-full bg-gray-50 hover:bg-red-50 rounded-xl p-2 flex items-center gap-1.5 text-left">
-                ${currentMoveDisplays[idx].typeIcon ? `<img src="${currentMoveDisplays[idx].typeIcon}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}
-                <span class="text-sm font-bold">換掉「${currentMoveDisplays[idx].nameZh}」</span>
+            ${(inst.moves || []).map((m, idx) => `<button onclick="useMoveReminder('${instanceId}','${moveName}',${idx})" class="w-full bg-gray-50 hover:bg-red-50 rounded-xl p-2 text-left">
+                <span class="flex items-center gap-1.5">
+                    ${currentMoveDisplays[idx].typeIcon ? `<img src="${currentMoveDisplays[idx].typeIcon}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}
+                    <span class="text-sm font-bold">換掉「${currentMoveDisplays[idx].nameZh}」</span>
+                </span>
+                ${currentMoveDisplays[idx].descZh ? `<span class="block text-[11px] text-gray-400 leading-snug mt-0.5">${currentMoveDisplays[idx].descZh}</span>` : ''}
             </button>`).join('')}
         </div>
         <button onclick="openUseItemModal('${instanceId}')" class="w-full text-gray-400 text-sm">取消</button>
@@ -2312,6 +2315,10 @@ async function cancelRoom(roomId) {
 
 // 連線對戰要進行「封鎖+選人」，隊伍至少要有4隻才有意義(禁用1隻、還要能從剩下的挑3隻上場)
 const PVP_MIN_PARTY_SIZE = 4;
+// 連線對戰(玩家對玩家)雙方數值強度統一用等級100計算，招式維持玩家自己配置的招組不變——
+// 避免練等進度差距直接決定連線對戰的勝負，只在buildOwnTeamSnapshot(PvP專用)套用，
+// 野生對戰/道館戰打的是固定NPC隊伍，不受這個影響，維持玩家寶可夢的真實等級
+const PVP_BATTLE_LEVEL = 100;
 
 // roomModalMode決定「建立房間」彈窗這次是拿來開新房間、加入別人的房間、還是出發打野生寶可夢——
 // 野生對戰維持原本「先選1隻出戰」的流程；連線對戰(建房/加入)不用在這裡選寶可夢了，
@@ -2379,7 +2386,8 @@ async function renderPartyPicker(containerId, party, onPick) {
 async function buildOwnTeamSnapshot() {
     const party = currentInstances.filter(i => i.inParty).slice(0, 6);
     const displays = await Promise.all(party.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
-    return party.map((inst, idx) => buildTeamDataFromInstData(inst.id, inst, pokemonDisplayName(inst, displays[idx])));
+    // 連線對戰統一用PVP_BATTLE_LEVEL(等級100)算數值強度，招式維持玩家自己配置的招組不變
+    return party.map((inst, idx) => buildTeamDataFromInstData(inst.id, inst, pokemonDisplayName(inst, displays[idx]), PVP_BATTLE_LEVEL));
 }
 async function submitCreateRoom() {
     const party = currentInstances.filter(i => i.inParty);
@@ -3230,6 +3238,7 @@ async function renderRoomView(room) {
             myCurrentHp: myTeam.currentHp, oppCurrentHp: oppTeam.currentHp,
             mySwitchInSprite: myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite,
             oppSwitchInSprite: oppDisplay.spriteAnimated || oppDisplay.sprite,
+            token: myToken, // 讓playBattleEvents自己能判斷「這輪動畫播到一半時，是不是已經被更新的render取代掉了」
         });
         if (myToken !== roomRenderToken) return;
     } else if (alreadyAnimated === undefined) {
@@ -3467,6 +3476,15 @@ async function renderBattleStage(container, ctx) {
 // 對應resolveBattleRound算出來的每一種事件形狀，一一播出動畫
 async function playBattleEvents(events, ctx) {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
+    // isStale：這整個函式從頭到尾要跑好幾秒(每個事件之間都要await sleep)，過程中如果又收到一次
+    // Firestore onSnapshot、觸發新一輪renderRoomView，畫面(sprite-me/sprite-opp這些id元素)會被
+    // renderBattleStage整個重新畫過——但這個「舊的」playBattleEvents呼叫並不知道自己已經過時，
+    // 還是會用document.getElementById抓到「新的」同id元素繼續改classList/src/血條，結果變成
+    // 兩輪動畫互相打架(玩家看到的症狀：精靈球縮小收回去、又放大恢復、才終於跳成正確的下一隻)。
+    // ctx.token是renderRoomView呼叫當下的roomRenderToken快照，每次sleep醒來後都重新比對一次，
+    // 一旦發現已經有更新的render接手了，就直接中止、不再繼續碰任何DOM
+    const animToken = ctx.token;
+    const isStale = () => animToken !== roomRenderToken;
     const logBox = document.getElementById('battle-log-box');
     const appendLog = text => {
         if (!logBox) return;
@@ -3512,6 +3530,7 @@ async function playBattleEvents(events, ctx) {
                 el.classList.add('switch-out');
                 if (ball) ball.classList.add('pokeball-recall'); // 精靈球亮起來，把舊寶可夢收回去
                 await sleep(800);
+                if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
                 // 這一刻才正式換成新寶可夢的圖片跟血條——用新寶可夢自己的血量上限來算百分比，
                 // 不能繼續沿用舊寶可夢的血量數字套在新寶可夢的血條上(這正是玩家回報的血條異常成因)
                 el.src = isMe ? ctx.mySwitchInSprite : ctx.oppSwitchInSprite;
@@ -3527,10 +3546,12 @@ async function playBattleEvents(events, ctx) {
                 el.classList.add('switch-in');
                 if (ev.inSpeciesId) SFX.cry(ev.inSpeciesId); // 新寶可夢上場的瞬間播叫聲，跟正版遊戲的節奏一致
                 await sleep(800);
+                if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
                 el.classList.remove('switch-in');
                 if (ball) ball.classList.remove('pokeball-throw');
             }
             await sleep(250);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             continue;
         }
         // ---- 雙回合蓄力招式的第一回合：只蓄力、不會真的打到對手 ----
@@ -3539,6 +3560,7 @@ async function playBattleEvents(events, ctx) {
             const el = document.getElementById(ev.attackerKey === ctx.myUid ? 'sprite-me' : 'sprite-opp');
             if (el) { el.classList.remove('self-buff-glow'); void el.offsetWidth; el.classList.add('self-buff-glow'); }
             await sleep(800);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             continue;
         }
         // ---- 天氣/場地被改變 ----
@@ -3546,6 +3568,7 @@ async function playBattleEvents(events, ctx) {
             const label = ev.fieldEffect.kind === 'weather' ? WEATHER_NAME_ZH[ev.fieldEffect.type] : TERRAIN_NAME_ZH[ev.fieldEffect.type];
             appendLog(`${ev.fieldEffect.kind === 'weather' ? '天氣' : '場地'}變成了${label}！`);
             await sleep(650);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             continue;
         }
         // ---- 守住/替身：自己身上生效的準備動作，原地發光提示 ----
@@ -3557,6 +3580,7 @@ async function playBattleEvents(events, ctx) {
             else appendLog(`${ev.attackerName} 沒能使出替身！`);
             if (el && (ev.protectSuccess || ev.substituteSet)) { el.classList.remove('self-buff-glow'); void el.offsetWidth; el.classList.add('self-buff-glow'); }
             await sleep(700);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             continue;
         }
         // ---- 攻擊被守住擋下：攻擊方照樣衝刺一下，但完全不會造成傷害/附加效果 ----
@@ -3565,6 +3589,7 @@ async function playBattleEvents(events, ctx) {
             const atkElBlock = document.getElementById(ev.attackerKey === ctx.myUid ? 'sprite-me' : 'sprite-opp');
             if (atkElBlock) { atkElBlock.classList.remove('lunge-right', 'lunge-left'); void atkElBlock.offsetWidth; atkElBlock.classList.add(ev.attackerKey === ctx.myUid ? 'lunge-right' : 'lunge-left'); }
             await sleep(700);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             continue;
         }
         // ---- 回合結束的扎根回血／寄生種子吸血：跟endTurnStatus相反方向(加血)，一樣沒有攻守方 ----
@@ -3582,6 +3607,7 @@ async function playBattleEvents(events, ctx) {
             if (bar) bar.style.width = pct + '%';
             if (hpText) hpText.textContent = `${ev.hpAfter}/${maxHp}`;
             await sleep(700);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             continue;
         }
         // ---- 回合結束的中毒/劇毒/燒傷/寄生種子持續傷害：沒有攻守方，單純扣某一邊的血 ----
@@ -3604,6 +3630,7 @@ async function playBattleEvents(events, ctx) {
             if (bar) bar.style.width = pct + '%';
             if (hpText) hpText.textContent = `${Math.max(0, ev.hpAfter)}/${maxHp}`;
             await sleep(800);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             if (ev.fainted) {
                 SFX.faint();
                 // 野生寶可夢倒下不用收進精靈球(牠本來就不是任何人的寶可夢，沒有球可以收)，
@@ -3614,6 +3641,7 @@ async function playBattleEvents(events, ctx) {
                 el.classList.add('faint-drop');
                 if (ball) { ball.classList.remove('pokeball-recall'); void ball.offsetWidth; ball.classList.add('pokeball-recall'); }
                 await sleep(850);
+                if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             }
             continue;
         }
@@ -3659,6 +3687,7 @@ async function playBattleEvents(events, ctx) {
                 SFX.miss();
             }
             await sleep(850);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             continue;
         }
 
@@ -3669,9 +3698,11 @@ async function playBattleEvents(events, ctx) {
             void atkEl.offsetWidth;
             atkEl.classList.add(isMeAttacking ? 'lunge-right' : 'lunge-left');
             await sleep(500);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             SFX.miss();
             popupText(defPopupId, 'MISS', '#9ca3af', '0.8rem');
             await sleep(650);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             continue;
         }
 
@@ -3683,6 +3714,7 @@ async function playBattleEvents(events, ctx) {
             void atkEl.offsetWidth;
             atkEl.classList.add('self-buff-glow');
             await sleep(500);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
         } else {
             if (ev.damage > 0) {
                 appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，${ev.hitCount > 1 ? `打中了 ${ev.hitCount} 次，總共` : ''}造成 ${ev.damage} 點傷害${ev.effectiveness > 1 ? '，效果絕佳！' : ev.effectiveness < 1 ? '，效果不理想...' : ''}${ev.crit ? '，會心一擊！' : ''}`);
@@ -3696,6 +3728,7 @@ async function playBattleEvents(events, ctx) {
             void atkEl.offsetWidth; // 強制reflow，讓同一個class能重新觸發animation
             atkEl.classList.add(isMeAttacking ? 'lunge-right' : 'lunge-left');
             await sleep(500);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             if (!document.getElementById(isMeAttacking ? 'sprite-opp' : 'sprite-me')) return;
 
             if (ev.damage > 0 || ev.effectiveness === 0) {
@@ -3727,6 +3760,7 @@ async function playBattleEvents(events, ctx) {
                 if (defBar) defBar.style.width = pct + '%';
                 if (defHpText) defHpText.textContent = `${Math.max(0, ev.defenderHpAfter)}/${defMaxHp}`;
                 await sleep(850);
+                if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             }
         }
 
@@ -3742,6 +3776,7 @@ async function playBattleEvents(events, ctx) {
                 if (atkHpText) atkHpText.textContent = `${Math.max(0, ev.attackerHpAfter)}/${atkMaxHp}`;
             }
             await sleep(650);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
         }
 
         // ---- 附加異常狀態的樹果小圖示提示(對應的文字已經在Firestore的log裡了，這裡只補圖示動畫) ----
@@ -3750,6 +3785,7 @@ async function playBattleEvents(events, ctx) {
             popupIcon(targetIsMe ? 'popupwrap-me' : 'popupwrap-opp', statusIconHtml(ev.ailmentApplied.status, 'w-6 h-6'));
             SFX.statusApplied();
             await sleep(550);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
         }
 
         // ---- 能力等級變化的上升/下降箭頭提示 ----
@@ -3763,6 +3799,7 @@ async function playBattleEvents(events, ctx) {
                 setTimeout(() => popupText(targetWrapId, `${c.statNameZh}${c.change > 0 ? '▲' : '▼'}`, c.change > 0 ? '#16a34a' : '#dc2626', '0.75rem'), idx * 200);
             });
             await sleep(550 + ev.statChanges.changes.length * 300);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
         }
 
         if (ev.fainted) {
@@ -3775,29 +3812,34 @@ async function playBattleEvents(events, ctx) {
             if (stillThere) stillThere.classList.add('faint-drop');
             if (ball) { ball.classList.remove('pokeball-recall'); void ball.offsetWidth; ball.classList.add('pokeball-recall'); }
             await sleep(850);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
         } else if (!isSelfBuff) {
             await sleep(250);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
         }
     }
 }
 
 // 把一筆pokemonInstances文件資料組成戰鬥用的teamObj——PvP的先發/替換候補、野生對戰的
-// 玩家先發/候補都共用這個function，確保欄位形狀一致
-function buildTeamDataFromInstData(instanceId, inst, nickname) {
+// 玩家先發/候補都共用這個function，確保欄位形狀一致。
+// forceLevel(選填)：連線對戰用PVP_BATTLE_LEVEL(100)強制覆蓋數值強度用的等級，野生/道館戰
+// 不傳這個參數，維持吃inst.level(寶可夢真實養成等級)
+function buildTeamDataFromInstData(instanceId, inst, nickname, forceLevel) {
     // 星級加成也要套進戰鬥用的數值(不是只有展示用的maxHpOf/atkOf/defOf/spdOf那幾個函式)，
     // 不然玩家看到的卡片數值跟真正上場戰鬥用的數值會對不上
     const mult = starMultiplier(inst.stars);
-    const maxHp = Math.floor(statAtLevel(inst.baseHp, inst.level, true) * mult);
+    const battleLevel = forceLevel || inst.level;
+    const maxHp = Math.floor(statAtLevel(inst.baseHp, battleLevel, true) * mult);
     return {
         instanceId,
         speciesId: inst.speciesId,
         nickname,
-        level: inst.level,
+        level: battleLevel,
         maxHp,
         currentHp: maxHp,
-        atk: Math.floor(statAtLevel(inst.baseAtk, inst.level, false) * mult),
-        def: Math.floor(statAtLevel(inst.baseDef, inst.level, false) * mult),
-        spd: Math.floor(statAtLevel(inst.baseSpd, inst.level, false) * mult),
+        atk: Math.floor(statAtLevel(inst.baseAtk, battleLevel, false) * mult),
+        def: Math.floor(statAtLevel(inst.baseDef, battleLevel, false) * mult),
+        spd: Math.floor(statAtLevel(inst.baseSpd, battleLevel, false) * mult),
         moves: inst.moves && inst.moves.length ? inst.moves : ['tackle'],
         isShiny: !!inst.isShiny,
         heldItem: inst.heldItem || null, // 攜帶道具/莓果，效果見resolveBattleRound裡的持有道具邏輯區塊
@@ -4013,6 +4055,13 @@ const STAT_NAME_TO_STAGE_KEY = {
     speed: 'spd', accuracy: 'acc', evasion: 'eva',
 };
 const STAGE_KEY_ZH = { atk: '攻擊', def: '防禦', spd: '速度', acc: '命中率', eva: '閃避率' };
+// PokeAPI的move.target欄位除了'user'(純自己)以外，還有'user-and-allies'/'user-or-ally'這種
+// 「自己+隊友」的雙打語意(例如長嚎howl、生命之露life-dew、生氣蓬勃work-up這類)——這個遊戲沒有
+// 雙打/隊友機制，原本只認'user'一種寫法，導致這些招式被誤判成「不是打自己」而套用到對手身上
+// (幫對手加攻擊力這種離譜的錯，或是被對方的替身/保護/看穿檢查誤擋)，所以這裡統一擴充判斷範圍，
+// 全部視為「作用在自己身上」
+const SELF_TARGET_MOVE_TARGETS = new Set(['user', 'user-and-allies', 'user-or-ally']);
+function isSelfTargetMove(target) { return SELF_TARGET_MOVE_TARGETS.has(target); }
 // 固定傷害招式：傷害不是套一般公式算的，是官方規則寫死的經典特例(等級傷害/半血/指定傷害...)
 const FIXED_DAMAGE_MOVES = {
     'seismic-toss': (atk, def) => atk.level,
@@ -4663,7 +4712,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // (先不模擬地震能打到挖洞中對手這類「特定招式可以打到無敵狀態」的例外) ----
         let hit = true;
         const defVanished = !!(def.chargingMove && TWO_TURN_MOVES[def.chargingMove] && TWO_TURN_MOVES[def.chargingMove].vanish);
-        if (move.target !== 'user' && move.target !== 'entire-field' && defVanished) {
+        if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && defVanished) {
             hit = false;
         } else if (move.accuracy != null) {
             // 正統規則：被看穿/識破/定身術鎖定(identified)之後，閃避率等級一律當作0——
@@ -4691,7 +4740,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 招式(能力提升/回血/天氣/場地)不用管跟對手的屬性相剋。這裡也一併處理草屬性對粉末/孢子系
         // 招式的正統免疫(不看招式本身屬性，草屬性天生免疫所有粉塵類招式，Gen6之後的規則) ----
         const powderBlocked = POWDER_MOVES.has(move.name) && displayOf[defenderUid].types.includes('grass');
-        if (move.target !== 'user' && move.target !== 'entire-field' && (eff === 0 || powderBlocked)) {
+        if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && (eff === 0 || powderBlocked)) {
             ev.effectiveness = 0;
             ev.damage = 0;
             log.push(`${atkName} 使出 ${move.nameZh}，但是沒有效果...`);
@@ -4705,7 +4754,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         }
 
         // ---- 對方擺出了守住：這回合的攻擊完全被擋下來，不會造成傷害或附加效果 ----
-        if (move.target !== 'user' && move.target !== 'entire-field' && def.protectedThisTurn) {
+        if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && def.protectedThisTurn) {
             ev.protectedBlock = true;
             log.push(`${defName} 防住了攻擊！`);
             events.push(ev);
@@ -4920,10 +4969,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // ---- 附加異常狀態：扎根/寄生種子有自己專屬的欄位(rooted/seeded)，不是共用.status那條
         // 「互斥的主要異常狀態」線——這是修正扎根之前完全沒有回血邏輯的關鍵，把它從共用status
         // 特例出來，並且被替身擋下來時不會附加(defSubActiveBeforeHit) ----
-        if (move.ailment && (move.target === 'user' || eff !== 0) && !(move.target !== 'user' && defSubActiveBeforeHit)) {
+        if (move.ailment && (isSelfTargetMove(move.target) || eff !== 0) && !(!isSelfTargetMove(move.target) && defSubActiveBeforeHit)) {
             const chance = move.category === 'ailment' ? 100 : (move.ailmentChance || 0);
             if (chance > 0 && rollChance(chance)) {
-                const ailmentTarget = move.target === 'user' ? atk : def;
+                const ailmentTarget = isSelfTargetMove(move.target) ? atk : def;
                 if (move.ailment === 'confusion') {
                     if (!ailmentTarget.confusedTurns) {
                         ailmentTarget.confusedTurns = 1 + Math.floor(Math.random() * 4);
@@ -5086,10 +5135,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         }
 
         // ---- 能力等級變化(被替身擋下來時，對對方生效的部分不會套用) ----
-        if (move.statChanges && move.statChanges.length && !(move.target !== 'user' && defSubActiveBeforeHit)) {
+        if (move.statChanges && move.statChanges.length && !(!isSelfTargetMove(move.target) && defSubActiveBeforeHit)) {
             const chance = (move.category === 'net-good-stats' || move.category === 'swagger') ? 100 : (move.statChance || 100);
             if (rollChance(chance)) {
-                const statTarget = move.target === 'user' ? atk : def;
+                const statTarget = isSelfTargetMove(move.target) ? atk : def;
                 const applied = [];
                 move.statChanges.forEach(sc => {
                     const before = statTarget.stages[sc.statKey] || 0;
