@@ -112,6 +112,11 @@
             </div>
             <button id="sfx-toggle-btn" type="button" onclick="toggleSfxMute()" class="w-8 h-8 shrink-0 rounded-full bg-gray-100 flex items-center justify-center text-base" title="音效開關">🔊</button>
             <button id="bgm-toggle-btn" type="button" onclick="toggleBgmMute()" class="w-8 h-8 shrink-0 rounded-full bg-gray-100 flex items-center justify-center text-base" title="背景音樂開關">🎵</button>
+            <!-- 清除帳號資料：預設隱藏，只有ACCOUNT_DATA_WIPE_ALLOWED_EMAIL那個帳號登入時才會顯示
+                 (見onAuthStateChanged裡的判斷)，避免其他玩家看到這顆按鈕。伺服器端的
+                 pokemon_delete_account_data動作本身只認auth.uid、只會刪呼叫者自己的資料，
+                 這裡的隱藏純粹是UI層面不要讓其他玩家誤觸/困惑，不是安全邊界 -->
+            <button id="wipe-account-btn" type="button" onclick="openWipeAccountModal()" class="hidden w-8 h-8 shrink-0 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-base" title="清除帳號資料">🗑️</button>
             <div id="login-area">
                 <button id="login-btn" class="text-sm bg-red-500 text-white px-3 py-1.5 rounded-full font-bold">登入</button>
                 <img id="user-avatar" class="hidden w-8 h-8 rounded-full cursor-pointer" onclick="logoutUser()" title="點擊登出">
@@ -253,6 +258,25 @@
         <h3 id="gym-list-modal-title" class="font-bold text-lg mb-3"></h3>
         <div id="gym-list-modal-body" class="space-y-2"></div>
         <button onclick="closeGymListModal()" class="w-full text-gray-400 text-sm mt-3">關閉</button>
+    </div>
+</div>
+
+<!-- 清除帳號資料確認彈窗：只有wipe-account-btn(限定帳號才看得到)按下去才會跳出來，這裡是
+     使用者要求的「按下後還要再詢問一次」那一步——按了「清除帳號資料」按鈕不會馬上動手，
+     一定要在這個彈窗裡再按一次紅色的確認按鈕才會真的送出刪除請求 -->
+<div id="wipe-account-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this && !wipeAccountInFlight) closeWipeAccountModal()">
+    <div class="bg-white rounded-3xl p-6 max-w-sm w-full text-center">
+        <p class="text-4xl mb-2">⚠️</p>
+        <h3 class="font-black text-lg mb-2 text-red-600">確定要清除帳號資料嗎？</h3>
+        <p class="text-sm text-gray-500 mb-4 text-left">這個動作無法復原，會刪除：</p>
+        <ul class="text-sm text-gray-600 mb-4 text-left list-disc pl-5 space-y-1">
+            <li>牧場/隊伍/收藏庫裡的所有寶可夢</li>
+            <li>代幣、道具、已攻略道館紀錄</li>
+            <li>對戰房間、猜猜看作答紀錄等殘留資料</li>
+        </ul>
+        <p id="wipe-account-status" class="text-xs text-gray-400 mb-3 hidden"></p>
+        <button id="wipe-account-confirm-btn" onclick="confirmWipeAccountData()" class="w-full bg-red-600 text-white py-2.5 rounded-full font-bold mb-2">確定清除，不能反悔</button>
+        <button id="wipe-account-cancel-btn" onclick="closeWipeAccountModal()" class="w-full text-gray-400 text-sm">取消</button>
     </div>
 </div>
 
@@ -747,6 +771,46 @@ function logoutUser() {
     auth.signOut();
 }
 
+// ---------- 清除帳號資料：只有ACCOUNT_DATA_WIPE_ALLOWED_EMAIL那個帳號登入時，畫面上才會
+// 出現觸發用的wipe-account-btn(見onAuthStateChanged)。按下去先跳出這個彈窗再問一次
+// (使用者明確要求「按下後還要再詢問是否要清除」)，真的按了彈窗裡的確認按鈕才會呼叫
+// pokemon_delete_account_data——這支worker動作只認auth.uid，永遠只會刪呼叫者自己的資料 ----------
+let wipeAccountInFlight = false;
+function openWipeAccountModal() {
+    document.getElementById('wipe-account-status').classList.add('hidden');
+    document.getElementById('wipe-account-confirm-btn').disabled = false;
+    document.getElementById('wipe-account-modal').classList.remove('hidden');
+    document.getElementById('wipe-account-modal').classList.add('flex');
+}
+function closeWipeAccountModal() {
+    if (wipeAccountInFlight) return; // 正在刪除中，不能點背景/取消把彈窗關掉
+    document.getElementById('wipe-account-modal').classList.add('hidden');
+    document.getElementById('wipe-account-modal').classList.remove('flex');
+}
+async function confirmWipeAccountData() {
+    if (wipeAccountInFlight) return;
+    wipeAccountInFlight = true;
+    const statusEl = document.getElementById('wipe-account-status');
+    const confirmBtn = document.getElementById('wipe-account-confirm-btn');
+    const cancelBtn = document.getElementById('wipe-account-cancel-btn');
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    statusEl.textContent = '正在清除中，請稍候...';
+    statusEl.classList.remove('hidden');
+    try {
+        await callWorker('pokemon_delete_account_data');
+        statusEl.textContent = '已經清除完畢，即將登出...';
+        detachAllListeners();
+        setTimeout(() => auth.signOut(), 1200); // 讓玩家看到「已清除」的提示再登出，不要畫面瞬間跳走
+    } catch (err) {
+        wipeAccountInFlight = false;
+        confirmBtn.disabled = false;
+        cancelBtn.disabled = false;
+        statusEl.textContent = '清除失敗：' + err.message;
+        showToast('清除帳號資料失敗：' + err.message);
+    }
+}
+
 let playerUnsub = null, instancesUnsub = null, roomListUnsub = null, roomDetailUnsub = null;
 function detachAllListeners() {
     [playerUnsub, instancesUnsub, roomListUnsub, roomDetailUnsub].forEach(fn => { if (fn) fn(); });
@@ -755,6 +819,11 @@ function detachAllListeners() {
 
 let currentPlayerData = null;
 let currentInstances = [];  // [{id, ...fields}]
+
+// 清除帳號資料按鈕只給這個信箱看得到——伺服器端(pokemon_delete_account_data)本來就只會刪
+// auth.uid自己的資料，這裡的信箱檢查純粹是不想讓其他玩家在畫面上看到這顆按鈕產生疑惑，
+// 不是真正的權限控管(真正的權限控管在worker.js那邊，靠Firebase登入身分辨識)
+const ACCOUNT_DATA_WIPE_ALLOWED_EMAIL = 'wallcemax@gmail.com';
 
 auth.onAuthStateChanged(user => {
     if (user) {
@@ -765,6 +834,7 @@ auth.onAuthStateChanged(user => {
         document.getElementById('user-avatar').src = user.photoURL || '';
         document.getElementById('coin-display').classList.remove('hidden');
         document.getElementById('coin-display').classList.add('flex');
+        document.getElementById('wipe-account-btn').classList.toggle('hidden', user.email !== ACCOUNT_DATA_WIPE_ALLOWED_EMAIL);
         startListeners(user.uid);
         // 一登入就開始播大廳配樂——這裡是onAuthStateChanged自動觸發的(不是使用者手勢)，
         // AudioContext這時候多半還是suspended狀態，BGM.play()本身不會強制resume，
@@ -795,6 +865,7 @@ auth.onAuthStateChanged(user => {
         document.getElementById('login-btn').classList.remove('hidden');
         document.getElementById('user-avatar').classList.add('hidden');
         document.getElementById('coin-display').classList.add('hidden');
+        document.getElementById('wipe-account-btn').classList.add('hidden');
     }
 });
 
