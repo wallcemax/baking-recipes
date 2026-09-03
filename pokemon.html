@@ -683,74 +683,97 @@ const BGM = (() => {
     };
 
     // ============================================================
-    // 連線對戰(PvP)專屬配樂 + 地區對戰9大地區各自專屬配樂：玩家反映「對戰音樂都一樣，PvP應該要有
-    // 自己的、9大地區也應該都不同」——與其手刻10首完整旋律(容易打錯音、也很難一眼核對每首拍數
-    // 有沒有對齊)，這裡寫一個小型「配樂產生器」：所有戰鬥配樂共用同一套節奏輪廓(跟上面TRACK_BATTLE
-    // 一模一樣的16拍旋律骨架、16拍貝斯骨架)，只換「調式(音階組成)」「根音」「速度」「貝斯音色/
-    // 音域」這幾個參數——同樣的骨架套進不同調式，聽起來就會有明顯不同的味道(小調/多利安/弗里吉安/
-    // 利地亞...)，又能保證每一首melody/bass的拍數一定對得起來(骨架本身拍數固定，不會因為手刻疏漏
-    // 而兜不起來)
+    // 連線對戰(PvP)專屬配樂 + 地區對戰9大地區各自專屬配樂：玩家反映「PvP應該要有自己的、9大地區
+    // 也應該都不同」——第一版做法偷懶了，9首/PvP全部共用同一套旋律節奏骨架，只換調式跟根音，
+    // 結果聽起來像同一首歌移調而已，玩家抓包了。這次重寫：每個地區/PvP都是完全獨立設計的樂句——
+    // 不只調式/根音/速度不同，旋律的節奏輪廓(音符長短排列)、樂句結構(呼應式/華爾茲/一路爬升...)、
+    // 貝斯的彈奏方式(行走貝斯/分解和弦/反拍skank/持續低音/加洛普節奏...)都各自獨立設計，才會是
+    // 真正聽感不同的9+1首配樂，不是同一個模子刻出來的。仍然沿用degFreq()這個「音階級數→頻率」
+    // 的小工具(純粹避免手算等律制頻率打錯數字)，但每首自己的melody/bass節奏內容都是分開手刻的
     const MODE = {
-        aeolian:       [0, 2, 3, 5, 7, 8, 10],  // 自然小調(跟原本TRACK_BATTLE同一種調式)
-        dorian:        [0, 2, 3, 5, 7, 9, 10],  // 比自然小調亮一點，帶點神秘感
-        phrygian:      [0, 1, 3, 5, 7, 8, 10],  // 降2音，陰暗/侵略感
-        harmonicMinor: [0, 2, 3, 5, 7, 8, 11],  // 升7音(導音)，比較有史詩/莊嚴感
-        mixolydian:    [0, 2, 4, 5, 7, 9, 10],  // 大調但降7音，明亮又不失分量
-        lydian:        [0, 2, 4, 6, 7, 9, 11],  // 升4音，飄逸/優雅
-        melodicMinor:  [0, 2, 3, 5, 7, 9, 11],  // 升6升7音，冒險/開闊感
+        aeolian:       [0, 2, 3, 5, 7, 8, 10],  // 自然小調(關都、合眾)
+        dorian:        [0, 2, 3, 5, 7, 9, 10],  // 比自然小調亮一點，帶神秘感(城都)
+        phrygian:      [0, 1, 3, 5, 7, 8, 10],  // 降2音，陰暗/侵略感(伽勒爾)
+        harmonicMinor: [0, 2, 3, 5, 7, 8, 11],  // 升7音(導音)，史詩/莊嚴感(神奧)、緊繃感(PvP)
+        mixolydian:    [0, 2, 4, 5, 7, 9, 10],  // 大調但降7音，明亮又不失分量(豐緣、阿羅拉)
+        lydian:        [0, 2, 4, 6, 7, 9, 11],  // 升4音，飄逸/優雅(卡洛斯)
+        melodicMinor:  [0, 2, 3, 5, 7, 9, 11],  // 升6升7音，冒險/開闊感(帕底亞)
     };
-    // 旋律的節奏骨架(跟TRACK_BATTLE原本那16拍旋律的拍長排列完全一樣，只是這裡用「音階第幾級」
-    // 取代寫死的音高)：[degreeIndex(0~6), octaveShift, beats]，degreeIndex 0=主音...6=第7級
-    const BATTLE_MELODY_SHAPE = [
-        [0, 0, 1], [2, 0, 1], [4, 0, 0.5], [6, 0, 0.5], [0, 1, 1], [6, 0, 0.5], [4, 0, 0.5], [6, 0, 1],
-        [2, 1, 1], [1, 1, 0.5], [0, 1, 0.5], [6, 0, 1], [4, 0, 1], [3, 0, 0.5], [2, 0, 0.5], [1, 0, 1],
-        [2, 0, 1], [0, 0, 0.5], [1, 0, 0.5], [0, 0, 2],
-    ];
-    // 貝斯的和弦進行骨架：4個區塊各佔4拍(8顆八分音符)，對應i–III–VII–v的走向，一樣用音階級數表示
-    const BATTLE_BASS_DEGREE_BLOCKS = [0, 2, 6, 4];
-    // 把「音階第幾級+八度位移」換算成實際頻率：等律制公式，root是那個調式的主音頻率
+    // 把「音階第幾級(0=主音...6=第7級)+八度位移」換算成實際頻率：等律制公式，root是那個調式的主音頻率
     function degFreq(rootFreq, scaleArr, degreeIndex, octaveShift) {
         const semis = scaleArr[degreeIndex] + octaveShift * 12;
         return rootFreq * Math.pow(2, semis / 12);
     }
-    // 用共用骨架+指定的調式/根音/速度/貝斯音色，產生一首完整的戰鬥配樂
-    function buildBattleTrack({ root, mode, beatDur, bassOctave = -1, bassTimbre = 'square', volMul = 1 }) {
+    // 用指定的調式/根音/速度，把「這首歌自己的」melodyShape/bassShape(音階級數版本)轉換成實際
+    // 頻率的音符陣列——跟menu/battle/kanto那幾首手刻好的曲目最後產生的資料格式完全一樣
+    function buildBattleTrack({ root, mode, beatDur, volMul = 1, melodyShape, bassShape }) {
         const scaleArr = MODE[mode];
-        const melody = BATTLE_MELODY_SHAPE.map(([d, o, beats], i) => {
+        const melody = melodyShape.map(([d, o, beats], i) => {
             const freq = degFreq(root, scaleArr, d, o);
             const vol = Math.round((0.12 + (i % 2 === 0 ? 0.01 : 0)) * volMul * 1000) / 1000;
             return [freq, beats, vol];
         });
-        const bass = [];
-        BATTLE_BASS_DEGREE_BLOCKS.forEach(d => {
-            const freq = degFreq(root, scaleArr, d, bassOctave);
-            for (let i = 0; i < 8; i++) {
-                const vol = Math.round((i % 2 === 0 ? 0.1 : 0.09) * volMul * 1000) / 1000;
-                bass.push([freq, 0.5, vol, bassTimbre]);
-            }
+        const bass = bassShape.map(([d, o, beats, timbre], i) => {
+            const freq = d == null ? 0 : degFreq(root, scaleArr, d, o); // d是null代表這裡是休止符(反拍/skank節奏會用到)
+            const vol = d == null ? 0 : Math.round((i % 2 === 0 ? 0.1 : 0.09) * volMul * 1000) / 1000;
+            return [freq, beats, vol, timbre];
         });
         return { beatDur, melody, bass };
     }
-    // 連線對戰：跟所有地區對戰/野生對戰都不一樣的專屬配樂——比較高音域、最快的速度、最緊繃的
-    // 和聲調式，凸顯「真人對戰」的高張力
-    const TRACK_PVP = buildBattleTrack({ root: N.D4, mode: 'harmonicMinor', beatDur: 0.18, bassTimbre: 'sawtooth', volMul: 1.1 });
-    // 9大地區對戰各自的專屬配樂：關都沿用經典的自然小調(呼應原本的預設戰鬥配樂調性)，其餘8個
-    // 地區各自換一種調式/根音/速度/貝斯音色，讓每個地區打起來的感覺都不一樣
-    const REGION_TRACK_PARAMS = {
-        kanto:  { root: N.A3, mode: 'aeolian',       beatDur: 0.24, bassTimbre: 'square',   volMul: 1.00 },
-        johto:  { root: N.D3, mode: 'dorian',        beatDur: 0.26, bassTimbre: 'sine',      volMul: 0.95 },
-        hoenn:  { root: N.E3, mode: 'mixolydian',     beatDur: 0.23, bassTimbre: 'triangle',  volMul: 1.00 },
-        sinnoh: { root: N.G3, mode: 'harmonicMinor',  beatDur: 0.27, bassTimbre: 'sawtooth',  volMul: 1.05 },
-        unova:  { root: N.B3, mode: 'aeolian',        beatDur: 0.20, bassTimbre: 'square',    volMul: 1.00 },
-        kalos:  { root: N.C4, mode: 'lydian',         beatDur: 0.25, bassTimbre: 'sine',      volMul: 0.95 },
-        alola:  { root: N.F3, mode: 'mixolydian',     beatDur: 0.22, bassTimbre: 'triangle',  volMul: 1.00 },
-        galar:  { root: N.E3, mode: 'phrygian',       beatDur: 0.19, bassTimbre: 'sawtooth',  volMul: 1.10 },
-        paldea: { root: N.A3, mode: 'melodicMinor',   beatDur: 0.21, bassTimbre: 'square',    volMul: 1.00 },
+
+    // ---- 城都：多利安調式，鐘乳石洞窟般的神秘感，call-and-response(呼喊-回音)樂句結構，
+    // 樂句之間刻意留空隙製造空間感，貝斯是稀疏的「長音+休止」脈動 ----
+    const REGION_MELODY_SHAPES_JOHTO = [[0, 0, 1.5], [2, 0, 0.5], [3, 0, 1], [0, 0, 1], [6, -1, 1], [5, -1, 1], [3, -1, 2], [0, 0, 1.5], [2, 0, 0.5], [4, 0, 1], [3, 0, 1], [5, 0, 0.5], [3, 0, 0.5], [2, 0, 1], [0, 0, 2]];
+    const REGION_BASS_SHAPES_JOHTO = [[0, -1, 2, 'sine'], [null, -1, 0.5, 'sine'], [0, -1, 1.5, 'sine'], [6, -1, 2, 'sine'], [null, -1, 0.5, 'sine'], [6, -1, 1.5, 'sine'], [3, -1, 2, 'sine'], [null, -1, 0.5, 'sine'], [3, -1, 1.5, 'sine'], [0, -1, 2, 'sine'], [null, -1, 0.5, 'sine'], [0, -1, 1.5, 'sine']];
+    // ---- 豐緣：混合利地亞調式，熱帶/海洋感，附點音符的切分節奏，貝斯是連續八分音符的
+    // 跳動律動——注意不是休止型的反拍，是豐緣自己的節奏個性 ----
+    const REGION_MELODY_SHAPES_HOENN = [[0, 0, 0.75], [2, 0, 0.25], [4, 0, 1], [6, 0, 0.5], [4, 0, 0.5], [2, 0, 0.75], [0, 0, 0.25], [4, 0, 1], [0, 1, 0.5], [6, 0, 0.5], [4, 0, 0.75], [6, 0, 0.25], [0, 1, 1], [6, 0, 0.5], [4, 0, 0.5], [2, 0, 0.75], [4, 0, 0.25], [2, 0, 1], [0, 0, 1]];
+    const REGION_BASS_SHAPES_HOENN = [[null, -1, 0.5, 'triangle'], [0, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [0, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [4, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [4, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [6, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [6, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [4, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [4, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [0, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [0, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [4, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [4, -1, 0.5, 'triangle']];
+    // ---- 神奧：和聲小調，神話般的莊嚴感，旋律用八度大跳，貝斯是撐滿整拍的持續低音
+    // (legato長音，不是其他地區的斷奏跳動) ----
+    const REGION_MELODY_SHAPES_SINNOH = [[0, 0, 2], [4, 0, 1], [0, 1, 1], [6, 0, 1], [4, 0, 1], [2, 0, 1], [0, 0, 1], [0, 0, 2], [3, 0, 1], [5, 0, 1], [6, 0, 2], [4, 0, 1], [0, 0, 1]];
+    const REGION_BASS_SHAPES_SINNOH = [[0, -1, 4, 'sawtooth'], [6, -2, 4, 'sawtooth'], [3, -1, 4, 'sawtooth'], [4, -1, 4, 'sawtooth']];
+    // ---- 合眾：自然小調，都市的緊湊速度感，貝斯是不斷換音高的行走貝斯(walking bass)，
+    // 每半拍都可能換一顆音，跟其他地區「同一顆音撐好幾拍」的貝斯完全不同質感 ----
+    const REGION_MELODY_SHAPES_UNOVA = [[0, 0, 0.5], [0, 0, 0.5], [2, 0, 0.5], [0, 0, 0.5], [4, 0, 0.5], [4, 0, 0.5], [2, 0, 0.5], [4, 0, 0.5], [6, 0, 0.5], [6, 0, 0.5], [4, 0, 0.5], [6, 0, 0.5], [0, 1, 1], [6, 0, 0.5], [4, 0, 0.5], [2, 0, 0.5], [2, 0, 0.5], [0, 0, 0.5], [2, 0, 0.5], [0, 0, 1]];
+    const REGION_BASS_SHAPES_UNOVA = [[0, -1, 0.5, 'square'], [2, -1, 0.5, 'square'], [4, -1, 0.5, 'square'], [2, -1, 0.5, 'square'], [5, -1, 0.5, 'square'], [4, -1, 0.5, 'square'], [2, -1, 0.5, 'square'], [0, -1, 0.5, 'square'], [6, -2, 0.5, 'square'], [0, -1, 0.5, 'square'], [6, -2, 0.5, 'square'], [4, -1, 0.5, 'square'], [0, -1, 0.5, 'square'], [2, -1, 0.5, 'square'], [4, -1, 0.5, 'square'], [0, -1, 0.5, 'square'], [0, -1, 1, 'square'], [4, -1, 0.5, 'square'], [2, -1, 0.5, 'square'], [0, -1, 1, 'square']];
+    // ---- 卡洛斯：利地亞調式，優雅華麗，用3拍一組的圓舞曲(waltz)樂句分句(跟其他地區慣用的
+    // 2/4拍感不同)，貝斯是根音-五度-根音的分解和弦(arpeggio)，跟著旋律一起三拍一組律動 ----
+    const REGION_MELODY_SHAPES_KALOS = [[0, 0, 1], [2, 0, 1], [4, 0, 1], [6, 0, 1], [4, 0, 1], [2, 0, 1], [3, 0, 1], [5, 0, 1], [0, 1, 1], [6, 0, 1], [4, 0, 1], [2, 0, 1], [0, 0, 1.5], [2, 0, 0.75], [0, 0, 0.75]];
+    const REGION_BASS_SHAPES_KALOS = [[0, -1, 1, 'sine'], [4, -1, 1, 'sine'], [0, -1, 1, 'sine'], [5, -1, 1, 'sine'], [2, -1, 1, 'sine'], [5, -1, 1, 'sine'], [3, -1, 1, 'sine'], [0, -1, 1, 'sine'], [3, -1, 1, 'sine'], [5, -1, 1, 'sine'], [2, -1, 1, 'sine'], [5, -1, 1, 'sine'], [0, -1, 1, 'sine'], [0, -1, 1, 'sine'], [0, -1, 1, 'sine']];
+    // ---- 阿羅拉：混合利地亞調式，海島雷鬼(ska)節奏感，貝斯完全落在反拍(正拍休止、反拍才進來)，
+    // 旋律每句開頭都帶一個短促的裝飾音——反拍的貝斯個性跟豐緣的附點切分完全不一樣 ----
+    const REGION_MELODY_SHAPES_ALOLA = [[6, -1, 0.25], [0, 0, 0.75], [2, 0, 0.5], [4, 0, 0.5], [6, -1, 0.25], [0, 1, 0.75], [6, 0, 0.5], [4, 0, 0.5], [2, 0, 0.25], [4, 0, 0.75], [2, 0, 0.5], [0, 0, 0.5], [6, -1, 0.25], [0, 0, 0.75], [4, 0, 1]];
+    const REGION_BASS_SHAPES_ALOLA = [[null, -1, 0.5, 'triangle'], [0, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [0, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [4, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [4, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [6, -2, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [6, -2, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [4, -1, 0.5, 'triangle'], [null, -1, 0.5, 'triangle'], [4, -1, 0.5, 'triangle']];
+    // ---- 伽勒爾：弗里吉安調式，工業/侵略感，旋律用降2音製造半音摩擦的刺耳感，貝斯是同一顆
+    // 根音狂打的高速八分音符「機關槍」節奏(不像其他地區有和弦進行變化)，塑造單一目標的壓迫感 ----
+    const REGION_MELODY_SHAPES_GALAR = [[0, 0, 0.5], [1, 0, 0.5], [0, 0, 0.5], [1, 0, 0.5], [0, 0, 0.5], [6, -1, 0.5], [0, 0, 1], [4, 0, 0.5], [1, 0, 0.5], [4, 0, 0.5], [1, 0, 0.5], [4, 0, 0.5], [0, 0, 0.5], [0, 0, 1]];
+    const REGION_BASS_SHAPES_GALAR = [[0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [1, -1, 0.5, 'sawtooth'], [1, -1, 0.5, 'sawtooth'], [1, -1, 0.5, 'sawtooth'], [1, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth']];
+    // ---- 帕底亞：旋律小調，開闊冒險感，旋律是一路爬升的音階跑句(跟其他地區來回跳動的短樂句
+    // 不同)，貝斯用根音-高八度-根音的加洛普(gallop)節奏(長-短-短)，有策馬奔騰的推進感 ----
+    const REGION_MELODY_SHAPES_PALDEA = [[0, 0, 0.5], [1, 0, 0.5], [2, 0, 0.5], [3, 0, 1], [4, 0, 0.5], [5, 0, 0.5], [6, 0, 0.5], [0, 1, 1.5], [6, 0, 0.5], [4, 0, 0.5], [2, 0, 0.5], [0, 0, 1.5], [2, 0, 0.5], [4, 0, 0.5], [6, 0, 0.5], [0, 1, 2]];
+    const REGION_BASS_SHAPES_PALDEA = [[0, -1, 1, 'square'], [0, 0, 0.5, 'square'], [0, -1, 0.5, 'square'], [0, -1, 1, 'square'], [0, 0, 0.5, 'square'], [0, -1, 0.5, 'square'], [4, -1, 1, 'square'], [4, 0, 0.5, 'square'], [4, -1, 0.5, 'square'], [0, -1, 1, 'square'], [0, 0, 0.5, 'square'], [0, -1, 0.5, 'square'], [6, -2, 1, 'square'], [6, -1, 0.5, 'square'], [6, -2, 0.5, 'square'], [0, -1, 1, 'square'], [0, 0, 0.5, 'square'], [0, -1, 0.5, 'square']];
+    // ---- 連線對戰(PvP)：跟所有地區對戰/野生對戰都不一樣的專屬配樂——和聲小調製造最緊繃的
+    // 導音張力，旋律是快速16分音符感的齊奏衝刺樂句，貝斯是雙倍速的持續八分音符，凸顯「真人
+    // 對戰」的高張力，比任何一個地區都更急促 ----
+    const PVP_MELODY_SHAPE = [[0, 0, 0.5], [0, 0, 0.5], [2, 0, 0.5], [0, 0, 0.5], [4, 0, 0.5], [4, 0, 0.5], [6, 0, 0.5], [4, 0, 0.5], [0, 1, 1], [6, 0, 0.5], [4, 0, 0.5], [2, 0, 0.5], [0, 0, 0.5], [2, 0, 0.5], [4, 0, 0.5], [0, 1, 1.5], [6, 0, 0.5], [4, 0, 0.5], [2, 0, 0.5], [0, 0, 1]];
+    const PVP_BASS_SHAPE = [[0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [4, -1, 0.5, 'sawtooth'], [4, -1, 0.5, 'sawtooth'], [4, -1, 0.5, 'sawtooth'], [4, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [6, -2, 0.5, 'sawtooth'], [6, -2, 0.5, 'sawtooth'], [2, -1, 0.5, 'sawtooth'], [2, -1, 0.5, 'sawtooth'], [4, -1, 0.5, 'sawtooth'], [4, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [0, -1, 0.5, 'sawtooth'], [4, -1, 0.5, 'sawtooth'], [4, -1, 0.5, 'sawtooth']];
+
+    const TRACK_PVP = buildBattleTrack({ root: N.D4, mode: 'harmonicMinor', beatDur: 0.18, volMul: 1.1, melodyShape: PVP_MELODY_SHAPE, bassShape: PVP_BASS_SHAPE });
+    // 9大地區對戰各自的專屬配樂：關都直接沿用上面原本手刻的TRACK_BATTLE(呼應「經典/初始地區」的
+    // 定位)，其餘8個地區各自是完全獨立設計的樂句+貝斯彈法(見上面每首各自的註解)
+    const TRACKS = {
+        menu: TRACK_MENU, battle: TRACK_BATTLE, pvp: TRACK_PVP,
+        region_kanto: TRACK_BATTLE,
+        region_johto: buildBattleTrack({ root: N.D3, mode: 'dorian', beatDur: 0.26, volMul: 0.95, melodyShape: REGION_MELODY_SHAPES_JOHTO, bassShape: REGION_BASS_SHAPES_JOHTO }),
+        region_hoenn: buildBattleTrack({ root: N.E3, mode: 'mixolydian', beatDur: 0.23, volMul: 1.0, melodyShape: REGION_MELODY_SHAPES_HOENN, bassShape: REGION_BASS_SHAPES_HOENN }),
+        region_sinnoh: buildBattleTrack({ root: N.G3, mode: 'harmonicMinor', beatDur: 0.27, volMul: 1.05, melodyShape: REGION_MELODY_SHAPES_SINNOH, bassShape: REGION_BASS_SHAPES_SINNOH }),
+        region_unova: buildBattleTrack({ root: N.B3, mode: 'aeolian', beatDur: 0.20, volMul: 1.0, melodyShape: REGION_MELODY_SHAPES_UNOVA, bassShape: REGION_BASS_SHAPES_UNOVA }),
+        region_kalos: buildBattleTrack({ root: N.C4, mode: 'lydian', beatDur: 0.25, volMul: 0.95, melodyShape: REGION_MELODY_SHAPES_KALOS, bassShape: REGION_BASS_SHAPES_KALOS }),
+        region_alola: buildBattleTrack({ root: N.F3, mode: 'mixolydian', beatDur: 0.22, volMul: 1.0, melodyShape: REGION_MELODY_SHAPES_ALOLA, bassShape: REGION_BASS_SHAPES_ALOLA }),
+        region_galar: buildBattleTrack({ root: N.E3, mode: 'phrygian', beatDur: 0.19, volMul: 1.1, melodyShape: REGION_MELODY_SHAPES_GALAR, bassShape: REGION_BASS_SHAPES_GALAR }),
+        region_paldea: buildBattleTrack({ root: N.A3, mode: 'melodicMinor', beatDur: 0.21, volMul: 1.0, melodyShape: REGION_MELODY_SHAPES_PALDEA, bassShape: REGION_BASS_SHAPES_PALDEA }),
     };
-    const TRACKS = { menu: TRACK_MENU, battle: TRACK_BATTLE, pvp: TRACK_PVP };
-    Object.keys(REGION_TRACK_PARAMS).forEach(regionId => {
-        TRACKS['region_' + regionId] = buildBattleTrack(REGION_TRACK_PARAMS[regionId]);
-    });
 
     let currentName = null;
     let activeToken = 0; // 每次play()/stop()都換一個新token，舊迴圈排程時只要token對不上就自動停止接力
