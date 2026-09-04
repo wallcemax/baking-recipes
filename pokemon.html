@@ -357,11 +357,10 @@
      之間的中點)：拿掉負margin，父層容器改成inset-x-[25%](左右各留25%空間，只在中間50%範圍
      裡排版)搭配justify-between，兩張圖固定貼齊這個內縮容器的左右邊界，換算下來視覺中心大約
      落在畫面25%/75%的位置。圖片尺寸依使用者要求拿掉max-h/object-contain這種「限制在螢幕
-     比例內」的縮放方式，改成直接用CSS transform: scale(3)把原始圖片像素尺寸放大3倍(不再受
+     比例內」的縮放方式，改成直接用CSS transform: scale()把原始圖片像素尺寸放大(不再受
      42vh/60vh這種跟裝置尺寸掛勾的上限影響)——scale是視覺層的變形，不會影響flex排版本身用的
-     盒子大小，所以還是能維持25%/75%這個定位基準；同時setStoryPortraitSlot()裡原本active/
-     未active切換用的scale(1)/scale(0.92)也同步乘上3倍改成scale(3)/scale(2.76)，維持原本
-     「不是目前說話者就稍微縮小一點」的比例效果 -->
+     盒子大小，所以還是能維持25%/75%這個定位基準；倍率本身(第二十一輪定案為2倍/1.84倍，
+     見setStoryPortraitSlot()裡的說明)寫在JS那邊統一控制 -->
 <div id="story-modal" class="hidden fixed inset-0 bg-black z-[60] flex-col justify-end overflow-hidden" onclick="storyModalTap(event)">
     <img id="story-bg" class="absolute inset-0 w-full h-full object-cover transition-opacity duration-500" style="opacity:0;z-index:0" onerror="this.style.opacity='0'">
     <div class="absolute inset-0 bg-black/25" style="z-index:1"></div>
@@ -3983,10 +3982,10 @@ function setStoryPortraitSlot(side, name, opts) {
     if (storyPortraitState[side] !== name) el.src = url;
     storyPortraitState[side] = name;
     el.style.opacity = opts.active ? '1' : '0.55';
-    // 第十九輪：基準倍率從原本的1/0.92改成使用者要求的「原圖尺寸放大300%」3/2.76(=0.92*3，
-    // 維持原本「非目前說話者要縮小8%」的相對比例)，img本身沒有再用max-h/object-contain限制
-    // 尺寸，這個scale就是最終視覺大小
-    el.style.transform = (side === 'left' ? 'scaleX(-1) ' : '') + (opts.active ? 'scale(3)' : 'scale(2.76)');
+    // 第十九輪先改成「原圖尺寸放大300%」3/2.76，第二十一輪使用者實測覺得300%太大，改成200%
+    // 2/1.84(=0.92*2，維持原本「非目前說話者要縮小8%」的相對比例)，img本身沒有再用max-h/
+    // object-contain限制尺寸，這個scale就是最終視覺大小
+    el.style.transform = (side === 'left' ? 'scaleX(-1) ' : '') + (opts.active ? 'scale(2)' : 'scale(1.84)');
     el.classList.remove('story-portrait-shake', 'story-portrait-flash');
     if (opts.active && opts.effect) {
         void el.offsetWidth; // 強制觸發reflow，確保同一句連續出現同樣的特效class時動畫還是會重新播放
