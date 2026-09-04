@@ -4451,6 +4451,7 @@ const MEMENTO_MOVES = new Set(['memento']);
 const HAZE_MOVES = new Set(['haze']);
 const SPITE_MOVES = new Set(['spite']);
 const BELLY_DRUM_MOVES = new Set(['belly-drum']);
+const AQUA_RING_MOVES = new Set(['aqua-ring']);
 const PAIN_SPLIT_MOVES = new Set(['pain-split']);
 const CURSE_MOVES = new Set(['curse']);
 const DESTINY_BOND_MOVES = new Set(['destiny-bond']);
@@ -4623,6 +4624,7 @@ function freshBattleStatus() {
         mimicSlot: null, // 仿效：{index, mimickedMove}，代表moves陣列裡第index格暫時被換成mimickedMove，換人會復原
         transformedInto: null, // 變身：{speciesId, isShiny, atk, def, spAtk, spDef, spd, moves, movePp}，記錄「變身前」的原始資料，換人會復原(能力等級stages換人時本來就會歸零，不用另外存)
         cursed: false, // 詛咒(鬼系使用curse對敵人下的那種)：每回合結束損失1/4最大HP，換人(resetVolatileForBench)就會解除
+        aquaRing: false, // 水流環(Aqua Ring)：每回合結束回復自己1/16最大HP，換人(resetVolatileForBench)就會解除
     };
 }
 // 一隻寶可夢從場上換下去時(不管是自願替換、還是被吼叫/咆哮/龍尾/圓環摔這類招式強制換下場)，
@@ -4650,6 +4652,7 @@ function resetVolatileForBench(battler) {
     outgoing.trapped = false; outgoing.trapTurns = 0; outgoing.trapperKey = null; outgoing.trapDamage = false;
     outgoing.silencedTurns = 0; outgoing.perishCount = 0; outgoing.identified = false;
     outgoing.cursed = false;
+    outgoing.aquaRing = false;
     if (outgoing.mimicSlot && Array.isArray(outgoing.moves)) {
         outgoing.moves = outgoing.moves.slice();
         outgoing.moves[outgoing.mimicSlot.index] = 'mimic';
@@ -4801,6 +4804,7 @@ function battleStatusBadgesHtml(team) {
     if (team.perishCount > 0) html += genericIconHtml(itemSpriteUrl('reaper-cloth'), 'w-3.5 h-3.5', `滅亡倒數：${team.perishCount}`);
     if (team.identified) html += genericIconHtml(typeIconUrl('psychic'), 'w-3.5 h-3.5', '已被看穿(閃避無效)');
     if (team.cursed) html += genericIconHtml(typeIconUrl('ghost'), 'w-3.5 h-3.5', '被詛咒纏身(每回合損血)');
+    if (team.aquaRing) html += genericIconHtml(typeIconUrl('water'), 'w-3.5 h-3.5', '水流環(每回合回血)');
     return html;
 }
 // ---------- 天氣/場地：圖示素材(天氣用道具庫的「天氣石」，場地用道具庫的「場地種子」，
@@ -5256,7 +5260,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 又照PokéAPI原始資料重複套用一次，變成疊加兩次效果
         const isHardcodedSpecialMove = !!(HAZARD_MOVE_INFO[move.name] || SCREEN_MOVE_INFO[move.name] || CURSE_MOVES.has(move.name) ||
             BELLY_DRUM_MOVES.has(move.name) || PAIN_SPLIT_MOVES.has(move.name) || DESTINY_BOND_MOVES.has(move.name) ||
-            MEMENTO_MOVES.has(move.name) || HAZE_MOVES.has(move.name) || SPITE_MOVES.has(move.name));
+            MEMENTO_MOVES.has(move.name) || HAZE_MOVES.has(move.name) || SPITE_MOVES.has(move.name) ||
+            AQUA_RING_MOVES.has(move.name));
         const ev = {
             attackerKey: attackerUid, defenderKey: defenderUid,
             attackerName: atkName, defenderName: defName,
@@ -5643,6 +5648,17 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             atk.stages = { atk: 0, def: 0, spAtk: 0, spDef: 0, spd: 0, acc: 0, eva: 0 };
             def.stages = { atk: 0, def: 0, spAtk: 0, spDef: 0, spd: 0, acc: 0, eva: 0 };
             log.push(`${atkName} 使出了黑霧，把場上所有的能力等級都恢復原狀了！`);
+        } else if (AQUA_RING_MOVES.has(move.name)) {
+            // 水流環：PokéAPI的meta.ailment是'none'(不是正式的異常狀態)，跟詛咒/鼓腹擂鼓一樣
+            // 要手動實作——標記一個揮發性狀態，每回合結束(見下面「回合結束」區塊，緊接在扎根
+            // 之後、跟扎根共用同一套治癒封印判斷)回復自己1/16最大HP，換人(resetVolatileForBench)
+            // 就會解除。已經是水流環狀態的話再用一次會直接失敗，不會重複疊加
+            if (atk.aquaRing) {
+                log.push(`但是${atkName}已經被水流環包住了！`);
+            } else {
+                atk.aquaRing = true;
+                log.push(`${atkName} 被水流環包住了！`);
+            }
         } else if (move.power > 0) {
             const hits = rollMultiHitCount(move.minHits, move.maxHits);
             // 物理/特殊分流：move.damageClass是'physical'還是'special'決定這一下要吃攻擊/防禦
@@ -6199,6 +6215,22 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     }
                 }
             }
+
+            if (t.aquaRing) {
+                if (t.healBlockTurns > 0) {
+                    log.push(`${nameOf[uid]} 被治癒封印了，水流環沒辦法回血！`);
+                } else {
+                    const heal = Math.max(1, Math.floor(t.maxHp / 16));
+                    const before = t.currentHp;
+                    t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                    const actual = t.currentHp - before;
+                    if (actual > 0) {
+                        log.push(`${nameOf[uid]} 因為水流環回復了 ${actual} 點HP！`);
+                        events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: actual, hpAfter: t.currentHp });
+                    }
+                }
+            }
+            if (t.currentHp <= 0) continue;
 
             if (t.seeded) {
                 const seeder = state[t.seederKey];
