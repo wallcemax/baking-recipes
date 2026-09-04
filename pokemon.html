@@ -4513,7 +4513,18 @@ async function fetchMoveData(moveName) {
     }
     const data = await res.json();
     // 招式敘述：PokeAPI的language代碼是全小寫的'zh-hant'；文字裡常帶換行符號(遊戲對話框斷行用)，顯示時要拿掉
-    const zhFlavorEntries = (data.flavor_text_entries || []).filter(e => e.language && String(e.language.name).toLowerCase() === 'zh-hant');
+    // PokeAPI資料坑：對於在劍盾(sword-shield)不能學到/選取的招式(例如烈焰濺射、玩水這類被削減的舊招式)，
+    // PokeAPI在sword-shield版本組的zh-hant欄位塞的不是招式說明，而是遊戲UI裡「遺忘爺爺」對「目前無法選取
+    // 的招式」顯示的系統提示句「無法使用此招式。雖然忘記後將無法再想起來，但還是建議忘記此招式。」——
+    // 這句話混進了flavor_text_entries，而sword-shield通常排在陣列最後面，直接取最後一筆就會抓到這句廢文字
+    // 而不是真正的招式說明。這裡先把這個已知的系統提示句過濾掉，再取「最後一筆真正的說明」當作退化備援。
+    const isMoveDeleterPlaceholder = (text) => {
+        const t = String(text || '').replace(/[\n\f\r]+/g, '');
+        return t.includes('無法使用此招式') && t.includes('建議忘記此招式');
+    };
+    const zhFlavorEntries = (data.flavor_text_entries || [])
+        .filter(e => e.language && String(e.language.name).toLowerCase() === 'zh-hant')
+        .filter(e => !isMoveDeleterPlaceholder(e.flavor_text));
     const descZh = zhFlavorEntries.length ? zhFlavorEntries[zhFlavorEntries.length - 1].flavor_text.replace(/[\n\f\r]+/g, ' ') : '';
     const meta = data.meta || {};
     const ailmentName = meta.ailment && meta.ailment.name !== 'none' ? meta.ailment.name : null;
