@@ -346,7 +346,7 @@
 
 <!-- 寶可夢詳情彈窗(改暱稱/餵果實/進化/加入隊伍) -->
 <div id="detail-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeDetailModal()">
-    <div class="bg-white rounded-3xl p-6 max-w-sm w-full" id="detail-modal-content"></div>
+    <div class="bg-white rounded-3xl p-6 max-w-sm w-full max-h-[85vh] overflow-y-auto" id="detail-modal-content"></div>
 </div>
 
 <!-- 升級學新招式彈窗：升級時偵測到有新招式可以學，跳出來讓玩家自己選要不要學(招式滿4招要選一招換掉)。
@@ -1656,7 +1656,6 @@ async function openDetailModal(instanceId) {
             <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">特防</p><p class="font-bold">${spDefOf(inst)}</p></div>
             <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">速度</p><p class="font-bold">${spdOf(inst)}</p></div>
         </div>
-        <p class="text-[10px] text-gray-400 -mt-2 mb-3">物理招式(例如百萬吨拳)算傷害用「攻擊/防禦」，特殊招式(例如噴射火焰)算傷害用「特攻/特防」——招式列表裡每招前面的屬性圖示旁邊會標示是物理還是特殊</p>
         <p class="text-xs text-gray-400 mb-1">目前招式</p>
         <div class="text-left mb-3 space-y-1">
             ${moveDisplays.map(m => `<p class="text-sm flex items-start gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 mt-0.5 shrink-0" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}<span><span class="font-bold">${m.nameZh}</span>${DAMAGE_CLASS_BADGE[m.damageClass] || ''}<span class="text-xs text-gray-400">　${m.descZh || ''}</span></span></p>`).join('')}
@@ -1884,8 +1883,20 @@ const BERRY_EFFECT_ZH = {
 // (item)資料要——每種樹果對應到一個同名的道具(例如oran莓對應道具oran-berry)，那份資料
 // 裡才有names陣列可以抓zh-Hant翻譯
 const berryNameZhCache = new Map();
+// PokéAPI的item資料裡，有極少數道具的names陣列根本沒有zh-Hant那筆(不是查詢方式錯誤，是
+// PokéAPI資料本身就缺)，這種情況extractZhHantNameClient只能整個退回英文代號，畫面就會一直
+// 顯示"roseli"而不是中文——這裡先手動列出已知會查不到的莓果、用玩家回報的正確中文名稱頂替，
+// 查到就直接用，不用再打API
+const BERRY_NAME_ZH_OVERRIDE = {
+    'roseli': '洛玫果',
+};
 async function fetchBerryNameZh(berryName) {
     if (berryNameZhCache.has(berryName)) return berryNameZhCache.get(berryName);
+    if (BERRY_NAME_ZH_OVERRIDE[berryName]) {
+        const overridden = BERRY_NAME_ZH_OVERRIDE[berryName];
+        berryNameZhCache.set(berryName, overridden);
+        return overridden;
+    }
     try {
         const berryRes = await fetch(`https://pokeapi.co/api/v2/berry/${berryName}`);
         if (!berryRes.ok) throw new Error(`berry API回傳${berryRes.status}`);
