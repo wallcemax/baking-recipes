@@ -4802,6 +4802,35 @@ async function playBattleEvents(events, ctx) {
             if (ball) { ball.classList.remove('pokeball-recall'); void ball.offsetWidth; ball.classList.add('pokeball-recall'); }
             await sleep(850);
             if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+        } else if (ev.megaTransform) {
+            // 原地變身(第十二輪第二版)：使用者明確要求「不要有倒下的畫面」，這裡完全不套用
+            // faint-drop(淡出消失)/pokeball-recall(收回球裡)那一套——sprite原地發光一下、
+            // 換成新造型的圖片跟滿血血條，再借switch-in(throwOut)那個從中心彈出的動畫當作
+            // 「變身完成、精神抖擻登場」的收尾，全程同一個sprite槽位，沒有任何收回/丟出精靈球的
+            // 演出，讀起來比第一版(候補遞補上場、只是換人文案改講「變化為」)更像真正的原地變身
+            appendLog(`${ev.megaTransform.outName} 變化為 ${ev.megaTransform.inName}！`);
+            const stillThere = document.getElementById(isMeAttacking ? 'sprite-opp' : 'sprite-me');
+            if (stillThere) {
+                stillThere.classList.remove('switch-out', 'switch-in', 'faint-drop', 'sprite-fainted');
+                void stillThere.offsetWidth;
+                stillThere.classList.add('self-buff-glow');
+                SFX.statUp(); // 沒有專門做「變身」的音效，借用既有的能力提升音效營造「變強了」的感覺
+                await sleep(500);
+                if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+                stillThere.src = isMeAttacking ? ctx.oppSwitchInSprite : ctx.mySwitchInSprite;
+                const newMaxHp = isMeAttacking ? ctx.oppMaxHp : ctx.myMaxHp;
+                if (defBar) defBar.style.width = '100%';
+                if (defHpText) defHpText.textContent = `${newMaxHp}/${newMaxHp}`;
+                stillThere.classList.remove('self-buff-glow');
+                void stillThere.offsetWidth;
+                stillThere.classList.add('switch-in');
+                if (ev.megaTransform.inSpeciesId) SFX.cry(ev.megaTransform.inSpeciesId);
+                await sleep(600);
+                if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+                stillThere.classList.remove('switch-in');
+            }
+            await sleep(300);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
         } else if (!isSelfBuff) {
             await sleep(250);
             if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
@@ -5773,6 +5802,30 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     const displayB = await fetchSpeciesDisplay(state[uidB].speciesId, state[uidB].isShiny);
     const displayOf = { [uidA]: displayA, [uidB]: displayB };
     const nameOf = { [uidA]: state[uidA].nickname, [uidB]: state[uidB].nickname };
+
+    // ---- 原地變身(第十二輪第二版，取代原本「候補遞補上場+換人文案改講變化」的做法)：
+    // 使用者明確要求「更強烈的原地變身，不要有倒下的畫面」，這裡改成在「這隻真的要判定倒下」的
+    // 那一刻攔截，完全不讓牠進入fainted/mustSwitch狀態——沒有「倒下了」訊息、沒有精靈球收回/
+    // 丟出的換人動畫，直接把候補清單最前面那一位(directives.isMegaTransform，目前只有帕希歐
+    // 世界大師賽終戰的超級噴火龍X)整組資料原地覆蓋到state[uid]身上(species/暱稱/數值/招式/
+    // 特性全換，HP滿血重新開始，異常狀態/揮發性戰鬥狀態比照freshBattleStatus()全部重置)，
+    // 讀起來/看起來都像同一隻寶可夢原地變身，戰鬥沿用同一個回合繼續打下去。
+    // 只接在「主動攻擊直接打倒對方」這條最常見的路徑上(見下面events.push(ev)後的if(fainted)分支)，
+    // 沒有涵蓋回合結束的持續傷害(中毒/束縛等)/反作用力/掙扎等比較少見的死法——這幾種比較罕見
+    // 的路徑仍然會照原本邏輯走「倒下→autoHandleTrainerSwitch候補遞補上場」，但候補本身已經
+    // 掛了isMegaTransform旗標，那條路徑(見該函式)也已經有專門的「變化為」換人文案當保底，
+    // 不會退化成完全沒處理過的「倒下後，換上了」。回傳{outName,inName}給呼叫端組log/events用，
+    // 沒有符合條件的候補就回傳null，呼叫端照舊走原本fainted的流程。
+    function tryMegaTransform(uid) {
+        const bench = benchState[uid];
+        const next = bench && bench[0];
+        if (!next || !next.directives || !next.directives.isMegaTransform) return null;
+        const outName = state[uid].nickname;
+        benchState[uid] = bench.slice(1);
+        state[uid] = { ...freshBattleStatus(), ...next, currentHp: next.maxHp };
+        nameOf[uid] = state[uid].nickname;
+        return { outName, inName: state[uid].nickname, inSpeciesId: state[uid].speciesId };
+    }
 
     // ---- Step 2：只有「這回合真的選了招式」的那一方才需要抓招式資料/算出招順序——
     // 換人的那一方這回合沒有招式，不會進入下面的攻擊流程 ----
@@ -6759,13 +6812,33 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         }
 
         events.push(ev);
+        let defenderJustTransformed = false;
         if (fainted) {
-            log.push(`${defName} 倒下了！`);
-            handleFaint(defenderUid);
-            // 亡語之約：如果剛剛倒下的正是稍早設下亡語之約的一方，打倒牠的攻擊方(atk.currentHp
-            // 已經在上面被歸零了)也要在這裡一起結算，沿用同一次events/break，不用重複push
-            if (atk.currentHp <= 0) { log.push(`${atkName} 倒下了！`); handleFaint(attackerUid); }
-            break;
+            // 打倒對方之前先看看牠是不是「原地變身」型的王牌(見上面tryMegaTransform的說明)——
+            // 是的話完全不走「倒下了→handleFaint→候補遞補上場」這條路，改成當場覆寫ev/log成
+            // 變身文案，沒有倒下畫面
+            const transformed = tryMegaTransform(defenderUid);
+            if (transformed) {
+                defenderJustTransformed = true;
+                ev.fainted = false;
+                ev.megaTransform = transformed;
+                log.push(`${transformed.outName} 變化為 ${transformed.inName}！`);
+                def = state[defenderUid];
+                defName = def.nickname;
+                // 借用「這回合真的換過人」的既有快照機制(switchedA/switchedB+prevSnapshotA/B，
+                // 本來是給玩家/NPC主動換人用的)——原地變身雖然不是換人，但一樣是「這回合開打前
+                // 跟結束時是不同一隻寶可夢」，client端playBattleEvents開播動畫前那一刻的畫面
+                // 一定要照樣先用「變身前」的種類/血量上限畫出來，不然血條會拿變身後的血量上限
+                // 硬套變身前的HP數字，又是一次「血條顯示異常」(這個專案已知的既有bug模式)
+                if (defenderUid === uidA) switchedA = true; else switchedB = true;
+            } else {
+                log.push(`${defName} 倒下了！`);
+                handleFaint(defenderUid);
+                // 亡語之約：如果剛剛倒下的正是稍早設下亡語之約的一方，打倒牠的攻擊方(atk.currentHp
+                // 已經在上面被歸零了)也要在這裡一起結算，沿用同一次events/break，不用重複push
+                if (atk.currentHp <= 0) { log.push(`${atkName} 倒下了！`); handleFaint(attackerUid); }
+                break;
+            }
         }
         // ---- 招式本身讓攻擊方自己倒下(訣別之言的自我犧牲、詛咒鬼系版本付出的HP代價)：跟「防禦方
         // 被打倒」是不同方向(defenderUid沒有倒下，fainted是false)，這裡獨立收斂處理，但沿用
@@ -6787,8 +6860,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
         }
         // ---- 強制對方換人招式：命中且沒有把對方打倒的話，強制對方換下場(換誰上來還是由
-        // 對方/AI自己決定) ----
-        if (FORCE_SWITCH_MOVES.has(move.name) && def.currentHp > 0) {
+        // 對方/AI自己決定)。defenderJustTransformed防呆：如果這一下剛好是「打倒後原地變身」，
+        // def現在其實已經是變身後的新寶可夢了(HP滿血>0)，不能因為這樣就把牠強制換下場——
+        // 剛變身出來的寶可夢還沒有機會留在場上，這裡直接跳過 ----
+        if (FORCE_SWITCH_MOVES.has(move.name) && def.currentHp > 0 && !defenderJustTransformed) {
             const aliveDefBench = (benchState[defenderUid] || []).filter(b => b.currentHp > 0);
             if (aliveDefBench.length > 0) {
                 def.mustSwitch = true;
