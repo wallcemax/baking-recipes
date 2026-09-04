@@ -4637,6 +4637,35 @@ const AQUA_RING_MOVES = new Set(['aqua-ring']);
 const PAIN_SPLIT_MOVES = new Set(['pain-split']);
 const CURSE_MOVES = new Set(['curse']);
 const DESTINY_BOND_MOVES = new Set(['destiny-bond']);
+// 充電(charge)：自己特防+1的部分PokéAPI有給stat_changes，走既有的通用能力等級變化邏輯就會生效，
+// 不用另外處理；但「下一次使用電屬性招式威力加倍」這個效果PokéAPI完全沒有對應欄位可以查
+// (meta裡沒有任何欄位能表示「下一回合條件式加成」)，是玩家回報「技能充電下一回合沒有提升電
+// 屬性招式傷害」的成因——這裡另外用一個揮發性旗標(chargeBoost)手動實作，用完(不管下一招是不是
+// 電屬性)就會清掉，跟正統規則一樣只保留到「下一次真正出招」，換人(resetVolatileForBench)也會清掉
+const CHARGE_MOVES = new Set(['charge']);
+// 魔法反射(magic-coat)：玩家回報「完全沒有作用」，查證後這招之前確實完全沒被實作(PokéAPI給的
+// category是'unique'，跟仿效/變身/訣別之言一樣沒有可以套用既有邏輯的欄位)。正統效果是「這回合
+// 稍早被magic-coat的對象，之後第一個瞄準牠、以牠為目標的變化招式，會被原封不動彈回施放者自己
+// 身上」——用最小侵入的方式實作：偵測到符合條件時，直接把resolveBattleRound這次迴圈的
+// attackerUid/defenderUid(以及對應的atk/def/atkName/defName/eff)整組對調，後面命中判定/
+// 屬性免疫/異常狀態/能力等級變化等所有邏輯都是靠這幾個區域變數運作，對調後全部自動套用在
+// 「原本的施放者」身上，不用逐段額外改寫
+const MAGIC_COAT_MOVES = new Set(['magic-coat']);
+// 可以被魔法反射彈回去的招式範圍：變化招式(damageClass==='status')、目標是「單一對手」
+// (target是selected-pokemon或all-opponents，這個遊戲只有單打，all-opponents實際上就是指
+// 對面那一隻)。field-side的入場障礙/光牆系/詛咒(target不是這兩種標準值，天生就不會符合，這裡
+// 仍手動排除做為防呆)、對自己生效的招式(target是user，本來就不會被選為「瞄準對方」的招式)、
+// 仿效/變身(讀取對方資料用，不是真的攻擊效果)，以及官方明訂「不會被反彈」的三招(訣別之言/
+// 顯影/輪舞曲)都排除在外
+function isMagicCoatBounceable(move) {
+    if (move.damageClass !== 'status' || move.power > 0) return false;
+    if (move.target !== 'selected-pokemon' && move.target !== 'all-opponents') return false;
+    if (MEMENTO_MOVES.has(move.name) || move.name === 'defog' || move.name === 'teeter-dance') return false;
+    if (TRANSFORM_MOVES.has(move.name) || MIMIC_MOVES.has(move.name)) return false;
+    if (HAZARD_MOVE_INFO[move.name] || SCREEN_MOVE_INFO[move.name] || CURSE_MOVES.has(move.name)) return false;
+    if (FIXED_DAMAGE_MOVES[move.name]) return false;
+    return true;
+}
 // 入場障礙在寶可夢換上場時的結算：隱形岩(不分接地與否都會打到，傷害隨自身對岩石屬性的抗性/
 // 弱點浮動)、撒菱/毒菱(只打「接地」的寶可夢，飛行屬性天生免疫)、黏黏網(只對接地的寶可夢降低
 // 1階速度，不會扣血)。三個換人的地方(玩家自願替換performSwitch、被強制換下場的
@@ -4695,6 +4724,16 @@ const MOVE_DESC_ZH_OVERRIDE = {
     'flower-trick': '將動過手腳的花束投向對手進行攻擊。必定會命中並擊中要害。', // 使用者提供的官方中文說明
     'aqua-cutter': '以高壓噴出的水流如利刃般切斬對手進行攻擊。容易擊中要害。',
 };
+// 玩家質疑「千變萬花你有確定攻擊一定會命中並且擊中要害嗎」——查證後：必定命中的部分沒問題
+// (PokéAPI的accuracy欄位本來就是null，下面命中判定邏輯本來就會讓null直接跳過機率判定)，
+// 但「必定會心一擊」這部分其實還真的沒做對。其他必定會心一擊的招式(暴風飛拳/催眠拳法/
+// 三重奪取等)PokéAPI都在meta.crit_rate填6(這個遊戲的6階會心率表clamp到索引5剛好等於100%)，
+// 千變萬花因為太新，跟中文說明一樣，PokéAPI整包meta欄位都是null(不是只有crit_rate缺)，
+// 沒有meta可以查就退化成預設的0(一般機率，只有1/24)——這裡比照MOVE_DESC_ZH_OVERRIDE的做法，
+// 手動補上已知有這個資料缺口、需要覆寫會心率的招式清單
+const MOVE_CRIT_RATE_OVERRIDE = {
+    'flower-trick': 6, // 官方必定會心一擊，比照其他同款招式填最高階6
+};
 async function fetchMoveData(moveName) {
     if (moveName === 'struggle') return STRUGGLE_MOVE;
     if (moveDataCache.has(moveName)) return moveDataCache.get(moveName);
@@ -4744,7 +4783,7 @@ async function fetchMoveData(moveName) {
         category: meta.category?.name || 'damage', // damage/ailment/net-good-stats/heal/damage-ailment/damage-lower/damage-raise/damage-heal/ohko/swagger/unique...
         drain: meta.drain || 0, // 傷害的百分比會反過來影響攻擊方血量：正值=吸血招式、負值=反作用力傷害
         healing: meta.healing || 0, // 招式直接回復攻擊方「最大HP」的百分比(不是靠傷害吸的那種)
-        critRate: meta.crit_rate || 0, // 會心率加成階段(0=一般機率，數字愈大愈容易會心一擊)
+        critRate: meta.crit_rate || MOVE_CRIT_RATE_OVERRIDE[data.name] || 0, // 會心率加成階段(0=一般機率，數字愈大愈容易會心一擊)；meta本身缺資料的招式(見MOVE_CRIT_RATE_OVERRIDE)才會用到後面這個備援
         flinchChance: meta.flinch_chance || 0,
         statChance: meta.stat_chance || 0,
         minHits: meta.min_hits || null,
@@ -4831,6 +4870,8 @@ function freshBattleStatus() {
         transformedInto: null, // 變身：{speciesId, isShiny, atk, def, spAtk, spDef, spd, moves, movePp}，記錄「變身前」的原始資料，換人會復原(能力等級stages換人時本來就會歸零，不用另外存)
         cursed: false, // 詛咒(鬼系使用curse對敵人下的那種)：每回合結束損失1/4最大HP，換人(resetVolatileForBench)就會解除
         aquaRing: false, // 水流環(Aqua Ring)：每回合結束回復自己1/16最大HP，換人(resetVolatileForBench)就會解除
+        chargeBoost: false, // 充電(Charge)：下一次使用電屬性招式威力加倍，用掉(不管是不是電屬性)或換人就會解除
+        magicCoatActive: false, // 魔法反射(Magic Coat)：只在「這一回合」有效，回合開始時會被explicit重置(見resolveBattleRound)，換人也會清掉
     };
 }
 // 一隻寶可夢從場上換下去時(不管是自願替換、還是被吼叫/咆哮/龍尾/圓環摔這類招式強制換下場)，
@@ -4859,6 +4900,8 @@ function resetVolatileForBench(battler) {
     outgoing.silencedTurns = 0; outgoing.perishCount = 0; outgoing.identified = false;
     outgoing.cursed = false;
     outgoing.aquaRing = false;
+    outgoing.chargeBoost = false;
+    outgoing.magicCoatActive = false;
     if (outgoing.mimicSlot && Array.isArray(outgoing.moves)) {
         outgoing.moves = outgoing.moves.slice();
         outgoing.moves[outgoing.mimicSlot.index] = 'mimic';
@@ -5277,6 +5320,11 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     // 不能沿用上一回合寫進Firestore的舊值(否則守住的效果會一直卡著不會消失)
     state[uidA].protectedThisTurn = false;
     state[uidB].protectedThisTurn = false;
+    // 魔法反射(magicCoatActive)也是「只在單一回合內有意義」的旗標，理由跟protectedThisTurn一樣：
+    // 不能沿用上一回合寫進Firestore的舊值，不然反射效果會一直卡著(這一回合設下之後，要等到「這
+    // 回合稍早」被觸發或這回合結束都會清掉，下面出招迴圈裡任何一方用了magic-coat才會重新設true)
+    state[uidA].magicCoatActive = false;
+    state[uidB].magicCoatActive = false;
     const benchState = { [uidA]: (benchAll[uidA] || []).slice(), [uidB]: (benchAll[uidB] || []).slice() };
     const nameOfOriginal = { [uidA]: state[uidA].nickname, [uidB]: state[uidB].nickname };
     // 入場障礙/光牆系(hazards/screens)：跟state一樣用freshXxxSide()補齊欄位，這樣舊的、
@@ -5449,16 +5497,16 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     // 每次呼叫剛好處理一整個回合，範圍天然吻合，不需要額外的跨回合持續狀態
     let destinyBondHolder = null;
 
-    for (const attackerUid of order) {
-        const defenderUid = attackerUid === uidA ? uidB : uidA;
-        const atk = state[attackerUid];
-        const def = state[defenderUid];
+    for (let attackerUid of order) {
+        let defenderUid = attackerUid === uidA ? uidB : uidA;
+        let atk = state[attackerUid];
+        let def = state[defenderUid];
         if (atk.currentHp <= 0) continue; // 已經先手被打倒了，不能再出招
         if (def.currentHp <= 0) break; // 對手這回合稍早已經被打倒，戰鬥已經結束
 
         const move = moveOf[attackerUid];
-        const eff = effOf[attackerUid];
-        const atkName = nameOf[attackerUid], defName = nameOf[defenderUid];
+        let eff = effOf[attackerUid];
+        let atkName = nameOf[attackerUid], defName = nameOf[defenderUid];
         // 這批招式(入場障礙/光牆系/詛咒/鼓腹擂鼓/分擔痛楚/亡語之約/訣別之言/黑霧/怨恨)已經在
         // 上面的if/else鏈裡各自手動實作了正統效果——PokéAPI對這幾招大多沒有可用的stat_changes/
         // ailment資料(所以才需要手動實作)，但少數招式(例如鼓腹擂鼓真正把攻擊力沖到滿的效果)可能
@@ -5592,6 +5640,27 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
         }
         atk.lastMoveUsed = move.name; // 折磨/定身法/再來一次都要知道「上一個真正嘗試出招」是什麼
+
+        // ---- 魔法反射：這次出招的對象(def)如果這回合稍早用過魔法反射、而且這招符合可以被反彈的
+        // 條件(isMagicCoatBounceable)，就把這次出招的攻守對調，讓招式效果原封不動彈回施放者自己
+        // 身上——PP已經在上面consumePp扣過了(原施放者真的花了PP)，放在這裡對調剛好好：後面的
+        // 命中判定/屬性免疫/異常狀態/能力等級變化全部靠atk/def/atkName/defName/attackerUid/
+        // defenderUid這幾個區域變數運作，對調之後自動套用在原施放者身上，不用逐段改寫。
+        // ev.attackerKey/defenderKey要一併補上對調後的值，不然播放動畫時「哪一邊中招」會顯示錯邊；
+        // eff(相剋倍率)原本是「原施放者對原目標」算好的，對調後要改成「原施放者對原目標」變成
+        // 「原目標(現在是新攻擊方)對原施放者(現在是新防禦方)」，沒有現成值可以沿用，得重新查一次 ----
+        if (def.magicCoatActive && isMagicCoatBounceable(move)) {
+            def.magicCoatActive = false;
+            log.push(`${defName} 的魔法反射把 ${atkName} 的 ${move.nameZh} 彈了回去！`);
+            [attackerUid, defenderUid] = [defenderUid, attackerUid];
+            atk = state[attackerUid];
+            def = state[defenderUid];
+            atkName = nameOf[attackerUid];
+            defName = nameOf[defenderUid];
+            eff = await fetchTypeEffectiveness(move.type, displayOf[defenderUid].types);
+            ev.attackerKey = attackerUid;
+            ev.defenderKey = defenderUid;
+        }
 
         // ---- 雙回合蓄力招式：第一回合只蓄力、不會真的打到對手；天氣符合的話可以省略蓄力
         // (例如日光烈焰在大晴天下直接放) ----
@@ -5865,6 +5934,14 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 atk.aquaRing = true;
                 log.push(`${atkName} 被水流環包住了！`);
             }
+        } else if (CHARGE_MOVES.has(move.name)) {
+            // 充電：特防+1沿用下面共用的能力等級變化區塊(move.statChanges本來就有這筆資料)，
+            // 這裡只負責標記「下一次使用電屬性招式威力加倍」的旗標
+            atk.chargeBoost = true;
+            log.push(`${atkName} 開始蓄積電力！`);
+        } else if (MAGIC_COAT_MOVES.has(move.name)) {
+            atk.magicCoatActive = true;
+            log.push(`${atkName} 豎起了魔法反射！`);
         } else if (move.power > 0) {
             const hits = rollMultiHitCount(move.minHits, move.maxHits);
             // 物理/特殊分流：move.damageClass是'physical'還是'special'決定這一下要吃攻擊/防禦
@@ -5889,7 +5966,14 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             // 持有道具對傷害的影響：屬性強化道具(裝備跟招式屬性相符+20%)、生命寶珠(life-orb，
             // 不分屬性一律+30%，但會反傷，見下面)
             const typeBoostKey = POKEMON_TYPE_BOOST_ITEM[move.type];
-            const itemDmgMult = (atk.heldItem && atk.heldItem === typeBoostKey ? 1.2 : 1) * (atk.heldItem === 'life-orb' ? 1.3 : 1);
+            // 充電(charge)：如果稍早蓄積了電力，這次不管出的是不是電屬性招式都會被用掉(跟正統
+            // 規則一樣，只保留到「下一次真正出招」，不會一直放著等到真的用電屬性招式那天才生效)，
+            // 只有真的是電屬性才會加倍，其餘情況純粹浪費掉——這是玩家回報「充電下一回合沒有提升
+            // 電屬性招式傷害」的成因，之前這個效果完全沒有被實作
+            const chargeElectricBoost = (atk.chargeBoost && move.type === 'electric') ? 2 : 1;
+            if (atk.chargeBoost) atk.chargeBoost = false;
+            if (chargeElectricBoost > 1) log.push(`${atkName} 的充電效果發動了，電屬性招式威力加倍！`);
+            const itemDmgMult = (atk.heldItem && atk.heldItem === typeBoostKey ? 1.2 : 1) * (atk.heldItem === 'life-orb' ? 1.3 : 1) * chargeElectricBoost;
             // 焦點鏡(scope-lens)：會心一擊機率+1階
             const effectiveCritRate = (move.critRate || 0) + (atk.heldItem === 'scope-lens' ? 1 : 0);
             // 光牆/反射壁/極光幕：防禦方那一側如果有張開，對應分類的傷害減半——正統規則裡雙打是
