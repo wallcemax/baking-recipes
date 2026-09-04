@@ -3357,35 +3357,47 @@ function isZoneCleared(region, zoneId) {
     return zoneGyms.length > 0 && zoneGyms.every(g => isGymCleared(g.id));
 }
 // 一場戰鬥前的訓練家人物圖示排列(icons)：帕希歐這種沒有專屬徽章的關卡用這個取代原本放
-// 徽章圖示的位置，用小圓形頭像呈現「這場戰鬥會遇到哪些訓練家」，圖片下方附上角色名稱——
-// icon是{name,url}物件(見gen_regions.py的icons()輔助函式)，name直接顯示在頭像下面，
-// 玩家才看得出來這場戰鬥具體會遇到誰，不只是一排看不出是誰的頭像
+// 徽章圖示的位置，用大頭貼呈現「這場戰鬥會遇到哪些訓練家」，圖片下方附上完整角色名稱——
+// icon是{name,url}物件(見gen_regions.py的icons()輔助函式)。使用者反映第一版頭像太小、
+// 名字被truncate省略號截斷看不出是誰，這裡改成寧可卡片高一點也要讓每個角色的完整名稱
+// 顯示出來(不截斷、可以換行)，頭像也放大到w-14
 function gymIconsHtml(icons) {
-    return `<div class="flex gap-1.5 shrink-0">${(icons || []).map(icon => {
+    return `<div class="flex flex-wrap gap-2">${(icons || []).map(icon => {
         const url = (icon && typeof icon === 'object') ? icon.url : icon; // 相容萬一混入的舊格式(純url字串)
         const name = (icon && typeof icon === 'object') ? icon.name : '';
-        return `<div class="flex flex-col items-center w-8">
-            <img src="${url}" class="w-8 h-8 rounded-full border-2 border-white object-cover bg-gray-100 shrink-0" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
-            ${name ? `<span class="text-[9px] text-gray-500 leading-tight text-center w-full truncate">${name}</span>` : ''}
+        return `<div class="flex flex-col items-center w-16">
+            <img src="${url}" class="w-14 h-14 rounded-full border-2 border-white shadow object-cover bg-gray-100 shrink-0" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+            ${name ? `<span class="text-[10px] text-gray-600 leading-tight text-center mt-1 break-words">${name}</span>` : ''}
         </div>`;
     }).join('')}</div>`;
 }
 // 單一關卡列的HTML：locked為true時整列蓋上一層半透明陰影+鎖頭圖示，不能點擊挑戰——
-// 「未解鎖的任務放上陰影加個鎖頭」的實際呈現方式
+// 「未解鎖的任務放上陰影加個鎖頭」的實際呈現方式。原本9個地區(有專屬徽章badgeType)維持
+// 一行式的緊湊排版；帕希歐這種用訓練家頭像(icons)取代徽章的關卡改成上下兩層：上面是
+// 關卡名稱+狀態，下面完整放大頭像+角色名稱，避免頭像跟名字被硬塞進同一行擠到看不清楚
 function gymRowHtml(region, g, locked) {
     const cleared = isGymCleared(g.id);
     const clickable = !locked && !cleared;
-    const leadingHtml = g.badgeType
-        ? `<img src="${gymBadgeImgUrl(g)}" class="w-10 h-10 object-contain shrink-0" style="image-rendering:pixelated" onerror="this.onerror=null;this.src='${itemSpriteUrl('premier-ball')}'">`
-        : gymIconsHtml(g.icons);
-    return `<div class="relative rounded-xl overflow-hidden ${locked ? '' : ''}">
-        <div class="flex items-center gap-3 p-3 border ${cleared ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'} ${clickable ? 'cursor-pointer active:scale-95 transition-transform' : ''}"
-            ${clickable ? `onclick="openGymChallengeModal('${region.id}','${g.id}')"` : ''}>
-            ${leadingHtml}
+    const statusHtml = `<span class="text-xs font-bold shrink-0 ${cleared ? 'text-green-600' : 'text-red-500'}">${cleared ? '已攻略' : (locked ? '未解鎖' : '挑戰')}</span>`;
+    const bodyHtml = g.badgeType
+        ? `<div class="flex items-center gap-3">
+            <img src="${gymBadgeImgUrl(g)}" class="w-10 h-10 object-contain shrink-0" style="image-rendering:pixelated" onerror="this.onerror=null;this.src='${itemSpriteUrl('premier-ball')}'">
             <div class="flex-1 min-w-0">
                 <p class="font-bold text-sm truncate">${g.name}</p>
             </div>
-            <span class="text-xs font-bold shrink-0 ${cleared ? 'text-green-600' : 'text-red-500'}">${cleared ? '已攻略' : (locked ? '未解鎖' : '挑戰')}</span>
+            ${statusHtml}
+        </div>`
+        : `<div>
+            <div class="flex items-center justify-between gap-2 mb-2">
+                <p class="font-bold text-sm">${g.name}</p>
+                ${statusHtml}
+            </div>
+            ${gymIconsHtml(g.icons)}
+        </div>`;
+    return `<div class="relative rounded-xl overflow-hidden">
+        <div class="p-3 border ${cleared ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'} ${clickable ? 'cursor-pointer active:scale-95 transition-transform' : ''}"
+            ${clickable ? `onclick="openGymChallengeModal('${region.id}','${g.id}')"` : ''}>
+            ${bodyHtml}
         </div>
         ${locked ? `<div class="absolute inset-0 bg-black/55 flex items-center justify-center text-2xl pointer-events-none">🔒</div>` : ''}
     </div>`;
@@ -4680,7 +4692,7 @@ async function applyHazardsOnSwitchIn(incoming, hazardsSide) {
 // 會查不到說明的招式，照遊戲裡其他同類型招式(容易/必定擊中要害)的官方用語風格補上中文說明；
 // fetchMoveData抓不到zh-Hant說明時會退回查這張表，查得到就用、查不到還是維持空字串
 const MOVE_DESC_ZH_OVERRIDE = {
-    'flower-trick': '投擲動了手腳的花束攻擊對手。必定會擊中要害。',
+    'flower-trick': '將動過手腳的花束投向對手進行攻擊。必定會命中並擊中要害。', // 使用者提供的官方中文說明
     'aqua-cutter': '以高壓噴出的水流如利刃般切斬對手進行攻擊。容易擊中要害。',
 };
 async function fetchMoveData(moveName) {
