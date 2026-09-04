@@ -185,6 +185,7 @@
         <div class="flex items-center justify-between mb-2">
             <h3 class="font-bold flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/medal-box.png" class="w-5 h-5" style="image-rendering:pixelated">收藏庫</h3>
             <button type="button" onclick="openBagModal()" class="text-xs bg-gray-100 px-3 py-1.5 rounded-full font-bold inline-flex items-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/bag.png" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">背包</button>
+            <button type="button" onclick="openMartModal()" class="text-xs bg-gray-100 px-3 py-1.5 rounded-full font-bold inline-flex items-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/225.png" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">信使鳥百貨</button>
         </div>
         <div class="mb-3 space-y-2">
             <input id="box-search-input" type="text" placeholder="搜尋暱稱/種類名字..." oninput="debouncedRenderBoxTab()" class="w-full text-sm border border-gray-200 rounded-xl px-3 py-2">
@@ -385,6 +386,12 @@
 <!-- 背包彈窗：顯示目前持有的所有道具/莓果數量(全部靠寶可夢猜猜看小遊戲獲得，見handlePokemonGuessClaim) -->
 <div id="bag-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeBagModal()">
     <div class="bg-white rounded-3xl p-6 max-w-sm w-full max-h-[85vh] overflow-y-auto" id="bag-modal-content"></div>
+</div>
+
+<!-- 信使鳥百貨彈窗(第十六輪新增)：販售官方遊戲裡除了10種基本進化石以外的其他進化道具(POKEMON_MART_EVOLUTION_ITEMS)，
+     全部統一2200代幣，讓這些原本完全沒有取得管道的進化道具(例如啃果蟲要用的酸酸蘋果/甜甜蘋果)可以直接花代幣買到 -->
+<div id="mart-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeMartModal()">
+    <div class="bg-white rounded-3xl p-6 max-w-md w-full max-h-[85vh] overflow-y-auto" id="mart-modal-content"></div>
 </div>
 
 <!-- 使用道具彈窗(從寶可夢詳情頁點「使用道具」進來，針對某一隻寶可夢用經驗糖果/招式學習器) -->
@@ -2003,7 +2010,9 @@ async function openDetailModal(instanceId) {
         </div>
         <button onclick="openEquipModal('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-indigo-100 text-indigo-700 inline-flex items-center justify-center gap-1.5 mb-2"><img src="${itemSpriteUrl('life-orb')}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">${inst.heldItem ? '更換裝備道具' : '裝備道具'}</button>
         ${evoInfo.canEvolve
-            ? `<button onclick="evolvePokemon('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('rare-candy')}" class="w-4 h-4" style="image-rendering:pixelated">進化成 ${evoInfo.nextName}！</button>`
+            ? (evoInfo.requiresItemName
+                ? `<button onclick="evolvePokemon('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${evoInfo.itemSprite}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">使用「${evoInfo.itemNameZh}」進化成 ${evoInfo.nextName}！(道具會被消耗)</button>`
+                : `<button onclick="evolvePokemon('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('rare-candy')}" class="w-4 h-4" style="image-rendering:pixelated">進化成 ${evoInfo.nextName}！</button>`)
             : (evoInfo.nextName ? `<p class="text-xs text-gray-400 text-center mb-2 flex items-center justify-center gap-1">${evoInfo.itemSprite ? `<img src="${evoInfo.itemSprite}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span>${evoInfo.hint || ''}</span></p>` : '')}
         <button onclick="closeDetailModal()" class="w-full text-gray-400 text-sm">關閉</button>
     `;
@@ -2300,6 +2309,26 @@ async function feedBerry(instanceId, berryName) {
 // 這裡的currentPlayerData是playerUnsub那個onSnapshot即時同步的，庫存增減不用手動重抓
 // ============================================================
 const POKEMON_EVOLUTION_STONES = ['fire-stone','water-stone','thunder-stone','leaf-stone','moon-stone','sun-stone','shiny-stone','dusk-stone','dawn-stone','ice-stone'];
+// 第十六輪新增：除了上面10種基本進化石(有猜猜看小遊戲當取得管道)以外，官方遊戲裡其他所有
+// 「用道具讓寶可夢進化」的道具(不管原本是要直接使用還是交換時攜帶，這個專案簡化成統一走
+// 「背包裡有這個道具就能用掉它進化」同一套機制，跟進化石一直以來的處理方式一致)——這份清單
+// 整理自Bulbapedia的Evolution items模板，逐一在PokéAPI(2026年版本)確認過都查得到資料，
+// 涵蓋到目前為止官方推出過的全部世代(含第九世代DLC新增的道具)。這些道具原本沒有任何取得管道，
+// 這輪新增的信使鳥百貨(見openMartModal)讓玩家可以直接用代幣購買，不用再乾等猜猜看抽到——
+// 跟worker.js的同名常數要保持一致(worker那邊拿來驗證購買/使用道具進化的請求)
+const POKEMON_MART_EVOLUTION_ITEMS = [
+    'kings-rock','deep-sea-tooth','deep-sea-scale','oval-stone','prism-scale','whipped-dream','sachet',
+    'dubious-disc','reaper-cloth','razor-claw','razor-fang','protector','electirizer','magmarizer',
+    'dragon-scale','metal-coat','up-grade',
+    'berry-sweet','clover-sweet','flower-sweet','love-sweet','ribbon-sweet','star-sweet','strawberry-sweet',
+    'tart-apple','sweet-apple','syrupy-apple',
+    'chipped-pot','cracked-pot',
+    'galarica-cuff','galarica-wreath',
+    'black-augurite','peat-block','auspicious-armor','malicious-armor','metal-alloy',
+    'unremarkable-teacup','masterpiece-teacup',
+    'scroll-of-darkness','scroll-of-waters','linking-cord',
+];
+const DELIBIRD_MART_ITEM_COST = 2200; // 每個道具統一售價(使用者指定)，唯獨不賣POKEMON_EVOLUTION_STONES那10種進化之石(已經有猜猜看小遊戲當取得管道)
 // 神奇糖果的正確效果是「不看EXP、直接升1級」，經驗糖果拆成XS~XL五階、各自給固定EXP——
 // 這兩份鑰匙都要跟worker.js的EXP_CANDY_AMOUNTS/rollGuessReward保持一致
 const EXP_CANDY_AMOUNTS = { 'exp-candy-xs': 50, 'exp-candy-s': 100, 'exp-candy-m': 150, 'exp-candy-l': 300, 'exp-candy-xl': 500 };
@@ -2434,6 +2463,56 @@ async function openBagModal() {
 function closeBagModal() {
     document.getElementById('bag-modal').classList.add('hidden');
     document.getElementById('bag-modal').classList.remove('flex');
+}
+
+// ---------- 信使鳥百貨(第十六輪新增)：花代幣直接買POKEMON_MART_EVOLUTION_ITEMS清單裡的進化道具 ----------
+let martBuyInFlight = false; // 避免連點同一個道具的購買按鈕，一次請求還沒回來又送出下一次
+async function openMartModal() {
+    const modal = document.getElementById('mart-modal');
+    const content = document.getElementById('mart-modal-content');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+
+    const coins = currentPlayerData?.coins || 0;
+    const owned = currentPlayerData?.items || {};
+    const itemNames = await Promise.all(POKEMON_MART_EVOLUTION_ITEMS.map(fetchGenericItemNameZh));
+
+    content.innerHTML = `
+        <h3 class="font-bold text-lg mb-1 text-center flex items-center justify-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/225.png" class="w-6 h-6" style="image-rendering:pixelated" onerror="this.style.display='none'">信使鳥百貨</h3>
+        <p class="text-xs text-gray-400 text-center mb-3">收購各種官方進化道具(除了進化石以外)，每個統一${DELIBIRD_MART_ITEM_COST}代幣，買到之後到寶可夢詳情頁的「進化」按鈕就能直接用掉。進化石(火之石/水之石等10種)不在這裡賣，要去玩「猜猜看」小遊戲賺</p>
+        <div class="grid grid-cols-3 gap-2 mb-3">
+            ${POKEMON_MART_EVOLUTION_ITEMS.map((key, idx) => `
+                <div class="text-xs bg-gray-50 rounded-xl p-2 flex flex-col items-center gap-1 relative">
+                    ${owned[key] > 0 ? `<span class="absolute top-0.5 right-1 text-[10px] font-black text-purple-600">持有x${owned[key]}</span>` : ''}
+                    <img src="${itemSpriteUrl(key)}" class="w-9 h-9" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+                    <span class="text-center leading-tight">${itemNames[idx] || key}</span>
+                    <button type="button" onclick="buyMartItem('${key}')" ${coins < DELIBIRD_MART_ITEM_COST ? 'disabled' : ''} class="w-full text-[11px] py-1 rounded-full font-bold inline-flex items-center justify-center gap-0.5 ${coins < DELIBIRD_MART_ITEM_COST ? 'bg-gray-200 text-gray-400' : 'bg-yellow-500 text-white'}"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/amulet-coin.png" class="w-3 h-3" style="image-rendering:pixelated">${DELIBIRD_MART_ITEM_COST}</button>
+                </div>`).join('')}
+        </div>
+        <button onclick="closeMartModal()" class="w-full text-gray-400 text-sm">關閉</button>
+    `;
+}
+function closeMartModal() {
+    document.getElementById('mart-modal').classList.add('hidden');
+    document.getElementById('mart-modal').classList.remove('flex');
+}
+async function buyMartItem(itemName) {
+    if (martBuyInFlight) return;
+    if ((currentPlayerData?.coins || 0) < DELIBIRD_MART_ITEM_COST) { showToast('寶可幣不夠了'); return; }
+    martBuyInFlight = true;
+    try {
+        const itemZh = await fetchGenericItemNameZh(itemName);
+        await callWorker('pokemon_buy_shop_item', { itemName });
+        showToast(`買到了${itemZh}！`);
+        SFX.confirm();
+        openMartModal(); // 重新整理清單，讓代幣餘額/持有數量顯示最新狀態
+    } catch (err) {
+        showToast('購買失敗：' + err.message);
+        SFX.error();
+    } finally {
+        martBuyInFlight = false;
+    }
 }
 
 // ---------- 使用道具(針對某一隻寶可夢)：經驗糖果、招式學習器 ----------
@@ -2733,25 +2812,27 @@ async function checkEvolutionEligibility(inst) {
         const detail = next.evolution_details?.[0] || {};
         const minLevel = detail.min_level || null;
         const minFriendship = detail.min_happiness || null;
-        let canEvolve = true, hint = '', itemSprite = null, requiresItemName = null;
+        let canEvolve = true, hint = '', itemSprite = null, requiresItemName = null, itemNameZh = null;
         if (minLevel && inst.level < minLevel) { canEvolve = false; hint = `等級到${minLevel}才能進化(目前Lv.${inst.level})`; }
         else if (minFriendship && (inst.friendship || 0) < minFriendship) { canEvolve = false; hint = `親密度要到${minFriendship}才能進化(目前${inst.friendship || 0})`; }
         else if (detail.item) {
             const itemZh = await fetchItemNameZh(detail.item.url);
             itemSprite = itemSpriteUrl(detail.item.name);
-            // 進化石(POKEMON_EVOLUTION_STONES)有支援用背包裡的道具觸發進化——其他種類的進化道具
-            // (換手道具、頭目蝸牛的prism-scale之類)目前還沒有對應的取得管道，維持「還沒開放」
-            if (POKEMON_EVOLUTION_STONES.includes(detail.item.name)) {
+            itemNameZh = itemZh || detail.item.name;
+            // 進化石(POKEMON_EVOLUTION_STONES)+信使鳥百貨販售的其他進化道具(POKEMON_MART_EVOLUTION_ITEMS，
+            // 第十六輪新增)都支援用背包裡的道具觸發進化——不在這兩張清單裡的極少數道具(理論上已經涵蓋
+            // 官方目前全部的進化道具，見信使鳥百貨清單來源)才會維持「還沒開放」
+            if (POKEMON_EVOLUTION_STONES.includes(detail.item.name) || POKEMON_MART_EVOLUTION_ITEMS.includes(detail.item.name)) {
                 const owned = (currentPlayerData?.items || {})[detail.item.name] || 0;
-                if (owned > 0) { canEvolve = true; requiresItemName = detail.item.name; hint = `使用「${itemZh || detail.item.name}」進化`; }
-                else { canEvolve = false; hint = `需要道具「${itemZh || detail.item.name}」才能進化(目前沒有，去玩猜猜看賺一個試試)`; }
+                if (owned > 0) { canEvolve = true; requiresItemName = detail.item.name; hint = `使用「${itemNameZh}」進化`; }
+                else { canEvolve = false; hint = `需要道具「${itemNameZh}」才能進化(目前沒有，去玩猜猜看賺一個試試，或去信使鳥百貨用代幣購買)`; }
             } else {
-                canEvolve = false; hint = `需要道具「${itemZh || detail.item.name}」才能進化(這個功能還沒開放)`;
+                canEvolve = false; hint = `需要道具「${itemNameZh}」才能進化(這個功能還沒開放)`;
             }
         }
         else if (!minLevel && !minFriendship && !detail.item) { canEvolve = inst.level >= 16; hint = `等級到16才能進化(目前Lv.${inst.level})`; }
         const nextNameZh = await fetchSpeciesNameZhByUrl(next.species.url);
-        return { canEvolve, nextName: nextNameZh || next.species.name, nextSpeciesUrl: next.species.url, hint, itemSprite, requiresItemName };
+        return { canEvolve, nextName: nextNameZh || next.species.name, nextSpeciesUrl: next.species.url, hint, itemSprite, requiresItemName, itemNameZh };
     } catch (err) {
         return { canEvolve: false, nextName: null };
     }
@@ -4574,7 +4655,7 @@ async function renderBattleStage(container, ctx) {
             ${terrain.type ? `<span class="bg-white/85 rounded-full px-2 py-0.5 text-[10px] font-bold flex items-center gap-1 shadow">${terrainIconHtml(terrain.type, 'w-3.5 h-3.5')}${TERRAIN_NAME_ZH[terrain.type]}</span>` : ''}
         </div>` : '';
     container.innerHTML = `
-        <div class="relative bg-gradient-to-b from-sky-100 to-emerald-50 rounded-2xl card-shadow p-4 mb-3 overflow-hidden" style="min-height:270px">
+        <div class="relative bg-gradient-to-b from-sky-100 to-emerald-50 rounded-2xl card-shadow p-4 mb-3 overflow-hidden" style="min-height:320px">
             ${weatherTerrainBadgeHtml}
             <div class="absolute top-3 right-3 text-right" style="max-width:52%">
                 <div class="mb-1">
@@ -4584,22 +4665,22 @@ async function renderBattleStage(container, ctx) {
                 <div class="w-28 ml-auto bg-gray-200 rounded-full h-2.5 mb-2 overflow-hidden">
                     <div id="hpbar-opp" class="hp-bar-fill h-2.5 rounded-full ${hpColor(oppHpPct)}" style="width:${oppHpPct}%"></div>
                 </div>
-                <div class="relative flex justify-end" style="min-height:92px">
+                <div class="relative flex justify-end" style="min-height:132px">
                     <div id="fx-opp" class="fx-burst"></div>
                     <div id="popupwrap-opp" class="absolute inset-x-0 top-0 flex justify-end z-10"></div>
-                    <div class="relative w-24 h-24">
+                    <div class="relative w-24 h-32">
                         <img id="pokeball-opp" src="${itemSpriteUrl('poke-ball')}" class="pokeball-icon">
-                        <img id="sprite-opp" src="${oppDisplay.spriteAnimated || oppDisplay.sprite}" class="w-24 h-24 battle-sprite ${oppFainted ? 'sprite-fainted' : ''}" style="image-rendering:pixelated">
+                        <img id="sprite-opp" src="${oppDisplay.spriteAnimated || oppDisplay.sprite}" class="w-24 h-32 battle-sprite ${oppFainted ? 'sprite-fainted' : ''}" style="image-rendering:pixelated;object-fit:contain">
                     </div>
                 </div>
             </div>
             <div class="absolute bottom-3 left-3 text-left" style="max-width:60%">
-                <div class="relative flex justify-start mb-2" style="min-height:104px">
+                <div class="relative flex justify-start mb-2" style="min-height:148px">
                     <div id="fx-me" class="fx-burst"></div>
                     <div id="popupwrap-me" class="absolute inset-x-0 top-0 flex justify-start z-10"></div>
-                    <div class="relative w-28 h-28 ${allowSwitchTap ? 'cursor-pointer' : ''}" ${allowSwitchTap ? `onclick="toggleSwitchPicker(true)" title="點擊替換寶可夢"` : ''}>
+                    <div class="relative w-28 h-36 ${allowSwitchTap ? 'cursor-pointer' : ''}" ${allowSwitchTap ? `onclick="toggleSwitchPicker(true)" title="點擊替換寶可夢"` : ''}>
                         <img id="pokeball-me" src="${itemSpriteUrl('poke-ball')}" class="pokeball-icon">
-                        <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-28 battle-sprite ${myFainted ? 'sprite-fainted' : ''}" style="image-rendering:pixelated">
+                        <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-36 battle-sprite ${myFainted ? 'sprite-fainted' : ''}" style="image-rendering:pixelated;object-fit:contain">
                         ${allowSwitchTap ? `<img src="${itemSpriteUrl('luxury-ball')}" class="absolute -bottom-1 -right-1 w-5 h-5 pointer-events-none drop-shadow" style="image-rendering:pixelated">` : ''}
                     </div>
                 </div>
