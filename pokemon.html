@@ -4674,6 +4674,15 @@ async function applyHazardsOnSwitchIn(incoming, hazardsSide) {
     if (mon.currentHp <= 0) logs.push(`${mon.nickname} 倒下了！`);
     return { pokemon: mon, logs };
 }
+// PokéAPI的move資料裡，少數比較新/冷門的招式(尤其是最近幾代才加入的招式)flavor_text_entries
+// 根本沒有zh-Hant那筆(不是查詢方式錯誤，是PokéAPI資料本身就缺，例如玩家反映魔幻假面喵進化
+// 學會的「千變萬花」完全沒有中文說明)——這裡比照BERRY_NAME_ZH_OVERRIDE的做法，手動列出已知
+// 會查不到說明的招式，照遊戲裡其他同類型招式(容易/必定擊中要害)的官方用語風格補上中文說明；
+// fetchMoveData抓不到zh-Hant說明時會退回查這張表，查得到就用、查不到還是維持空字串
+const MOVE_DESC_ZH_OVERRIDE = {
+    'flower-trick': '投擲動了手腳的花束攻擊對手。必定會擊中要害。',
+    'aqua-cutter': '以高壓噴出的水流如利刃般切斬對手進行攻擊。容易擊中要害。',
+};
 async function fetchMoveData(moveName) {
     if (moveName === 'struggle') return STRUGGLE_MOVE;
     if (moveDataCache.has(moveName)) return moveDataCache.get(moveName);
@@ -4707,7 +4716,9 @@ async function fetchMoveData(moveName) {
     const zhFlavorEntries = (data.flavor_text_entries || [])
         .filter(e => e.language && String(e.language.name).toLowerCase() === 'zh-hant')
         .filter(e => !isMoveDeleterPlaceholder(e.flavor_text));
-    const descZh = zhFlavorEntries.length ? zhFlavorEntries[zhFlavorEntries.length - 1].flavor_text.replace(/[\n\f\r]+/g, ' ') : '';
+    const descZh = zhFlavorEntries.length
+        ? zhFlavorEntries[zhFlavorEntries.length - 1].flavor_text.replace(/[\n\f\r]+/g, ' ')
+        : (MOVE_DESC_ZH_OVERRIDE[data.name] || '');
     const meta = data.meta || {};
     const ailmentName = meta.ailment && meta.ailment.name !== 'none' ? meta.ailment.name : null;
     const result = {
