@@ -351,13 +351,23 @@
      兩側)改成justify-center+負margin(讓兩張圖水平方向靠在一起，中間微幅重疊)；bottom偏移量從
      118px(原本卡在對話框正上方、完全不重疊)大幅縮小到28px，配合max-h從42vh放大到60vh，讓立繪
      整體拉大、下緣自然沉到對話框(z-index:3，比立繪的z-index:2高)後面被蓋住，呈現類似「半身
-     立繪」的效果——腳被對話框擋住是預期效果，不是bug -->
+     立繪」的效果——腳被對話框擋住是預期效果，不是bug
+     【第十九輪再修正】使用者這次反映負margin靠太近變成整個疊在一起，改用「兩邊各站在畫面
+     25%/75%位置」(第一版是0%/100%貼齊左右邊緣、第十八輪改成50%正中央重疊，這次要的是這兩者
+     之間的中點)：拿掉負margin，父層容器改成inset-x-[25%](左右各留25%空間，只在中間50%範圍
+     裡排版)搭配justify-between，兩張圖固定貼齊這個內縮容器的左右邊界，換算下來視覺中心大約
+     落在畫面25%/75%的位置。圖片尺寸依使用者要求拿掉max-h/object-contain這種「限制在螢幕
+     比例內」的縮放方式，改成直接用CSS transform: scale(3)把原始圖片像素尺寸放大3倍(不再受
+     42vh/60vh這種跟裝置尺寸掛勾的上限影響)——scale是視覺層的變形，不會影響flex排版本身用的
+     盒子大小，所以還是能維持25%/75%這個定位基準；同時setStoryPortraitSlot()裡原本active/
+     未active切換用的scale(1)/scale(0.92)也同步乘上3倍改成scale(3)/scale(2.76)，維持原本
+     「不是目前說話者就稍微縮小一點」的比例效果 -->
 <div id="story-modal" class="hidden fixed inset-0 bg-black z-[60] flex-col justify-end overflow-hidden" onclick="storyModalTap(event)">
     <img id="story-bg" class="absolute inset-0 w-full h-full object-cover transition-opacity duration-500" style="opacity:0;z-index:0" onerror="this.style.opacity='0'">
     <div class="absolute inset-0 bg-black/25" style="z-index:1"></div>
-    <div class="absolute inset-x-0 bottom-[28px] flex justify-center items-end pointer-events-none" style="z-index:2">
-        <img id="story-portrait-left" class="max-h-[60vh] object-contain transition-all duration-300 -mr-6" style="opacity:0;transform-origin:bottom center">
-        <img id="story-portrait-right" class="max-h-[60vh] object-contain transition-all duration-300 -ml-6" style="opacity:0;transform-origin:bottom center">
+    <div class="absolute inset-x-[25%] bottom-[28px] flex justify-between items-end pointer-events-none" style="z-index:2">
+        <img id="story-portrait-left" class="transition-all duration-300" style="opacity:0;transform-origin:bottom center">
+        <img id="story-portrait-right" class="transition-all duration-300" style="opacity:0;transform-origin:bottom center">
     </div>
     <div class="relative flex justify-between items-center px-4 pt-3" style="z-index:3">
         <button id="story-ff-btn" onclick="event.stopPropagation();toggleStoryFastForward()" class="text-xs bg-white/20 text-white px-3 py-1.5 rounded-full active:scale-95 transition-transform">快進：關</button>
@@ -3973,7 +3983,10 @@ function setStoryPortraitSlot(side, name, opts) {
     if (storyPortraitState[side] !== name) el.src = url;
     storyPortraitState[side] = name;
     el.style.opacity = opts.active ? '1' : '0.55';
-    el.style.transform = (side === 'left' ? 'scaleX(-1) ' : '') + (opts.active ? 'scale(1)' : 'scale(0.92)');
+    // 第十九輪：基準倍率從原本的1/0.92改成使用者要求的「原圖尺寸放大300%」3/2.76(=0.92*3，
+    // 維持原本「非目前說話者要縮小8%」的相對比例)，img本身沒有再用max-h/object-contain限制
+    // 尺寸，這個scale就是最終視覺大小
+    el.style.transform = (side === 'left' ? 'scaleX(-1) ' : '') + (opts.active ? 'scale(3)' : 'scale(2.76)');
     el.classList.remove('story-portrait-shake', 'story-portrait-flash');
     if (opts.active && opts.effect) {
         void el.offsetWidth; // 強制觸發reflow，確保同一句連續出現同樣的特效class時動畫還是會重新播放
