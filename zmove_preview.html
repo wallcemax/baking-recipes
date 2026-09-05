@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Z招式特效預覽工具</title>
+<style>
+  :root{
+    color-scheme: light;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:"Microsoft JhengHei","PingFang TC",-apple-system,BlinkMacSystemFont,sans-serif;
+    background:#f4f5f7;
+    color:#222;
+    padding:16px;
+  }
+  h1{font-size:20px;margin:0 0 4px;}
+  .sub{color:#666;font-size:13px;margin:0 0 16px;}
+  .layout{
+    display:grid;
+    grid-template-columns: 360px 1fr;
+    gap:16px;
+    align-items:start;
+  }
+  @media (max-width: 900px){
+    .layout{grid-template-columns: 1fr;}
+  }
+  .panel{
+    background:#fff;
+    border-radius:12px;
+    padding:14px;
+    box-shadow:0 1px 3px rgba(0,0,0,.08);
+    margin-bottom:14px;
+  }
+  .panel h2{font-size:14px;margin:0 0 10px;color:#444;}
+  .toggle-row{display:flex;gap:8px;margin-bottom:10px;}
+  .toggle-btn{
+    flex:1;
+    padding:8px 6px;
+    border-radius:8px;
+    border:2px solid #ddd;
+    background:#fafafa;
+    cursor:pointer;
+    font-size:13px;
+    font-weight:600;
+    text-align:center;
+  }
+  .toggle-btn.active{
+    border-color:#3b82f6;
+    background:#eaf2ff;
+    color:#1d4ed8;
+  }
+  .btn{
+    padding:10px 12px;
+    border-radius:8px;
+    border:none;
+    cursor:pointer;
+    font-size:14px;
+    font-weight:600;
+  }
+  .btn-play{background:#16a34a;color:#fff;flex:2;}
+  .btn-play:disabled{background:#9ca3af;cursor:not-allowed;}
+  .btn-reset{background:#e5e7eb;color:#333;flex:1;}
+  .btn-row{display:flex;gap:8px;margin-top:10px;}
+  select{
+    width:100%;
+    padding:8px;
+    border-radius:8px;
+    border:1px solid #ccc;
+    font-size:13px;
+    margin-bottom:10px;
+  }
+  .move-grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:6px;
+    max-height:260px;
+    overflow-y:auto;
+    padding:2px;
+  }
+  .move-thumb{
+    border:2px solid #eee;
+    border-radius:8px;
+    padding:2px;
+    cursor:pointer;
+    background:#fff;
+    overflow:hidden;
+    height:44px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .move-thumb img{max-width:100%;max-height:100%;object-fit:contain;}
+  .move-thumb.active{border-color:#3b82f6;background:#eaf2ff;}
+  .flag{
+    display:inline-block;
+    font-size:11px;
+    padding:1px 6px;
+    border-radius:10px;
+    margin-left:6px;
+    vertical-align:middle;
+  }
+  .flag-approx{background:#fef3c7;color:#92400e;}
+  .flag-mirror{background:#dbeafe;color:#1e40af;}
+  .info-box{font-size:12.5px;line-height:1.6;color:#444;background:#f9fafb;border-radius:8px;padding:10px;white-space:pre-wrap;}
+  .stage-wrap{
+    position:relative;
+    background:linear-gradient(to bottom,#dff1ff,#e8fbef);
+    border-radius:16px;
+    box-shadow:0 1px 3px rgba(0,0,0,.1);
+    overflow:hidden;
+    min-height:340px;
+    height:340px;
+  }
+  .sprite{
+    position:absolute;
+    z-index:10;
+    image-rendering:pixelated;
+  }
+  #spriteOpp{top:14px;right:14px;width:104px;height:132px;object-fit:contain;}
+  #spriteMe{bottom:14px;left:14px;width:120px;height:150px;object-fit:contain;}
+  .side-label{
+    position:absolute;
+    font-size:11px;
+    background:rgba(0,0,0,.55);
+    color:#fff;
+    padding:1px 6px;
+    border-radius:6px;
+    z-index:11;
+  }
+  #labelOpp{top:150px;right:20px;}
+  #labelMe{bottom:168px;left:20px;}
+  #darkenOverlay{
+    position:absolute;inset:0;
+    background:#000;
+    opacity:0;
+    z-index:20;
+    pointer-events:none;
+  }
+  #fxLayer{
+    position:absolute;inset:0;
+    z-index:30;
+    pointer-events:none;
+    overflow:hidden;
+  }
+  #screenFlashLayer{
+    position:absolute;inset:0;
+    background:#fff;
+    opacity:0;
+    z-index:32;
+    pointer-events:none;
+  }
+  .zbadge{
+    position:absolute;
+    width:46px;height:46px;
+    z-index:25;
+    opacity:0;
+    pointer-events:none;
+  }
+  #nameplateLayer{
+    position:absolute;inset:0;
+    z-index:60;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    pointer-events:none;
+  }
+  #nameplateLayer img{
+    max-width:82%;
+    max-height:70%;
+    opacity:0;
+    object-fit:contain;
+    filter:drop-shadow(0 2px 6px rgba(0,0,0,.4));
+  }
+  .fx-img{
+    position:absolute;
+    pointer-events:none;
+  }
+  .broken-note{
+    position:absolute;
+    z-index:70;
+    background:#fee2e2;
+    color:#991b1b;
+    font-size:11px;
+    padding:2px 6px;
+    border-radius:6px;
+    border:1px solid #fca5a5;
+    max-width:200px;
+  }
+  #logPanel{
+    background:#0f172a;
+    color:#a7f3d0;
+    font-family:"Consolas","Menlo",monospace;
+    font-size:12.5px;
+    border-radius:10px;
+    padding:10px 12px;
+    height:180px;
+    overflow-y:auto;
+    white-space:pre-wrap;
+    line-height:1.55;
+    margin-top:14px;
+  }
+  #logPanel .warn{color:#fca5a5;}
+  #logPanel .step{color:#93c5fd;}
+  .note-list{font-size:12.5px;line-height:1.7;color:#444;}
+  .note-list b{color:#111;}
+</style>
+</head>
+<body>
+
+<h1>Z招式動畫預覽 / QA 工具</h1>
+<p class="sub">獨立預覽檔案，尚未套入 pokemon.html 或 worker.js。可切換「我方使用」/「對方使用」檢查方向與鏡像是否正確。確認沒問題後再進行遊戲整合。</p>
+
+<div class="layout">
+  <div class="left-col">
+
+    <div class="panel">
+      <h2>1. 誰使用 Z 招式</h2>
+      <div class="toggle-row">
+        <button class="toggle-btn active" id="btnCasterMe" onclick="setCaster('player')">我方使用</button>
+        <button class="toggle-btn" id="btnCasterOpp" onclick="setCaster('opponent')">對方使用</button>
+      </div>
+
+      <h2>2. 選擇招式</h2>
+      <select id="moveSelect" onchange="selectMove(this.value)"></select>
+      <div class="move-grid" id="moveGrid"></div>
+
+      <div class="btn-row">
+        <button class="btn btn-play" id="playBtn" onclick="playCurrent()">▶ 播放</button>
+        <button class="btn btn-reset" onclick="resetStage()">重置</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>招式說明（原始需求逐字對照）</h2>
+      <div class="info-box" id="moveInfo">請選擇招式</div>
+    </div>
+
+    <div class="panel">
+      <h2>需要你確認的地方</h2>
+      <div class="note-list">
+        <b>4個特效因無法在此環境讀取圖片，採用「近似效果」而非精確切圖</b>（全力無雙激烈拳／絕對捕食迴旋斬／可愛星星飛天撞／地動山搖地裂崩）。若要精確還原，麻煩把這4張特效圖片直接傳給我，或說明內部是幾格、怎麼切，我再做精修。<br><br>
+        <b>4個方向/鏡像判斷需要你用左側切換「我方／對方使用」實際看過確認</b>：激狂大地萬里冰、極速俯衝轟烈撞、究極巨龍震天地（這三個文字有明講預設方向，已依文字實作）、遮天蔽日暗影箭（文字沒講預設方向，箭矢方向改用「即時計算施放方向」處理，不用猜測翻轉）。麻煩每個都切兩邊看一次，有反的告訴我。
+      </div>
+    </div>
+
+  </div>
+
+  <div class="right-col">
+    <div class="panel">
+      <h2>戰鬥畫面預覽</h2>
+      <div class="stage-wrap" id="stage">
+        <div id="darkenOverlay"></div>
+        <img id="spriteOpp" class="sprite" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/6.png" onerror="this.style.opacity=0.3;">
+        <img id="spriteMe" class="sprite" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/back/25.png" onerror="this.style.opacity=0.3;">
+        <div class="side-label" id="labelOpp">對手</div>
+        <div class="side-label" id="labelMe">我方</div>
+        <img class="zbadge" id="zBadgeOpp" src="https://res.cloudinary.com/bumzwp9g/image/upload/v1788610351/Zmove_mbcynx.png">
+        <img class="zbadge" id="zBadgeMe" src="https://res.cloudinary.com/bumzwp9g/image/upload/v1788610351/Zmove_mbcynx.png">
+        <div id="fxLayer"></div>
+        <div id="screenFlashLayer"></div>
+        <div id="nameplateLayer"></div>
+      </div>
+      <div id="logPanel"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ============ 35個Z招式資料表（逐字取自 Z招式特效字樣.txt） ============ */
+var MOVES = [
+{id:1, zh:'究極無敵大衝撞', en:'Breakneck Blitz',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603386/220px-%E7%A9%B6%E6%A5%B5%E7%84%A1%E6%95%B5%E5%A4%A7%E8%A1%9D%E6%92%9E_Sprite_g9vbsw.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610099/%E7%A9%B6%E6%A5%B5%E7%84%A1%E6%95%B5%E5%A4%A7%E8%A1%9D%E6%92%9E_dxwoli.png',
+ desc:'放招式的寶可夢衝向對方將特效播放在對方身上後結束', primitive:'dashInto'},
+{id:2, zh:'超強極限爆焰彈', en:'Inferno Overdrive',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603389/220px-%E8%B6%85%E5%BC%B7%E6%A5%B5%E9%99%90%E7%88%86%E7%84%B0%E5%BD%88_Sprite_v26bm6.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610105/%E8%B6%85%E5%BC%B7%E6%A5%B5%E9%99%90%E7%88%86%E7%84%B0%E5%BD%88_wmnpgq.png',
+ desc:'在放招式的寶可夢頭上由小閃爍到大飛往對手寶可夢擊中後結束', primitive:'growFly', params:{fromHead:true}},
+{id:3, zh:'超級水流大漩渦', en:'Hydro Vortex',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603390/220px-%E8%B6%85%E7%B4%9A%E6%B0%B4%E6%B5%81%E5%A4%A7%E6%BC%A9%E6%B8%A6_Sprite_pd9kxp.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610121/%E8%B6%85%E7%B4%9A%E6%B0%B4%E6%B5%81%E5%A4%A7%E6%BC%A9%E6%B8%A6_pqgft7.png',
+ desc:'放招寶可夢處飛往對手寶可夢由小到大擊中後結束', primitive:'growFly', params:{fromHead:false}},
+{id:4, zh:'終極伏特狂雷閃', en:'Gigavolt Havoc',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603386/220px-%E7%B5%82%E6%A5%B5%E4%BC%8F%E7%89%B9%E7%8B%82%E9%9B%B7%E9%96%83_Sprite_u9kpl0.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610117/%E7%B5%82%E6%A5%B5%E4%BC%8F%E7%89%B9%E7%8B%82%E9%9B%B7%E9%96%83_uvkxwl.png',
+ desc:'全畫面閃爍後結束', primitive:'screenFlash'},
+{id:5, zh:'絢爛繽紛花怒放', en:'Bloom Doom',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603390/220px-%E7%B5%A2%E7%88%9B%E7%B9%BD%E7%B4%9B%E8%8A%B1%E6%80%92%E6%94%BE_Sprite_djhqyu.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610103/%E7%B5%A2%E7%88%9B%E7%B9%BD%E7%B4%9B%E8%8A%B1%E6%80%92%E6%94%BE_x82tac.png',
+ desc:'直接在對手寶可夢身上顯示後結束', primitive:'appearOnTarget'},
+{id:6, zh:'激狂大地萬里冰', en:'Subzero Slammer',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603392/220px-%E6%BF%80%E7%8B%82%E5%A4%A7%E5%9C%B0%E8%90%AC%E9%87%8C%E5%86%B0_Sprite_ioyxxs.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610119/%E6%BF%80%E7%8B%82%E5%A4%A7%E5%9C%B0%E8%90%AC%E9%87%8C%E5%86%B0_kk32du.png',
+ desc:'圖片逆時針轉90度快速從放招方顯示到對手方快速淡入後結束、若是敵方放則要特效反向施放效果',
+ primitive:'rotateSlideIn', mirror:true, params:{flipWhenOpponentCasts:true}},
+{id:7, zh:'全力無雙激烈拳', en:'All-Out Pummeling',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603383/220px-%E5%85%A8%E5%8A%9B%E7%84%A1%E9%9B%99%E6%BF%80%E7%83%88%E6%8B%B3_Sprite_pa9l9r.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610098/%E5%85%A8%E5%8A%9B%E7%84%A1%E9%9B%99%E6%BF%80%E7%83%88%E6%8B%B3_nl4ic0.png',
+ desc:'你要切割裡面的特效效果堆疊特效並且像打擊一樣顯示好幾次在對手身上(這個圖片要給你處理過)',
+ primitive:'punchStack', approx:true},
+{id:8, zh:'強酸劇毒滅絕雨', en:'Acid Downpour',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603387/220px-%E5%BC%BA%E9%85%B8%E5%8A%87%E6%AF%92%E6%BB%85%E7%B5%95%E9%9B%A8_Sprite_kwlh2c.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610100/%E5%BC%B7%E9%85%B8%E5%8A%87%E6%AF%92%E6%BB%85%E7%B5%95%E9%9B%A8_sek35u.png',
+ desc:'從對手頭上快速淡入往下後結束', primitive:'fadeInAboveDown'},
+{id:9, zh:'地動山搖地裂崩', en:'Tectonic Rage',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603385/220px-%E5%9C%B0%E9%9A%86%E5%98%AF%E5%A4%A9%E5%A4%A7%E7%B5%82%E7%B5%90_Sprite_qb4zek.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610101/%E5%9C%B0%E5%8B%95%E5%B1%B1%E6%90%96%E5%9C%B0%E8%A3%82%E5%B4%A9_uwkgsu.png',
+ desc:'整題畫面晃動連續出現特效內裂痕 要檢視這個檔案特效', primitive:'screenShakeCracks', approx:true},
+{id:10, zh:'極速俯衝轟烈撞', en:'Supersonic Skystrike',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603391/220px-%E6%A5%B5%E9%80%9F%E4%BF%AF%E8%A1%9D%E8%BD%9F%E7%83%88%E6%92%9E_Sprite_sdl0hc.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610107/%E6%A5%B5%E9%80%9F%E4%BF%AF%E8%A1%9D%E8%BD%9F%E7%83%88%E6%92%9E_nqph7o.png',
+ desc:'全畫面由放招方快速入到對手、若是敵方放則要特效反向施放效果',
+ primitive:'screenSweep', mirror:true, params:{flipWhenOpponentCasts:true}},
+{id:11, zh:'至高精神破壞波', en:'Shattered Psyche',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603383/220px-%E8%87%B3%E9%AB%98%E7%B2%BE%E7%A5%9E%E7%A0%B4%E5%A3%9E%E6%B3%A2_Sprite_fyb97m.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610114/%E8%87%B3%E9%AB%98%E7%B2%BE%E7%A5%9E%E7%A0%B4%E5%A3%9E%E6%B3%A2_uhvctk.png',
+ desc:'在對手身上顯示閃爍', primitive:'flickerOnTarget'},
+{id:12, zh:'絕對捕食迴旋斬', en:'Savage Spin-Out',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603388/220px-%E7%B5%95%E5%B0%8D%E6%8D%95%E9%A3%9F%E8%BF%B4%E6%97%8B%E6%96%AC_Sprite_bh498b.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610102/%E7%B5%95%E5%B0%8D%E6%8D%95%E9%A3%9F%E8%BF%B4%E6%97%8B%E6%96%AC_gpurks.png',
+ desc:'堆疊裡面的特效 從放招方飛往對手後結束 (這個圖片要給你處理過)', primitive:'stackFly', approx:true},
+{id:13, zh:'毀天滅地巨岩墜', en:'Continental Crush',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603393/220px-%E6%AF%80%E5%A4%A9%E6%BB%85%E5%9C%B0%E5%B7%A8%E5%B2%A9%E5%A2%9C_Sprite_khsh4q.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610108/%E6%AF%80%E5%A4%A9%E6%BB%85%E5%9C%B0%E5%B7%A8%E5%B2%A9%E5%A2%9C_qybqcy.png',
+ desc:'在對手身上顯示閃爍落下後消失連續兩次', primitive:'fallTwice'},
+{id:14, zh:'無盡暗夜之誘惑', en:'Never-Ending Nightmare',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603392/220px-%E7%84%A1%E7%9B%A1%E6%9A%97%E5%A4%9C%E4%B9%8B%E8%AA%98%E6%83%91_Sprite_mbutxk.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610102/%E7%84%A1%E7%9B%A1%E6%9A%97%E5%A4%9C%E4%B9%8B%E8%AA%98%E6%83%91_lbidzc.png',
+ desc:'在對手身上顯示縮小後消失', primitive:'shrinkOnTarget'},
+{id:15, zh:'究極巨龍震天地', en:'Devastating Drake',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603385/220px-%E7%A9%B6%E6%A5%B5%E5%B7%A8%E9%BE%8D%E9%9C%87%E5%A4%A9%E5%9C%B0_Sprite_cdzgqe.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610116/%E7%A9%B6%E6%A5%B5%E5%B7%A8%E9%BE%8D%E9%9C%87%E5%A4%A9%E5%9C%B0_m6ynj0.png',
+ desc:'畫面震動,特效180度水平翻轉由放招式方衝向對手後結束,若是對手放招我就會看到沒有翻轉的衝過來',
+ primitive:'flipDash', mirror:true, params:{flipWhenPlayerCasts:true}},
+{id:16, zh:'黑洞吞噬萬物滅', en:'Black Hole Eclipse',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603391/220px-%E9%BB%91%E6%B4%9E%E5%90%9E%E5%99%AC%E8%90%AC%E7%89%A9%E6%BB%85_Sprite_twbgip.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610107/%E9%BB%91%E6%B4%9E%E5%90%9E%E5%99%AC%E8%90%AC%E7%89%A9%E6%BB%85_p3rcm1.png',
+ desc:'在對手身上出現後縮小消失結束', primitive:'shrinkOnTarget'},
+{id:17, zh:'超絕螺旋連擊', en:'Corkscrew Crash',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603394/220px-%E8%B6%85%E7%B5%95%E8%9E%BA%E6%97%8B%E9%80%A3%E6%93%8A_Sprite_jlgmzj.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610106/%E8%B6%85%E7%B5%95%E8%9E%BA%E6%97%8B%E9%80%A3%E6%93%8A%E7%A0%B4_f8ddlu.png',
+ desc:'在對手身上出現並閃光後結束', primitive:'appearFlashOnce'},
+{id:18, zh:'可愛星星飛天撞', en:'Twinkle Tackle',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603382/220px-%E5%8F%AF%E6%84%9B%E6%98%9F%E6%98%9F%E9%A3%9B%E5%A4%A9%E6%92%9E_Sprite_pgys5u.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610096/%E5%8F%AF%E6%84%9B%E6%98%9F%E6%98%9F%E9%A3%9B%E5%A4%A9%E6%92%9E_h5jdo5.png',
+ desc:'剪裁此特效用很多星星衝撞對手 (這個圖片要給你處理過)', primitive:'starBurst', approx:true},
+{id:19, zh:'皮卡皮卡必殺擊', en:'Catastropika',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/160px-%E7%9A%AE%E5%8D%A1%E7%9A%AE%E5%8D%A1%E5%BF%85%E6%AE%BA%E6%93%8A_Sprite_pngapo.webp',
+ effect:null,
+ desc:'放招者衝撞對手 只有字樣圖片無特效', primitive:'dashIntoNoEffect'},
+{id:20, zh:'千萬伏特', en:'10,000,000 Volt Thunderbolt',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603380/180px-%E5%8D%83%E8%90%AC%E4%BC%8F%E7%89%B9_Sprite_sbuzmj.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610114/%E5%8D%83%E8%90%AC%E4%BC%8F%E7%89%B9_cmjeli.png',
+ desc:'在對手身上顯示閃爍後消失', primitive:'flickerOnTarget'},
+{id:21, zh:'駕雷馭電戲衝浪', en:'Stoked Sparksurfer',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/140px-%E9%A7%95%E9%9B%B7%E9%A6%AD%E9%9B%BB%E6%88%B2%E8%A1%9D%E6%B5%AA_Sprite_pnabpu.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610111/%E9%A7%95%E9%9B%B7%E9%A6%AD%E9%9B%BB%E6%88%B2%E8%A1%9D%E6%B5%AA_ciabxa.png',
+ desc:'在對手身上顯示閃爍後消失', primitive:'flickerOnTarget'},
+{id:22, zh:'認真起來大爆擊', en:'Pulverizing Pancake',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603393/220px-%E8%AA%8D%E7%9C%9F%E8%B5%B7%E4%BE%86%E5%A4%A7%E7%88%86%E6%93%8A_Sprite_hnkmsz.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610112/%E8%AA%8D%E7%9C%9F%E8%B5%B7%E4%BE%86%E5%A4%A7%E7%88%86%E6%93%8A_dpwv65.png',
+ desc:'在對手身上顯示閃爍後消失（原文寫「舵手」，判斷為「對手」的筆誤）', primitive:'flickerOnTarget'},
+{id:23, zh:'九彩昇華齊聚頂', en:'Extreme Evoboost',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603381/191px-%E4%B9%9D%E5%BD%A9%E6%98%87%E8%8F%AF%E9%BD%8A%E8%81%9A%E9%A0%82_Sprite_mjjeyu.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610097/%E4%B9%9D%E5%BD%A9%E6%98%87%E8%8F%AF%E9%BD%8A%E8%81%9A%E9%A0%82_kciawp.png',
+ desc:'在放招者頭上出現特效後結束（自身增益，特效不飛向對手）', primitive:'selfHeadFx'},
+{id:24, zh:'起源超新星大爆炸', en:'Genesis Supernova',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603376/140px-%E8%B5%B7%E6%BA%90%E8%B6%85%E6%96%B0%E6%98%9F%E5%A4%A7%E7%88%86%E7%82%B8T_Sprite_b00gqm.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610100/%E8%B5%B7%E6%BA%90%E8%B6%85%E6%96%B0%E6%98%9F%E5%A4%A7%E7%88%86%E7%82%B8_ey6eeb.png',
+ desc:'在對手身上出現以後消失', primitive:'appearThenGone'},
+{id:25, zh:'遮天蔽日暗影箭', en:'Sinister Arrow Raid',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603376/150px-%E9%81%AE%E5%A4%A9%E8%94%BD%E6%97%A5%E6%9A%97%E5%BD%B1%E7%AE%ADT_Sprite_sn9hmg.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610108/%E9%81%AE%E5%A4%A9%E8%94%BD%E6%97%A5%E6%9A%97%E5%BD%B1%E7%AE%AD_nfhpzx.png',
+ desc:'從放招式者射往對手要注意箭頭方向（原文未指定預設方向，改用「即時依施放方向計算」處理，不猜測翻轉）',
+ primitive:'arrowShoot', mirror:true},
+{id:26, zh:'極惡飛躍粉碎擊', en:'Malicious Moonsault',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603380/180px-%E6%A5%B5%E6%83%A1%E9%A3%9B%E8%BA%8D%E7%B2%89%E7%A2%8E%E6%93%8A_Sprite_oof7lq.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610119/%E6%A5%B5%E6%83%A1%E9%A3%9B%E8%BA%8D%E7%B2%89%E7%A2%8E%E6%93%8A_d1erha.png',
+ desc:'在對手身上出現閃爍後消失', primitive:'flickerOnTarget'},
+{id:27, zh:'海神莊嚴交響樂', en:'Oceanic Operetta',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603376/140px-%E6%B5%B7%E7%A5%9E%E8%8E%8A%E5%9A%B4%E4%BA%A4%E9%9F%BF%E6%A8%82_Sprite_inut24.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610101/%E6%B5%B7%E7%A5%9E%E8%8E%8A%E5%9A%B4%E4%BA%A4%E9%9F%BF%E6%A8%82_h2xvlp.png',
+ desc:'從放招方頭上由小變大以後丟出往對手方向擊中結束', primitive:'growFly', params:{fromHead:true}},
+{id:28, zh:'巨人衛士・阿羅拉', en:'Guardian of Alola',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/150px-%E5%B7%A8%E4%BA%BA%E8%A1%9B%E5%A3%AB_%E9%98%BF%E7%BE%85%E6%8B%89_Sprite_y0yuoi.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610098/%E5%B7%A8%E4%BA%BA%E8%A1%9B%E5%A3%AB_%E9%98%BF%E7%BE%85%E6%8B%89_pqdryv.png',
+ desc:'從對手頭上下來巨人拳頭砸到對手身上', primitive:'dropSmash'},
+{id:29, zh:'七星奪魂腿', en:'Soul-Stealing 7-Star Strike',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603384/220px-%E4%B8%83%E6%98%9F%E5%A5%AA%E9%AD%82%E8%85%BF_Sprite_xecldh.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610096/%E4%B8%83%E6%98%9F%E5%A5%AA%E9%AD%82%E8%85%BF_xtunzi.png',
+ desc:'在對手身上顯示兩次後結束', primitive:'appearTwice'},
+{id:30, zh:'熾魂熱舞烈音爆', en:'Clangorous Soulblaze',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/165px-%E7%86%BE%E9%AD%82%E7%86%B1%E8%88%9E%E7%83%88%E9%9F%B3%E7%88%86_Sprite_biapef.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610112/%E7%86%BE%E9%AD%82%E7%86%B1%E8%88%9E%E7%83%88%E9%9F%B3%E7%88%86_vkuuog.png',
+ desc:'在對手身上顯示閃爍後消失', primitive:'flickerOnTarget'},
+{id:31, zh:'狼嘯石牙颶風暴', en:'Splintered Stormshards',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/165px-%E7%8B%BC%E5%98%AF%E7%9F%B3%E7%89%99%E9%A2%B6%E9%A2%A8%E6%9A%B4_Sprite_fqyd1r.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788612379/%E7%8B%BC%E5%98%AF%E7%9F%B3%E7%89%99%E9%A2%B6%E9%A2%A8%E6%9A%B4_pnk9i2.png',
+ desc:'在對方身上出現並且一直做180度水平翻轉4次後結束', primitive:'flipNTimes', params:{times:4}},
+{id:32, zh:"親密無間大亂鬥", en:"Let's Snuggle Forever",
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603381/181px-%E8%A6%AA%E5%AF%86%E7%84%A1%E9%96%93%E5%A4%A7%E4%BA%82%E6%8F%8D_Sprite_xrbx3m.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610114/%E8%A6%AA%E5%AF%86%E7%84%A1%E9%96%93%E5%A4%A7%E4%BA%82%E9%AC%A5_phmtmp.png',
+ desc:'整個畫面變暗多處出現這個圖片的堆疊特效後結束(字樣不可被變暗覆蓋)', primitive:'darkenStackMulti', params:{count:6}},
+{id:33, zh:'日光回旋下蒼穹', en:'Searing Sunrazer Smash',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603380/168px-%E6%97%A5%E5%85%89%E8%BF%B4%E6%97%8B%E4%B8%8B%E8%92%BC%E7%A9%B9_Sprite_vpwsqt.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610101/%E6%97%A5%E5%85%89%E5%9B%9E%E6%97%8B%E4%B8%8B%E8%92%BC%E7%A9%B9_abrj9v.png',
+ desc:'在對手身上出現後圖片只有上下縮小壓扁後消失', primitive:'squishVertical'},
+{id:34, zh:'月華飛濺落靈霄', en:'Menacing Moonrazer Marasmus',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/163px-%E6%9C%88%E8%8F%AF%E9%A3%9B%E6%BF%BA%E8%90%BD%E9%9D%88%E9%9C%84_Sprite_o6jzov.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610099/%E6%9C%88%E8%8F%AF%E9%A3%9B%E6%BF%BA%E8%90%BD%E9%9D%88%E9%9C%84_n9y4tg.png',
+ desc:'在對方頭上快速淡入2秒後消失', primitive:'fadeInAboveTimed', params:{ms:2000}},
+{id:35, zh:'焚天滅世熾光爆', en:'Light That Burns the Sky',
+ nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603388/220px-%E7%84%9A%E5%A4%A9%E6%BB%85%E4%B8%96%E7%86%BE%E5%85%89%E7%88%86_Sprite_jktijb.webp',
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610108/%E7%84%9A%E5%A4%A9%E6%BB%85%E4%B8%96%E7%86%BE%E5%85%89%E7%88%86_tcq6mx.png',
+ desc:'在放招者頭上由小變超大丟往對手後結束', primitive:'growFly', params:{fromHead:true, huge:true}}
+];
+
+/* ============ 狀態 ============ */
+var casterSide = 'player'; // 'player' | 'opponent'
+var currentMoveId = 1;
+var playing = false;
+
+var stage = document.getElementById('stage');
+var spriteMe = document.getElementById('spriteMe');
+var spriteOpp = document.getElementById('spriteOpp');
+var fxLayer = document.getElementById('fxLayer');
+var nameplateLayer = document.getElementById('nameplateLayer');
+var darkenOverlay = document.getElementById('darkenOverlay');
+var screenFlashLayer = document.getElementById('screenFlashLayer');
+var zBadgeMe = document.getElementById('zBadgeMe');
+var zBadgeOpp = document.getElementById('zBadgeOpp');
+var logPanel = document.getElementById('logPanel');
+var playBtn = document.getElementById('playBtn');
+
+var t0 = 0;
+function log(msg, cls){
+  var el = document.createElement('div');
+  var elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  el.textContent = elapsed + 's： ' + msg;
+  if(cls) el.className = cls;
+  logPanel.appendChild(el);
+  logPanel.scrollTop = logPanel.scrollHeight;
+}
+function logPlain(msg, cls){
+  var el = document.createElement('div');
+  el.textContent = msg;
+  if(cls) el.className = cls;
+  logPanel.appendChild(el);
+  logPanel.scrollTop = logPanel.scrollHeight;
+}
+
+function wait(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+
+function stageRect(){ return stage.getBoundingClientRect(); }
+function centerOf(el){
+  var r = el.getBoundingClientRect();
+  var s = stageRect();
+  return { x: r.left - s.left + r.width/2, y: r.top - s.top + r.height/2, w: r.width, h: r.height };
+}
+
+function makeFxImg(src, size){
+  var img = document.createElement('img');
+  img.className = 'fx-img';
+  img.src = src;
+  if(size) { img.style.width = size + 'px'; }
+  else { img.style.width = '110px'; }
+  img.style.opacity = '0';
+  img.onerror = function(){
+    img.style.display = 'none';
+    var note = document.createElement('div');
+    note.className = 'broken-note';
+    note.textContent = '⚠ 圖片載入失敗：' + src.slice(-40);
+    note.style.left = img.style.left;
+    note.style.top = img.style.top;
+    fxLayer.appendChild(note);
+    setTimeout(function(){ note.remove(); }, 4000);
+  };
+  fxLayer.appendChild(img);
+  return img;
+}
+
+function clearFx(){
+  fxLayer.innerHTML = '';
+  darkenOverlay.style.opacity = 0;
+  screenFlashLayer.style.opacity = 0;
+}
+
+/* ============ 20餘個動畫「原型」函式（Web Animations API） ============ */
+
+function dashInto(caster, target, effectUrl){
+  var c = centerOf(caster), tpos = centerOf(target);
+  var dx = (tpos.x - c.x) * 0.5, dy = (tpos.y - c.y) * 0.5;
+  var anim1 = caster.animate([
+    {transform:'translate(0,0) scale(1)'},
+    {transform:'translate('+dx+'px,'+dy+'px) scale(1.08)'},
+    {transform:'translate(0,0) scale(1)'}
+  ], {duration:600, easing:'ease-in-out'});
+  return anim1.finished.then(function(){
+    if(!effectUrl) return;
+    var img = makeFxImg(effectUrl, 100);
+    img.style.left = (tpos.x-50)+'px'; img.style.top=(tpos.y-50)+'px';
+    var a = img.animate([
+      {opacity:0, transform:'scale(0.6)'},
+      {opacity:1, transform:'scale(1.15)'},
+      {opacity:1, transform:'scale(1)'},
+      {opacity:0, transform:'scale(1)'}
+    ], {duration:600, easing:'ease-out'});
+    return a.finished.then(function(){ img.remove(); });
+  });
+}
+function dashIntoNoEffect(caster, target){
+  return dashInto(caster, target, null);
+}
+
+function growFly(caster, target, effectUrl, params){
+  params = params || {};
+  var c = centerOf(caster), tpos = centerOf(target);
+  var startX = params.fromHead ? c.x : c.x;
+  var startY = params.fromHead ? c.y - c.h*0.35 : c.y;
+  var maxSize = params.huge ? 170 : 110;
+  var img = makeFxImg(effectUrl, 24);
+  img.style.left = (startX-12)+'px'; img.style.top=(startY-12)+'px';
+  var dx = tpos.x - startX, dy = tpos.y - startY;
+  var a = img.animate([
+    {opacity:0, transform:'translate(0,0) scale(0.3)', width:'24px'},
+    {opacity:1, transform:'translate(0,0) scale(1)', width:'24px', offset:0.3},
+    {opacity:1, transform:'translate('+dx+'px,'+dy+'px) scale(1)', width:maxSize+'px', offset:0.9},
+    {opacity:0, transform:'translate('+dx+'px,'+dy+'px) scale(1.1)', width:maxSize+'px'}
+  ], {duration: params.huge?1400:1000, easing:'ease-in'});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function screenFlash(effectUrl){
+  var a = screenFlashLayer.animate([
+    {opacity:0}, {opacity:0.9, offset:0.15}, {opacity:0.2, offset:0.3},
+    {opacity:0.85, offset:0.45}, {opacity:0}
+  ], {duration:900, easing:'ease-in-out'});
+  var img = null;
+  if(effectUrl){
+    img = makeFxImg(effectUrl, 220);
+    var s = stageRect();
+    img.style.left = (s.width/2 - 110)+'px'; img.style.top=(s.height/2 - 110)+'px';
+    img.animate([{opacity:0},{opacity:0.9,offset:0.3},{opacity:0}], {duration:900});
+  }
+  return a.finished.then(function(){ if(img) img.remove(); });
+}
+
+function appearOnTarget(target, effectUrl){
+  var t = centerOf(target);
+  var img = makeFxImg(effectUrl, 110);
+  img.style.left=(t.x-55)+'px'; img.style.top=(t.y-55)+'px';
+  var a = img.animate([
+    {opacity:0, transform:'scale(0.8)'},
+    {opacity:1, transform:'scale(1)', offset:0.3},
+    {opacity:1, transform:'scale(1)', offset:0.75},
+    {opacity:0, transform:'scale(1)'}
+  ], {duration:1000});
+  return a.finished.then(function(){ img.remove(); });
+}
+function appearThenGone(target, effectUrl){ return appearOnTarget(target, effectUrl); }
+
+function rotateSlideIn(caster, target, effectUrl, params, mirrored){
+  var c = centerOf(caster), t = centerOf(target);
+  var img = makeFxImg(effectUrl, 100);
+  img.style.left=(c.x-50)+'px'; img.style.top=(c.y-50)+'px';
+  var flip = mirrored ? -1 : 1;
+  var dx = t.x - c.x, dy = t.y - c.y;
+  var a = img.animate([
+    {opacity:0, transform:'translate(0,0) rotate(0deg) scaleX('+flip+')'},
+    {opacity:1, transform:'translate('+(dx*0.5)+'px,'+(dy*0.5)+'px) rotate(-45deg) scaleX('+flip+')', offset:0.4},
+    {opacity:1, transform:'translate('+dx+'px,'+dy+'px) rotate(-90deg) scaleX('+flip+')', offset:0.8},
+    {opacity:0, transform:'translate('+dx+'px,'+dy+'px) rotate(-90deg) scaleX('+flip+')'}
+  ], {duration:800, easing:'ease-in'});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function punchStack(target, effectUrl){
+  var t = centerOf(target);
+  var n = 5;
+  var p = Promise.resolve();
+  for(var i=0;i<n;i++){
+    (function(idx){
+      p = p.then(function(){
+        var img = makeFxImg(effectUrl, 90);
+        var ox = (Math.random()-0.5)*30, oy=(Math.random()-0.5)*30;
+        img.style.left=(t.x-45+ox)+'px'; img.style.top=(t.y-45+oy)+'px';
+        var a = img.animate([
+          {opacity:0, transform:'scale(0.5) rotate(0deg)'},
+          {opacity:1, transform:'scale(1.2) rotate('+(idx%2?8:-8)+'deg)', offset:0.4},
+          {opacity:0, transform:'scale(0.9) rotate(0deg)'}
+        ], {duration:180});
+        return a.finished.then(function(){ img.remove(); });
+      });
+    })(i);
+  }
+  return p;
+}
+
+function fadeInAboveDown(target, effectUrl){
+  var t = centerOf(target);
+  var img = makeFxImg(effectUrl, 100);
+  img.style.left=(t.x-50)+'px'; img.style.top=(t.y - t.h - 40)+'px';
+  var dy = t.h + 20;
+  var a = img.animate([
+    {opacity:0, transform:'translateY(0)'},
+    {opacity:1, transform:'translateY(0)', offset:0.25},
+    {opacity:1, transform:'translateY('+dy+'px)', offset:0.85},
+    {opacity:0, transform:'translateY('+dy+'px)'}
+  ], {duration:900, easing:'ease-in'});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function screenShakeCracks(effectUrl){
+  var shakeAnim = stage.animate([
+    {transform:'translate(0,0)'},{transform:'translate(-6px,4px)'},{transform:'translate(6px,-4px)'},
+    {transform:'translate(-5px,-3px)'},{transform:'translate(5px,3px)'},{transform:'translate(0,0)'}
+  ], {duration:900, iterations:1});
+  var s = stageRect();
+  var p = Promise.resolve();
+  var positions = [{x:0.3,y:0.4},{x:0.6,y:0.3},{x:0.5,y:0.6},{x:0.7,y:0.55}];
+  positions.forEach(function(pos, i){
+    p = p.then(function(){
+      var img = makeFxImg(effectUrl, 90);
+      img.style.left=(s.width*pos.x-45)+'px'; img.style.top=(s.height*pos.y-45)+'px';
+      var a = img.animate([
+        {opacity:0, transform:'scale(0.7)'},
+        {opacity:0.95, transform:'scale(1)', offset:0.5},
+        {opacity:0, transform:'scale(1)'}
+      ], {duration:220});
+      return a.finished.then(function(){ img.remove(); });
+    });
+  });
+  return Promise.all([shakeAnim.finished, p]);
+}
+
+function screenSweep(caster, target, effectUrl, mirrored){
+  var s = stageRect();
+  var img = makeFxImg(effectUrl, s.width*0.9);
+  img.style.height = '70%';
+  img.style.top = '15%';
+  var fromLeft = (caster === spriteMe);
+  img.style.left = fromLeft ? (-s.width) + 'px' : s.width + 'px';
+  if(mirrored){ img.style.transform = 'scaleX(-1)'; }
+  var toX = fromLeft ? (s.width*0.05) : (-s.width*0.05 - (s.width*0.9 - s.width));
+  var a = img.animate([
+    {opacity:0.9, left: img.style.left},
+    {opacity:1, left: (fromLeft? '2%':'8%')},
+    {opacity:0, left: (fromLeft? '2%':'8%')}
+  ], {duration:700, easing:'ease-in'});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function flickerOnTarget(target, effectUrl){
+  var t = centerOf(target);
+  var img = makeFxImg(effectUrl, 110);
+  img.style.left=(t.x-55)+'px'; img.style.top=(t.y-55)+'px';
+  var a = img.animate([
+    {opacity:0},{opacity:1,offset:0.15},{opacity:0.2,offset:0.3},
+    {opacity:1,offset:0.45},{opacity:0.2,offset:0.6},{opacity:1,offset:0.75},{opacity:0}
+  ], {duration:1000});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function stackFly(caster, target, effectUrl){
+  var c = centerOf(caster), t = centerOf(target);
+  var n = 3;
+  var proms = [];
+  for(var i=0;i<n;i++){
+    (function(i){
+      var img = makeFxImg(effectUrl, 90);
+      img.style.left=(c.x-45+i*8)+'px'; img.style.top=(c.y-45-i*8)+'px';
+      var dx = t.x-c.x, dy = t.y-c.y;
+      var a = img.animate([
+        {opacity:0, transform:'translate(0,0) scale(0.7)'},
+        {opacity:0.9, transform:'translate(0,0) scale(1)', offset:0.2},
+        {opacity:0.9, transform:'translate('+dx+'px,'+dy+'px) scale(1)', offset:0.85},
+        {opacity:0, transform:'translate('+dx+'px,'+dy+'px) scale(1)'}
+      ], {duration:700, delay:i*80});
+      proms.push(a.finished.then(function(){ img.remove(); }));
+    })(i);
+  }
+  return Promise.all(proms);
+}
+
+function fallTwice(target, effectUrl){
+  function once(){
+    var t = centerOf(target);
+    var img = makeFxImg(effectUrl, 100);
+    img.style.left=(t.x-50)+'px'; img.style.top=(t.y-t.h-60)+'px';
+    var a = img.animate([
+      {opacity:0, transform:'translateY(0)'},
+      {opacity:1, transform:'translateY(0)', offset:0.15},
+      {opacity:1, transform:'translateY('+(t.h+60)+'px)', offset:0.75},
+      {opacity:0, transform:'translateY('+(t.h+60)+'px)'}
+    ], {duration:600});
+    return a.finished.then(function(){ img.remove(); });
+  }
+  return once().then(function(){ return wait(120); }).then(once);
+}
+
+function shrinkOnTarget(target, effectUrl){
+  var t = centerOf(target);
+  var img = makeFxImg(effectUrl, 120);
+  img.style.left=(t.x-60)+'px'; img.style.top=(t.y-60)+'px';
+  var a = img.animate([
+    {opacity:0, transform:'scale(1.2)'},
+    {opacity:1, transform:'scale(1)', offset:0.3},
+    {opacity:1, transform:'scale(1)', offset:0.6},
+    {opacity:0, transform:'scale(0.1)'}
+  ], {duration:1000, easing:'ease-in'});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function flipDash(caster, target, effectUrl, params){
+  var flipped = params && params._flipped;
+  var shake = stage.animate([
+    {transform:'translate(0,0)'},{transform:'translate(-4px,3px)'},{transform:'translate(4px,-3px)'},{transform:'translate(0,0)'}
+  ], {duration:600});
+  var c = centerOf(caster), t = centerOf(target);
+  var img = makeFxImg(effectUrl, 110);
+  img.style.left=(c.x-55)+'px'; img.style.top=(c.y-55)+'px';
+  var dx = t.x-c.x, dy = t.y-c.y;
+  var flipScale = flipped ? -1 : 1;
+  var a = img.animate([
+    {opacity:0, transform:'translate(0,0) scaleX('+flipScale+')'},
+    {opacity:1, transform:'translate(0,0) scaleX('+flipScale+')', offset:0.15},
+    {opacity:1, transform:'translate('+dx+'px,'+dy+'px) scaleX('+flipScale+')', offset:0.85},
+    {opacity:0, transform:'translate('+dx+'px,'+dy+'px) scaleX('+flipScale+')'}
+  ], {duration:700, easing:'ease-in'});
+  return Promise.all([shake.finished, a.finished]).then(function(){ img.remove(); });
+}
+
+function appearFlashOnce(target, effectUrl){
+  var t = centerOf(target);
+  var img = makeFxImg(effectUrl, 110);
+  img.style.left=(t.x-55)+'px'; img.style.top=(t.y-55)+'px';
+  var a = img.animate([
+    {opacity:0, transform:'scale(0.8)'},
+    {opacity:1, transform:'scale(1.15)', offset:0.35},
+    {opacity:1, transform:'scale(1)', offset:0.6},
+    {opacity:0, transform:'scale(1)'}
+  ], {duration:800});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function starBurst(caster, target, effectUrl){
+  var c = centerOf(caster), t = centerOf(target);
+  var n = 6;
+  var proms = [];
+  for(var i=0;i<n;i++){
+    (function(i){
+      var img = makeFxImg(effectUrl, 34);
+      var jitterX = (Math.random()-0.5)*40, jitterY=(Math.random()-0.5)*40;
+      img.style.left=(c.x-17+jitterX)+'px'; img.style.top=(c.y-17+jitterY)+'px';
+      var dx = t.x-c.x+ (Math.random()-0.5)*30, dy = t.y-c.y+(Math.random()-0.5)*30;
+      var a = img.animate([
+        {opacity:0, transform:'translate(0,0) rotate(0deg) scale(0.6)'},
+        {opacity:1, transform:'translate(0,0) rotate(60deg) scale(1)', offset:0.15},
+        {opacity:1, transform:'translate('+dx+'px,'+dy+'px) rotate(300deg) scale(1)', offset:0.85},
+        {opacity:0, transform:'translate('+dx+'px,'+dy+'px) rotate(360deg) scale(0.8)'}
+      ], {duration:650, delay:i*60});
+      proms.push(a.finished.then(function(){ img.remove(); }));
+    })(i);
+  }
+  return Promise.all(proms);
+}
+
+function selfHeadFx(caster, effectUrl){
+  var c = centerOf(caster);
+  var img = makeFxImg(effectUrl, 90);
+  img.style.left=(c.x-45)+'px'; img.style.top=(c.y-c.h*0.55-45)+'px';
+  var a = img.animate([
+    {opacity:0, transform:'scale(0.6) translateY(0)'},
+    {opacity:1, transform:'scale(1) translateY(-6px)', offset:0.4},
+    {opacity:1, transform:'scale(1) translateY(0)', offset:0.75},
+    {opacity:0, transform:'scale(1) translateY(0)'}
+  ], {duration:1000});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function arrowShoot(caster, target, effectUrl){
+  var c = centerOf(caster), t = centerOf(target);
+  var img = makeFxImg(effectUrl, 90);
+  img.style.left=(c.x-45)+'px'; img.style.top=(c.y-45)+'px';
+  var angle = Math.atan2(t.y-c.y, t.x-c.x) * 180/Math.PI;
+  img.style.transformOrigin = 'center';
+  var dx = t.x-c.x, dy=t.y-c.y;
+  var a = img.animate([
+    {opacity:0, transform:'translate(0,0) rotate('+angle+'deg) scale(0.7)'},
+    {opacity:1, transform:'translate(0,0) rotate('+angle+'deg) scale(1)', offset:0.15},
+    {opacity:1, transform:'translate('+dx+'px,'+dy+'px) rotate('+angle+'deg) scale(1)', offset:0.85},
+    {opacity:0, transform:'translate('+dx+'px,'+dy+'px) rotate('+angle+'deg) scale(1)'}
+  ], {duration:650, easing:'ease-in'});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function dropSmash(target, effectUrl){
+  var t = centerOf(target);
+  var img = makeFxImg(effectUrl, 120);
+  img.style.left=(t.x-60)+'px'; img.style.top=(-140)+'px';
+  var dy = t.y + 140 - 60;
+  var a = img.animate([
+    {opacity:0, transform:'translateY(0) scale(0.8)'},
+    {opacity:1, transform:'translateY(0) scale(0.9)', offset:0.2},
+    {opacity:1, transform:'translateY('+dy+'px) scale(1.1)', offset:0.8},
+    {opacity:0, transform:'translateY('+dy+'px) scale(1)'}
+  ], {duration:650, easing:'ease-in'});
+  var shakeP = a.finished.then(function(){
+    return stage.animate([{transform:'translate(0,0)'},{transform:'translate(-5px,4px)'},{transform:'translate(5px,-4px)'},{transform:'translate(0,0)'}], {duration:250}).finished;
+  });
+  return a.finished.then(function(){ img.remove(); }).then(function(){ return shakeP; });
+}
+
+function appearTwice(target, effectUrl){
+  function once(){
+    var t = centerOf(target);
+    var img = makeFxImg(effectUrl, 110);
+    img.style.left=(t.x-55)+'px'; img.style.top=(t.y-55)+'px';
+    var a = img.animate([
+      {opacity:0, transform:'scale(0.85)'},
+      {opacity:1, transform:'scale(1)', offset:0.3},
+      {opacity:1, transform:'scale(1)', offset:0.7},
+      {opacity:0, transform:'scale(1)'}
+    ], {duration:500});
+    return a.finished.then(function(){ img.remove(); });
+  }
+  return once().then(function(){ return wait(120); }).then(once);
+}
+
+function flipNTimes(target, effectUrl, params){
+  var times = (params && params.times) || 4;
+  var t = centerOf(target);
+  var img = makeFxImg(effectUrl, 110);
+  img.style.left=(t.x-55)+'px'; img.style.top=(t.y-55)+'px';
+  var kf = [{opacity:0, transform:'scaleX(1)'}];
+  var steps = times*2;
+  for(var i=1;i<=steps;i++){
+    kf.push({opacity:1, transform:'scaleX('+(i%2?-1:1)+')', offset: i/(steps+1)});
+  }
+  kf.push({opacity:0, transform:'scaleX(1)'});
+  var a = img.animate(kf, {duration: 220*times});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function darkenStackMulti(effectUrl, params){
+  var count = (params && params.count) || 6;
+  var s = stageRect();
+  darkenOverlay.animate([{opacity:0},{opacity:0.55}], {duration:300, fill:'forwards'});
+  var proms = [];
+  for(var i=0;i<count;i++){
+    (function(i){
+      var img = makeFxImg(effectUrl, 70);
+      var x = 0.15 + (i% 3) * 0.3 + Math.random()*0.05;
+      var y = 0.2 + Math.floor(i/3) * 0.35 + Math.random()*0.05;
+      img.style.left=(s.width*x-35)+'px'; img.style.top=(s.height*y-35)+'px';
+      img.style.zIndex = 31;
+      var a = img.animate([
+        {opacity:0, transform:'scale(0.6)'},
+        {opacity:1, transform:'scale(1)', offset:0.3},
+        {opacity:1, transform:'scale(1)', offset:0.7},
+        {opacity:0, transform:'scale(1)'}
+      ], {duration:900, delay:i*80});
+      proms.push(a.finished.then(function(){ img.remove(); }));
+    })(i);
+  }
+  return Promise.all(proms).then(function(){
+    return darkenOverlay.animate([{opacity:0.55},{opacity:0}], {duration:300, fill:'forwards'}).finished;
+  });
+}
+
+function squishVertical(target, effectUrl){
+  var t = centerOf(target);
+  var img = makeFxImg(effectUrl, 110);
+  img.style.left=(t.x-55)+'px'; img.style.top=(t.y-55)+'px';
+  img.style.transformOrigin = 'center bottom';
+  var a = img.animate([
+    {opacity:0, transform:'scaleY(1)'},
+    {opacity:1, transform:'scaleY(1)', offset:0.35},
+    {opacity:1, transform:'scaleY(1)', offset:0.55},
+    {opacity:1, transform:'scaleY(0.15)', offset:0.85},
+    {opacity:0, transform:'scaleY(0.1)'}
+  ], {duration:900});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+function fadeInAboveTimed(target, effectUrl, params){
+  var ms = (params && params.ms) || 2000;
+  var t = centerOf(target);
+  var img = makeFxImg(effectUrl, 100);
+  img.style.left=(t.x-50)+'px'; img.style.top=(t.y-t.h-40)+'px';
+  var a = img.animate([
+    {opacity:0},{opacity:1, offset:0.15},{opacity:1, offset: Math.min(0.95, 1 - 150/ (ms+300))},{opacity:0}
+  ], {duration: ms+300});
+  return a.finished.then(function(){ img.remove(); });
+}
+
+var PRIMITIVES = {
+  dashInto: dashInto,
+  dashIntoNoEffect: dashIntoNoEffect,
+  growFly: growFly,
+  screenFlash: screenFlash,
+  appearOnTarget: appearOnTarget,
+  appearThenGone: appearThenGone,
+  rotateSlideIn: rotateSlideIn,
+  punchStack: punchStack,
+  fadeInAboveDown: fadeInAboveDown,
+  screenShakeCracks: screenShakeCracks,
+  screenSweep: screenSweep,
+  flickerOnTarget: flickerOnTarget,
+  stackFly: stackFly,
+  fallTwice: fallTwice,
+  shrinkOnTarget: shrinkOnTarget,
+  flipDash: flipDash,
+  appearFlashOnce: appearFlashOnce,
+  starBurst: starBurst,
+  selfHeadFx: selfHeadFx,
+  arrowShoot: arrowShoot,
+  dropSmash: dropSmash,
+  appearTwice: appearTwice,
+  flipNTimes: flipNTimes,
+  darkenStackMulti: darkenStackMulti,
+  squishVertical: squishVertical,
+  fadeInAboveTimed: fadeInAboveTimed
+};
+
+/* ============ 執行單一特效（依 primitive 名稱分派引數） ============ */
+function runEffect(move, caster, target){
+  var fn = PRIMITIVES[move.primitive];
+  if(!fn) return Promise.resolve();
+  switch(move.primitive){
+    case 'dashInto':
+      return fn(caster, target, move.effect);
+    case 'dashIntoNoEffect':
+      return fn(caster, target);
+    case 'growFly':
+      return fn(caster, target, move.effect, move.params);
+    case 'screenFlash':
+      return fn(move.effect);
+    case 'appearOnTarget':
+    case 'appearThenGone':
+      return fn(target, move.effect);
+    case 'rotateSlideIn': {
+      var mirrored6 = !!(move.params && move.params.flipWhenOpponentCasts && casterSide === 'opponent');
+      return fn(caster, target, move.effect, move.params, mirrored6);
+    }
+    case 'punchStack':
+      return fn(target, move.effect);
+    case 'fadeInAboveDown':
+      return fn(target, move.effect);
+    case 'screenShakeCracks':
+      return fn(move.effect);
+    case 'screenSweep': {
+      var mirrored10 = !!(move.params && move.params.flipWhenOpponentCasts && casterSide === 'opponent');
+      return fn(caster, target, move.effect, mirrored10);
+    }
+    case 'flickerOnTarget':
+      return fn(target, move.effect);
+    case 'stackFly':
+      return fn(caster, target, move.effect);
+    case 'fallTwice':
+      return fn(target, move.effect);
+    case 'shrinkOnTarget':
+      return fn(target, move.effect);
+    case 'flipDash': {
+      var p = Object.assign({}, move.params);
+      p._flipped = !!(p.flipWhenPlayerCasts && casterSide === 'player');
+      return fn(caster, target, move.effect, p);
+    }
+    case 'appearFlashOnce':
+      return fn(target, move.effect);
+    case 'starBurst':
+      return fn(caster, target, move.effect);
+    case 'selfHeadFx':
+      return fn(caster, move.effect);
+    case 'arrowShoot':
+      return fn(caster, target, move.effect);
+    case 'dropSmash':
+      return fn(target, move.effect);
+    case 'appearTwice':
+      return fn(target, move.effect);
+    case 'flipNTimes':
+      return fn(target, move.effect, move.params);
+    case 'darkenStackMulti':
+      return fn(move.effect, move.params);
+    case 'squishVertical':
+      return fn(target, move.effect);
+    case 'fadeInAboveTimed':
+      return fn(target, move.effect, move.params);
+    default:
+      return Promise.resolve();
+  }
+}
+
+/* ============ 5步驟時序主控 playZMove ============ */
+function playZMove(moveId, side){
+  var move = MOVES.filter(function(m){ return m.id === moveId; })[0];
+  if(!move) return Promise.resolve();
+
+  var caster = side === 'player' ? spriteMe : spriteOpp;
+  var target = side === 'player' ? spriteOpp : spriteMe;
+  var zBadge = side === 'player' ? zBadgeMe : zBadgeOpp;
+  var casterLabel = side === 'player' ? '我方' : '對方';
+
+  t0 = performance.now();
+  logPlain('──────────────────────────');
+  logPlain('▶ 開始播放：' + move.zh + '（' + move.en + '）　施放方：' + casterLabel, 'step');
+
+  // t=0：Z字覆蓋施放者
+  var cRect = centerOf(caster);
+  zBadge.style.left = (cRect.x - 23) + 'px';
+  zBadge.style.top = (cRect.y - 23) + 'px';
+  zBadge.style.opacity = 0;
+  var zAnim = zBadge.animate([
+    {opacity:0, transform:'scale(0.5)'},
+    {opacity:1, transform:'scale(1.1)', offset:0.5},
+    {opacity:1, transform:'scale(1)'}
+  ], {duration:400, fill:'forwards'});
+  log('Z字覆蓋圖出現在' + casterLabel + '身上');
+
+  return wait(1000).then(function(){
+    // t=1000ms：字樣圖片出現，顯示2秒
+    log('字樣圖片出現：「' + move.zh + '」（顯示2秒，優先度最高會蓋住任何特效）');
+    nameplateLayer.innerHTML = '';
+    var np = document.createElement('img');
+    np.src = move.nameplate;
+    np.onerror = function(){
+      logPlain('⚠ 字樣圖片載入失敗，請確認網址：' + move.nameplate, 'warn');
+    };
+    nameplateLayer.appendChild(np);
+    var npAnim = np.animate([
+      {opacity:0, transform:'scale(0.85)'},
+      {opacity:1, transform:'scale(1)', offset:0.15},
+      {opacity:1, transform:'scale(1)', offset:0.85},
+      {opacity:0, transform:'scale(0.95)'}
+    ], {duration:2000, fill:'forwards'});
+    var nameplateDone = npAnim.finished.then(function(){ np.remove(); });
+
+    var effectDone = wait(1000).then(function(){
+      log('開始播放招式攻擊特效動畫');
+      return runEffect(move, caster, target);
+    });
+
+    return Promise.all([nameplateDone, effectDone]);
+  }).then(function(){
+    zBadge.style.opacity = 0;
+    log('所有動畫播放完畢，可以判定傷害了 ✅', 'step');
+  });
+}
+
+/* ============ UI 綁定 ============ */
+function setCaster(side){
+  casterSide = side;
+  document.getElementById('btnCasterMe').classList.toggle('active', side==='player');
+  document.getElementById('btnCasterOpp').classList.toggle('active', side==='opponent');
+}
+
+function buildUI(){
+  var select = document.getElementById('moveSelect');
+  var grid = document.getElementById('moveGrid');
+  MOVES.forEach(function(m){
+    var opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.id + '. ' + m.zh + '（' + m.en + '）' + (m.approx? ' ⚠近似' : '') + (m.mirror? ' 🔁鏡像' : '');
+    select.appendChild(opt);
+
+    var thumb = document.createElement('div');
+    thumb.className = 'move-thumb';
+    thumb.title = m.zh;
+    thumb.dataset.id = m.id;
+    var img = document.createElement('img');
+    img.src = m.nameplate;
+    img.onerror = function(){ thumb.textContent = m.id; thumb.style.fontSize='11px'; };
+    thumb.appendChild(img);
+    thumb.onclick = function(){ selectMove(m.id); };
+    grid.appendChild(thumb);
+  });
+  selectMove(1);
+}
+
+function selectMove(id){
+  id = parseInt(id, 10);
+  currentMoveId = id;
+  document.getElementById('moveSelect').value = id;
+  var grid = document.getElementById('moveGrid');
+  Array.prototype.forEach.call(grid.children, function(el){
+    el.classList.toggle('active', parseInt(el.dataset.id,10) === id);
+  });
+  var m = MOVES.filter(function(x){ return x.id === id; })[0];
+  var info = document.getElementById('moveInfo');
+  var flags = '';
+  if(m.approx) flags += '<span class="flag flag-approx">近似效果，非精確切圖</span>';
+  if(m.mirror) flags += '<span class="flag flag-mirror">方向/鏡像需確認</span>';
+  info.innerHTML =
+    '<b>' + m.zh + '</b>（' + m.en + '）' + flags + '\n\n' +
+    '原始需求描述：\n' + m.desc + (m.effect ? '' : '\n\n（此招式無特效圖片，只有字樣圖片）');
+}
+
+function playCurrent(){
+  if(playing) return;
+  playing = true;
+  playBtn.disabled = true;
+  clearFx();
+  playZMove(currentMoveId, casterSide).then(function(){
+    playing = false;
+    playBtn.disabled = false;
+  }).catch(function(err){
+    logPlain('⚠ 播放時發生例外：' + err, 'warn');
+    playing = false;
+    playBtn.disabled = false;
+  });
+}
+
+function resetStage(){
+  clearFx();
+  nameplateLayer.innerHTML = '';
+  zBadgeMe.style.opacity = 0;
+  zBadgeOpp.style.opacity = 0;
+  logPanel.innerHTML = '';
+  playing = false;
+  playBtn.disabled = false;
+  logPlain('（畫面已重置）');
+}
+
+buildUI();
+setCaster('player');
+logPlain('提示：選好招式與施放方後按「播放」。可重複切換「我方／對方使用」比較兩邊動畫方向是否正確。');
+
+})();
+</script>
+</body>
+</html>
