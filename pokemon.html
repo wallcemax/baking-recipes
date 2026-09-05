@@ -3207,7 +3207,24 @@ function renderIdleBonusPreview(placedTypeSet) {
 // 額外查道具/莓果的中文名稱(fetchGenericItemNameZh/fetchBerryNameZh都可能要打PokéAPI)，
 // 不應該卡住牧場卡片本身的render
 let idlePendingDropsRenderToken = 0;
+let idlePendingDropsLastFetchMs = 0; // 見下面的節流說明
+// 【第二十六輪緊急修正】renderIdleTab原本掛在全域的setInterval(renderIdleTab, 30000)上，
+// 這個計時器完全不管玩家目前在看哪個分頁、頁面有沒有在背景——玩家只要開著遊戲網頁，不管
+// 有沒有在看牧場，都會每30秒觸發一次renderIdleTab，連帶每30秒對worker打一次
+// pokemon_idle_peek_drops(讀+可能寫Firestore)。這在使用者實測時造成「429 Quota
+// exceeded」，連累猜猜看等完全無關的功能一起收到500——因為所有動作共用同一個Firestore
+// 專案的配額，這支新增的動作把配額榨乾了。這裡補兩道防線：①只有牧場分頁真的是目前顯示中
+// 的分頁時才打這支API，離開牧場分頁之後就完全不會再呼叫；②即使一直開著牧場分頁，也用
+// 時間戳把實際呼叫worker的頻率節流到最多每55秒一次(比renderIdleTab本身30秒的重繪頻率
+// 更低)，避免玩家把牧場分頁開著不動時還是持續消耗配額。伺服器端(worker.js的
+// rollDueIdleDrops/handlePokemonIdlePeekDrops)也同步修正成「沒有真的骰到新東西就不寫入
+// Firestore」，兩邊一起把這個功能實際的Firestore用量降到最低
 async function renderIdlePendingDrops() {
+    const idleTabEl = document.getElementById('tab-idle');
+    if (!idleTabEl || idleTabEl.classList.contains('hidden')) return; // 不是目前顯示中的分頁，完全不打worker
+    const nowMs = Date.now();
+    if (nowMs - idlePendingDropsLastFetchMs < 55000) return; // 節流：55秒內已經打過就跳過這次
+    idlePendingDropsLastFetchMs = nowMs;
     const myToken = ++idlePendingDropsRenderToken;
     const wrap = document.getElementById('idle-pending-drops-wrap');
     const box = document.getElementById('idle-pending-drops-list');
