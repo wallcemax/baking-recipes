@@ -304,8 +304,8 @@ var MOVES = [
 {id:6, zh:'激狂大地萬里冰', en:'Subzero Slammer',
  nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603392/220px-%E6%BF%80%E7%8B%82%E5%A4%A7%E5%9C%B0%E8%90%AC%E9%87%8C%E5%86%B0_Sprite_ioyxxs.webp',
  effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610119/%E6%BF%80%E7%8B%82%E5%A4%A7%E5%9C%B0%E8%90%AC%E9%87%8C%E5%86%B0_kk32du.png',
- desc:'圖片逆時針轉90度快速從放招方顯示到對手方快速淡入後結束、若是敵方放則要特效反向施放效果（修改建議：圖案改成從出招方淡入延伸到對方）',
- primitive:'rotateSlideIn', mirror:true, params:{flipWhenOpponentCasts:true},
+ desc:'圖片逆時針轉90度快速從放招方顯示到對手方快速淡入後結束、若是敵方放則要特效反向施放效果（修改建議：圖案改成從出招方淡入延伸到對方；這輪再改：圖片維持原本角度不移動，改成全螢幕從出招者那一側淡入、一路蔓延到對手那一側覆蓋整個畫面，蔓延完再整個一起消失，像結冰一路擴散過去的感覺）',
+ primitive:'wipeAcrossScreen', mirror:true, params:{flipWhenOpponentCasts:true},
  sound:'ice', soundWhen:'start'},
 {id:7, zh:'全力無雙激烈拳', en:'All-Out Pummeling',
  nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603383/220px-%E5%85%A8%E5%8A%9B%E7%84%A1%E9%9B%99%E6%BF%80%E7%83%88%E6%8B%B3_Sprite_pa9l9r.webp',
@@ -742,22 +742,31 @@ function appearOnTarget(target, effectUrl){
 }
 function appearThenGone(target, effectUrl){ return appearOnTarget(target, effectUrl); }
 
-function rotateSlideIn(caster, target, effectUrl, params, mirrored){
-  // 修改建議：圖案改成「從出招方淡入延伸到對方」——原本是先轉90度、快速位移、最後才淡入，
-  // 改成一開始就慢慢淡入、同步從施放方位置逐漸放大延伸到對手位置，看起來比較像「延伸過去」
-  // 而不是「瞬間移動後閃一下」。逆時針轉90度的基準方向、跟敵方施放時的水平鏡像都維持不變。
-  var c = centerOf(caster), t = centerOf(target);
-  var size = 130;
-  var img = makeFxImg(effectUrl, size);
-  img.style.left = (c.x - size/2)+'px'; img.style.top=(c.y - size/2)+'px';
+function wipeAcrossScreen(caster, target, effectUrl, mirrored){
+  // 修改建議(激狂大地萬里冰，取代原本會位移的rotateSlideIn)：使用者要求「圖片不要移動」——
+  // 圖片本身固定鋪滿全螢幕、角度維持原本設計(逆時針轉90度、對手施放時水平鏡像)完全不變，
+  // 不再用translate位移動畫，改用clip-path控制「目前顯示到哪裡」：可視範圍固定從施放者
+  // 那一側開始，隨時間逐漸往對手那一側展開、覆蓋整個畫面，看起來就像結冰從施放者那一端
+  // 一路蔓延到對手那一端；蔓延完全覆蓋畫面之後，不是往回收(不是wipe out)，而是整張圖
+  // 一起淡出消失，符合「到對手後才整個消失」的說法。
+  var s = stageRect();
+  var w = Math.max(s.width, s.height) * 1.2;
+  var img = makeFxImg(effectUrl, w);
+  img.style.height = w + 'px';
+  img.style.left = (s.width/2 - w/2) + 'px';
+  img.style.top = (s.height/2 - w/2) + 'px';
   var flip = mirrored ? -1 : 1;
-  var dx = t.x - c.x, dy = t.y - c.y;
+  img.style.transform = 'rotate(-90deg) scaleX(' + flip + ')';
+  var fromLeft = (caster === spriteMe);
+  var startClip = fromLeft ? 'inset(0 100% 0 0)' : 'inset(0 0 0 100%)'; // 固定從施放者那一側開始展開
+  var fullClip = 'inset(0 0 0 0)';
+  img.style.clipPath = startClip;
   var a = img.animate([
-    {opacity:0, transform:'translate(0,0) rotate(-90deg) scale(0.35) scaleX('+flip+')'},
-    {opacity:1, transform:'translate('+(dx*0.5)+'px,'+(dy*0.5)+'px) rotate(-90deg) scale(0.7) scaleX('+flip+')', offset:0.5},
-    {opacity:1, transform:'translate('+dx+'px,'+dy+'px) rotate(-90deg) scale(1) scaleX('+flip+')', offset:0.9},
-    {opacity:0, transform:'translate('+dx+'px,'+dy+'px) rotate(-90deg) scale(1) scaleX('+flip+')'}
-  ], {duration:900, easing:'ease-out'});
+    {opacity:1, clipPath: startClip, offset:0},
+    {opacity:1, clipPath: fullClip, offset:0.7},
+    {opacity:1, clipPath: fullClip, offset:0.85},
+    {opacity:0, clipPath: fullClip, offset:1}
+  ], {duration:1100, easing:'ease-in'});
   return a.finished.then(function(){ img.remove(); });
 }
 
@@ -966,19 +975,6 @@ function starBurst(caster, target, effectUrl, size){
   return Promise.all(proms);
 }
 
-function selfHeadFx(caster, effectUrl){
-  var c = centerOf(caster);
-  var img = makeFxImg(effectUrl, 90);
-  img.style.left=(c.x-45)+'px'; img.style.top=(c.y-c.h*0.55-45)+'px';
-  var a = img.animate([
-    {opacity:0, transform:'scale(0.6) translateY(0)'},
-    {opacity:1, transform:'scale(1) translateY(-6px)', offset:0.4},
-    {opacity:1, transform:'scale(1) translateY(0)', offset:0.75},
-    {opacity:0, transform:'scale(1) translateY(0)'}
-  ], {duration:1000});
-  return a.finished.then(function(){ img.remove(); });
-}
-
 function nineBeamsAscend(caster, effectUrl){
   // 第三次修改建議(九彩昇華齊聚頂)：使用者這次明確要求「圖片不要用移動的」——不是位移動畫，
   // 而是9張圖片各自固定不動：每張圖的頂端(旋轉軸心)都疊在放招者頭頂上方同一個匯聚點，
@@ -1044,7 +1040,7 @@ function arrowShoot(caster, target, effectUrl){
 function dropSmash(target, effectUrl, mirror180){
   // 修改建議：特效大一些(120→145)；對手施放時圖片要轉向——原本用rotate(180deg)整張圖上下
   // 顛倒(拳頭圖案變成朝上、但整個box還是往下砸，看起來很怪)，使用者這輪回饋確認是上下顛倒了。
-  // 改成跟這個檔案其他鏡像特效(rotateSlideIn/screenSweep)同一套做法：只用scaleX(-1)做「左右鏡像」，
+  // 改成跟這個檔案其他鏡像特效(wipeAcrossScreen/screenSweep)同一套做法：只用scaleX(-1)做「左右鏡像」，
   // 不影響上下方向，砸落的動作看起來還是正常朝下、只是圖案左右相反。
   var t = centerOf(target);
   var size = 145;
@@ -1179,7 +1175,7 @@ var PRIMITIVES = {
   screenFlash: screenFlash,
   appearOnTarget: appearOnTarget,
   appearThenGone: appearThenGone,
-  rotateSlideIn: rotateSlideIn,
+  wipeAcrossScreen: wipeAcrossScreen,
   punchStack: punchStack,
   fadeInAboveDown: fadeInAboveDown,
   screenShakeCracks: screenShakeCracks,
@@ -1191,7 +1187,6 @@ var PRIMITIVES = {
   flipDash: flipDash,
   appearFlashOnce: appearFlashOnce,
   starBurst: starBurst,
-  selfHeadFx: selfHeadFx,
   nineBeamsAscend: nineBeamsAscend,
   arrowShoot: arrowShoot,
   dropSmash: dropSmash,
@@ -1218,9 +1213,9 @@ function runEffect(move, caster, target){
     case 'appearOnTarget':
     case 'appearThenGone':
       return fn(target, move.effect);
-    case 'rotateSlideIn': {
+    case 'wipeAcrossScreen': {
       var mirrored6 = !!(move.params && move.params.flipWhenOpponentCasts && casterSide === 'opponent');
-      return fn(caster, target, move.effect, move.params, mirrored6);
+      return fn(caster, target, move.effect, mirrored6);
     }
     case 'punchStack':
       return fn(target, move.effect);
@@ -1249,8 +1244,6 @@ function runEffect(move, caster, target){
       return fn(target, move.effect);
     case 'starBurst':
       return fn(caster, target, move.effect, move.params && move.params.size);
-    case 'selfHeadFx':
-      return fn(caster, move.effect);
     case 'nineBeamsAscend':
       return fn(caster, move.effect);
     case 'arrowShoot':
