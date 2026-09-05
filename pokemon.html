@@ -6669,7 +6669,12 @@ async function playBattleEvents(events, ctx) {
                 if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             }
         } else {
-            if (ev.damage > 0) {
+            if (ev.zPierceProtect) {
+                // 【第五十輪新增】Ｚ招式突破守住：明確告訴玩家「防禦方雖然守住了，但還是被打穿1/4傷害」，
+                // 跟一般被守住完全擋下(ev.protectedBlock，上面另一個分支)的文字分開，避免玩家誤以為
+                // 沒有效果
+                appendLog(`${ev.defenderName} 想要防住攻擊，但是Ｚ招式的力量太強了，還是受到了 ${ev.damage} 點傷害！${ev.crit ? '(會心一擊！)' : ''}`);
+            } else if (ev.damage > 0) {
                 appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，${ev.hitCount > 1 ? `打中了 ${ev.hitCount} 次，總共` : ''}造成 ${ev.damage} 點傷害${ev.effectiveness > 1 ? '，效果絕佳！' : ev.effectiveness < 1 ? '，效果不理想...' : ''}${ev.crit ? '，會心一擊！' : ''}`);
             } else if (ev.effectiveness === 0) {
                 appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，但是沒有效果...`);
@@ -9009,8 +9014,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && !isFieldSideMoveForHit && defVanished) {
             hit = false;
         } else if (move.accuracy != null) {
-            // 不會犯規(no-guard)：任何一方帶著這個特性，這次攻擊一律必中(不看命中率也不看閃避率)
-            if (atk.ability === 'no-guard' || def.ability === 'no-guard') {
+            // 不會犯規(no-guard)：任何一方帶著這個特性，這次攻擊一律必中(不看命中率也不看閃避率)。
+            // 【第五十輪新增】正統規則：有威力的傷害型Ｚ招式無視命中率判定、一律必中(但上面的
+            // defVanished「對方蓄力中消失」判斷已經先跑過、不受這裡影響——飛翔/挖洞中還是躲得掉)
+            if (move.__isZMove || atk.ability === 'no-guard' || def.ability === 'no-guard') {
                 hit = true;
             } else {
             // 正統規則：被看穿/識破/定身術鎖定(identified)之後，閃避率等級一律當作0——
@@ -9119,8 +9126,13 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // ---- 對方擺出了守住：這回合的攻擊完全被擋下來，不會造成傷害或附加效果。入場障礙/光牆系
         // 一樣不受守住影響(打在場地上，不是打在寶可夢身上)，跟上面屬性免疫的bypassesTypeImmunity
         // 共用同一個isFieldSideMove判斷；看不見的拳頭(unseen-fist)：接觸類招式無視守住 ----
-        if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && !isFieldSideMove && def.protectedThisTurn &&
-            !(atk.ability === 'unseen-fist' && moveMakesContact(move, atk))) {
+        const isProtectedTarget = !isSelfTargetMove(move.target) && move.target !== 'entire-field' && !isFieldSideMove && def.protectedThisTurn &&
+            !(atk.ability === 'unseen-fist' && moveMakesContact(move, atk));
+        // 【第五十輪新增】正統規則：有威力的傷害型Ｚ招式沒辦法被守住完全擋下來，還是會突破守住
+        // 造成原本傷害1/4的傷害——但招式本身其他的附加效果(異常狀態/能力等級變化/吸血/畏縮等)
+        // 依然完全被守住擋掉，只有傷害本身會透過，下面會另外用zPierceProtect把那些效果擋掉
+        const zPierceProtect = isProtectedTarget && move.__isZMove && move.power > 0;
+        if (isProtectedTarget && !zPierceProtect) {
             ev.protectedBlock = true;
             log.push(`${defName} 防住了攻擊！`);
             events.push(ev);
@@ -9159,7 +9171,82 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             return false;
         }
 
-        if (move.category === 'ohko' || OHKO_MOVES.has(move.name)) {
+        if (zPierceProtect) {
+            // 【第五十輪新增】Ｚ招式突破守住：只計算「這一下攻擊本身」的傷害(跟一般傷害招式同一套
+            // 基礎公式：能力等級/特性攻防倍率/支配之盤/天氣場地/屬性強化道具/生命寶珠/光牆系減傷/
+            // 會心一擊都照算)，但固定只打一下(不管原招式是不是連續攻擊，正統規則Ｚ招式一律單發)，
+            // 最後把算出來的傷害砍到1/4(至少1點)。招式本身其他附加效果(異常狀態/能力等級變化/
+            // 吸血/畏縮/生命寶珠反傷等)一律不觸發——守住依然完全擋掉這些，只有傷害本身穿透得過去
+            const isSpecialZ = move.damageClass === 'special';
+            const atkStageMultZ = def.ability === 'unaware' ? 1 : statStageMult(isSpecialZ ? atk.stages.spAtk : atk.stages.atk);
+            let abilityAtkMultZ = 1;
+            if (!isSpecialZ) {
+                if (atk.ability === 'huge-power' || atk.ability === 'pure-power') abilityAtkMultZ = 2;
+                else if (atk.ability === 'guts' && atk.status) abilityAtkMultZ = 1.5;
+                else if (atk.ability === 'toxic-boost' && atk.status === 'poison') abilityAtkMultZ = 1.5;
+                else if (atk.ability === 'slow-start' && (atk.turnsOnField || 0) <= 5) abilityAtkMultZ = 0.5;
+            } else {
+                if (atk.ability === 'solar-power' && weatherState.type === 'sun') abilityAtkMultZ = 1.5;
+                else if (atk.ability === 'flare-boost' && atk.status === 'burn') abilityAtkMultZ = 1.5;
+            }
+            if (atk.ability === 'defeatist' && atk.currentHp <= atk.maxHp / 2) abilityAtkMultZ *= 0.5;
+            let ruinAtkMultZ = 1;
+            if (!isSpecialZ && def.ability === 'tablets-of-ruin') ruinAtkMultZ = 0.75;
+            else if (isSpecialZ && def.ability === 'vessel-of-ruin') ruinAtkMultZ = 0.75;
+            const atkStatZ = (isSpecialZ ? atk.spAtk : atk.atk) * atkStageMultZ * abilityAtkMultZ * ruinAtkMultZ;
+            const defStageMultZ = atk.ability === 'unaware' ? 1 : statStageMult(isSpecialZ ? def.stages.spDef : def.stages.def);
+            let abilityDefMultZ = 1;
+            if (!isSpecialZ) {
+                if (def.ability === 'fur-coat') abilityDefMultZ = 2;
+                else if (def.ability === 'marvel-scale' && def.status) abilityDefMultZ = 1.5;
+                else if (def.ability === 'grass-pelt' && terrainState.type === 'grassy') abilityDefMultZ = 1.5;
+            } else if (def.ability === 'ice-scales') abilityDefMultZ = 2;
+            let ruinDefMultZ = 1;
+            if (!isSpecialZ && atk.ability === 'sword-of-ruin') ruinDefMultZ = 0.75;
+            else if (isSpecialZ && atk.ability === 'beads-of-ruin') ruinDefMultZ = 0.75;
+            let defStatZ = (isSpecialZ ? def.spDef : def.def) * defStageMultZ * abilityDefMultZ * ruinDefMultZ;
+            if (weatherState.type === 'sandstorm' && isSpecialZ && displayOf[defenderUid].types.includes('rock')) defStatZ *= 1.5;
+            if (isSpecialZ && def.heldItem === 'assault-vest') defStatZ *= 1.5;
+            if (def.heldItem === 'eviolite') defStatZ *= 1.5;
+            const wDmgMultZ = weatherDamageMult(weatherState.type, move.type);
+            const tDmgMultZ = terrainDamageMult(terrainState.type, move.type, isGrounded(displayOf[attackerUid]), isGrounded(displayOf[defenderUid]));
+            const typeBoostKeyZ = POKEMON_TYPE_BOOST_ITEM[move.type];
+            let abilityDmgPostMultZ = 1;
+            if (def.ability && !attackerBypassesAbilities(atk)) {
+                if (['solid-rock', 'filter', 'prism-armor'].includes(def.ability) && eff > 1) abilityDmgPostMultZ *= 0.75;
+                if ((def.ability === 'multiscale' || def.ability === 'shadow-shield') && defWasFullHp) abilityDmgPostMultZ *= 0.5;
+                if (def.ability === 'thick-fat' && (move.type === 'fire' || move.type === 'ice')) abilityDmgPostMultZ *= 0.5;
+                if (def.ability === 'heatproof' && move.type === 'fire') abilityDmgPostMultZ *= 0.5;
+                if (def.ability === 'purifying-salt' && move.type === 'ghost') abilityDmgPostMultZ *= 0.5;
+                if (def.ability === 'fluffy') {
+                    if (moveMakesContact(move, atk)) abilityDmgPostMultZ *= 0.5;
+                    if (move.type === 'fire') abilityDmgPostMultZ *= 2;
+                }
+                if (def.ability === 'dry-skin' && move.type === 'fire') abilityDmgPostMultZ *= 1.25;
+            }
+            const itemDmgMultZ = (atk.heldItem && atk.heldItem === typeBoostKeyZ ? 1.2 : 1) * (atk.heldItem === 'life-orb' ? 1.3 : 1) * abilityDmgPostMultZ;
+            const effectiveCritRateZ = (move.critRate || 0) + (atk.heldItem === 'scope-lens' ? 1 : 0) + (atk.ability === 'super-luck' ? 1 : 0);
+            const critBlockedByAbilityZ = ['battle-armor', 'shell-armor'].includes(def.ability) && !attackerBypassesAbilities(atk);
+            const forcedCritByAbilityZ = atk.ability === 'merciless' && def.status === 'poison';
+            const isCritZ = !critBlockedByAbilityZ && (forcedCritByAbilityZ || rollChance(critChance(effectiveCritRateZ) * 100));
+            if (isCritZ) crit = true;
+            let dmgZ = computeDamage(atk.level, atkStatZ, defStatZ, move.power, eff, stabMult, isCritZ ? (atk.ability === 'sniper' ? 2.25 : 1.5) : 1);
+            dmgZ = Math.max(1, Math.floor(dmgZ * wDmgMultZ * tDmgMultZ * itemDmgMultZ));
+            if (!isCritZ) {
+                const defScreensZ = screensState[defenderUid];
+                if (defScreensZ) {
+                    if (defScreensZ.auroraVeil > 0) dmgZ = Math.max(1, Math.floor(dmgZ * 0.5));
+                    else if (isSpecialZ && defScreensZ.lightScreen > 0) dmgZ = Math.max(1, Math.floor(dmgZ * 0.5));
+                    else if (!isSpecialZ && defScreensZ.reflect > 0) dmgZ = Math.max(1, Math.floor(dmgZ * 0.5));
+                }
+            }
+            totalDamage = Math.max(1, Math.floor(dmgZ / 4));
+            totalDamage = Math.min(totalDamage, def.currentHp);
+            def.currentHp = Math.max(0, def.currentHp - totalDamage);
+            hitCount = 1;
+            fainted = def.currentHp <= 0 && !tryFocusSash();
+            log.push(`${defName} 想要防住攻擊，但是Ｚ招式的力量太強了，還是受到了 ${totalDamage} 點傷害！${crit ? '(會心一擊！)' : ''}`);
+        } else if (move.category === 'ohko' || OHKO_MOVES.has(move.name)) {
             totalDamage = def.currentHp;
             hitCount = 1;
             def.currentHp = 0;
@@ -9494,6 +9581,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         ev.damage = totalDamage;
         ev.hitCount = hitCount;
         ev.crit = crit;
+        ev.zPierceProtect = zPierceProtect; // 【第五十輪新增】true代表這次攻擊是Ｚ招式突破守住，client端要顯示對應的專屬文字
         ev.defenderHpAfter = def.currentHp;
         ev.attackerHpAfter = atk.currentHp; // 讓生命寶珠反傷/凸凸頭盔反彈/貝殼之鈴回血都能即時反映在攻擊方HP條動畫上
         ev.fainted = fainted;
@@ -9527,7 +9615,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
 
         // ---- 吸血／反作用力(drain)：正值回攻擊方血、負值扣攻擊方血(可能因此自己也倒下)。
         // 治癒封印(heal-block)期間，「回血」的那一半會失效，但反作用力傷害還是正常生效 ----
-        if (move.drain && totalDamage > 0 && !move.isStruggle) {
+        if (move.drain && totalDamage > 0 && !move.isStruggle && !zPierceProtect) {
             const rawDrainAmt = Math.round(totalDamage * move.drain / 100);
             const healBlocked = rawDrainAmt > 0 && atk.healBlockTurns > 0;
             // 【第三十五輪新增】污泥漿(liquid-ooze)：防守方特性，讓「原本會讓攻擊方回血」的吸血
@@ -9576,7 +9664,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // ---- 附加異常狀態：扎根/寄生種子有自己專屬的欄位(rooted/seeded)，不是共用.status那條
         // 「互斥的主要異常狀態」線——這是修正扎根之前完全沒有回血邏輯的關鍵，把它從共用status
         // 特例出來，並且被替身擋下來時不會附加(defSubActiveBeforeHit) ----
-        if (!isHardcodedSpecialMove && move.ailment && (isSelfTargetMove(move.target) || eff !== 0) && !(!isSelfTargetMove(move.target) && defSubActiveBeforeHit)) {
+        if (!isHardcodedSpecialMove && !zPierceProtect && move.ailment && (isSelfTargetMove(move.target) || eff !== 0) && !(!isSelfTargetMove(move.target) && defSubActiveBeforeHit)) {
             // 鱗粉(shield-dust)：只擋「附加效果」性質的異常狀態(category不是'ailment'，例如
             // 火焰放射10%燒傷這種順帶效果)，不會擋像十萬伏特毒粉這種以異常狀態為主要目的的招式
             const shieldDustBlocked = move.category !== 'ailment' && !isSelfTargetMove(move.target) && def.ability === 'shield-dust' && !attackerBypassesAbilities(atk);
@@ -9801,7 +9889,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 不該被對方的替身擋下來(替身只擋「打在對方身上」的效果)，下面的defSubActiveBeforeHit
         // 判斷也要一併用statSelfTarget，不能只看move.target
         const statSelfTarget = move.category === 'damage-raise' || isSelfTargetMove(move.target);
-        if (!isHardcodedSpecialMove && move.statChanges && move.statChanges.length && !(!statSelfTarget && defSubActiveBeforeHit)) {
+        if (!isHardcodedSpecialMove && !zPierceProtect && move.statChanges && move.statChanges.length && !(!statSelfTarget && defSubActiveBeforeHit)) {
             // 機率沿用PokéAPI原始的stat_chance(damage-raise類招式常常不是100%——例如電磁波動
             // charge-beam只有70%機率加自己特攻，硬把damage-raise全部當成100%機率會變成過強)，
             // 只有net-good-stats(劍舞/生氣蓬勃這類純強化招式，PokéAPI的stat_chance欄位常常是0，
@@ -9854,7 +9942,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 直覺(inner-focus)/鱗粉(shield-dust)：完全不會畏縮(破格系特性攻擊方可以無視)；
         // 堅毅(steadfast)：真的畏縮的話反而讓自己速度提高
         const flinchImmune = ['inner-focus', 'shield-dust'].includes(def.ability) && !attackerBypassesAbilities(atk);
-        if (!flinchImmune && effectiveFlinchChance > 0 && def.currentHp > 0 && !defSubActiveBeforeHit && order.indexOf(defenderUid) > order.indexOf(attackerUid)) {
+        if (!zPierceProtect && !flinchImmune && effectiveFlinchChance > 0 && def.currentHp > 0 && !defSubActiveBeforeHit && order.indexOf(defenderUid) > order.indexOf(attackerUid)) {
             if (rollChance(effectiveFlinchChance)) {
                 def.flinched = true;
                 if (def.ability === 'steadfast') {
