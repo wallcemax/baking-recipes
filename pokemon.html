@@ -121,6 +121,10 @@
     .puzzle-tile { position: relative; border: 0; border-radius: 10px; overflow: hidden; background-repeat: no-repeat; background-size: 300% 300%; cursor: pointer; transition: filter .12s, transform .12s; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.5); }
     .puzzle-tile:active { filter: brightness(1.08); transform: scale(0.97); }
     .puzzle-tile.puzzle-empty { background: #e2e8f0 !important; cursor: default; box-shadow: none; }
+    /* 【第三十二輪追加】有些立繪本身留白/透空區域很大，3x3切格常常好幾片都落在空白處、
+       外觀分不出差異；每片右下角加一個小小的編號當保底，就算完全看不出圖案內容，
+       也能純靠編號1~9把拼圖排回正確順序，不會卡關 */
+    .puzzle-tile-num { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 800; line-height: 1; color: rgba(255,255,255,0.92); text-shadow: 0 0 2px #000, 0 0 4px #000, 0 1px 1px #000; pointer-events: none; }
 </style>
 </head>
 <body class="min-h-screen pb-24">
@@ -9553,6 +9557,7 @@ function resetGuessGame() {
 // background-position切成3x3格顯示對應的那一小塊，不用真的裁切成9張小圖檔
 // ============================================================
 let puzzleState = null; // {sessionId, speciesId, display, tiles, moves, seconds, timer, started, finished}
+const PUZZLE_GAME_COST = 50; // 【第三十二輪追加】玩一次拼圖要花費的寶可幣，worker端(handlePokemonPuzzleStart)才是真正扣款的地方，這裡只是給畫面顯示用，跟GUESS_GAME_COST同一套模式
 
 function renderPuzzleStartScreen() {
     // 玩到一半切分頁再切回來，接著顯示目前這一局，不要整個重新開局(跟猜猜看guessState的作法一樣)
@@ -9566,13 +9571,14 @@ function renderPuzzleStartScreen() {
                 <p class="text-xs opacity-90">把打亂的9宮格拼回完整的寶可夢，題目來自PokéAPI全國圖鑑</p>
             </div>
             <div class="p-6 text-center">
-                <p class="text-sm text-gray-500 mb-4 leading-relaxed">點擊跟空格相鄰的拼圖片塊即可移動，遊玩完全免費：<br>
+                <p class="text-sm text-gray-500 mb-4 leading-relaxed">點擊跟空格相鄰的拼圖片塊即可移動：<br>
                     ⏱️ 1分鐘內解完 → 100代幣・超過1分鐘 → 50代幣<br>
                     👣 100步內解完 → 100代幣・超過100步 → 50代幣<br>
                     拼好至少拿100代幣，兩個條件都達成直接拿200代幣！<br>
                     ✨ 完成還有10%機率額外獲得Ｚ純晶（絕不重複已擁有的種類）！<br>
                     使用合法移動方式打亂，每一局都保證有解。</p>
-                <button onclick="startPuzzleGame()" id="puzzle-start-btn" class="bg-red-500 text-white px-8 py-3 rounded-full font-bold">開始遊戲</button>
+                <p class="text-xs text-gray-400 mb-3 inline-flex items-center gap-1"><img src="${itemSpriteUrl('amulet-coin')}" class="w-4 h-4" style="image-rendering:pixelated">每玩一次要花費 ${PUZZLE_GAME_COST} 寶可幣</p>
+                <button onclick="startPuzzleGame()" id="puzzle-start-btn" class="bg-red-500 text-white px-8 py-3 rounded-full font-bold">開始遊戲(${PUZZLE_GAME_COST}💰)</button>
             </div>
         </div>
     `;
@@ -9587,6 +9593,60 @@ function puzzleNeighbors(pos) {
     return a;
 }
 function puzzleSolved(tiles) { return tiles.every((v, i) => v === i); }
+// 【第三十二輪追加】使用者回報：拼圖常常切出兩三片幾乎全白(其實是官方立繪四周的透明留白，
+// 疊在頁面白色背景上看起來就是一片空白)，玩家分不出來，甚至擺錯位置了整張圖看起來還是很像
+// 拼好，但因為拼圖的「完成」判定是看每片有沒有歸位(puzzleSolved)、不是看外觀像不像，
+// 兩片空白格擺反的話遊戲永遠不會結束。這裡在真正切格顯示之前，先把立繪丟進canvas掃一次
+// alpha通道，抓出「真的有畫到東西」的最小外框，四邊留5%緩衝(避免抗鋸齒邊緣被切掉)後
+// 裁掉外圍留白、置中放大成新的正方形圖，讓寶可夢本體盡量佔滿整張圖，3x3切格後每一片
+// 切到空白的機率會小很多。這裡刻意回傳一份「新的圖網址(data URL)」而不是直接改掉
+// display.sprite——display物件是fetchSpeciesDisplay內部speciesCache快取的同一個物件參考，
+// 直接改掉sprite欄位會連圖鑑詳情/戰鬥畫面也一起被裁切過的圖污染，兩者必須分開存放
+function trimSpriteForPuzzle(url) {
+    return new Promise((resolve) => {
+        if (!url) { resolve(url); return; }
+        const img = new Image();
+        img.crossOrigin = 'anonymous'; // PokéAPI/sprites倉庫(raw.githubusercontent.com)有開放CORS，理論上讀得到像素
+        img.onload = () => {
+            try {
+                const w = img.naturalWidth, h = img.naturalHeight;
+                if (!w || !h) { resolve(url); return; }
+                const srcCanvas = document.createElement('canvas');
+                srcCanvas.width = w; srcCanvas.height = h;
+                const srcCtx = srcCanvas.getContext('2d');
+                srcCtx.drawImage(img, 0, 0, w, h);
+                const { data } = srcCtx.getImageData(0, 0, w, h);
+                let minX = w, minY = h, maxX = -1, maxY = -1;
+                const ALPHA_THRESHOLD = 20; // 忽略幾乎全透明的雜訊像素
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        if (data[(y * w + x) * 4 + 3] > ALPHA_THRESHOLD) {
+                            if (x < minX) minX = x;
+                            if (x > maxX) maxX = x;
+                            if (y < minY) minY = y;
+                            if (y > maxY) maxY = y;
+                        }
+                    }
+                }
+                if (maxX < minX || maxY < minY) { resolve(url); return; } // 整張都是透明的異常圖檔，放棄裁切、用回原圖
+                const padX = Math.round((maxX - minX + 1) * 0.05), padY = Math.round((maxY - minY + 1) * 0.05);
+                minX = Math.max(0, minX - padX); minY = Math.max(0, minY - padY);
+                maxX = Math.min(w - 1, maxX + padX); maxY = Math.min(h - 1, maxY + padY);
+                const boxW = maxX - minX + 1, boxH = maxY - minY + 1;
+                const side = Math.max(boxW, boxH); // 用長邊當正方形邊長，避免非正方形外框把圖案拉伸變形
+                const outCanvas = document.createElement('canvas');
+                outCanvas.width = side; outCanvas.height = side;
+                const outCtx = outCanvas.getContext('2d');
+                outCtx.drawImage(srcCanvas, minX, minY, boxW, boxH, Math.round((side - boxW) / 2), Math.round((side - boxH) / 2), boxW, boxH);
+                resolve(outCanvas.toDataURL('image/png'));
+            } catch (err) {
+                resolve(url); // 萬一瀏覽器基於安全性擋住canvas讀像素(理論上不會，防呆一下)，直接退回原圖，不影響遊戲正常進行
+            }
+        };
+        img.onerror = () => resolve(url);
+        img.src = url;
+    });
+}
 function puzzleLegalShuffle() {
     // 跟preview.html原型同一套演算法：從已解開的狀態開始，做120次「合法移動」(每次都跟空格
     // 相鄰的格子交換，且不走回上一步剛換過的格子，避免一路來回互相抵銷)，保證打亂完一定有解——
@@ -9608,6 +9668,7 @@ async function startPuzzleGame() {
     if (btn) { btn.disabled = true; btn.textContent = '出題中...'; }
     try {
         const result = await callWorker('pokemon_puzzle_start');
+        if (typeof result.coins === 'number') showToastWithIcon(itemSpriteUrl('amulet-coin'), `花費${PUZZLE_GAME_COST}寶可幣，開始遊戲！`);
         // 計時器要盡量貼近伺服器的 createdAt 時間點開始跑，不然玩家看到的秒數
         // 會跟伺服器判定的經過時間有落差(尤其是抓寶可夢圖片那段網路來回的時間)
         puzzleState = {
@@ -9625,6 +9686,10 @@ async function startPuzzleGame() {
         const display = await fetchSpeciesDisplay(result.speciesId, false);
         if (!puzzleState || puzzleState.sessionId !== result.sessionId) return;
         puzzleState.display = display;
+        // 裁切完再一次渲染，避免先顯示原圖、裁切算完又整個跳一次版面(位置/縮放都會變)的
+        // 突兀感——裁切本身很快(掃一張圖的alpha通道)，多等這一下感覺不出來
+        puzzleState.puzzleSprite = await trimSpriteForPuzzle(display.sprite);
+        if (!puzzleState || puzzleState.sessionId !== result.sessionId) return;
         renderPuzzleBoard();
     } catch (err) {
         showToast('開始遊戲失敗：' + err.message);
@@ -9672,10 +9737,14 @@ function puzzleRenderTiles() {
     const board = document.getElementById('puzzle-board');
     if (!board || !puzzleState) return;
     const { tiles, display } = puzzleState;
+    // puzzleSprite是裁掉立繪四周留白後的緊縮版圖(見trimSpriteForPuzzle)，裁切失敗的話會退回
+    // display.sprite原圖，遊戲一樣能玩；片塊右下角固定疊一個1~9的編號(piece+1)當保底——
+    // 就算裁完還是有片塊剛好切到留白/看不出圖案內容，玩家也能純靠編號把拼圖排回正確位置
+    const spriteUrl = puzzleState.puzzleSprite || display.sprite;
     board.innerHTML = tiles.map((piece, pos) => {
         if (piece === 8) return `<div class="puzzle-tile puzzle-empty"></div>`;
         const bx = (piece % 3) * 50, by = Math.floor(piece / 3) * 50;
-        return `<button class="puzzle-tile" onclick="movePuzzleTile(${pos})" style="background-image:url('${display.sprite}');background-position:${bx}% ${by}%"></button>`;
+        return `<button class="puzzle-tile" onclick="movePuzzleTile(${pos})" style="background-image:url('${spriteUrl}');background-position:${bx}% ${by}%"><span class="puzzle-tile-num">${piece + 1}</span></button>`;
     }).join('');
 }
 
