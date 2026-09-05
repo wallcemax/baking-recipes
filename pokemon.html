@@ -9683,8 +9683,22 @@ function resetGuessGame() {
 // 拼圖片塊完全沿用preview.html原型的做法：background-size:300% 300%讓同一張立繪依照
 // background-position切成3x3格顯示對應的那一小塊，不用真的裁切成9張小圖檔
 // ============================================================
-let puzzleState = null; // {sessionId, speciesId, display, tiles, moves, seconds, timer, started, finished}
-const PUZZLE_GAME_COST = 50; // 【第三十二輪追加】玩一次拼圖要花費的寶可幣，worker端(handlePokemonPuzzleStart)才是真正扣款的地方，這裡只是給畫面顯示用，跟GUESS_GAME_COST同一套模式
+let puzzleState = null; // {sessionId, speciesId, difficulty, size, display, tiles, moves, seconds, timer, started, finished}
+// 【第三十四輪追加】原本寫死3x3/50代幣的單一規格，改成跟worker端POKEMON_PUZZLE_DIFFICULTIES
+// 對應的同一張難度表(數值要跟伺服器一致，這裡純粹是給畫面顯示用，真正扣款/發獎都是worker端
+// 說了算，前端亂改這裡的數字並不會讓實際獎勵跟著變)。novice就是原本的3x3規格(數值不變)，
+// elite/veteran是新增的4x4/5x5
+const PUZZLE_DIFFICULTIES = {
+    novice: { size: 3, labelZh: '新星', cost: 50, timeLimitMs: 60 * 1000, moveLimit: 100, baseReward: 100, missReward: 50, zChancePct: 10 },
+    elite: { size: 4, labelZh: '精英', cost: 100, timeLimitMs: 150 * 1000, moveLimit: 250, baseReward: 200, missReward: 100, zChancePct: 25 },
+    veteran: { size: 5, labelZh: '資深', cost: 300, timeLimitMs: 420 * 1000, moveLimit: 350, baseReward: 600, missReward: 200, zChancePct: 50 },
+};
+function puzzleFormatLimitText(ms) {
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `${s}秒`;
+    const m = Math.floor(s / 60), rem = s % 60;
+    return rem === 0 ? `${m}分鐘` : `${m}分${rem}秒`;
+}
 
 function renderPuzzleStartScreen() {
     // 玩到一半切分頁再切回來，接著顯示目前這一局，不要整個重新開局(跟猜猜看guessState的作法一樣)
@@ -9695,28 +9709,37 @@ function renderPuzzleStartScreen() {
         <div class="bg-white rounded-2xl card-shadow overflow-hidden">
             <div class="p-5 text-center bg-gradient-to-br from-red-500 to-orange-500 text-white">
                 <p class="text-xl font-black mb-1">🧩 PokéSlide滑塊拼圖</p>
-                <p class="text-xs opacity-90">把打亂的9宮格拼回完整的寶可夢，題目來自PokéAPI全國圖鑑</p>
+                <p class="text-xs opacity-90">把打亂的宮格拼回完整的寶可夢，題目來自PokéAPI全國圖鑑</p>
             </div>
             <div class="p-6 text-center">
-                <p class="text-sm text-gray-500 mb-4 leading-relaxed">點擊跟空格相鄰的拼圖片塊即可移動：<br>
-                    ⏱️ 1分鐘內解完 → 100代幣・超過1分鐘 → 50代幣<br>
-                    👣 100步內解完 → 100代幣・超過100步 → 50代幣<br>
-                    拼好至少拿100代幣，兩個條件都達成直接拿200代幣！<br>
-                    ✨ 完成還有10%機率額外獲得Ｚ純晶（絕不重複已擁有的種類）！<br>
-                    使用合法移動方式打亂，每一局都保證有解。</p>
-                <p class="text-xs text-gray-400 mb-3 inline-flex items-center gap-1"><img src="${itemSpriteUrl('amulet-coin')}" class="w-4 h-4" style="image-rendering:pixelated">每玩一次要花費 ${PUZZLE_GAME_COST} 寶可幣</p>
-                <button onclick="startPuzzleGame()" id="puzzle-start-btn" class="bg-red-500 text-white px-8 py-3 rounded-full font-bold">開始遊戲(${PUZZLE_GAME_COST}💰)</button>
+                <p class="text-sm text-gray-500 mb-4">選一個難度開始吧！點擊跟空格相鄰的拼圖片塊即可移動，使用合法移動方式打亂，每一局都保證有解。</p>
+                <div class="grid gap-3 text-left">
+                    ${Object.entries(PUZZLE_DIFFICULTIES).map(([key, d]) => `
+                        <button onclick="startPuzzleGame('${key}')" id="puzzle-start-btn-${key}" class="w-full text-left bg-gray-50 hover:bg-orange-50 border border-gray-200 rounded-xl p-4 transition">
+                            <div class="flex items-center justify-between mb-1">
+                                <span class="font-black text-base">${d.size}×${d.size}「${d.labelZh}」</span>
+                                <span class="text-xs font-bold text-white bg-red-500 rounded-full px-3 py-1 inline-flex items-center gap-1"><img src="${itemSpriteUrl('amulet-coin')}" class="w-3.5 h-3.5" style="image-rendering:pixelated">${d.cost}</span>
+                            </div>
+                            <p class="text-xs text-gray-500 leading-relaxed">
+                                ⏱️ ${puzzleFormatLimitText(d.timeLimitMs)}內解完 → ${d.baseReward}代幣・超過 → ${d.missReward}代幣<br>
+                                👣 ${d.moveLimit}步內解完 → ${d.baseReward}代幣・超過 → ${d.missReward}代幣<br>
+                                ✨ 完成有${d.zChancePct}%機率額外獲得Ｚ純晶（絕不重複已擁有的種類）
+                            </p>
+                        </button>
+                    `).join('')}
+                </div>
             </div>
         </div>
     `;
 }
 
-function puzzleNeighbors(pos) {
-    const r = Math.floor(pos / 3), c = pos % 3, a = [];
-    if (r > 0) a.push(pos - 3);
-    if (r < 2) a.push(pos + 3);
+function puzzleNeighbors(pos, size) {
+    const n = size || (puzzleState ? puzzleState.size : 3) || 3;
+    const r = Math.floor(pos / n), c = pos % n, a = [];
+    if (r > 0) a.push(pos - n);
+    if (r < n - 1) a.push(pos + n);
     if (c > 0) a.push(pos - 1);
-    if (c < 2) a.push(pos + 1);
+    if (c < n - 1) a.push(pos + 1);
     return a;
 }
 function puzzleSolved(tiles) { return tiles.every((v, i) => v === i); }
@@ -9774,35 +9797,45 @@ function trimSpriteForPuzzle(url) {
         img.src = url;
     });
 }
-function puzzleLegalShuffle() {
-    // 跟preview.html原型同一套演算法：從已解開的狀態開始，做120次「合法移動」(每次都跟空格
+function puzzleLegalShuffle(size) {
+    const n = size || 3;
+    const total = n * n;
+    // 跟preview.html原型同一套演算法：從已解開的狀態開始，做「合法移動」(每次都跟空格
     // 相鄰的格子交換，且不走回上一步剛換過的格子，避免一路來回互相抵銷)，保證打亂完一定有解——
-    // 不是隨機排列9個數字再檢查有沒有解，那種作法有一半機率會排出無解的組合
-    let tiles = [0, 1, 2, 3, 4, 5, 6, 7, 8];
-    let empty = 8, previous = -1;
-    for (let i = 0; i < 120; i++) {
-        const choices = puzzleNeighbors(empty).filter(x => x !== previous);
+    // 不是隨機排列數字再檢查有沒有解，那種作法有一半機率會排出無解的組合。
+    // 【第三十四輪】原本3x3固定打亂120步，現在4x4/5x5格子數更多，打亂步數太少的話容易只有
+    // 局部被打散，這裡照3x3(9格/120步≈13.3倍)的同一個比例，依總格數等比例放大步數
+    const shuffleSteps = Math.round(total * 13.34);
+    let tiles = Array.from({ length: total }, (_, i) => i);
+    let empty = total - 1, previous = -1;
+    for (let i = 0; i < shuffleSteps; i++) {
+        const choices = puzzleNeighbors(empty, n).filter(x => x !== previous);
         const pick = choices[Math.floor(Math.random() * choices.length)];
         [tiles[empty], tiles[pick]] = [tiles[pick], tiles[empty]];
         previous = empty; empty = pick;
     }
-    if (puzzleSolved(tiles)) return puzzleLegalShuffle(); // 極小機率120步後剛好還原，重打一次
+    if (puzzleSolved(tiles)) return puzzleLegalShuffle(n); // 極小機率打亂完剛好還原，重打一次
     return tiles;
 }
 
-async function startPuzzleGame() {
-    const btn = document.getElementById('puzzle-start-btn');
-    if (btn) { btn.disabled = true; btn.textContent = '出題中...'; }
+async function startPuzzleGame(difficultyKey) {
+    const diffKey = PUZZLE_DIFFICULTIES[difficultyKey] ? difficultyKey : 'novice';
+    const diffCfg = PUZZLE_DIFFICULTIES[diffKey];
+    const btn = document.getElementById(`puzzle-start-btn-${diffKey}`);
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; }
     try {
-        const result = await callWorker('pokemon_puzzle_start');
-        if (typeof result.coins === 'number') showToastWithIcon(itemSpriteUrl('amulet-coin'), `花費${PUZZLE_GAME_COST}寶可幣，開始遊戲！`);
+        const result = await callWorker('pokemon_puzzle_start', { difficulty: diffKey });
+        const size = result.size || diffCfg.size;
+        if (typeof result.coins === 'number') showToastWithIcon(itemSpriteUrl('amulet-coin'), `花費${diffCfg.cost}寶可幣，開始遊戲！`);
         // 計時器要盡量貼近伺服器的 createdAt 時間點開始跑，不然玩家看到的秒數
         // 會跟伺服器判定的經過時間有落差(尤其是抓寶可夢圖片那段網路來回的時間)
         puzzleState = {
             sessionId: result.sessionId,
             speciesId: result.speciesId,
+            difficulty: result.difficulty || diffKey,
+            size,
             display: null,
-            tiles: puzzleLegalShuffle(),
+            tiles: puzzleLegalShuffle(size),
             moves: 0,
             seconds: 0,
             timer: null,
@@ -9820,7 +9853,7 @@ async function startPuzzleGame() {
         renderPuzzleBoard();
     } catch (err) {
         showToast('開始遊戲失敗：' + err.message);
-        if (btn) { btn.disabled = false; btn.textContent = '開始遊戲'; }
+        if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
     }
 }
 
@@ -9842,11 +9875,12 @@ function puzzleStopTimer() {
 function renderPuzzleBoard() {
     const root = document.getElementById('puzzle-game-root');
     if (!root || !puzzleState) return;
+    const diffCfg = PUZZLE_DIFFICULTIES[puzzleState.difficulty] || PUZZLE_DIFFICULTIES.novice;
     root.innerHTML = `
         <div class="bg-white rounded-2xl card-shadow overflow-hidden">
             <div class="p-4 bg-gradient-to-br from-red-500 to-orange-500 text-white flex items-center justify-between">
                 <div>
-                    <p class="text-lg font-black">🧩 PokéSlide滑塊拼圖</p>
+                    <p class="text-lg font-black">🧩 PokéSlide滑塊拼圖　<span class="text-sm font-bold opacity-90">${diffCfg.size}×${diffCfg.size}「${diffCfg.labelZh}」</span></p>
                     <p class="text-xs opacity-90">⏱️ <span id="puzzle-time">${puzzleFormatTime(puzzleState.seconds)}</span>　👣 <span id="puzzle-moves">${puzzleState.moves}</span> 步</p>
                 </div>
             </div>
@@ -9864,21 +9898,30 @@ function puzzleRenderTiles() {
     const board = document.getElementById('puzzle-board');
     if (!board || !puzzleState) return;
     const { tiles, display } = puzzleState;
+    const n = puzzleState.size || 3;
+    const emptyIndex = n * n - 1;
+    // 【第三十四輪】3x3寫死的grid-template-columns/background-size現在改成JS依size動態設定
+    // (CSS類別.puzzle-board/.puzzle-tile本身還是保留3x3的預設值沒動，這裡用inline style覆蓋)
+    board.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
     // puzzleSprite是裁掉立繪四周留白後的緊縮版圖(見trimSpriteForPuzzle)，裁切失敗的話會退回
-    // display.sprite原圖，遊戲一樣能玩；片塊右下角固定疊一個1~9的編號(piece+1)當保底——
+    // display.sprite原圖，遊戲一樣能玩；片塊右下角固定疊一個編號(piece+1)當保底——
     // 就算裁完還是有片塊剛好切到留白/看不出圖案內容，玩家也能純靠編號把拼圖排回正確位置
     const spriteUrl = puzzleState.puzzleSprite || display.sprite;
+    const step = n > 1 ? 100 / (n - 1) : 0;
+    const bgSize = `${n * 100}% ${n * 100}%`;
     board.innerHTML = tiles.map((piece, pos) => {
-        if (piece === 8) return `<div class="puzzle-tile puzzle-empty"></div>`;
-        const bx = (piece % 3) * 50, by = Math.floor(piece / 3) * 50;
-        return `<button class="puzzle-tile" onclick="movePuzzleTile(${pos})" style="background-image:url('${spriteUrl}');background-position:${bx}% ${by}%"><span class="puzzle-tile-num">${piece + 1}</span></button>`;
+        if (piece === emptyIndex) return `<div class="puzzle-tile puzzle-empty"></div>`;
+        const bx = (piece % n) * step, by = Math.floor(piece / n) * step;
+        return `<button class="puzzle-tile" onclick="movePuzzleTile(${pos})" style="background-image:url('${spriteUrl}');background-position:${bx}% ${by}%;background-size:${bgSize}"><span class="puzzle-tile-num">${piece + 1}</span></button>`;
     }).join('');
 }
 
 function movePuzzleTile(pos) {
     if (!puzzleState || puzzleState.finished) return;
-    const empty = puzzleState.tiles.indexOf(8);
-    if (!puzzleNeighbors(empty).includes(pos)) return;
+    const n = puzzleState.size || 3;
+    const emptyIndex = n * n - 1;
+    const empty = puzzleState.tiles.indexOf(emptyIndex);
+    if (!puzzleNeighbors(empty, n).includes(pos)) return;
     [puzzleState.tiles[empty], puzzleState.tiles[pos]] = [puzzleState.tiles[pos], puzzleState.tiles[empty]];
     puzzleState.moves++;
     SFX.tileMove();
@@ -9926,14 +9969,17 @@ async function claimPuzzleReward() {
 function renderPuzzleRewardScreen(result) {
     const root = document.getElementById('puzzle-game-root');
     if (!root || !puzzleState) return;
+    const diffCfg = PUZZLE_DIFFICULTIES[puzzleState.difficulty] || PUZZLE_DIFFICULTIES.novice;
     const coinsEarned = result.coinsEarned || 0;
     let detailHtml;
     if (coinsEarned > 0) {
-        // 現在兩個門檻都是「達成拿100、沒達成也還有50的安慰獎」，所以這裡兩行一定都會顯示，
-        // 不會出現完全沒有任何一行的情況(最低也是50+50=100)
+        // 【第三十四輪】原本寫死「1分鐘內/100步內」的文字，改成依這一局的難度查表動態組字——
+        // 兩個門檻都是「達成拿該難度的baseReward、沒達成也還有missReward的安慰獎」，所以這裡
+        // 兩行一定都會顯示，不會出現完全沒有任何一行的情況(最低也是missReward*2)
+        const timeLimitText = puzzleFormatLimitText(diffCfg.timeLimitMs);
         const lines = [
-            result.underTime ? '⏱️ 1分鐘內解完 → +100' : '⏱️ 超過1分鐘 → +50',
-            result.underMoves ? '👣 100步內解完 → +100' : '👣 超過100步 → +50',
+            result.underTime ? `⏱️ ${timeLimitText}內解完 → +${diffCfg.baseReward}` : `⏱️ 超過${timeLimitText} → +${diffCfg.missReward}`,
+            result.underMoves ? `👣 ${diffCfg.moveLimit}步內解完 → +${diffCfg.baseReward}` : `👣 超過${diffCfg.moveLimit}步 → +${diffCfg.missReward}`,
         ];
         detailHtml = `<div class="bg-gray-50 rounded-xl p-4 my-4 text-left text-sm">${lines.map(l => `<p class="mb-1">${l}</p>`).join('')}<p class="font-black text-yellow-600 mt-2 pt-2 border-t border-gray-200">合計 +${coinsEarned} 💰</p></div>`;
         SFX.coin();
