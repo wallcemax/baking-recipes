@@ -1288,6 +1288,7 @@ function startListeners(uid) {
         renderIdleTab();
         checkPendingMoveLearns();
         backfillMissingSpecialStats(currentInstances); // fire-and-forget，見該函式說明
+        backfillMissingAbilities(currentInstances); // 【第三十六輪新增】fire-and-forget，見該函式說明
     });
     listenOpenRooms();
 }
@@ -1770,6 +1771,43 @@ async function backfillMissingSpecialStats(instances) {
             const baseSpDef = baseStats['special-defense'] || insts[0].baseDef;
             await Promise.all(insts.map(i => db.collection('pokemonInstances').doc(i.id).update({ baseSpAtk, baseSpDef }).catch(() => {})));
         } catch (err) { /* 補不到就算了，下次登入(specialStatsBackfillAttempted重置)還會再試 */ }
+    }
+}
+
+const abilityBackfillAttempted = new Set(); // 這個分頁生命週期內，同一個speciesId最多只嘗試查一次，避免onSnapshot反覆觸發時重複打API
+// 【第三十六輪新增】使用者反映「很多特性沒有顯示在詳細資料裡面，玩家根本不知道有實裝該特性」——
+// 追查後發現openDetailModal本身完全正常(inst.ability有值就會正確顯示名稱+說明，跟currentInstances
+// 是直接展開Firestore文件全部欄位、不會漏欄位)，真正的原因是特性系統第三十一輪才加上，這之前就
+// 已經存在的舊寶可夢完全沒有ability欄位，顯示區塊看到inst.ability是undefined，整段就不會顯示
+// 任何東西——不只是「看不到」，實際對戰時也會因為ability是null而完全沒有特性效果，是比顯示更
+// 嚴重的功能缺漏。第三十一輪其實已經做了一支admin專用的一次性維護腳本
+// (pokemon_admin_backfill_abilities，要手動在瀏覽器console下指令才會跑)，但顯然沒有被觸發過。
+// 這裡改成比照上面backfillMissingSpecialStats同一套「玩家自己登入、收藏庫資料一到就順手自動補」
+// 的模式，不用再手動觸發指令，往後也不會再發生「舊資料一直沒補」的情況
+async function backfillMissingAbilities(instances) {
+    const missing = instances.filter(i => !i.ability);
+    if (missing.length === 0) return;
+    const bySpecies = new Map();
+    missing.forEach(i => {
+        if (abilityBackfillAttempted.has(i.speciesId)) return;
+        if (!bySpecies.has(i.speciesId)) bySpecies.set(i.speciesId, []);
+        bySpecies.get(i.speciesId).push(i);
+    });
+    for (const [speciesId, insts] of bySpecies) {
+        abilityBackfillAttempted.add(speciesId);
+        try {
+            const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${speciesId}`);
+            if (!res.ok) continue;
+            const data = await res.json();
+            // 跟rollAndCreatePokemonInstance(worker.js)/pokemon_admin_backfill_abilities同一套
+            // 95%一般特性/5%隱藏特性規則，但這裡是「每一隻寶可夢各自獨立抽一次」(不是同一種全部
+            // 補成同一個特性)，比較貼近正統規則裡「同一種寶可夢，不同隻抽到的特性不一定一樣」
+            await Promise.all(insts.map(i => {
+                const ability = rollAbilityFromPokemonData(data);
+                if (!ability) return Promise.resolve();
+                return db.collection('pokemonInstances').doc(i.id).update({ ability }).catch(() => {});
+            }));
+        } catch (err) { /* 補不到就算了，下次登入(abilityBackfillAttempted重置)還會再試 */ }
     }
 }
 
@@ -6322,6 +6360,9 @@ const BITE_MOVES = new Set(['bite', 'crunch', 'ice-fang', 'fire-fang', 'thunder-
 const PULSE_MOVES = new Set(['aura-sphere', 'dark-pulse', 'dragon-pulse', 'water-pulse', 'heal-pulse', 'terrain-pulse', 'origin-pulse']);
 const SLICING_MOVES = new Set(['cut', 'night-slash', 'x-scissor', 'leaf-blade', 'sacred-sword', 'air-cutter', 'aerial-ace', 'slash', 'psycho-cut', 'razor-shell', 'stone-axe', 'kowtow-cleave', 'cross-poison', 'solar-blade', 'behemoth-blade', 'secret-sword', 'razor-leaf', 'sacred-sword']);
 const WIND_MOVES = new Set(['hurricane', 'gust', 'twister', 'icy-wind', 'petal-blizzard', 'heat-wave', 'fairy-wind', 'whirlwind', 'bleakwind-storm', 'springtide-storm', 'wildbolt-storm', 'sandsear-storm', 'tailwind']);
+// 【第三十五輪新增】球/彈類招式(防彈/bulletproof會完全免疫)：官方判定不是看招式屬性，是看
+// 招式本身的分類標記，這裡照Bulbapedia的球彈招式清單直接列出招式代號比對
+const BALLISTIC_MOVES = new Set(['acid-spray', 'aura-sphere', 'barrage', 'beak-blast', 'bullet-seed', 'egg-bomb', 'electro-ball', 'energy-ball', 'focus-blast', 'gyro-ball', 'ice-ball', 'magnet-bomb', 'mist-ball', 'mud-bomb', 'octazooka', 'pollen-puff', 'pyro-ball', 'rock-wrecker', 'searing-shot', 'seed-bomb', 'shadow-ball', 'sludge-bomb', 'syrup-bomb', 'weather-ball', 'zap-cannon']);
 // 災禍系特性(第九世代柱子四天王：蕭瑟之鈴/嚴刑之劍/滿盈之杯/塗漆之杖)：讓自己以外的寶可夢
 // 對應的能力視為打了0.75折——因為這個遊戲只有1對1單打，「自己以外的所有寶可夢」在場上實際上
 // 就是「對手」一個對象，不用處理雙打友軍。實際的0.75倍判斷直接寫在下面傷害計算區塊的
@@ -6606,6 +6647,22 @@ function resetVolatileForBench(battler) {
     outgoing.unburdenActive = false;
     outgoing.cudChewBerry = null;
     outgoing.cudChewTurns = 0;
+    // 【第三十五輪新增】自然回復(natural-cure)：換下場的瞬間治好自己的主要異常狀態(麻痺/中毒/
+    // 灼傷/睡眠/冰凍)，跟莓果/道具那種「觸發一次就消耗掉」不同，這是特性天生的被動效果，
+    // 每次換下場都會生效，不限次數。呼叫端(performSwitch/submitForcedSwitch)會比對換下場前後
+    // 的status欄位，判斷要不要另外補一行log訊息
+    if (outgoing.ability === 'natural-cure') {
+        outgoing.status = null;
+        outgoing.statusTurns = 0;
+        outgoing.toxicCounter = 0;
+    }
+    // 【第三十五輪新增】自我再生(regenerator)：換下場的瞬間回復自己最大HP的1/3——正統規則是
+    // 「換下場」才觸發，不是留在場上的每回合回血，跟儲水(rain-dish，每回合固定1/16)是完全不同的
+    // 觸發時機，故意分開寫。這個函式不會用在「真的倒下」的寶可夢身上(currentHp<=0不會被放回候補)，
+    // 這裡的currentHp一定>0，不用另外防呆
+    if (outgoing.ability === 'regenerator' && outgoing.currentHp < outgoing.maxHp) {
+        outgoing.currentHp = Math.min(outgoing.maxHp, outgoing.currentHp + Math.max(1, Math.floor(outgoing.maxHp / 3)));
+    }
     return outgoing;
 }
 function revertMegaEvolution(battler) {
@@ -6958,7 +7015,19 @@ async function submitForcedSwitch(instanceId) {
             // 復原乾淨，跟自願替換(performSwitch)用的是同一套清理邏輯
             const wasAlive = outgoingTeam && outgoingTeam.currentHp > 0;
             let newBenchList = bench.filter(b => b.instanceId !== instanceId);
-            if (wasAlive) newBenchList = [...newBenchList, resetVolatileForBench(outgoingTeam)];
+            // 【第三十五輪新增】自然回復/自我再生：跟performSwitch(自願替換)同樣的邏輯，比對
+            // resetVolatileForBench換下場前後的差異，補一行log訊息(這裡沒有resolveBattleRound的
+            // log陣列可以用，改成疊進下面logLines)
+            let benchAbilityLog = null;
+            if (wasAlive) {
+                const restedOutgoing = resetVolatileForBench(outgoingTeam);
+                if (restedOutgoing.ability === 'natural-cure' && outgoingTeam.status) {
+                    benchAbilityLog = `${outgoingTeam.nickname} 的自然回復發動了，異常狀態治好了！`;
+                } else if (restedOutgoing.ability === 'regenerator' && restedOutgoing.currentHp > outgoingTeam.currentHp) {
+                    benchAbilityLog = `${outgoingTeam.nickname} 的自我再生發動了，回復了HP！`;
+                }
+                newBenchList = [...newBenchList, restedOutgoing];
+            }
             // 入場障礙：強制換上場的這隻一樣要結算隱形岩/撒菱/毒菱/黏黏網——如果因此直接倒下，
             // 這隻也不能留在場上，要看候補還有沒有活著的，有就繼續要求玩家再選一隻(awaitingSwitch
             // 保留myUid不清掉)，沒有的話這場戰鬥就是輸了(hazards KO最後一隻)
@@ -6972,7 +7041,7 @@ async function submitForcedSwitch(instanceId) {
             const newBenchAlive = newBenchList.filter(b => b.currentHp > 0).length > 0;
             const outName = outgoingTeam ? outgoingTeam.nickname : null;
             const outReasonTxt = outName ? `${outName} ${wasAlive ? '被換下場後' : '倒下後'}，` : '';
-            const logLines = [`${outReasonTxt}派出了 ${chosen.nickname}！`, ...hazardResult.logs];
+            const logLines = [...(benchAbilityLog ? [benchAbilityLog] : []), `${outReasonTxt}派出了 ${chosen.nickname}！`, ...hazardResult.logs];
             const update = {
                 'battleState.teams': newTeams,
                 'battleState.bench': newBench,
@@ -7192,7 +7261,15 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 被換下場的寶可夢：保留currentHp跟主要異常狀態(麻痺/中毒/燒傷/睡眠/冰凍——這些跟著
         // 寶可夢本體走，換人也治不好)，其餘「只在上場期間有意義」的暫時效果統一交給
         // resetVolatileForBench清掉(自願替換/被強制換下場共用同一套清理，見該函式的說明)
-        const outgoing = resetVolatileForBench(state[uid]);
+        const beforeSwitch = state[uid];
+        const outgoing = resetVolatileForBench(beforeSwitch);
+        // 【第三十五輪新增】自然回復/自我再生的效果已經在resetVolatileForBench裡面算好了，這裡
+        // 比對換下場前後的差異，補上對應的log訊息(resetVolatileForBench本身沒有log可以用)
+        if (outgoing.ability === 'natural-cure' && beforeSwitch.status) {
+            log.push(`${beforeSwitch.nickname} 的自然回復發動了，異常狀態治好了！`);
+        } else if (outgoing.ability === 'regenerator' && outgoing.currentHp > beforeSwitch.currentHp) {
+            log.push(`${beforeSwitch.nickname} 的自我再生發動了，回復了HP！`);
+        }
         const newBench = bench.slice();
         newBench[idx] = outgoing;
         benchState[uid] = newBench;
@@ -7519,6 +7596,25 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             defT.stages.spd = Math.min(6, before + 1);
             if (defT.stages.spd !== before) log.push(`${nameOf[defenderUid]} 的戰慄發動了，速度提高了！`);
         }
+        // 【第三十五輪新增】吐沙(sand-spit)：被打中(不需要接觸)時把天氣變成沙暴；跟威嚇/天氣
+        // 特性共用的setWeather寫在runSwitchInAbility裡面(不同函式)，這裡直接照同樣的判斷/賦值
+        // 方式重寫一次，weatherState是resolveBattleRound最外層的let變數，這個巢狀函式一樣讀寫得到
+        if (defT.ability === 'sand-spit' && weatherState.type !== 'sandstorm') {
+            weatherState = { type: 'sandstorm', turnsLeft: 999 };
+            log.push(`${nameOf[defenderUid]} 的吐沙發動了，捲起了沙暴！`);
+        }
+        // 【第三十五輪新增】掉出種子(seed-sower)：被打中時把場地變成青草場地，跟吐沙同樣道理
+        if (defT.ability === 'seed-sower' && terrainState.type !== 'grassy') {
+            terrainState = { type: 'grassy', turnsLeft: 999 };
+            log.push(`${nameOf[defenderUid]} 的掉出種子發動了，場地變成了青草場地！`);
+        }
+        // 【第三十五輪新增】棉絮(cotton-down)：被打中時(不需要接觸)讓攻擊方速度-1，正統規則其實是
+        // 「場上除了自己以外的所有寶可夢」，這個引擎1對1單打的話「除了自己以外」就只有攻擊方一個
+        if (defT.ability === 'cotton-down' && atkT.currentHp > 0) {
+            const before = atkT.stages.spd || 0;
+            atkT.stages.spd = Math.max(-6, before - 1);
+            if (atkT.stages.spd !== before) log.push(`${nameOf[defenderUid]} 的棉絮發動了，${nameOf[attackerUid]} 的速度下降了！`);
+        }
     }
     // 依序觸發雙方的上場特性(A先、B後——1v1沒有真正的速度同時判定需求，固定順序簡單且結果一致)；
     // 只有還沒觸發過(這一次上場之後第一次呼叫resolveBattleRound)的那一方才會真的執行
@@ -7588,6 +7684,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             else if (ability === 'dragons-maw' && type === 'dragon') power = Math.round(power * 1.5);
             else if (ability === 'transistor' && type === 'electric') power = Math.round(power * 1.3);
             else if (ability === 'steelworker' && type === 'steel') power = Math.round(power * 1.5);
+            else if (ability === 'steely-spirit' && type === 'steel') power = Math.round(power * 1.5); // 【第三十五輪新增】鋼之意志：官方原本是雙打時連隊友的鋼招也加成，這個引擎只有1對1單打，簡化成只加成自己，跟steelworker數值/判斷完全一樣
             else if (ability === 'reckless' && mv.drain < 0) power = Math.round(power * 1.2);
             else if (ability === 'sand-force' && weatherState.type === 'sandstorm' && ['rock', 'ground', 'steel'].includes(type)) power = Math.round(power * 1.3);
             else if (['overgrow', 'blaze', 'torrent', 'swarm'].includes(ability)) {
@@ -7769,8 +7866,11 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (quickA && !quickB) { order = [uidA, uidB]; log.push(`${nameOf[uidA] || state[uidA].nickname} 的先制之爪發動了！`); }
             else if (quickB && !quickA) { order = [uidB, uidA]; log.push(`${nameOf[uidB] || state[uidB].nickname} 的先制之爪發動了！`); }
             else {
-                const laggingA = state[uidA].heldItem === 'lagging-tail';
-                const laggingB = state[uidB].heldItem === 'lagging-tail';
+                // 【第三十五輪新增】慢出(stall)：特性版的後攻尾巴，效果完全一樣(同優先度必定最後
+                // 出招)，直接併進同一組判斷——如果兩邊剛好都是慢出/都拿著後攻尾巴，等於互相抵銷，
+                // 照樣往下看速度比較，這也是官方規則遇到「雙方都最後」時的處理方式
+                const laggingA = state[uidA].heldItem === 'lagging-tail' || state[uidA].ability === 'stall';
+                const laggingB = state[uidB].heldItem === 'lagging-tail' || state[uidB].ability === 'stall';
                 if (laggingA && !laggingB) {
                     order = [uidB, uidA];
                 } else if (laggingB && !laggingA) {
@@ -7938,6 +8038,12 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         const alreadyCharging = atk.chargingMove === move.name;
         if (!alreadyCharging && !move.isStruggle) {
             consumePp(atk, move);
+            // 【第三十五輪新增】壓迫感(pressure)：防守方特性，只要攻擊方對牠使出「不是純粹對自己
+            // 生效」的招式，就會多消耗1點PP(等於官方規則的雙倍PP)。放在這裡(consumePp之後、
+            // 蘋野果判斷之前)可以讓蘋野果的自動補PP順著這次多扣的PP一起判斷，不用另外處理順序
+            if (def.ability === 'pressure' && def.currentHp > 0 && !isSelfTargetMove(move.target)) {
+                consumePp(atk, move);
+            }
             // 蘋野果(leppa)：某一招PP用到0的時候自動吃掉，補回10點PP(一次性)
             if (atk.heldItem === 'leppa' && getMovePp(atk, move) <= 0) {
                 atk.movePp[move.name] = Math.min(move.pp || 10, 10);
@@ -8129,6 +8235,35 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
             events.push(ev);
             continue;
+        }
+
+        // ---- 【第三十五輪新增】隔音(soundproof)/防彈(bulletproof)/黃金之軀(good-as-gold)：
+        // 這三個都是「完全免疫某一整類招式」的被動特性，不看招式屬性相剋，改看招式本身是不是
+        // 音波系(SOUND_MOVES，跟「封聲」共用同一份清單)/球彈系(BALLISTIC_MOVES)/變化招式
+        // (damageClass==='status')，一樣要排除對自己生效/整個場地生效/入場障礙這幾種不是
+        // 「打在對方身上」的招式，也一樣能被破格系特性無視 ----
+        if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && !isFieldSideMove && !attackerBypassesAbilities(atk)) {
+            if (SOUND_MOVES.has(move.name) && def.ability === 'soundproof') {
+                ev.effectiveness = 0;
+                ev.damage = 0;
+                log.push(`${atkName} 使出 ${move.nameZh}，但是被 ${defName} 的隔音完全擋下了！`);
+                events.push(ev);
+                continue;
+            }
+            if (BALLISTIC_MOVES.has(move.name) && def.ability === 'bulletproof') {
+                ev.effectiveness = 0;
+                ev.damage = 0;
+                log.push(`${atkName} 使出 ${move.nameZh}，但是被 ${defName} 的防彈完全擋下了！`);
+                events.push(ev);
+                continue;
+            }
+            if (move.damageClass === 'status' && def.ability === 'good-as-gold') {
+                ev.effectiveness = 0;
+                ev.damage = 0;
+                log.push(`${defName} 是黃金之軀，${move.nameZh} 對它沒有用！`);
+                events.push(ev);
+                continue;
+            }
         }
 
         // ---- 女王的威嚴/耀眼身軀/破格盔尾：對方帶著這幾個特性的話，優先度大於0的招式完全打不中
@@ -8556,11 +8691,22 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (move.drain && totalDamage > 0 && !move.isStruggle) {
             const rawDrainAmt = Math.round(totalDamage * move.drain / 100);
             const healBlocked = rawDrainAmt > 0 && atk.healBlockTurns > 0;
-            const drainAmt = healBlocked ? 0 : rawDrainAmt;
+            // 【第三十五輪新增】污泥漿(liquid-ooze)：防守方特性，讓「原本會讓攻擊方回血」的吸血
+            // 效果反過來變成扣攻擊方血，扣的量跟原本會回的量一樣多；治癒封印期間本來就不會回血，
+            // 跟liquid-ooze無關，維持原本healBlocked優先判斷
+            const oozed = !healBlocked && rawDrainAmt > 0 && def.ability === 'liquid-ooze';
+            // 【第三十五輪新增】堅硬腦袋(rock-head)：攻擊方特性，招式本身寫死負值drain(例如
+            // 捨身衝撞/撞擊等經典反作用力招式)造成的反作用力傷害完全免疫；不影響liquid-ooze造成
+            // 的傷害(兩者是不同來源，官方規則也是分開判定)，也不影響掙扎(掙扎的反作用力在上面
+            // 獨立處理，不會經過這裡)
+            const rockHeadBlocked = !oozed && !healBlocked && rawDrainAmt < 0 && atk.ability === 'rock-head';
+            const drainAmt = (healBlocked || rockHeadBlocked) ? 0 : (oozed ? -rawDrainAmt : rawDrainAmt);
             atk.currentHp = Math.max(0, Math.min(atk.maxHp, atk.currentHp + drainAmt));
             ev.attackerHpAfter = atk.currentHp;
             ev.drainAmount = drainAmt;
             if (healBlocked) log.push(`${atkName} 被治癒封印了，沒辦法吸血回復！`);
+            else if (rockHeadBlocked) log.push(`${atkName} 的堅硬腦袋發動了，沒有受到反作用力傷害！`);
+            else if (oozed) log.push(`${defName} 的污泥漿發動了，${atkName} 反而損失了 ${-drainAmt} 點HP！`);
             else if (drainAmt > 0) log.push(`${atkName} 吸收了 ${drainAmt} 點HP！`);
             else if (drainAmt < 0) log.push(`${atkName} 受到反作用力，損失了 ${-drainAmt} 點HP！`);
             if (atk.currentHp <= 0 && drainAmt < 0) {
@@ -8678,7 +8824,16 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 惡夢/道具封印/治癒封印/束縛系/封聲，全部用招式名稱直接比對(不透過meta.ailment，理由
         // 同上面常數表註解)，而且(亡語之歌除外)一樣會被替身擋下來 ----
         if (!defSubActiveBeforeHit) {
-            if (TAUNT_MOVES.has(move.name)) {
+            // 【第三十五輪新增】芳香幕(aroma-veil)：完全免疫挑釁/折磨/定身法/再來一次/治癒封印
+            // 這批「心靈系」招式(官方原本還包含著迷，這個簡化版遊戲沒有實作著迷機制，故不列入)；
+            // 遲鈍(oblivious)：現行世代規則除了免疫著迷，也免疫挑釁——這裡同樣只做挑釁的部分。
+            // 兩個都可以被破格系特性無視
+            const aromaVeilBlocked = !attackerBypassesAbilities(atk) && def.ability === 'aroma-veil' &&
+                (TAUNT_MOVES.has(move.name) || TORMENT_MOVES.has(move.name) || DISABLE_MOVES.has(move.name) || ENCORE_MOVES.has(move.name) || HEAL_BLOCK_MOVES.has(move.name));
+            const obliviousTauntBlocked = !attackerBypassesAbilities(atk) && def.ability === 'oblivious' && TAUNT_MOVES.has(move.name);
+            if (aromaVeilBlocked || obliviousTauntBlocked) {
+                log.push(`${defName} 因為${aromaVeilBlocked ? '芳香幕' : '遲鈍'}，${atkName} 的${move.nameZh}沒有效果！`);
+            } else if (TAUNT_MOVES.has(move.name)) {
                 if (def.heldItem === 'mental-herb') {
                     log.push(`${defName} 的心靈香草發動了，抵擋了挑釁！`);
                     def.heldItem = null;
@@ -9355,6 +9510,20 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (t.silencedTurns > 0) { t.silencedTurns -= 1; if (t.silencedTurns <= 0) log.push(`${nameOf[uid]} 的封聲解除了！`); }
             if (t.healBlockTurns > 0) { t.healBlockTurns -= 1; if (t.healBlockTurns <= 0) log.push(`${nameOf[uid]} 的治癒封印解除了！`); }
             if (t.embargoTurns > 0) { t.embargoTurns -= 1; if (t.embargoTurns <= 0) log.push(`${nameOf[uid]} 的道具封印解除了！`); }
+
+            // 【第三十五輪新增】心情不定(moody)：回合結束時，隨機一項能力大幅提高(+2)、另一個
+            // 不同的隨機能力降低(-1)——包含命中率/閃避率共7項都可能被抽到，跟現行世代規則一致；
+            // 就算抽到的那項已經頂到+6/-6，也還是照樣算是「這次被選中的那個」(不會因此重抽)，
+            // 跟官方的行為一致(頂格的話單純沒有數值變化，但log訊息還是會顯示)
+            if (t.ability === 'moody') {
+                const moodyStats = ['atk', 'def', 'spAtk', 'spDef', 'spd', 'acc', 'eva'];
+                const raiseKey = moodyStats[Math.floor(Math.random() * moodyStats.length)];
+                const lowerPool = moodyStats.filter(k => k !== raiseKey);
+                const lowerKey = lowerPool[Math.floor(Math.random() * lowerPool.length)];
+                t.stages[raiseKey] = Math.min(6, (t.stages[raiseKey] || 0) + 2);
+                t.stages[lowerKey] = Math.max(-6, (t.stages[lowerKey] || 0) - 1);
+                log.push(`${nameOf[uid]} 的心情不定發動了，${STAGE_KEY_ZH[raiseKey]}大幅提高，${STAGE_KEY_ZH[lowerKey]}降低了！`);
+            }
         }
         // 兩邊都要檢查完才能判斷輸贏——任一方這時候HP歸零，先看牠還有沒有活著的候補寶可夢，
         // 有的話不會直接輸掉戰鬥，而是進入「強制替換」狀態。
@@ -9691,7 +9860,7 @@ let puzzleState = null; // {sessionId, speciesId, difficulty, size, display, til
 const PUZZLE_DIFFICULTIES = {
     novice: { size: 3, labelZh: '新星', cost: 50, timeLimitMs: 60 * 1000, moveLimit: 100, baseReward: 100, missReward: 50, zChancePct: 10 },
     elite: { size: 4, labelZh: '精英', cost: 100, timeLimitMs: 150 * 1000, moveLimit: 250, baseReward: 200, missReward: 100, zChancePct: 25 },
-    veteran: { size: 5, labelZh: '資深', cost: 300, timeLimitMs: 420 * 1000, moveLimit: 350, baseReward: 600, missReward: 200, zChancePct: 50 },
+    veteran: { size: 5, labelZh: '資深', cost: 300, timeLimitMs: 420 * 1000, moveLimit: 450, baseReward: 600, missReward: 200, zChancePct: 50 }, // 【第三十六輪修改】步數門檻350→450，要跟worker.js的POKEMON_PUZZLE_DIFFICULTIES.veteran保持一致
 };
 function puzzleFormatLimitText(ms) {
     const s = Math.round(ms / 1000);
