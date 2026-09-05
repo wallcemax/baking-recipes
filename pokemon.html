@@ -4038,6 +4038,21 @@ function findGym(gymId) {
 // totemBoost：正統規則裡「小峭壁背後站著一隻聲援的寶可夢幫Totem加能力階級」，這裡簡化成
 // 直接在建隊當下把能力階級(stages)種進去——沿用戰鬥引擎本來就有的能力等級機制，
 // 不用另外寫一套「登場時買加成」的邏輯
+// 【第三十二輪追加】從PokéAPI的abilities陣列隨機挑一個特性——跟worker.js的
+// rollAndCreatePokemonInstance完全同一套規則(95%機率一般特性、5%機率隱藏特性，
+// 沒有隱藏特性資料就退回一般特性池子)，讓NPC訓練家/野生寶可夢也能抽到跟玩家寶可夢
+// 同樣機率分布的特性。之前只有玩家自己隊伍的寶可夢會設ability欄位，這裡補齊
+// buildTrainerTeamMember/rollWildOpponent這兩個NPC/野生建置函式的缺口——戰鬥引擎
+// 本身檢查特性效果時(resolveBattleRound裡的atk.ability/def.ability/t.ability)完全
+// 不分玩家或NPC，只要battler物件上有ability欄位就會生效，不需要另外改動效果判定邏輯
+function rollAbilityFromPokemonData(pokemonData) {
+    const normalAbilities = (pokemonData?.abilities || []).filter(a => !a.is_hidden).map(a => a.ability.name);
+    const hiddenAbilities = (pokemonData?.abilities || []).filter(a => a.is_hidden).map(a => a.ability.name);
+    if (hiddenAbilities.length > 0 && Math.random() < 0.05) return hiddenAbilities[Math.floor(Math.random() * hiddenAbilities.length)];
+    if (normalAbilities.length > 0) return normalAbilities[Math.floor(Math.random() * normalAbilities.length)];
+    if (hiddenAbilities.length > 0) return hiddenAbilities[Math.floor(Math.random() * hiddenAbilities.length)];
+    return null;
+}
 async function buildTrainerTeamMember(member, idx, gymId) {
     const pokemonRes = await fetch(`https://pokeapi.co/api/v2/pokemon/${member.id}`);
     const pokemonData = await pokemonRes.json();
@@ -4081,6 +4096,7 @@ async function buildTrainerTeamMember(member, idx, gymId) {
         directives: d ? { ...d } : null,
         isAce: !!member.ace,
         starMult: 1, // 【第三十輪新增】訓練家的寶可夢沒有星級加成，固定給1，跟buildTeamDataFromInstData的starMult欄位對齊(Mega進化重算數值時共用同一套公式)
+        ability: rollAbilityFromPokemonData(pokemonData), // 【第三十二輪新增】道館NPC現在也會抽到特性、套用真正的戰鬥效果
     };
 }
 
@@ -5007,6 +5023,7 @@ async function rollWildOpponent(playerLevel) {
         spd: statAtLevel(baseStats.speed || 45, targetLevel, false),
         moves,
         isShiny: Math.random() < WILD_SHINY_CHANCE,
+        ability: rollAbilityFromPokemonData(pokemonData), // 【第三十二輪新增】野生寶可夢現在也會抽到特性、套用真正的戰鬥效果
     };
 }
 async function submitWildBattleStart() {
@@ -5488,6 +5505,7 @@ async function renderBattleStage(container, ctx) {
             <div class="absolute top-3 right-3 text-right" style="max-width:52%">
                 <div class="mb-1">
                     <span class="text-sm font-bold">${oppTeam.nickname}${oppTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(oppTeam)}${oppHazardsScreensBadge}
+                    ${battlerAbilityBadgeHtml(oppTeam.ability)}
                     <div id="hptext-opp" class="text-xs text-gray-400">${oppTeam.currentHp}/${oppTeam.maxHp}</div>
                 </div>
                 <div class="w-28 ml-auto bg-gray-200 rounded-full h-2.5 mb-2 overflow-hidden">
@@ -5514,6 +5532,7 @@ async function renderBattleStage(container, ctx) {
                 </div>
                 <div class="mb-1">
                     <span class="text-sm font-bold">${myTeam.nickname}${myTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(myTeam)}${myHazardsScreensBadge}
+                    ${battlerAbilityBadgeHtml(myTeam.ability)}
                     <div id="hptext-me" class="text-xs text-gray-400">${myTeam.currentHp}/${myTeam.maxHp}</div>
                 </div>
                 <div class="w-28 bg-gray-200 rounded-full h-2.5 overflow-hidden">
@@ -5959,13 +5978,13 @@ function buildTeamDataFromInstData(instanceId, inst, nickname, forceLevel) {
         isShiny: !!inst.isShiny,
         heldItem: inst.heldItem || null, // 攜帶道具/莓果，效果見resolveBattleRound裡的持有道具邏輯區塊
         starMult: mult, // 【第三十輪新增】Mega進化中途要用「Mega後的種族值」重新算數值，得記住這隻原本的星級加成倍率，不然沒辦法重算
-        // 【第三十一輪新增】特性：inst.ability是worker.js抽蛋時(rollAndCreatePokemonInstance)隨機
-        // 決定、寫進pokemonInstances文件的欄位；沒有這個欄位的舊寶可夢(這次更新之前就已經抓到的)
-        // 一律當成null(沒有特性效果)，需要用管理員補發腳本(pokemon_admin_backfill_abilities)才會
-        // 補上——這跟第七輪進化限定招式缺欄位時的處理方式(先讓舊資料優雅退化，再用補發腳本補齊)
-        // 是同一套模式。這次只有「玩家自己隊伍」的寶可夢(PvP雙方、野生/道館戰裡玩家這一側)會有
-        // 真正的特性效果；道館NPC/野生寶可夢對手沒有走這個函式(NPC走的是buildTrainerTeamMember，
-        // 這次沒有加特性)，是刻意縮小這輪範圍的簡化，見交付紀錄說明
+        // 【第三十一輪新增，第三十二輪起NPC/野生也比照辦理】特性：inst.ability是worker.js抽蛋時
+        // (rollAndCreatePokemonInstance)隨機決定、寫進pokemonInstances文件的欄位；沒有這個欄位的
+        // 舊寶可夢(這次更新之前就已經抓到的)一律當成null(沒有特性效果)，需要用管理員補發腳本
+        // (pokemon_admin_backfill_abilities)才會補上——這跟第七輪進化限定招式缺欄位時的處理方式
+        // (先讓舊資料優雅退化，再用補發腳本補齊)是同一套模式。【第三十二輪】道館NPC
+        // (buildTrainerTeamMember)、野生寶可夢(rollWildOpponent)這兩個建置函式現在也會用
+        // rollAbilityFromPokemonData抽一個特性，不再只有玩家自己隊伍才有特性效果
         ability: inst.ability || null,
     };
 }
@@ -6283,6 +6302,18 @@ function abilityDisplayInfo(abilitySlug) {
     if (!abilitySlug || !ABILITY_DATA_ZH[abilitySlug]) return null;
     return ABILITY_DATA_ZH[abilitySlug];
 }
+// 【第三十二輪新增】戰鬥畫面用的特性小標籤——NPC訓練家/野生寶可夢現在也會抽到特性
+// (見buildTrainerTeamMember/rollWildOpponent的rollAbilityFromPokemonData)，但牠們不是
+// 玩家自己的pokemonInstances資料，沒辦法像玩家的寶可夢一樣點開openDetailModal查看詳情，
+// 所以直接把「目前在場這隻」的特性名稱顯示在戰鬥畫面暱稱底下(不分我方/對方都適用)，
+// 滑鼠移上去(手機長按)title屬性會顯示完整效果說明；沒有特性(ability是null，例如舊資料
+// 還沒補發過)就不顯示任何東西
+function battlerAbilityBadgeHtml(abilitySlug) {
+    const info = abilityDisplayInfo(abilitySlug);
+    if (!info) return '';
+    const safeDesc = String(info.descZh || '').replace(/"/g, '&quot;');
+    return `<div class="text-[10px] text-purple-600 font-bold truncate" title="${safeDesc}">特性：${info.nameZh}</div>`;
+}
 // ---- 特性戰鬥效果會用到的招式分類清單：PokéAPI沒有穩定可用的「拳頭/啃咬/波動/切割系」旗標欄位
 // 可以查(跟SOUND_MOVES同樣的情況，見第十一輪的說明)，這裡用手動整理的清單頂替，涵蓋這個遊戲
 // 76+28座道館+轉蛋池會用到的常見招式，不是PokéAPI全部930幾招的完整清單 ----
@@ -6497,6 +6528,14 @@ function freshBattleStatus() {
         lastEatenBerry: null,
         turnsOnField: 0,
         switchInAbilityFired: false,
+        // 【第三十二輪新增】跨回合記憶特性用的欄位：unburdenActive(輕裝：道具在戰鬥中消失過一次，
+        // 就會維持速度加倍直到換下場為止，跟hadHeldItem沒關係、純粹是「消失事件」觸發的旗標)、
+        // cudChewBerry/cudChewTurns(反芻：記錄還沒吃完第二次的莓果種類跟倒數，見resolveBattleRound
+        // 「回合結束」區塊)。這兩個都是「只在場上時才有意義」的揮發性效果，換人(resetVolatileForBench)
+        // 會整批清空，跟perishCount(滅亡之軀共用)的道理一樣
+        unburdenActive: false,
+        cudChewBerry: null,
+        cudChewTurns: 0,
     };
 }
 // 一隻寶可夢從場上換下去時(不管是自願替換、還是被吼叫/咆哮/龍尾/圓環摔這類招式強制換下場)，
@@ -6561,6 +6600,12 @@ function resetVolatileForBench(battler) {
     outgoing.lastEatenBerry = null;
     outgoing.turnsOnField = 0;
     outgoing.switchInAbilityFired = false;
+    // 【第三十二輪新增】同樣道理，輕裝的「道具消失過」旗標、反芻的待觸發莓果/倒數都只在場上
+    // 時才有意義，換下場要清空，不然被打飛道具的輕裝寶可夢换人再上場後會一直維持2倍速度
+    // (正統規則是「換下場就解除」)
+    outgoing.unburdenActive = false;
+    outgoing.cudChewBerry = null;
+    outgoing.cudChewTurns = 0;
     return outgoing;
 }
 function revertMegaEvolution(battler) {
@@ -7414,6 +7459,26 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     log.push(`${nameOf[attackerUid]} 被感染了，特性變成了${info ? info.nameZh : defT.ability}！`);
                 }
             }
+            // 【第三十二輪新增，跨回合記憶特性】遊魂(wandering-spirit)：接觸後跟攻擊方「互換」特性
+            // (不是像木乃伊那樣單向感染)，共用同一份不可交換清單，避免變身者/幻覺/多屬性這類
+            // 跟外觀、判定綁死的特性被換掉造成顯示錯亂或引擎判斷異常
+            if (defT.ability === 'wandering-spirit' && atkT.ability && atkT.ability !== 'wandering-spirit') {
+                const unswappable = ['mummy', 'lingering-aroma', 'multitype', 'illusion', 'disguise', 'rks-system', 'battle-bond', 'stance-change', 'schooling', 'wonder-guard'];
+                if (!unswappable.includes(atkT.ability)) {
+                    const swapped = atkT.ability;
+                    atkT.ability = defT.ability;
+                    defT.ability = swapped;
+                    log.push(`${nameOf[defenderUid]} 的遊魂發動了，跟 ${nameOf[attackerUid]} 交換了特性！`);
+                }
+            }
+            // 【第三十二輪新增，跨回合記憶特性】滅亡之軀(perish-body)：被接觸類招式打中時，
+            // 幫雙方都掛上3回合倒數——跟亡語之歌(PERISH_SONG_MOVES)共用同一個perishCount欄位、
+            // 同一套回合結束遞減/歸零時昏厥的邏輯(見後面「回合結束」區塊)，正統規則是雙方都還沒
+            // 進入倒數狀態時才會觸發，已經在倒數中的話不會被重新洗成3
+            if (defT.ability === 'perish-body' && !atkT.perishCount && !defT.perishCount) {
+                atkT.perishCount = 3; defT.perishCount = 3;
+                log.push(`${nameOf[defenderUid]} 的滅亡之軀發動了，雙方都被下了滅亡的倒數！`);
+            }
         }
         // 破損盔甲(weak-armor)：被物理招式打中(不用接觸)防禦-1、速度+2
         if (defT.ability === 'weak-armor' && move.damageClass === 'physical') {
@@ -7674,7 +7739,19 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     // 「有效速度」= 種族速度 × 能力等級倍率 × (麻痺的話再打對折，這是經典的麻痺副作用)
     const effectiveSpeed = uid => {
         const t = state[uid];
-        const base = t.spd * statStageMult(t.stages.spd);
+        let base = t.spd * statStageMult(t.stages.spd);
+        // 【第三十二輪新增】天氣系加速特性：對應天氣時速度直接翻倍，彼此互斥(一隻寶可夢不會同時
+        // 有兩個天氣加速特性)，用if/else if串接就好
+        if (t.ability === 'swift-swim' && weatherState.type === 'rain') base *= 2;
+        else if (t.ability === 'chlorophyll' && weatherState.type === 'sun') base *= 2;
+        else if (t.ability === 'sand-rush' && weatherState.type === 'sandstorm') base *= 2;
+        else if (t.ability === 'slush-rush' && weatherState.type === 'hail') base *= 2;
+        // 【第三十二輪新增，跨回合記憶特性】輕裝(unburden)：道具在戰鬥中消失過一次(見上面各個
+        // heldItem = null旁邊設的unburdenActive)，速度變2倍、直到換下場為止
+        if (t.ability === 'unburden' && t.unburdenActive) base *= 2;
+        // 飛毛腿(quick-feet)：陷入異常狀態時速度變1.5倍，而且正統規則是連麻痺原本的減速效果也會
+        // 一併無視(所以這裡直接return，不會再疊乘下面的麻痺0.5倍)
+        if (t.ability === 'quick-feet' && t.status) return base * 1.5;
         return t.status === 'paralysis' ? base * 0.5 : base;
     };
     let order;
@@ -7865,6 +7942,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (atk.heldItem === 'leppa' && getMovePp(atk, move) <= 0) {
                 atk.movePp[move.name] = Math.min(move.pp || 10, 10);
                 atk.heldItem = null;
+                if (atk.ability === 'unburden') atk.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：道具消失後速度翻倍，直到換下場為止(見effectiveSpeed)
                 log.push(`${atkName} 的蘋野果發動了，${move.nameZh}的PP恢復了！`);
             }
         }
@@ -8100,6 +8178,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (defWasFullHp && def.currentHp <= 0 && def.heldItem === 'focus-sash') {
                 def.currentHp = 1;
                 def.heldItem = null;
+                    if (def.ability === 'unburden') def.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                 log.push(`${defName} 的氣勢披帶發動了，驚險地保留了1點HP！`);
                 return true;
             }
@@ -8371,6 +8450,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                         resistBerryConsumed = true;
                         log.push(`${defName} 的${def.heldItem === 'chilan' ? '燈籠果' : '抗性莓果'}發動了，傷害減半！`);
                         def.heldItem = null;
+                    if (def.ability === 'unburden') def.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                     }
                 }
                 if (defSubActiveBeforeHit) {
@@ -8535,6 +8615,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                             ailmentTarget.confusedTurns = 0;
                             log.push(`${ailmentTarget === atk ? atkName : defName} 自動吃下了手上的莓果，解除了混亂！`);
                             ailmentTarget.heldItem = null;
+                            if (ailmentTarget.ability === 'unburden') ailmentTarget.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                         }
                     }
                 } else if (move.ailment === 'ingrain') {
@@ -8586,6 +8667,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                             ailmentTarget.toxicCounter = 0;
                             log.push(`${ailmentTarget === atk ? atkName : defName} 自動吃下了手上的莓果，解除了${isToxic ? '劇毒' : (STATUS_NAME_ZH[move.ailment] || move.ailment)}！`);
                             ailmentTarget.heldItem = null;
+                            if (ailmentTarget.ability === 'unburden') ailmentTarget.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                         }
                     }
                 }
@@ -8600,6 +8682,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 if (def.heldItem === 'mental-herb') {
                     log.push(`${defName} 的心靈香草發動了，抵擋了挑釁！`);
                     def.heldItem = null;
+                    if (def.ability === 'unburden') def.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                 } else if (!def.tauntTurns) {
                     def.tauntTurns = 3;
                     log.push(`${defName} 被挑釁了，接下來只能使出攻擊招式！`);
@@ -8613,6 +8696,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 if (def.heldItem === 'mental-herb') {
                     log.push(`${defName} 的心靈香草發動了，抵擋了定身法！`);
                     def.heldItem = null;
+                    if (def.ability === 'unburden') def.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                 } else if (!def.disableTurns && def.lastMoveUsed && def.lastMoveUsed !== 'struggle') {
                     def.disabledMove = def.lastMoveUsed;
                     def.disableTurns = 4;
@@ -8624,6 +8708,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 if (def.heldItem === 'mental-herb') {
                     log.push(`${defName} 的心靈香草發動了，抵擋了再來一次！`);
                     def.heldItem = null;
+                    if (def.ability === 'unburden') def.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                 } else if (!def.encoreTurns && def.lastMoveUsed && def.lastMoveUsed !== 'struggle' && getMovePp(def, { name: def.lastMoveUsed }) > 0) {
                     def.encoreMove = def.lastMoveUsed;
                     def.encoreTurns = 3;
@@ -8660,6 +8745,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 if (def.heldItem === 'mental-herb') {
                     log.push(`${defName} 的心靈香草發動了，抵擋了治癒封印！`);
                     def.heldItem = null;
+                    if (def.ability === 'unburden') def.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                 } else if (!def.healBlockTurns) {
                     def.healBlockTurns = 5;
                     log.push(`${defName} 被治癒封印了，沒辦法回復HP！`);
@@ -9106,6 +9192,41 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
                 }
             }
+            // 【第三十二輪新增，跨回合記憶特性】反芻(cud-chew)：吃下樹果後，下下回合結束時會
+            // 「再吃一次」同一顆莓果的效果——不消耗手上道具(道具早就被吃掉了，這裡單純只是效果
+            // 重新觸發一次)。cudChewTurns在下面3個自動吃莓果分支裡被設成2(見t.heldItem = null;
+            // 那幾行旁邊)，這裡放在harvest判斷之前，確保「這一回合吃、下下回合才吃第二次」的順序：
+            // 這裡讀到的cudChewTurns一定是上一回合(或更早)設定的值，不會跟這一回合稍後才可能發生的
+            // 新一次進食搞混
+            if (t.ability === 'cud-chew' && t.cudChewBerry && t.cudChewTurns > 0) {
+                t.cudChewTurns -= 1;
+                if (t.cudChewTurns <= 0) {
+                    const berryKey = t.cudChewBerry;
+                    t.cudChewBerry = null;
+                    if (t.currentHp > 0 && ['oran', 'sitrus'].includes(berryKey)) {
+                        const heal = berryKey === 'oran' ? 10 : Math.round(t.maxHp * 0.25);
+                        const before = t.currentHp;
+                        t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                        if (t.currentHp > before) {
+                            log.push(`${nameOf[uid]} 的反芻發動了，回復了 ${t.currentHp - before} 點HP！`);
+                            events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                        }
+                    } else if (t.currentHp > 0 && ['figy', 'wiki', 'mago', 'aguav', 'iapapa'].includes(berryKey)) {
+                        const heal = Math.max(1, Math.round(t.maxHp / 8));
+                        const before = t.currentHp;
+                        t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                        if (t.currentHp > before) {
+                            log.push(`${nameOf[uid]} 的反芻發動了，回復了 ${t.currentHp - before} 點HP！`);
+                            events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                        }
+                    } else if (t.currentHp > 0 && ['liechi', 'petaya'].includes(berryKey)) {
+                        const statKey = berryKey === 'liechi' ? 'atk' : 'spAtk';
+                        const before = t.stages[statKey] || 0;
+                        t.stages[statKey] = Math.min(6, before + 1);
+                        if (t.stages[statKey] !== before) log.push(`${nameOf[uid]} 的反芻發動了，${STAGE_KEY_ZH[statKey]}上升了！`);
+                    }
+                }
+            }
             // 收穫(harvest)：手上沒有道具、而且之前吃過莓果的話，大晴天下必定、其餘天氣50%機率
             // 長出同一顆莓果——用新增的lastEatenBerry欄位記錄「上次吃的是哪顆」
             if (!t.heldItem && t.lastEatenBerry && t.ability === 'harvest') {
@@ -9134,6 +9255,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
                 t.lastEatenBerry = t.heldItem;
                 t.heldItem = null;
+                t.cudChewBerry = t.lastEatenBerry; t.cudChewTurns = t.ability === 'cud-chew' ? 2 : 0; // 【第三十二輪新增，跨回合記憶特性】反芻：下下回合會再重新觸發一次同一顆莓果的效果，見下方cud-chew區塊
+                if (t.ability === 'unburden') t.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                 applyCheekPouchBonus();
             } else if (t.heldItem && ['figy', 'wiki', 'mago', 'aguav', 'iapapa'].includes(t.heldItem) && !(t.healBlockTurns > 0) && t.currentHp <= t.maxHp * berryEatThreshold) {
                 // 熟成(ripen)：這批殘血系回血莓果的效果加倍
@@ -9144,6 +9267,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
                 t.lastEatenBerry = t.heldItem;
                 t.heldItem = null;
+                t.cudChewBerry = t.lastEatenBerry; t.cudChewTurns = t.ability === 'cud-chew' ? 2 : 0; // 【第三十二輪新增，跨回合記憶特性】反芻：下下回合會再重新觸發一次同一顆莓果的效果，見下方cud-chew區塊
+                if (t.ability === 'unburden') t.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                 applyCheekPouchBonus();
             } else if (t.heldItem && (t.heldItem === 'liechi' || t.heldItem === 'petaya') && t.currentHp <= t.maxHp * berryEatThreshold) {
                 // 正統規則：芝居果(liechi)提升攻擊、巴堅果(petaya)提升特攻——以前這個遊戲沒有拆
@@ -9156,6 +9281,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 if (t.stages[statKey] !== before) log.push(`${nameOf[uid]} 自動吃下了手上的莓果，${STAGE_KEY_ZH[statKey]}${bonus > 1 ? '大幅' : ''}上升了！`);
                 t.lastEatenBerry = t.heldItem;
                 t.heldItem = null;
+                t.cudChewBerry = t.lastEatenBerry; t.cudChewTurns = t.ability === 'cud-chew' ? 2 : 0; // 【第三十二輪新增，跨回合記憶特性】反芻：下下回合會再重新觸發一次同一顆莓果的效果，見下方cud-chew區塊
+                if (t.ability === 'unburden') t.unburdenActive = true; // 【第三十二輪新增，跨回合記憶特性】輕裝：見effectiveSpeed
                 applyCheekPouchBonus();
             }
             if (t.currentHp <= 0) continue;
