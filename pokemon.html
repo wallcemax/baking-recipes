@@ -2488,6 +2488,9 @@ const POKEMON_HELD_EQUIPMENT_ITEMS = [
     'shell-bell', 'leftovers', 'eviolite', 'lagging-tail', 'quick-claw', 'wide-lens', 'zoom-lens',
     'bright-powder', 'mental-herb', 'focus-sash', 'scope-lens', 'kings-rock',
 ];
+// 【第三十輪新增】POKEMON_MEGA_STONE_ITEMS/POKEMON_Z_CRYSTAL_ITEMS定義在後面MEGA_STONE_CATALOG/
+// Z_CRYSTAL_CATALOG那兩張表宣告的地方(因為要用Object.keys從那兩張表算出來，const宣告順序上
+// 不能引用還沒宣告的常數，這裡先留一句提示，實際定義搜尋「POKEMON_MEGA_STONE_ITEMS = Object.keys」)
 // 屬性強化道具/屬性抗性莓果：跟worker.js的同名常數一一對應，client這裡主要拿來畫裝備彈窗的
 // 分類跟戰鬥引擎查表用(哪個道具對應哪個屬性)
 const POKEMON_TYPE_BOOST_ITEM = {
@@ -2538,6 +2541,10 @@ async function fetchGenericItemNameZh(itemSlug) {
     // 【第二十八輪新增】真正的招式學習器(tm-001~tm-229)：名稱直接從TM_CATALOG組出來，
     // 不需要额外的翻譯/快取(這些本來就不是PokéAPI真實存在的道具，沒有zh-Hant可以查)
     if (TM_CATALOG[itemSlug]) return `招式學習器${TM_CATALOG[itemSlug].tmNum}：${TM_CATALOG[itemSlug].moveZh}`;
+    // 【第三十輪新增】超級石/Z純晶：名稱直接從各自的對照表組出來，不是PokéAPI真實存在的道具，
+    // 沒有zh-Hant可以查，道理跟上面招式學習器一樣
+    if (MEGA_STONE_CATALOG[itemSlug]) return MEGA_STONE_CATALOG[itemSlug].nameZh;
+    if (Z_CRYSTAL_CATALOG[itemSlug]) return Z_CRYSTAL_CATALOG[itemSlug].nameZh;
     if (SPECIAL_ITEM_NAME_ZH[itemSlug]) return SPECIAL_ITEM_NAME_ZH[itemSlug];
     if (genericItemNameZhCache.has(itemSlug)) return genericItemNameZhCache.get(itemSlug);
     try {
@@ -2561,6 +2568,11 @@ async function fetchGenericItemNameZh(itemSlug) {
 function itemSpriteForKey(key) {
     if (key === 'move-reminder') return itemSpriteUrl('heart-scale');
     if (TM_CATALOG[key]) return itemSpriteUrl('tm-' + TM_CATALOG[key].type);
+    // 【第三十輪新增】超級石：key本身就是PokéAPI真實存在的道具代號(跟item sprite檔名逐字對應，
+    // 例如venusaurite.png)，走最下面itemSpriteUrl(key)這條路就對了，不用特別處理。
+    // Z純晶：PokéAPI的圖示檔名固定是「代號--bag.png」/「代號--held.png」兩種，沒有裸代號.png，
+    // 這裡統一用--bag這個版本(背包/裝備彈窗都用得到，比較清楚好認)
+    if (Z_CRYSTAL_CATALOG[key]) return itemSpriteUrl(key + '--bag');
     return itemSpriteUrl(key);
 }
 // 卡片右上角的裝備道具小圖示(收藏庫/隊伍/牧場卡片共用)：inst.heldItem有值就顯示，莓果跟一般
@@ -2956,6 +2968,11 @@ async function openEquipModal(instanceId) {
     const ownedTypeBoostKeys = POKEMON_TYPE_BOOST_ITEM_LIST.filter(k => (items[k] || 0) > 0);
     const ownedBerryKeys = COMMON_BERRIES.filter(k => (berries[k] || 0) > 0);
     const equipDisplayKeys = [...ownedEquipKeys, ...ownedTypeBoostKeys];
+    // 【第三十輪新增】超級石/Z純晶：跟一般裝備道具一樣，只要有持有就列出來、可以裝上任何一隻
+    // 寶可夢(裝了不對的種類，戰鬥中就是單純沒有Mega進化/Z招式的選項可以按，不會出錯)——
+    // 是不是「對的那一隻」由道具名稱本身(例如「妙蛙花進化石」)告訴玩家，不用額外查種類比對
+    const ownedMegaStoneKeys = POKEMON_MEGA_STONE_ITEMS.filter(k => (items[k] || 0) > 0);
+    const ownedZCrystalKeys = POKEMON_Z_CRYSTAL_ITEMS.filter(k => (items[k] || 0) > 0);
 
     const heldItem = inst.heldItem || null;
     const heldIsBerry = heldItem && COMMON_BERRIES.includes(heldItem);
@@ -2963,6 +2980,8 @@ async function openEquipModal(instanceId) {
 
     const equipNames = await Promise.all(equipDisplayKeys.map(fetchGenericItemNameZh));
     const berryNames = await Promise.all(ownedBerryKeys.map(fetchBerryNameZh));
+    const megaStoneNames = await Promise.all(ownedMegaStoneKeys.map(fetchGenericItemNameZh));
+    const zCrystalNames = await Promise.all(ownedZCrystalKeys.map(fetchGenericItemNameZh));
 
     const currentHeldHtml = heldItem ? `
         <div class="bg-yellow-50 rounded-xl p-3 flex items-center gap-2 mb-3">
@@ -3000,12 +3019,30 @@ async function openEquipModal(instanceId) {
         </div>
     ` : '';
 
+    // 【第三十輪新增】超級石/Z純晶專屬區塊：跟一般裝備道具分開顯示，並提醒玩家「名稱裡的那隻
+    // 寶可夢才用得到」，避免誤裝在不對的種類身上、對戰中卻找不到Mega進化/Z招式選項
+    const megaZSectionHtml = (ownedMegaStoneKeys.length > 0 || ownedZCrystalKeys.length > 0) ? `
+        <p class="text-xs text-gray-400 mb-1.5">超級石／Ｚ純晶(只有名稱裡對應的寶可夢才能在戰鬥中觸發Mega進化／Ｚ招式；裝在別的寶可夢身上不會出錯，只是戰鬥時不會出現選項)</p>
+        <div class="grid grid-cols-2 gap-2 mb-3">
+            ${[...ownedMegaStoneKeys.map((k, idx) => [k, megaStoneNames[idx], items[k]]), ...ownedZCrystalKeys.map((k, idx) => [k, zCrystalNames[idx], items[k]])].map(([k, name, count]) => `
+                <button onclick="equipItemAction('${instanceId}','${k}')" class="bg-gray-50 hover:bg-purple-50 rounded-xl p-2 flex items-center gap-2 text-left ${heldItem === k ? 'ring-2 ring-purple-400' : ''}">
+                    <img src="${itemSpriteForKey(k)}" class="w-8 h-8 shrink-0" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+                    <span class="min-w-0 flex-1">
+                        <span class="block text-xs font-bold truncate">${name}</span>
+                        <span class="block text-[10px] text-gray-400">x${count}</span>
+                    </span>
+                </button>
+            `).join('')}
+        </div>
+    ` : '';
+
     content.innerHTML = `
         <h3 class="font-bold text-lg mb-3 text-center">裝備道具</h3>
         ${currentHeldHtml}
         ${equipSectionHtml}
+        ${megaZSectionHtml}
         ${berrySectionHtml}
-        ${equipDisplayKeys.length === 0 && ownedBerryKeys.length === 0 ? `<p class="text-sm text-gray-400 text-center py-6">目前身上沒有可以裝備的道具/莓果，去玩「猜猜看」分頁賺一些吧！</p>` : ''}
+        ${equipDisplayKeys.length === 0 && ownedBerryKeys.length === 0 && ownedMegaStoneKeys.length === 0 && ownedZCrystalKeys.length === 0 ? `<p class="text-sm text-gray-400 text-center py-6">目前身上沒有可以裝備的道具/莓果，去玩「猜猜看」分頁賺一些吧！</p>` : ''}
         <button onclick="closeEquipModal(); openDetailModal('${instanceId}')" class="w-full text-gray-400 text-sm mt-1">返回</button>
     `;
 }
@@ -4036,6 +4073,7 @@ async function buildTrainerTeamMember(member, idx, gymId) {
         stages,
         directives: d ? { ...d } : null,
         isAce: !!member.ace,
+        starMult: 1, // 【第三十輪新增】訓練家的寶可夢沒有星級加成，固定給1，跟buildTeamDataFromInstData的starMult欄位對齊(Mega進化重算數值時共用同一套公式)
     };
 }
 
@@ -4188,6 +4226,13 @@ async function autoHandleTrainerSwitch(roomRef, roomData) {
                 update.status = 'finished';
                 update.winnerUid = humanUid || null;
                 update.winnerInstanceId = humanUid && data.battleState.teams[humanUid] ? data.battleState.teams[humanUid].instanceId : null;
+                // 【第三十輪新增】戰鬥在這裡真正結束——如果贏的玩家(humanUid)場上還維持著Mega進化
+                // 的樣子，這裡也要復原，道理跟resolveBattleRound最後寫回前的處理一樣
+                if (humanUid && data.battleState.teams[humanUid] && data.battleState.teams[humanUid].megaEvolvedFrom) {
+                    const revertedHuman = { ...data.battleState.teams[humanUid] };
+                    revertMegaEvolution(revertedHuman);
+                    update['battleState.teams.' + humanUid] = revertedHuman;
+                }
             } else if (settledFainted) {
                 // 還有候補，維持awaitingSwitch包含'wild'——下一次onSnapshot觸發時這個函式會
                 // 再跑一次，繼續挑下一隻候補上場
@@ -5100,6 +5145,14 @@ function toggleSwitchPicker(show) {
     battleShowSwitchPicker = show;
     if (lastRenderedRoom) renderRoomView(lastRenderedRoom);
 }
+// 【第三十輪新增】battlePendingMega：跟battleShowSwitchPicker同樣的做法，是純前端UI狀態(玩家
+// 有沒有勾選「這回合順便Mega進化」)，不寫進Firestore，切換時手動重新呼叫renderRoomView。
+// 每次真正送出招式(submitMove)後要記得歸零，不然下一場戰鬥/下一隻寶可夢會不小心沿用上次的勾選
+let battlePendingMega = false;
+function toggleMegaPending() {
+    battlePendingMega = !battlePendingMega;
+    if (lastRenderedRoom) renderRoomView(lastRenderedRoom);
+}
 
 // 選出這場對戰該播哪一首戰鬥配樂：地區對戰(有regionId)用該地區的專屬曲目、真人連線對戰(不是
 // isWild)用PvP專屬曲目、其餘(單純野生遭遇)用原本的通用戰鬥配樂——BGM.play()內部沒有這首曲目
@@ -5383,15 +5436,27 @@ async function renderBattleStage(container, ctx) {
         // 才被伺服器擋下來的招式
         const usableList = myMoveDisplays.map(m => ({ m, pp: getMovePp(myTeam, m), blockReason: isMoveBlockedByStatus(myTeam, m) }));
         const usableCount = usableList.filter(x => x.pp > 0 && !x.blockReason).length;
+        // 【第三十輪新增】Mega進化/Ｚ招式的資格判斷——每次重繪都重新算一次，讀最新的room.battleState
+        // (megaUsed/zMoveUsed這兩個「整場戰鬥只能用一次」的名額，見resolveBattleRound的說明)
+        const megaAlreadyUsed = !!(room.battleState && room.battleState.megaUsed && room.battleState.megaUsed[myUid]);
+        const zAlreadyUsed = !!(room.battleState && room.battleState.zMoveUsed && room.battleState.zMoveUsed[myUid]);
+        const megaInfoNow = !megaAlreadyUsed && !myTeam.megaEvolvedFrom ? findMegaInfoFor(myTeam) : null;
+        const megaToggleHtml = megaInfoNow ? `
+            <label class="flex items-center gap-1.5 mb-1.5 text-xs font-bold text-purple-600 select-none">
+                <input type="checkbox" ${battlePendingMega ? 'checked' : ''} onchange="toggleMegaPending()" class="w-4 h-4 accent-purple-600">
+                這回合順便Mega進化(這場戰鬥只能用一次)
+            </label>` : '';
         if (usableCount === 0) {
-            movesHtml = `<button onclick="submitMove('struggle')" class="w-full h-full min-h-[110px] rounded-2xl bg-gray-500 text-white font-black text-base active:scale-95 transition-transform">所有招式都沒辦法使用了，使出掙扎！</button>`;
+            movesHtml = `${megaToggleHtml}<button onclick="submitMove('struggle', {mega: battlePendingMega})" class="w-full h-full min-h-[110px] rounded-2xl bg-gray-500 text-white font-black text-base active:scale-95 transition-transform">所有招式都沒辦法使用了，使出掙扎！</button>`;
         } else {
-            movesHtml = `<div class="grid grid-cols-2 gap-2">${usableList.map(({ m, pp, blockReason }) => {
+            movesHtml = `${megaToggleHtml}<div class="grid grid-cols-2 gap-2">${usableList.map(({ m, pp, blockReason }) => {
                 const disabled = pp <= 0 || !!blockReason;
-                return `<button ${disabled ? 'disabled' : ''} onclick="submitMove('${m.name}')" class="rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden ${disabled ? 'opacity-40' : ''}" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
+                const zInfo = (!disabled && !zAlreadyUsed) ? findZMoveInfoFor(myTeam, m) : null;
+                return `<button ${disabled ? 'disabled' : ''} onclick="submitMove('${m.name}', {mega: battlePendingMega})" class="relative rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden ${disabled ? 'opacity-40' : ''}" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
                     <span class="flex items-center gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 shrink-0" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span class="text-white text-sm font-black truncate">${m.nameZh}</span>${DAMAGE_CLASS_BADGE_PILL[m.damageClass] || ''}</span>
                     <span class="block text-[0.6rem] text-white/85 mt-0.5 truncate">${blockReason || m.descZh || ' '}</span>
                     <span class="block text-[0.6rem] text-white/70 mt-0.5">PP ${pp}/${m.pp || '?'}</span>
+                    ${zInfo ? `<span onclick="event.stopPropagation(); submitMove('${m.name}', {mega: battlePendingMega, zMove: true})" class="absolute top-1 right-1 bg-white/90 text-purple-700 text-[9px] font-black px-1.5 py-0.5 rounded-full shadow" title="Ｚ招式：${zInfo.zMoveNameZh}">Ｚ</span>` : ''}
                 </button>`;
             }).join('')}</div>`;
             allowSwitchTap = myBench.length > 0; // 這個分支才是「正常選招式」狀態，才能點寶可夢圖片開替換選單
@@ -5885,6 +5950,7 @@ function buildTeamDataFromInstData(instanceId, inst, nickname, forceLevel) {
         moves: inst.moves && inst.moves.length ? inst.moves : ['tackle'],
         isShiny: !!inst.isShiny,
         heldItem: inst.heldItem || null, // 攜帶道具/莓果，效果見resolveBattleRound裡的持有道具邏輯區塊
+        starMult: mult, // 【第三十輪新增】Mega進化中途要用「Mega後的種族值」重新算數值，得記住這隻原本的星級加成倍率，不然沒辦法重算
     };
 }
 
@@ -6143,6 +6209,48 @@ const MOVE_DATA_ZH = {"pound":{"zh":"拍擊","type":"normal","category":"physica
 // 使用者提供的「招式學習器資料.txt」。moveSlug對應到上面MOVE_DATA_ZH的key，兩份表along同一批
 // 招式資料一起維護，不會有兜不起來的問題(見gen_regions.py旁另外一支轉檔腳本的說明)
 const TM_CATALOG = {"tm-001":{"tmNum":"001","moveSlug":"take-down","moveZh":"猛撞","type":"normal","category":"physical"},"tm-002":{"tmNum":"002","moveSlug":"charm","moveZh":"撒嬌","type":"fairy","category":"status"},"tm-003":{"tmNum":"003","moveSlug":"fake-tears","moveZh":"假哭","type":"dark","category":"status"},"tm-004":{"tmNum":"004","moveSlug":"agility","moveZh":"高速移動","type":"psychic","category":"status"},"tm-005":{"tmNum":"005","moveSlug":"mud-slap","moveZh":"擲泥","type":"ground","category":"special"},"tm-006":{"tmNum":"006","moveSlug":"scary-face","moveZh":"鬼面","type":"normal","category":"status"},"tm-007":{"tmNum":"007","moveSlug":"protect","moveZh":"守住","type":"normal","category":"status"},"tm-008":{"tmNum":"008","moveSlug":"fire-fang","moveZh":"火焰牙","type":"fire","category":"physical"},"tm-009":{"tmNum":"009","moveSlug":"thunder-fang","moveZh":"雷電牙","type":"electric","category":"physical"},"tm-010":{"tmNum":"010","moveSlug":"ice-fang","moveZh":"冰凍牙","type":"ice","category":"physical"},"tm-011":{"tmNum":"011","moveSlug":"water-pulse","moveZh":"水之波動","type":"water","category":"special"},"tm-012":{"tmNum":"012","moveSlug":"low-kick","moveZh":"踢倒","type":"fighting","category":"physical"},"tm-013":{"tmNum":"013","moveSlug":"acid-spray","moveZh":"酸液炸彈","type":"poison","category":"special"},"tm-014":{"tmNum":"014","moveSlug":"acrobatics","moveZh":"雜技","type":"flying","category":"physical"},"tm-015":{"tmNum":"015","moveSlug":"struggle-bug","moveZh":"蟲之抵抗","type":"bug","category":"special"},"tm-016":{"tmNum":"016","moveSlug":"psybeam","moveZh":"幻象光線","type":"psychic","category":"special"},"tm-017":{"tmNum":"017","moveSlug":"confuse-ray","moveZh":"奇異之光","type":"ghost","category":"status"},"tm-018":{"tmNum":"018","moveSlug":"thief","moveZh":"小偷","type":"dark","category":"physical"},"tm-019":{"tmNum":"019","moveSlug":"disarming-voice","moveZh":"魅惑之聲","type":"fairy","category":"special"},"tm-020":{"tmNum":"020","moveSlug":"trailblaze","moveZh":"起草","type":"grass","category":"physical"},"tm-021":{"tmNum":"021","moveSlug":"pounce","moveZh":"蟲撲","type":"bug","category":"physical"},"tm-022":{"tmNum":"022","moveSlug":"chilling-water","moveZh":"潑冷水","type":"water","category":"special"},"tm-023":{"tmNum":"023","moveSlug":"charge-beam","moveZh":"充電光束","type":"electric","category":"special"},"tm-024":{"tmNum":"024","moveSlug":"fire-spin","moveZh":"火焰旋渦","type":"fire","category":"special"},"tm-025":{"tmNum":"025","moveSlug":"facade","moveZh":"硬撐","type":"normal","category":"physical"},"tm-026":{"tmNum":"026","moveSlug":"poison-tail","moveZh":"毒尾","type":"poison","category":"physical"},"tm-027":{"tmNum":"027","moveSlug":"aerial-ace","moveZh":"燕返","type":"flying","category":"physical"},"tm-028":{"tmNum":"028","moveSlug":"bulldoze","moveZh":"重踏","type":"ground","category":"physical"},"tm-029":{"tmNum":"029","moveSlug":"hex","moveZh":"禍不單行","type":"ghost","category":"special"},"tm-030":{"tmNum":"030","moveSlug":"snarl","moveZh":"大聲咆哮","type":"dark","category":"special"},"tm-031":{"tmNum":"031","moveSlug":"metal-claw","moveZh":"金屬爪","type":"steel","category":"physical"},"tm-032":{"tmNum":"032","moveSlug":"swift","moveZh":"高速星星","type":"normal","category":"special"},"tm-033":{"tmNum":"033","moveSlug":"magical-leaf","moveZh":"魔法葉","type":"grass","category":"special"},"tm-034":{"tmNum":"034","moveSlug":"icy-wind","moveZh":"冰凍之風","type":"ice","category":"special"},"tm-035":{"tmNum":"035","moveSlug":"mud-shot","moveZh":"泥巴射擊","type":"ground","category":"special"},"tm-036":{"tmNum":"036","moveSlug":"rock-tomb","moveZh":"岩石封鎖","type":"rock","category":"physical"},"tm-037":{"tmNum":"037","moveSlug":"draining-kiss","moveZh":"吸取之吻","type":"fairy","category":"special"},"tm-038":{"tmNum":"038","moveSlug":"flame-charge","moveZh":"蓄能焰襲","type":"fire","category":"physical"},"tm-039":{"tmNum":"039","moveSlug":"low-sweep","moveZh":"下盤踢","type":"fighting","category":"physical"},"tm-040":{"tmNum":"040","moveSlug":"air-cutter","moveZh":"空氣利刃","type":"flying","category":"special"},"tm-041":{"tmNum":"041","moveSlug":"stored-power","moveZh":"輔助力量","type":"psychic","category":"special"},"tm-042":{"tmNum":"042","moveSlug":"night-shade","moveZh":"黑夜魔影","type":"ghost","category":"special"},"tm-043":{"tmNum":"043","moveSlug":"fling","moveZh":"投擲","type":"dark","category":"physical"},"tm-044":{"tmNum":"044","moveSlug":"dragon-tail","moveZh":"龍尾","type":"dragon","category":"physical"},"tm-045":{"tmNum":"045","moveSlug":"venoshock","moveZh":"毒液衝擊","type":"poison","category":"special"},"tm-046":{"tmNum":"046","moveSlug":"avalanche","moveZh":"雪崩","type":"ice","category":"physical"},"tm-047":{"tmNum":"047","moveSlug":"endure","moveZh":"挺住","type":"normal","category":"status"},"tm-048":{"tmNum":"048","moveSlug":"volt-switch","moveZh":"伏特替換","type":"electric","category":"special"},"tm-049":{"tmNum":"049","moveSlug":"sunny-day","moveZh":"大晴天","type":"fire","category":"status"},"tm-050":{"tmNum":"050","moveSlug":"rain-dance","moveZh":"求雨","type":"water","category":"status"},"tm-051":{"tmNum":"051","moveSlug":"sandstorm","moveZh":"沙暴","type":"rock","category":"status"},"tm-052":{"tmNum":"052","moveSlug":"snowscape","moveZh":"雪景","type":"ice","category":"status"},"tm-053":{"tmNum":"053","moveSlug":"smart-strike","moveZh":"修長之角","type":"steel","category":"physical"},"tm-054":{"tmNum":"054","moveSlug":"psyshock","moveZh":"精神衝擊","type":"psychic","category":"special"},"tm-055":{"tmNum":"055","moveSlug":"dig","moveZh":"挖洞","type":"ground","category":"physical"},"tm-056":{"tmNum":"056","moveSlug":"bullet-seed","moveZh":"種子機關槍","type":"grass","category":"physical"},"tm-057":{"tmNum":"057","moveSlug":"false-swipe","moveZh":"點到為止","type":"normal","category":"physical"},"tm-058":{"tmNum":"058","moveSlug":"brick-break","moveZh":"劈瓦","type":"fighting","category":"physical"},"tm-059":{"tmNum":"059","moveSlug":"zen-headbutt","moveZh":"意念頭鎚","type":"psychic","category":"physical"},"tm-060":{"tmNum":"060","moveSlug":"u-turn","moveZh":"急速折返","type":"bug","category":"physical"},"tm-061":{"tmNum":"061","moveSlug":"shadow-claw","moveZh":"暗影爪","type":"ghost","category":"physical"},"tm-062":{"tmNum":"062","moveSlug":"foul-play","moveZh":"詐欺","type":"dark","category":"physical"},"tm-063":{"tmNum":"063","moveSlug":"psychic-fangs","moveZh":"精神之牙","type":"psychic","category":"physical"},"tm-064":{"tmNum":"064","moveSlug":"bulk-up","moveZh":"健美","type":"fighting","category":"status"},"tm-065":{"tmNum":"065","moveSlug":"air-slash","moveZh":"空氣斬","type":"flying","category":"special"},"tm-066":{"tmNum":"066","moveSlug":"body-slam","moveZh":"泰山壓頂","type":"normal","category":"physical"},"tm-067":{"tmNum":"067","moveSlug":"fire-punch","moveZh":"火焰拳","type":"fire","category":"physical"},"tm-068":{"tmNum":"068","moveSlug":"thunder-punch","moveZh":"雷電拳","type":"electric","category":"physical"},"tm-069":{"tmNum":"069","moveSlug":"ice-punch","moveZh":"冰凍拳","type":"ice","category":"physical"},"tm-070":{"tmNum":"070","moveSlug":"sleep-talk","moveZh":"夢話","type":"normal","category":"status"},"tm-071":{"tmNum":"071","moveSlug":"seed-bomb","moveZh":"種子炸彈","type":"grass","category":"physical"},"tm-072":{"tmNum":"072","moveSlug":"electro-ball","moveZh":"電球","type":"electric","category":"special"},"tm-073":{"tmNum":"073","moveSlug":"drain-punch","moveZh":"吸取拳","type":"fighting","category":"physical"},"tm-074":{"tmNum":"074","moveSlug":"reflect","moveZh":"反射壁","type":"psychic","category":"status"},"tm-075":{"tmNum":"075","moveSlug":"light-screen","moveZh":"光牆","type":"psychic","category":"status"},"tm-076":{"tmNum":"076","moveSlug":"rock-blast","moveZh":"岩石爆擊","type":"rock","category":"physical"},"tm-077":{"tmNum":"077","moveSlug":"waterfall","moveZh":"攀瀑","type":"water","category":"physical"},"tm-078":{"tmNum":"078","moveSlug":"dragon-claw","moveZh":"龍爪","type":"dragon","category":"physical"},"tm-079":{"tmNum":"079","moveSlug":"dazzling-gleam","moveZh":"魔法閃耀","type":"fairy","category":"special"},"tm-080":{"tmNum":"080","moveSlug":"metronome","moveZh":"揮指","type":"normal","category":"status"},"tm-081":{"tmNum":"081","moveSlug":"grass-knot","moveZh":"打草結","type":"grass","category":"special"},"tm-082":{"tmNum":"082","moveSlug":"thunder-wave","moveZh":"電磁波","type":"electric","category":"status"},"tm-083":{"tmNum":"083","moveSlug":"poison-jab","moveZh":"毒擊","type":"poison","category":"physical"},"tm-084":{"tmNum":"084","moveSlug":"stomping-tantrum","moveZh":"跺腳","type":"ground","category":"physical"},"tm-085":{"tmNum":"085","moveSlug":"rest","moveZh":"睡覺","type":"psychic","category":"status"},"tm-086":{"tmNum":"086","moveSlug":"rock-slide","moveZh":"岩崩","type":"rock","category":"physical"},"tm-087":{"tmNum":"087","moveSlug":"taunt","moveZh":"挑釁","type":"dark","category":"status"},"tm-088":{"tmNum":"088","moveSlug":"swords-dance","moveZh":"劍舞","type":"normal","category":"status"},"tm-089":{"tmNum":"089","moveSlug":"body-press","moveZh":"撲擊","type":"fighting","category":"physical"},"tm-090":{"tmNum":"090","moveSlug":"spikes","moveZh":"撒菱","type":"ground","category":"status"},"tm-091":{"tmNum":"091","moveSlug":"toxic-spikes","moveZh":"毒菱","type":"poison","category":"status"},"tm-092":{"tmNum":"092","moveSlug":"imprison","moveZh":"封印","type":"psychic","category":"status"},"tm-093":{"tmNum":"093","moveSlug":"flash-cannon","moveZh":"加農光砲","type":"steel","category":"special"},"tm-094":{"tmNum":"094","moveSlug":"dark-pulse","moveZh":"惡之波動","type":"dark","category":"special"},"tm-095":{"tmNum":"095","moveSlug":"leech-life","moveZh":"吸血","type":"bug","category":"physical"},"tm-096":{"tmNum":"096","moveSlug":"eerie-impulse","moveZh":"怪異電波","type":"electric","category":"status"},"tm-097":{"tmNum":"097","moveSlug":"fly","moveZh":"飛翔","type":"flying","category":"physical"},"tm-098":{"tmNum":"098","moveSlug":"skill-swap","moveZh":"特性互換","type":"psychic","category":"status"},"tm-099":{"tmNum":"099","moveSlug":"iron-head","moveZh":"鐵頭","type":"steel","category":"physical"},"tm-100":{"tmNum":"100","moveSlug":"dragon-dance","moveZh":"龍之舞","type":"dragon","category":"status"},"tm-101":{"tmNum":"101","moveSlug":"power-gem","moveZh":"力量寶石","type":"rock","category":"special"},"tm-102":{"tmNum":"102","moveSlug":"gunk-shot","moveZh":"垃圾射擊","type":"poison","category":"physical"},"tm-103":{"tmNum":"103","moveSlug":"substitute","moveZh":"替身","type":"normal","category":"status"},"tm-104":{"tmNum":"104","moveSlug":"iron-defense","moveZh":"鐵壁","type":"steel","category":"status"},"tm-105":{"tmNum":"105","moveSlug":"x-scissor","moveZh":"十字架剪","type":"bug","category":"physical"},"tm-106":{"tmNum":"106","moveSlug":"drill-run","moveZh":"直衝鑽","type":"ground","category":"physical"},"tm-107":{"tmNum":"107","moveSlug":"will-o-wisp","moveZh":"鬼火","type":"fire","category":"status"},"tm-108":{"tmNum":"108","moveSlug":"crunch","moveZh":"咬碎","type":"dark","category":"physical"},"tm-109":{"tmNum":"109","moveSlug":"trick","moveZh":"戲法","type":"psychic","category":"status"},"tm-110":{"tmNum":"110","moveSlug":"liquidation","moveZh":"水流裂破","type":"water","category":"physical"},"tm-111":{"tmNum":"111","moveSlug":"giga-drain","moveZh":"終極吸取","type":"grass","category":"special"},"tm-112":{"tmNum":"112","moveSlug":"aura-sphere","moveZh":"波飛彈","type":"fighting","category":"special"},"tm-113":{"tmNum":"113","moveSlug":"tailwind","moveZh":"順風","type":"flying","category":"status"},"tm-114":{"tmNum":"114","moveSlug":"shadow-ball","moveZh":"暗影球","type":"ghost","category":"special"},"tm-115":{"tmNum":"115","moveSlug":"dragon-pulse","moveZh":"龍之波動","type":"dragon","category":"special"},"tm-116":{"tmNum":"116","moveSlug":"stealth-rock","moveZh":"隱形岩","type":"rock","category":"status"},"tm-117":{"tmNum":"117","moveSlug":"hyper-voice","moveZh":"大麥克","type":"normal","category":"special"},"tm-118":{"tmNum":"118","moveSlug":"heat-wave","moveZh":"熱風","type":"fire","category":"special"},"tm-119":{"tmNum":"119","moveSlug":"energy-ball","moveZh":"能量球","type":"grass","category":"special"},"tm-120":{"tmNum":"120","moveSlug":"psychic","moveZh":"精神強念","type":"psychic","category":"special"},"tm-121":{"tmNum":"121","moveSlug":"heavy-slam","moveZh":"重磅衝撞","type":"steel","category":"physical"},"tm-122":{"tmNum":"122","moveSlug":"encore","moveZh":"再來一次","type":"normal","category":"status"},"tm-123":{"tmNum":"123","moveSlug":"surf","moveZh":"衝浪","type":"water","category":"special"},"tm-124":{"tmNum":"124","moveSlug":"ice-spinner","moveZh":"冰旋","type":"ice","category":"physical"},"tm-125":{"tmNum":"125","moveSlug":"flamethrower","moveZh":"噴射火焰","type":"fire","category":"special"},"tm-126":{"tmNum":"126","moveSlug":"thunderbolt","moveZh":"十萬伏特","type":"electric","category":"special"},"tm-127":{"tmNum":"127","moveSlug":"play-rough","moveZh":"嬉鬧","type":"fairy","category":"physical"},"tm-128":{"tmNum":"128","moveSlug":"amnesia","moveZh":"瞬間失憶","type":"psychic","category":"status"},"tm-129":{"tmNum":"129","moveSlug":"calm-mind","moveZh":"冥想","type":"psychic","category":"status"},"tm-130":{"tmNum":"130","moveSlug":"helping-hand","moveZh":"幫助","type":"normal","category":"status"},"tm-131":{"tmNum":"131","moveSlug":"pollen-puff","moveZh":"花粉團","type":"bug","category":"special"},"tm-132":{"tmNum":"132","moveSlug":"baton-pass","moveZh":"接棒","type":"normal","category":"status"},"tm-133":{"tmNum":"133","moveSlug":"earth-power","moveZh":"大地之力","type":"ground","category":"special"},"tm-134":{"tmNum":"134","moveSlug":"reversal","moveZh":"起死回生","type":"fighting","category":"physical"},"tm-135":{"tmNum":"135","moveSlug":"ice-beam","moveZh":"冰凍光束","type":"ice","category":"special"},"tm-136":{"tmNum":"136","moveSlug":"electric-terrain","moveZh":"電氣場地","type":"electric","category":"status"},"tm-137":{"tmNum":"137","moveSlug":"grassy-terrain","moveZh":"青草場地","type":"grass","category":"status"},"tm-138":{"tmNum":"138","moveSlug":"psychic-terrain","moveZh":"精神場地","type":"psychic","category":"status"},"tm-139":{"tmNum":"139","moveSlug":"misty-terrain","moveZh":"薄霧場地","type":"fairy","category":"status"},"tm-140":{"tmNum":"140","moveSlug":"nasty-plot","moveZh":"詭計","type":"dark","category":"status"},"tm-141":{"tmNum":"141","moveSlug":"fire-blast","moveZh":"大字爆炎","type":"fire","category":"special"},"tm-142":{"tmNum":"142","moveSlug":"hydro-pump","moveZh":"水砲","type":"water","category":"special"},"tm-143":{"tmNum":"143","moveSlug":"blizzard","moveZh":"暴風雪","type":"ice","category":"special"},"tm-144":{"tmNum":"144","moveSlug":"fire-pledge","moveZh":"火之誓約","type":"fire","category":"special"},"tm-145":{"tmNum":"145","moveSlug":"water-pledge","moveZh":"水之誓約","type":"water","category":"special"},"tm-146":{"tmNum":"146","moveSlug":"grass-pledge","moveZh":"草之誓約","type":"grass","category":"special"},"tm-147":{"tmNum":"147","moveSlug":"wild-charge","moveZh":"瘋狂伏特","type":"electric","category":"physical"},"tm-148":{"tmNum":"148","moveSlug":"sludge-bomb","moveZh":"污泥炸彈","type":"poison","category":"special"},"tm-149":{"tmNum":"149","moveSlug":"earthquake","moveZh":"地震","type":"ground","category":"physical"},"tm-150":{"tmNum":"150","moveSlug":"stone-edge","moveZh":"尖石攻擊","type":"rock","category":"physical"},"tm-151":{"tmNum":"151","moveSlug":"phantom-force","moveZh":"潛靈奇襲","type":"ghost","category":"physical"},"tm-152":{"tmNum":"152","moveSlug":"giga-impact","moveZh":"終極衝擊","type":"normal","category":"physical"},"tm-153":{"tmNum":"153","moveSlug":"blast-burn","moveZh":"爆炸烈焰","type":"fire","category":"special"},"tm-154":{"tmNum":"154","moveSlug":"hydro-cannon","moveZh":"加農水砲","type":"water","category":"special"},"tm-155":{"tmNum":"155","moveSlug":"frenzy-plant","moveZh":"瘋狂植物","type":"grass","category":"special"},"tm-156":{"tmNum":"156","moveSlug":"outrage","moveZh":"逆鱗","type":"dragon","category":"physical"},"tm-157":{"tmNum":"157","moveSlug":"overheat","moveZh":"過熱","type":"fire","category":"special"},"tm-158":{"tmNum":"158","moveSlug":"focus-blast","moveZh":"真氣彈","type":"fighting","category":"special"},"tm-159":{"tmNum":"159","moveSlug":"leaf-storm","moveZh":"飛葉風暴","type":"grass","category":"special"},"tm-160":{"tmNum":"160","moveSlug":"hurricane","moveZh":"暴風","type":"flying","category":"special"},"tm-161":{"tmNum":"161","moveSlug":"trick-room","moveZh":"戲法空間","type":"psychic","category":"status"},"tm-162":{"tmNum":"162","moveSlug":"bug-buzz","moveZh":"蟲鳴","type":"bug","category":"special"},"tm-163":{"tmNum":"163","moveSlug":"hyper-beam","moveZh":"破壞光線","type":"normal","category":"special"},"tm-164":{"tmNum":"164","moveSlug":"brave-bird","moveZh":"勇鳥猛攻","type":"flying","category":"physical"},"tm-165":{"tmNum":"165","moveSlug":"flare-blitz","moveZh":"閃焰衝鋒","type":"fire","category":"physical"},"tm-166":{"tmNum":"166","moveSlug":"thunder","moveZh":"打雷","type":"electric","category":"special"},"tm-167":{"tmNum":"167","moveSlug":"close-combat","moveZh":"近身戰","type":"fighting","category":"physical"},"tm-168":{"tmNum":"168","moveSlug":"solar-beam","moveZh":"日光束","type":"grass","category":"special"},"tm-169":{"tmNum":"169","moveSlug":"draco-meteor","moveZh":"流星群","type":"dragon","category":"special"},"tm-170":{"tmNum":"170","moveSlug":"steel-beam","moveZh":"鐵蹄光線","type":"steel","category":"special"},"tm-171":{"tmNum":"171","moveSlug":"tera-blast","moveZh":"太晶爆發","type":"normal","category":"special"},"tm-172":{"tmNum":"172","moveSlug":"roar","moveZh":"吼叫","type":"normal","category":"status"},"tm-173":{"tmNum":"173","moveSlug":"charge","moveZh":"充電","type":"electric","category":"status"},"tm-174":{"tmNum":"174","moveSlug":"haze","moveZh":"黑霧","type":"ice","category":"status"},"tm-175":{"tmNum":"175","moveSlug":"toxic","moveZh":"劇毒","type":"poison","category":"status"},"tm-176":{"tmNum":"176","moveSlug":"sand-tomb","moveZh":"流沙地獄","type":"ground","category":"physical"},"tm-177":{"tmNum":"177","moveSlug":"spite","moveZh":"怨恨","type":"ghost","category":"status"},"tm-178":{"tmNum":"178","moveSlug":"gravity","moveZh":"重力","type":"psychic","category":"status"},"tm-179":{"tmNum":"179","moveSlug":"smack-down","moveZh":"擊落","type":"rock","category":"physical"},"tm-180":{"tmNum":"180","moveSlug":"gyro-ball","moveZh":"陀螺球","type":"steel","category":"physical"},"tm-181":{"tmNum":"181","moveSlug":"knock-off","moveZh":"拍落","type":"dark","category":"physical"},"tm-182":{"tmNum":"182","moveSlug":"bug-bite","moveZh":"蟲咬","type":"bug","category":"physical"},"tm-183":{"tmNum":"183","moveSlug":"super-fang","moveZh":"憤怒門牙","type":"normal","category":"physical"},"tm-184":{"tmNum":"184","moveSlug":"vacuum-wave","moveZh":"真空波","type":"fighting","category":"special"},"tm-185":{"tmNum":"185","moveSlug":"lunge","moveZh":"猛撲","type":"bug","category":"physical"},"tm-186":{"tmNum":"186","moveSlug":"high-horsepower","moveZh":"十萬馬力","type":"ground","category":"physical"},"tm-187":{"tmNum":"187","moveSlug":"icicle-spear","moveZh":"冰錐","type":"ice","category":"physical"},"tm-188":{"tmNum":"188","moveSlug":"scald","moveZh":"熱水","type":"water","category":"special"},"tm-189":{"tmNum":"189","moveSlug":"heat-crash","moveZh":"高溫重壓","type":"fire","category":"physical"},"tm-190":{"tmNum":"190","moveSlug":"solar-blade","moveZh":"日光刃","type":"grass","category":"physical"},"tm-191":{"tmNum":"191","moveSlug":"uproar","moveZh":"吵鬧","type":"normal","category":"special"},"tm-192":{"tmNum":"192","moveSlug":"focus-punch","moveZh":"真氣拳","type":"fighting","category":"physical"},"tm-193":{"tmNum":"193","moveSlug":"weather-ball","moveZh":"氣象球","type":"normal","category":"special"},"tm-194":{"tmNum":"194","moveSlug":"grassy-glide","moveZh":"青草滑梯","type":"grass","category":"physical"},"tm-195":{"tmNum":"195","moveSlug":"burning-jealousy","moveZh":"妒火","type":"fire","category":"special"},"tm-196":{"tmNum":"196","moveSlug":"flip-turn","moveZh":"快速折返","type":"water","category":"physical"},"tm-197":{"tmNum":"197","moveSlug":"dual-wingbeat","moveZh":"雙翼","type":"flying","category":"physical"},"tm-198":{"tmNum":"198","moveSlug":"poltergeist","moveZh":"靈騷","type":"ghost","category":"physical"},"tm-199":{"tmNum":"199","moveSlug":"lash-out","moveZh":"洩憤","type":"dark","category":"physical"},"tm-200":{"tmNum":"200","moveSlug":"scale-shot","moveZh":"鱗射","type":"dragon","category":"physical"},"tm-201":{"tmNum":"201","moveSlug":"misty-explosion","moveZh":"薄霧炸裂","type":"fairy","category":"special"},"tm-202":{"tmNum":"202","moveSlug":"pain-split","moveZh":"分擔痛楚","type":"normal","category":"status"},"tm-203":{"tmNum":"203","moveSlug":"psych-up","moveZh":"自我暗示","type":"normal","category":"status"},"tm-204":{"tmNum":"204","moveSlug":"double-edge","moveZh":"捨身衝撞","type":"normal","category":"physical"},"tm-205":{"tmNum":"205","moveSlug":"endeavor","moveZh":"蠻幹","type":"normal","category":"physical"},"tm-206":{"tmNum":"206","moveSlug":"petal-blizzard","moveZh":"落英繽紛","type":"grass","category":"physical"},"tm-207":{"tmNum":"207","moveSlug":"temper-flare","moveZh":"豁出去","type":"fire","category":"physical"},"tm-208":{"tmNum":"208","moveSlug":"whirlpool","moveZh":"潮旋","type":"water","category":"special"},"tm-209":{"tmNum":"209","moveSlug":"muddy-water","moveZh":"濁流","type":"water","category":"special"},"tm-210":{"tmNum":"210","moveSlug":"supercell-slam","moveZh":"閃電強襲","type":"electric","category":"physical"},"tm-211":{"tmNum":"211","moveSlug":"electroweb","moveZh":"電網","type":"electric","category":"special"},"tm-212":{"tmNum":"212","moveSlug":"triple-axel","moveZh":"三旋擊","type":"ice","category":"physical"},"tm-213":{"tmNum":"213","moveSlug":"coaching","moveZh":"指導","type":"fighting","category":"status"},"tm-214":{"tmNum":"214","moveSlug":"sludge-wave","moveZh":"污泥波","type":"poison","category":"special"},"tm-215":{"tmNum":"215","moveSlug":"scorching-sands","moveZh":"熱沙大地","type":"ground","category":"special"},"tm-216":{"tmNum":"216","moveSlug":"feather-dance","moveZh":"羽毛舞","type":"flying","category":"status"},"tm-217":{"tmNum":"217","moveSlug":"future-sight","moveZh":"預知未來","type":"psychic","category":"special"},"tm-218":{"tmNum":"218","moveSlug":"expanding-force","moveZh":"廣域戰力","type":"psychic","category":"special"},"tm-219":{"tmNum":"219","moveSlug":"skitter-smack","moveZh":"爬擊","type":"bug","category":"physical"},"tm-220":{"tmNum":"220","moveSlug":"meteor-beam","moveZh":"流星光束","type":"rock","category":"special"},"tm-221":{"tmNum":"221","moveSlug":"throat-chop","moveZh":"地獄突刺","type":"dark","category":"physical"},"tm-222":{"tmNum":"222","moveSlug":"breaking-swipe","moveZh":"廣域破壞","type":"dragon","category":"physical"},"tm-223":{"tmNum":"223","moveSlug":"metal-sound","moveZh":"金屬音","type":"steel","category":"status"},"tm-224":{"tmNum":"224","moveSlug":"curse","moveZh":"詛咒","type":"ghost","category":"status"},"tm-225":{"tmNum":"225","moveSlug":"hard-press","moveZh":"硬壓","type":"steel","category":"physical"},"tm-226":{"tmNum":"226","moveSlug":"dragon-cheer","moveZh":"龍聲鼓舞","type":"dragon","category":"status"},"tm-227":{"tmNum":"227","moveSlug":"alluring-voice","moveZh":"魅誘之聲","type":"fairy","category":"special"},"tm-228":{"tmNum":"228","moveSlug":"psychic-noise","moveZh":"精神噪音","type":"psychic","category":"special"},"tm-229":{"tmNum":"229","moveSlug":"upper-hand","moveZh":"快手還擊","type":"fighting","category":"physical"}};
+// 【第三十輪新增】Mega進化(超級進化)超級石對照表——資料來源：使用者提供的「mega進化石資料.xlsx」，
+// 47顆超級石對應45種可以Mega進化的寶可夢(噴火龍、超夢各有兩顆分屬X/Y兩種不同外型)。key是PokéAPI
+// 真實存在的道具代號(跟item sprite檔名逐字對應，不用額外的圖示對照)，baseSpeciesId是「原本種族」的
+// 全國圖鑑編號(這隻寶可夢要長這個編號才能裝備、使用這顆超級石)，megaSlug是PokéAPI真正查得到的
+// Mega進化後型態代號(例如charizard-mega-x)，戰鬥中把state[uid].speciesId直接換成這個代號，
+// 屬性/種族值/圖鑑圖片就會自動全部正確換成Mega後的樣子(fetchSpeciesDisplay本來就是每回合都
+// 重新用speciesId查一次，詳見resolveBattleRound)，不需要另外維護一份「屬性/種族值換成怎樣」的表
+const MEGA_STONE_CATALOG = {"venusaurite":{"nameZh":"妙蛙花進化石","baseSpeciesId":3,"megaSlug":"venusaur-mega"},"charizardite-x":{"nameZh":"噴火龍進化石Ｘ","baseSpeciesId":6,"megaSlug":"charizard-mega-x"},"charizardite-y":{"nameZh":"噴火龍進化石Ｙ","baseSpeciesId":6,"megaSlug":"charizard-mega-y"},"blastoisinite":{"nameZh":"水箭龜進化石","baseSpeciesId":9,"megaSlug":"blastoise-mega"},"beedrillite":{"nameZh":"大針蜂進化石","baseSpeciesId":15,"megaSlug":"beedrill-mega"},"pidgeotite":{"nameZh":"大比鳥進化石","baseSpeciesId":18,"megaSlug":"pidgeot-mega"},"alakazite":{"nameZh":"胡地進化石","baseSpeciesId":65,"megaSlug":"alakazam-mega"},"slowbronite":{"nameZh":"呆殼獸進化石","baseSpeciesId":80,"megaSlug":"slowbro-mega"},"gengarite":{"nameZh":"耿鬼進化石","baseSpeciesId":94,"megaSlug":"gengar-mega"},"kangaskhanite":{"nameZh":"袋獸進化石","baseSpeciesId":115,"megaSlug":"kangaskhan-mega"},"pinsirite":{"nameZh":"凱羅斯進化石","baseSpeciesId":127,"megaSlug":"pinsir-mega"},"gyaradosite":{"nameZh":"暴鯉龍進化石","baseSpeciesId":130,"megaSlug":"gyarados-mega"},"aerodactylite":{"nameZh":"化石翼龍進化石","baseSpeciesId":142,"megaSlug":"aerodactyl-mega"},"mewtwonite-x":{"nameZh":"超夢進化石Ｘ","baseSpeciesId":150,"megaSlug":"mewtwo-mega-x"},"mewtwonite-y":{"nameZh":"超夢進化石Ｙ","baseSpeciesId":150,"megaSlug":"mewtwo-mega-y"},"ampharosite":{"nameZh":"電龍進化石","baseSpeciesId":181,"megaSlug":"ampharos-mega"},"steelixite":{"nameZh":"大鋼蛇進化石","baseSpeciesId":208,"megaSlug":"steelix-mega"},"scizorite":{"nameZh":"巨鉗螳螂進化石","baseSpeciesId":212,"megaSlug":"scizor-mega"},"heracronite":{"nameZh":"赫拉克羅斯進化石","baseSpeciesId":214,"megaSlug":"heracross-mega"},"houndoominite":{"nameZh":"黑魯加進化石","baseSpeciesId":229,"megaSlug":"houndoom-mega"},"tyranitarite":{"nameZh":"班基拉斯進化石","baseSpeciesId":248,"megaSlug":"tyranitar-mega"},"sceptilite":{"nameZh":"蜥蜴王進化石","baseSpeciesId":254,"megaSlug":"sceptile-mega"},"blazikenite":{"nameZh":"火焰雞進化石","baseSpeciesId":257,"megaSlug":"blaziken-mega"},"swampertite":{"nameZh":"巨沼怪進化石","baseSpeciesId":260,"megaSlug":"swampert-mega"},"gardevoirite":{"nameZh":"沙奈朵進化石","baseSpeciesId":282,"megaSlug":"gardevoir-mega"},"sablenite":{"nameZh":"勾魂眼進化石","baseSpeciesId":302,"megaSlug":"sableye-mega"},"mawilite":{"nameZh":"大嘴娃進化石","baseSpeciesId":303,"megaSlug":"mawile-mega"},"aggronite":{"nameZh":"波士可多拉進化石","baseSpeciesId":306,"megaSlug":"aggron-mega"},"medichamite":{"nameZh":"恰雷姆進化石","baseSpeciesId":308,"megaSlug":"medicham-mega"},"manectite":{"nameZh":"雷電獸進化石","baseSpeciesId":310,"megaSlug":"manectric-mega"},"sharpedonite":{"nameZh":"巨牙鯊進化石","baseSpeciesId":319,"megaSlug":"sharpedo-mega"},"cameruptite":{"nameZh":"噴火駝進化石","baseSpeciesId":323,"megaSlug":"camerupt-mega"},"altarianite":{"nameZh":"七夕青鳥進化石","baseSpeciesId":334,"megaSlug":"altaria-mega"},"banettite":{"nameZh":"詛咒娃娃進化石","baseSpeciesId":354,"megaSlug":"banette-mega"},"absolite":{"nameZh":"阿勃梭魯進化石","baseSpeciesId":359,"megaSlug":"absol-mega"},"glalitite":{"nameZh":"冰鬼護進化石","baseSpeciesId":362,"megaSlug":"glalie-mega"},"salamencite":{"nameZh":"暴飛龍進化石","baseSpeciesId":373,"megaSlug":"salamence-mega"},"metagrossite":{"nameZh":"巨金怪進化石","baseSpeciesId":376,"megaSlug":"metagross-mega"},"latiasite":{"nameZh":"拉帝亞斯進化石","baseSpeciesId":380,"megaSlug":"latias-mega"},"latiosite":{"nameZh":"拉帝歐斯進化石","baseSpeciesId":381,"megaSlug":"latios-mega"},"garchompite":{"nameZh":"烈咬陸鯊進化石","baseSpeciesId":445,"megaSlug":"garchomp-mega"},"lucarionite":{"nameZh":"路卡利歐進化石","baseSpeciesId":448,"megaSlug":"lucario-mega"},"abomasite":{"nameZh":"暴雪王進化石","baseSpeciesId":460,"megaSlug":"abomasnow-mega"},"lopunnite":{"nameZh":"長耳兔進化石","baseSpeciesId":428,"megaSlug":"lopunny-mega"},"galladite":{"nameZh":"艾路雷朵進化石","baseSpeciesId":475,"megaSlug":"gallade-mega"},"audinite":{"nameZh":"差不多娃娃進化石","baseSpeciesId":531,"megaSlug":"audino-mega"},"diancite":{"nameZh":"蒂安希進化石","baseSpeciesId":719,"megaSlug":"diancie-mega"}};
+// 烈空坐(全國圖鑑384號)是唯一「不需要超級石」的Mega進化——正統規則是只要學會招式「畫龍點睛」
+// (dragon-ascent)即可，這裡照這個規則做特例判斷(見canMegaEvolve)，不會佔用heldItem欄位
+const MEGA_RAYQUAZA = {"speciesId":384,"requiredMove":"dragon-ascent","megaSlug":"rayquaza-mega"};
+
+// 【第三十輪新增】Z招式純晶對照表——資料來源：使用者提供的「Z招式條件.xlsx」，共35種(18種屬性
+// 通用+17種寶可夢限定)。kind==='type'的是屬性通用純晶：只要攻擊招式的屬性跟純晶屬性相同就能用，
+// 招式威力比照正統的「Z招式威力對照表」(見下面Z_POWER_CHART)由原招式威力換算，招式本身的分類
+// (物理/特殊)決定要套用zMoveSlugPhysical還是zMoveSlugSpecial這兩個PokéAPI裡真實存在、威力
+// 由官方對照表換算出來的招式資料(這兩個slug本身在PokéAPI查到的power是null，威力由這裡自己算)。
+// kind==='species'的是寶可夢限定純晶：只有species屬於speciesIds、而且已經學會requiredMove
+// 這個特定招式時才能用，用出來一定是zMoveSlug這個固定的招式，大多數威力固定(power有值)，但有
+// 兩個例外用special欄位標記：'evoboost'(伊布Z的九彩昇華齊聚頂，官方效果是不造成傷害、直接把
+// 5項能力等級全部+2，跟原本招式「精選」的威力完全無關)、'fixedFractionDamage'(卡璞Z的巨人衛士．
+// 阿羅拉，官方效果是無視威力數值，直接打掉對方目前HP的四分之三)——這兩個在resolveBattleRound
+// 裡各自用專門的分支處理，不會走一般的computeDamage流程。阿羅雷Z(Alolan Raichu專用)、索爾迦雷歐Z/
+// 露奈雅拉Z/究極奈克洛Z(官方原本限定「阿羅拉雷丘」「日食/月食奈克洛茲瑪」「究極奈克洛茲瑪」這幾種
+// 特殊地區/融合型態)，這個遊戲的轉蛋池只有全國圖鑑1~1025號的「基本型態」、沒有這些特殊地區/融合
+// 型態，所以這裡都退而求其次比照對應的「基本型態」全國圖鑑編號放行(雷丘26號、索爾迦雷歐791號、
+// 露奈雅拉792號、奈克洛茲瑪800號)，讓這幾顆純晶在這個遊戲裡至少還有實際能用的對象，是刻意的簡化
+const Z_CRYSTAL_CATALOG = {"normalium-z":{"kind":"type","nameZh":"一般Ｚ","type":"normal","zMoveSlugPhysical":"breakneck-blitz--physical","zMoveSlugSpecial":"breakneck-blitz--special","zMoveNameZh":"究極無敵大爆炸"},"firium-z":{"kind":"type","nameZh":"火Ｚ","type":"fire","zMoveSlugPhysical":"inferno-overdrive--physical","zMoveSlugSpecial":"inferno-overdrive--special","zMoveNameZh":"超強極限爆焰彈"},"waterium-z":{"kind":"type","nameZh":"水Ｚ","type":"water","zMoveSlugPhysical":"hydro-vortex--physical","zMoveSlugSpecial":"hydro-vortex--special","zMoveNameZh":"超級水流大漩渦"},"electrium-z":{"kind":"type","nameZh":"電Ｚ","type":"electric","zMoveSlugPhysical":"gigavolt-havoc--physical","zMoveSlugSpecial":"gigavolt-havoc--special","zMoveNameZh":"終極伏特狂雷閃"},"grassium-z":{"kind":"type","nameZh":"草Ｚ","type":"grass","zMoveSlugPhysical":"bloom-doom--physical","zMoveSlugSpecial":"bloom-doom--special","zMoveNameZh":"絢爛繽紛花怒放"},"icium-z":{"kind":"type","nameZh":"冰Ｚ","type":"ice","zMoveSlugPhysical":"subzero-slammer--physical","zMoveSlugSpecial":"subzero-slammer--special","zMoveNameZh":"激烈暴風雪延綿"},"fightinium-z":{"kind":"type","nameZh":"格鬥Ｚ","type":"fighting","zMoveSlugPhysical":"all-out-pummeling--physical","zMoveSlugSpecial":"all-out-pummeling--special","zMoveNameZh":"全力無雙激烈拳"},"poisonium-z":{"kind":"type","nameZh":"毒Ｚ","type":"poison","zMoveSlugPhysical":"acid-downpour--physical","zMoveSlugSpecial":"acid-downpour--special","zMoveNameZh":"腐蝕劇毒蓄光爆"},"groundium-z":{"kind":"type","nameZh":"地面Ｚ","type":"ground","zMoveSlugPhysical":"tectonic-rage--physical","zMoveSlugSpecial":"tectonic-rage--special","zMoveNameZh":"地動山搖地裂崩"},"flyinium-z":{"kind":"type","nameZh":"飛行Ｚ","type":"flying","zMoveSlugPhysical":"supersonic-skystrike--physical","zMoveSlugSpecial":"supersonic-skystrike--special","zMoveNameZh":"至高精神飛天擊"},"psychium-z":{"kind":"type","nameZh":"超能力Ｚ","type":"psychic","zMoveSlugPhysical":"shattered-psyche--physical","zMoveSlugSpecial":"shattered-psyche--special","zMoveNameZh":"至高精神破壞波"},"buginium-z":{"kind":"type","nameZh":"蟲Ｚ","type":"bug","zMoveSlugPhysical":"savage-spin-out--physical","zMoveSlugSpecial":"savage-spin-out--special","zMoveNameZh":"絕對捕食巨網收"},"rockium-z":{"kind":"type","nameZh":"岩石Ｚ","type":"rock","zMoveSlugPhysical":"continental-crush--physical","zMoveSlugSpecial":"continental-crush--special","zMoveNameZh":"毀天滅地巨岩墜"},"ghostium-z":{"kind":"type","nameZh":"幽靈Ｚ","type":"ghost","zMoveSlugPhysical":"never-ending-nightmare--physical","zMoveSlugSpecial":"never-ending-nightmare--special","zMoveNameZh":"無盡暗夜怨咒波"},"dragonium-z":{"kind":"type","nameZh":"龍Ｚ","type":"dragon","zMoveSlugPhysical":"devastating-drake--physical","zMoveSlugSpecial":"devastating-drake--special","zMoveNameZh":"究極巨龍震天地"},"darkinium-z":{"kind":"type","nameZh":"惡Ｚ","type":"dark","zMoveSlugPhysical":"black-hole-eclipse--physical","zMoveSlugSpecial":"black-hole-eclipse--special","zMoveNameZh":"黑洞吞噬萬物滅"},"steelium-z":{"kind":"type","nameZh":"鋼Ｚ","type":"steel","zMoveSlugPhysical":"corkscrew-crash--physical","zMoveSlugSpecial":"corkscrew-crash--special","zMoveNameZh":"超絕螺旋連擊破"},"fairium-z":{"kind":"type","nameZh":"妖精Ｚ","type":"fairy","zMoveSlugPhysical":"twinkle-tackle--physical","zMoveSlugSpecial":"twinkle-tackle--special","zMoveNameZh":"可愛星星飛天撞"},"pikashunium-z":{"kind":"species","nameZh":"皮卡丘Ｚ","speciesIds":[25],"requiredMove":"volt-tackle","zMoveSlug":"catastropika","zMoveNameZh":"皮卡皮卡必殺擊","type":"electric","category":"physical","power":210,"special":null},"pikanium-z":{"kind":"species","nameZh":"智皮卡Ｚ","speciesIds":[25],"requiredMove":"thunderbolt","zMoveSlug":"10-000-000-volt-thunderbolt","zMoveNameZh":"千萬伏特","type":"electric","category":"special","power":195,"special":null},"aloraichium-z":{"kind":"species","nameZh":"阿羅雷Ｚ","speciesIds":[26],"requiredMove":"thunderbolt","zMoveSlug":"stoked-sparksurfer","zMoveNameZh":"駕雷馭電戲衝浪","type":"electric","category":"special","power":175,"special":null},"snorlium-z":{"kind":"species","nameZh":"卡比獸Ｚ","speciesIds":[143],"requiredMove":"giga-impact","zMoveSlug":"pulverizing-pancake","zMoveNameZh":"認真起來大爆擊","type":"normal","category":"physical","power":210,"special":null},"eevium-z":{"kind":"species","nameZh":"伊布Ｚ","speciesIds":[133],"requiredMove":"last-resort","zMoveSlug":"extreme-evoboost","zMoveNameZh":"九彩昇華齊聚頂","type":"normal","category":"status","power":null,"special":"evoboost"},"mewnium-z":{"kind":"species","nameZh":"夢幻Ｚ","speciesIds":[151],"requiredMove":"psychic","zMoveSlug":"genesis-supernova","zMoveNameZh":"起源超新星大爆炸","type":"psychic","category":"special","power":185,"special":null},"decidium-z":{"kind":"species","nameZh":"狙射樹梟Ｚ","speciesIds":[724],"requiredMove":"spirit-shackle","zMoveSlug":"sinister-arrow-raid","zMoveNameZh":"遮天蔽日暗影箭","type":"ghost","category":"physical","power":180,"special":null},"incinium-z":{"kind":"species","nameZh":"熾焰咆哮虎Ｚ","speciesIds":[727],"requiredMove":"darkest-lariat","zMoveSlug":"malicious-moonsault","zMoveNameZh":"極惡飛躍粉碎擊","type":"dark","category":"physical","power":180,"special":null},"primarium-z":{"kind":"species","nameZh":"西獅海壬Ｚ","speciesIds":[730],"requiredMove":"sparkling-aria","zMoveSlug":"oceanic-operetta","zMoveNameZh":"海神莊嚴交響樂","type":"water","category":"special","power":195,"special":null},"tapunium-z":{"kind":"species","nameZh":"卡璞Ｚ","speciesIds":[785,786,787,788],"requiredMove":"natures-madness","zMoveSlug":"guardian-of-alola","zMoveNameZh":"巨人衛士・阿羅拉","type":"fairy","category":"special","power":null,"special":"fixedFractionDamage"},"marshadium-z":{"kind":"species","nameZh":"瑪夏多Ｚ","speciesIds":[802],"requiredMove":"spectral-thief","zMoveSlug":"soul-stealing-7-star-strike","zMoveNameZh":"七星奪魂腿","type":"ghost","category":"physical","power":195,"special":null},"kommonium-z":{"kind":"species","nameZh":"杖尾鱗甲龍Ｚ","speciesIds":[784],"requiredMove":"clanging-scales","zMoveSlug":"clangorous-soulblaze","zMoveNameZh":"熾魂熱舞型碎裂擊","type":"dragon","category":"special","power":185,"special":null},"lycanium-z":{"kind":"species","nameZh":"鬃岩狼人Ｚ","speciesIds":[745],"requiredMove":"stone-edge","zMoveSlug":"splintered-stormshards","zMoveNameZh":"狼嚎碎天地","type":"rock","category":"physical","power":190,"special":null},"mimikium-z":{"kind":"species","nameZh":"謎擬ＱＺ","speciesIds":[778],"requiredMove":"play-rough","zMoveSlug":"lets-snuggle-forever","zMoveNameZh":"親密無間大亂鬥","type":"fairy","category":"physical","power":190,"special":null},"solganium-z":{"kind":"species","nameZh":"索爾迦雷歐Ｚ","speciesIds":[791],"requiredMove":"sunsteel-strike","zMoveSlug":"searing-sunraze-smash","zMoveNameZh":"日光回旋下蒼穹","type":"steel","category":"physical","power":200,"special":null},"lunalium-z":{"kind":"species","nameZh":"露奈雅拉Ｚ","speciesIds":[792],"requiredMove":"moongeist-beam","zMoveSlug":"menacing-moonraze-maelstrom","zMoveNameZh":"月華飛濺落靈霄","type":"ghost","category":"special","power":200,"special":null},"ultranecrozium-z":{"kind":"species","nameZh":"究極奈克洛Ｚ","speciesIds":[800],"requiredMove":"photon-geyser","zMoveSlug":"light-that-burns-the-sky","zMoveNameZh":"焚天滅世熾光爆","type":"psychic","category":"special","power":200,"special":null}};
+
+// 官方「Z招式威力對照表」：屬性通用Z招式(不含寶可夢限定的固定威力Z招式)的威力完全由原本招式的
+// 威力換算而來，跟原招式屬性/招式本身完全無關，這張表是公版規則，寫死沒問題
+const Z_POWER_CHART = [[1,55,100],[56,65,120],[66,75,140],[76,85,160],[86,95,175],[96,110,190],[111,125,195],[126,999,200]];
+function zPowerForBasePower(basePower) {
+    if (!basePower || basePower <= 0) return 100;
+    for (const [lo, hi, z] of Z_POWER_CHART) { if (basePower >= lo && basePower <= hi) return z; }
+    return 200;
+}
+// 【第三十輪新增】超級石(Mega進化)、Z純晶(Z招式)的裝備白名單，補在POKEMON_HELD_EQUIPMENT_ITEMS
+// 旁邊那句提示的位置——這裡才真的宣告，因為要用Object.keys從上面MEGA_STONE_CATALOG/Z_CRYSTAL_CATALOG
+// 這兩張表算出來，const宣告順序上必須排在那兩張表後面。跟worker.js的同名常數要保持一致
+const POKEMON_MEGA_STONE_ITEMS = Object.keys(MEGA_STONE_CATALOG);
+const POKEMON_Z_CRYSTAL_ITEMS = Object.keys(Z_CRYSTAL_CATALOG);
 async function fetchMoveData(moveName) {
     if (moveName === 'struggle') return STRUGGLE_MOVE;
     if (moveDataCache.has(moveName)) return moveDataCache.get(moveName);
@@ -6313,6 +6421,12 @@ function freshBattleStatus() {
         chargeBoost: false, // 充電(Charge)：下一次使用電屬性招式威力加倍，用掉(不管是不是電屬性)或換人就會解除
         magicCoatActive: false, // 魔法反射(Magic Coat)：只在「這一回合」有效，回合開始時會被explicit重置(見resolveBattleRound)，換人也會清掉
         rolloutCount: 0, // 滾動(Rollout)/冰球(Ice Ball)：連續選同一招式攻擊的次數，改選別招或換人就會歸零
+        // 【第三十輪新增】Mega進化(超級進化)：非null時代表「現在是Mega後的樣子」，內容是Mega進化
+        // 前的{speciesId,nickname,atk,def,spAtk,spDef,spd,maxHp}快照，換人(resetVolatileForBench)
+        // 或戰鬥結束時都要用這份快照復原成原本的樣子——道理跟上面的transformedInto(變身)完全一樣，
+        // 只是觸發條件、資料來源不同(Mega進化是玩家主動選、種族值來自即時查詢的Mega型態；變身是
+        // 招式效果、直接複製對方目前的樣子)
+        megaEvolvedFrom: null,
     };
 }
 // 一隻寶可夢從場上換下去時(不管是自願替換、還是被吼叫/咆哮/龍尾/圓環摔這類招式強制換下場)，
@@ -6363,7 +6477,29 @@ function resetVolatileForBench(battler) {
         outgoing.movePp = original.movePp;
         outgoing.transformedInto = null;
     }
+    // 【第三十輪新增】Mega進化復原：換人(不管自願還是被強制換下場)就會解除Mega進化，變回原本的
+    // 種類/暱稱/數值——正統規則裡Mega進化在「退場」的當下就會解除。抽成獨立函式revertMegaEvolution
+    // 是因為除了這裡(換人)以外，戰鬥真正結束的那一刻(見resolveBattleRound最後寫回Firestore前)
+    // 也要用同一套復原邏輯——不然「贏了那一局、但贏的那隻還維持著Mega後的樣子」會一路帶到下一場
+    // 戰鬥的初始狀態，變成一隻打不掉的假Mega
+    revertMegaEvolution(outgoing);
     return outgoing;
+}
+function revertMegaEvolution(battler) {
+    if (!battler.megaEvolvedFrom) return;
+    const original = battler.megaEvolvedFrom;
+    battler.speciesId = original.speciesId;
+    battler.nickname = original.nickname;
+    battler.atk = original.atk;
+    battler.def = original.def;
+    battler.spAtk = original.spAtk;
+    battler.spDef = original.spDef;
+    battler.spd = original.spd;
+    battler.maxHp = original.maxHp;
+    // currentHp刻意不強制拉回原本的maxHp——保留當下實際的HP數字，只在數字超過復原後的maxHp時
+    // 才夾住(理論上不會發生，Mega通常HP種族值不會比原本低太多，這裡純粹防呆)
+    battler.currentHp = Math.min(battler.currentHp, original.maxHp);
+    battler.megaEvolvedFrom = null;
 }
 // 能力等級(-6~+6)換算成倍率：官方公式，攻/防/速用同一張表
 function statStageMult(stage) {
@@ -6510,6 +6646,9 @@ function battleStatusBadgesHtml(team) {
     if (team.identified) html += genericIconHtml(typeIconUrl('psychic'), 'w-3.5 h-3.5', '已被看穿(閃避無效)');
     if (team.cursed) html += genericIconHtml(typeIconUrl('ghost'), 'w-3.5 h-3.5', '被詛咒纏身(每回合損血)');
     if (team.aquaRing) html += genericIconHtml(typeIconUrl('water'), 'w-3.5 h-3.5', '水流環(每回合回血)');
+    // 【第三十輪新增】Mega進化中：借用超級石(如果知道具體是哪一顆的話)或通用的「妙蛙花進化石」
+    // 圖示提示玩家「現在是Mega後的樣子，退場就會變回原本種類」
+    if (team.megaEvolvedFrom) html += genericIconHtml(itemSpriteUrl('venusaurite'), 'w-3.5 h-3.5', 'Mega進化中');
     return html;
 }
 // ---------- 天氣/場地：圖示素材(天氣用道具庫的「天氣石」，場地用道具庫的「場地種子」，
@@ -6584,9 +6723,16 @@ function isMoveBlockedByStatus(team, move) {
 // 機率骰(chance是0~100的百分比數字)
 function rollChance(chancePct) { return Math.random() * 100 < chancePct; }
 
-async function submitMove(moveName) {
+async function submitMove(moveName, opts) {
     battleShowSwitchPicker = false;
-    if (currentRoomIsWild) return submitWildMove(moveName);
+    // 【第三十輪新增】opts.mega(這回合順便Mega進化)/opts.zMove(這一招用Ｚ純晶強化)——兩個都是
+    // 「附加在這次出招動作上」的旗標，不是獨立的動作類型，寫進pendingMoves後由resolveBattleRound
+    // 判斷要不要真的觸發(還要驗證持有的道具/種類/是否已經用過這場戰鬥的名額，見findMegaInfoFor/
+    // findZMoveInfoFor)
+    const mega = !!(opts && opts.mega);
+    const zMove = !!(opts && opts.zMove);
+    battlePendingMega = false; // 送出後歸零，避免沿用到下一次選招式/下一隻寶可夢身上
+    if (currentRoomIsWild) return submitWildMove(moveName, { mega, zMove });
     const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
     const myUid = auth.currentUser.uid;
     let roomDataAfter = null;
@@ -6597,7 +6743,7 @@ async function submitMove(moveName) {
             if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
             const pending = { ...(data.pendingMoves || {}) };
             if (pending[myUid]) throw new Error('這回合已經送出過招式了');
-            pending[myUid] = { type: 'move', move: moveName };
+            pending[myUid] = { type: 'move', move: moveName, mega, zMove };
             tx.update(roomRef, { pendingMoves: pending });
             roomDataAfter = { ...data, pendingMoves: pending };
         });
@@ -6717,6 +6863,13 @@ async function submitForcedSwitch(instanceId) {
                 update.status = 'finished';
                 update.winnerUid = opponentUid || null;
                 update.winnerInstanceId = opponentUid && data.battleState.teams[opponentUid] ? data.battleState.teams[opponentUid].instanceId : null;
+                // 【第三十輪新增】戰鬥在這裡真正結束——如果贏的那一方(opponentUid)場上還維持著
+                // Mega進化的樣子，這裡也要復原，道理跟resolveBattleRound最後寫回前的處理一樣
+                if (opponentUid && newTeams[opponentUid] && newTeams[opponentUid].megaEvolvedFrom) {
+                    newTeams[opponentUid] = { ...newTeams[opponentUid] };
+                    revertMegaEvolution(newTeams[opponentUid]);
+                    update['battleState.teams'] = newTeams;
+                }
             } else if (settledFainted) {
                 // 還有候補活著，維持awaitingSwitch包含myUid，畫面會繼續要求玩家再選一隻上場
                 update['battleState.awaitingSwitch'] = awaiting.includes(myUid) ? awaiting : [...awaiting, myUid];
@@ -6734,7 +6887,9 @@ async function submitForcedSwitch(instanceId) {
 // 刻意不做得太刁鑽。跟PvP的submitMove不一樣的地方：不用等對方送出招式(AI「送出」是
 // 這裡當場決定的)，把雙方的招式一次寫進pendingMoves後，直接呼叫resolveBattleRound結算，
 // 沿用一模一樣的傷害計算/回合結算邏輯
-async function submitWildMove(moveName) {
+async function submitWildMove(moveName, opts) {
+    const mega = !!(opts && opts.mega);
+    const zMove = !!(opts && opts.zMove);
     const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
     const myUid = auth.currentUser.uid;
     let roomDataAfter = null;
@@ -6745,7 +6900,7 @@ async function submitWildMove(moveName) {
             if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
             const wildTeamNow = data.battleState.teams.wild || { moves: ['tackle'] };
             const aiMoveName = decideTrainerMoveName(wildTeamNow, data.battleState.round || 1);
-            const pending = { [myUid]: { type: 'move', move: moveName }, wild: { type: 'move', move: aiMoveName } };
+            const pending = { [myUid]: { type: 'move', move: moveName, mega, zMove }, wild: { type: 'move', move: aiMoveName } };
             tx.update(roomRef, { pendingMoves: pending });
             roomDataAfter = { ...data, pendingMoves: pending };
         });
@@ -6754,6 +6909,88 @@ async function submitWildMove(moveName) {
         return;
     }
     await resolveBattleRound(roomRef, roomDataAfter, myUid, 'wild');
+}
+
+// ============================================================
+// 【第三十輪新增】Mega進化(超級進化)：判斷「這隻現在能不能Mega進化」、實際執行變身換數值、
+// 查Mega型態種族值(即時查PokéAPI，跟一般寶可夢的種族值來源不同，這裡另外開一個小快取)。
+// 正統規則：一場對戰裡不管換了幾次寶可夢，整個「我方」全場只能用掉一次Mega進化名額(不是每隻
+// 寶可夢各自一次)，這份名額用battleState.megaUsed({[uid]:bool})這個新的頂層欄位追蹤，
+// 跟hazards/screens同樣的「每個battleState建立點都要給預設值、resolveBattleRound讀取時
+// 也要做防呆預設」的做法一致
+// ============================================================
+const megaBaseStatsCache = new Map();
+async function fetchMegaBaseStats(megaSlug) {
+    if (megaBaseStatsCache.has(megaSlug)) return megaBaseStatsCache.get(megaSlug);
+    const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${megaSlug}`);
+    if (!res.ok) throw new Error(`查詢Mega型態種族值失敗(${res.status})`);
+    const data = await res.json();
+    const statMap = {};
+    (data.stats || []).forEach(s => { statMap[s.stat.name] = s.base_stat; });
+    const result = {
+        hp: statMap.hp || 45, atk: statMap.attack || 45, def: statMap.defense || 45,
+        spAtk: statMap['special-attack'] || 45, spDef: statMap['special-defense'] || 45, spd: statMap.speed || 45,
+    };
+    megaBaseStatsCache.set(megaSlug, result);
+    return result;
+}
+// 這隻寶可夢現在符不符合「可以Mega進化」的條件：(a)持有對應這個種類的超級石，或(b)是烈空坐
+// (384號)而且已經學會畫龍點睛(dragon-ascent，唯一不需要超級石的特例)
+function findMegaInfoFor(battler) {
+    if (battler.speciesId === MEGA_RAYQUAZA.speciesId && Array.isArray(battler.moves) && battler.moves.includes(MEGA_RAYQUAZA.requiredMove)) {
+        return { megaSlug: MEGA_RAYQUAZA.megaSlug, viaStone: null };
+    }
+    const stoneInfo = battler.heldItem && MEGA_STONE_CATALOG[battler.heldItem];
+    if (stoneInfo && stoneInfo.baseSpeciesId === battler.speciesId) {
+        return { megaSlug: stoneInfo.megaSlug, viaStone: battler.heldItem };
+    }
+    return null;
+}
+// 實際執行Mega進化：把battler原地改成Mega後的種類/數值，並記下復原用的快照。呼叫端要自己確保
+// 「這次真的可以Mega進化」(findMegaInfoFor有回傳、megaUsed[uid]還沒被用掉)，這個函式本身不重複檢查
+async function applyMegaEvolution(battler, megaInfo) {
+    const baseStats = await fetchMegaBaseStats(megaInfo.megaSlug);
+    const mult = battler.starMult || 1;
+    const newMaxHp = Math.floor(statAtLevel(baseStats.hp, battler.level, true) * mult);
+    battler.megaEvolvedFrom = {
+        speciesId: battler.speciesId, nickname: battler.nickname,
+        atk: battler.atk, def: battler.def, spAtk: battler.spAtk, spDef: battler.spDef, spd: battler.spd,
+        maxHp: battler.maxHp,
+    };
+    battler.speciesId = megaInfo.megaSlug;
+    battler.nickname = '超級進化的' + battler.nickname;
+    battler.atk = Math.floor(statAtLevel(baseStats.atk, battler.level, false) * mult);
+    battler.def = Math.floor(statAtLevel(baseStats.def, battler.level, false) * mult);
+    battler.spAtk = Math.floor(statAtLevel(baseStats.spAtk, battler.level, false) * mult);
+    battler.spDef = Math.floor(statAtLevel(baseStats.spDef, battler.level, false) * mult);
+    battler.spd = Math.floor(statAtLevel(baseStats.spd, battler.level, false) * mult);
+    battler.maxHp = newMaxHp;
+    // 正統規則：Mega進化不會回血，現有HP數字原封不動保留，只有在新的maxHp比現在HP還低時才夾住
+    battler.currentHp = Math.min(battler.currentHp, newMaxHp);
+}
+
+// ============================================================
+// 【第三十輪新增】Ｚ招式：判斷「這個招式現在能不能用Ｚ純晶強化」、實際算出強化後的威力/分類/
+// 招式名稱。正統規則：一場對戰裡整個「我方」全場只能用掉一次Ｚ招式名額，用
+// battleState.zMoveUsed({[uid]:bool})這個新的頂層欄位追蹤，道理跟上面的megaUsed一樣。
+// Ｚ招式永遠沿用「原本那招」的屬性/分類(物理還是特殊)去算相剋跟攻防對象，只有威力(或極少數
+// 寶可夢限定Ｚ招式連分類都不一樣，見special欄位)不一樣——這樣屬性相剋/命中判定/PP消耗完全
+// 不用另外處理，只要在算完displayOf/moveOf之後蓋掉power/nameZh兩個欄位即可
+// ============================================================
+function findZMoveInfoFor(battler, move) {
+    const crystalKey = battler.heldItem;
+    const crystal = crystalKey && Z_CRYSTAL_CATALOG[crystalKey];
+    if (!crystal) return null;
+    if (crystal.kind === 'species') {
+        if (!crystal.speciesIds.includes(battler.speciesId)) return null;
+        if (move.name !== crystal.requiredMove) return null;
+        return { zMoveNameZh: crystal.zMoveNameZh, power: crystal.power, special: crystal.special };
+    }
+    // kind==='type'：屬性通用純晶，招式屬性要跟純晶屬性相同，而且只給「有威力的攻擊招式」用
+    // (變化招式Ｚ化後officially會有各自獨立的加成效果，這個簡化版遊戲沒有實作到那麼細，範圍
+    // 縮小成只強化攻擊招式，比較不會有效果對不起來的風險——見交付紀錄的範圍說明)
+    if (move.type !== crystal.type || !(move.power > 0)) return null;
+    return { zMoveNameZh: crystal.zMoveNameZh, power: zPowerForBasePower(move.power), special: null };
 }
 
 // 結算一整個回合：不再只是單純比大小算傷害，而是完整跑過「出招前異常狀態檢查(畏縮/冰凍/睡眠/
@@ -6790,6 +7027,12 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     const screensAll = roomData.battleState.screens || {};
     const hazardsState = { [uidA]: { ...freshHazardsSide(), ...(hazardsAll[uidA] || {}) }, [uidB]: { ...freshHazardsSide(), ...(hazardsAll[uidB] || {}) } };
     const screensState = { [uidA]: { ...freshScreensSide(), ...(screensAll[uidA] || {}) }, [uidB]: { ...freshScreensSide(), ...(screensAll[uidB] || {}) } };
+    // 【第三十輪新增】Mega進化/Ｚ招式「整場戰鬥只能各用一次」的名額，跟hazards/screens同樣的
+    // 防呆寫法：舊的、這個功能上線之前就已經開打的房間文件沒有這兩個欄位，預設當作「還沒用過」
+    const megaUsedAll = roomData.battleState.megaUsed || {};
+    const zMoveUsedAll = roomData.battleState.zMoveUsed || {};
+    const megaUsedState = { [uidA]: !!megaUsedAll[uidA], [uidB]: !!megaUsedAll[uidB] };
+    const zMoveUsedState = { [uidA]: !!zMoveUsedAll[uidA], [uidB]: !!zMoveUsedAll[uidB] };
 
     const log = [];
     const events = []; // 結構化的事件，給前端播放動畫用
@@ -6859,6 +7102,25 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         }
     }
 
+    // 【第三十輪新增】Mega進化：要放在換人結束、抓種類資料(displayOf)之前處理——這樣底下
+    // fetchSpeciesDisplay抓到的就已經是Mega後的種類，屬性/圖鑑圖片全部自動正確，不用另外
+    // 重查一次。只有「這回合真的選了招式(不是換人)、而且勾選了Mega進化」的那一方才會處理，
+    // 換人的那一方這回合沒有招式動作，action.type不會是'move'，天然就不會誤觸發
+    async function tryProcessMegaAction(uid, action) {
+        if (!action || action.type !== 'move' || !action.mega) return;
+        if (state[uid].currentHp <= 0) return; // 防呆：已經倒下的不能Mega進化
+        if (megaUsedState[uid]) { log.push(`${state[uid].nickname} 這場對戰的Mega進化名額已經用掉了！`); return; }
+        const megaInfo = findMegaInfoFor(state[uid]);
+        if (!megaInfo) { log.push(`${state[uid].nickname} 現在沒辦法Mega進化！`); return; }
+        const beforeName = state[uid].nickname;
+        await applyMegaEvolution(state[uid], megaInfo);
+        megaUsedState[uid] = true;
+        log.push(`${beforeName} 開始閃耀著光芒...Mega進化成了 ${state[uid].nickname}！`);
+        events.push({ megaEvolveEvent: true, uid, inSpeciesId: state[uid].speciesId, nickname: state[uid].nickname });
+    }
+    await tryProcessMegaAction(uidA, actionA);
+    await tryProcessMegaAction(uidB, actionB);
+
     // 換人之後才抓「現在真正在場上」的種類資料——如果剛剛換過人，要用新上場那隻的speciesId查屬性
     const displayA = await fetchSpeciesDisplay(state[uidA].speciesId, state[uidA].isShiny);
     const displayB = await fetchSpeciesDisplay(state[uidB].speciesId, state[uidB].isShiny);
@@ -6898,6 +7160,21 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     for (const uid of moveUids) {
         const act = uid === uidA ? actionA : actionB;
         moveOf[uid] = await fetchMoveData(act.move);
+        // 【第三十輪新增】Ｚ招式：只覆寫「威力」跟「顯示名稱」這兩個欄位(用淺拷貝，不會動到
+        // moveDataCache裡共用的原始物件)，屬性/分類/命中率/PP/招式代號完全不變——這樣後面
+        // 算相剋倍率/扣PP/命中判定全部自動沿用原招式的資料，只有傷害計算讀到的power、跟戰鬥
+        // 紀錄文字讀到的nameZh是強化過的版本。special('evoboost'/'fixedFractionDamage')
+        // 這兩個例外會在下面攻擊迴圈裡各自用專門的分支處理，不會走一般的computeDamage流程
+        if (act.zMove && !zMoveUsedState[uid]) {
+            const zResult = findZMoveInfoFor(state[uid], moveOf[uid]);
+            if (zResult) {
+                moveOf[uid] = { ...moveOf[uid], power: zResult.power, nameZh: zResult.zMoveNameZh, __zSpecial: zResult.special || null };
+                zMoveUsedState[uid] = true;
+                log.push(`${state[uid].nickname} 拿出了純晶的力量！`);
+            } else {
+                log.push(`${state[uid].nickname} 現在沒辦法使出Ｚ招式，${moveOf[uid].nameZh}照原本的威力使出！`);
+            }
+        }
     }
     const effOf = {};
     // 看穿/識破/定身術(miracle eye/odor-sleuth/foresight)的正統效果之一：讓幽靈系不再免疫一般/格鬥、
@@ -7125,6 +7402,38 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
         }
         atk.lastMoveUsed = move.name; // 折磨/定身法/再來一次都要知道「上一個真正嘗試出招」是什麼
+
+        // ---- 【第三十輪新增】Ｚ招式的兩個特例：效果跟原招式完全不同，不走一般的傷害流程(也不會
+        // 被魔法反射彈回去——正統規則裡魔法反射本來就沒辦法反射Ｚ招式) ----
+        if (move.__zSpecial === 'evoboost') {
+            // 伊布Z的「九彩昇華齊聚頂」：不造成傷害，直接把自己5項能力等級各+2
+            ['atk', 'def', 'spAtk', 'spDef', 'spd'].forEach(k => { atk.stages[k] = Math.min(6, (atk.stages[k] || 0) + 2); });
+            ev.zSpecial = 'evoboost';
+            log.push(`${atkName} 使出了 ${move.nameZh}！全部能力大幅提升了！`);
+            events.push(ev);
+            continue;
+        }
+        if (move.__zSpecial === 'fixedFractionDamage') {
+            // 卡璞Z的「巨人衛士．阿羅拉」：無視威力數值，直接打掉對方目前HP的3/4
+            const dmg = Math.max(1, Math.ceil(def.currentHp * 0.75));
+            def.currentHp = Math.max(0, def.currentHp - dmg);
+            ev.zSpecial = 'fixedFractionDamage';
+            ev.damage = dmg;
+            ev.defenderHpAfter = def.currentHp;
+            log.push(`${atkName} 使出了 ${move.nameZh}！給 ${defName} 造成了 ${dmg} 點傷害！`);
+            events.push(ev);
+            if (def.currentHp <= 0) {
+                const transformed = tryMegaTransform(defenderUid);
+                if (transformed) {
+                    log.push(`${transformed.outName} 變化為 ${transformed.inName}！`);
+                    if (defenderUid === uidA) switchedA = true; else switchedB = true;
+                } else {
+                    log.push(`${defName} 倒下了！`);
+                    handleFaint(defenderUid);
+                }
+            }
+            continue;
+        }
 
         // ---- 魔法反射：這次出招的對象(def)如果這回合稍早用過魔法反射、而且這招符合可以被反彈的
         // 條件(isMagicCoatBounceable)，就把這次出招的攻守對調，讓招式效果原封不動彈回施放者自己
@@ -8242,6 +8551,13 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     // 天氣/場地不用再倒數，awaitingSwitchFinal維持預設的空陣列即可)
 
     const finalStatus = winnerUid ? 'finished' : 'battling';
+    // 【第三十輪新增】戰鬥真正結束時，把還留著Mega進化樣子的一方復原回原本種類——不然這份
+    // 「Mega後的樣子」會原封不動留在battleState.teams裡，變成下一場戰鬥開局就已經是Mega狀態
+    // 的假資料(這隻寶可夢下次上場其實根本沒有再裝著超級石也一樣會被誤判成Mega中)
+    if (finalStatus === 'finished') {
+        revertMegaEvolution(state[uidA]);
+        revertMegaEvolution(state[uidB]);
+    }
     const winnerInstanceId = winnerUid ? state[winnerUid].instanceId : null;
     const resolvedRoundNum = roomData.battleState.round || 1;
 
@@ -8259,6 +8575,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 'battleState.terrain': terrainState,
                 'battleState.hazards': hazardsState,
                 'battleState.screens': screensState,
+                'battleState.megaUsed': megaUsedState, // 【第三十輪新增】
+                'battleState.zMoveUsed': zMoveUsedState, // 【第三十輪新增】
                 'battleState.awaitingSwitch': awaitingSwitchFinal,
                 'battleState.round': (data.battleState.round || 1) + 1,
                 'battleState.log': firebase.firestore.FieldValue.arrayUnion(...log),
@@ -8703,6 +9021,20 @@ function renderPuzzleRewardScreen(result) {
     } else {
         detailHtml = '<p class="text-sm text-gray-400 my-4">這次沒有拿到任何獎勵，再試一次看看！</p>';
     }
+    // 【第三十輪新增】拼圖10%機率額外掉落的Z純晶：獨立一塊紫色慶祝區塊，跟代幣明細分開顯示，
+    // 讓玩家一眼就能看出這次是「多中一個大獎」而不是代幣算法本身變了
+    let zHtml = '';
+    if (result.zCrystalWon && Z_CRYSTAL_CATALOG[result.zCrystalWon]) {
+        const crystalInfo = Z_CRYSTAL_CATALOG[result.zCrystalWon];
+        zHtml = `
+            <div class="bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl p-4 my-4 text-white text-center">
+                <p class="text-xs font-bold opacity-90 mb-1">✨ 額外大獎 ✨</p>
+                <img src="${itemSpriteForKey(result.zCrystalWon)}" class="w-14 h-14 mx-auto mb-1" style="image-rendering:pixelated">
+                <p class="font-black">獲得Ｚ純晶：${crystalInfo.nameZh}！</p>
+            </div>`;
+        SFX.sparkle();
+        setTimeout(() => SFX.itemGet(), 300);
+    }
     root.innerHTML = `
         <div class="bg-white rounded-2xl card-shadow overflow-hidden">
             <div class="p-5 text-center bg-gradient-to-br from-yellow-400 to-orange-500 text-white">
@@ -8711,6 +9043,7 @@ function renderPuzzleRewardScreen(result) {
             </div>
             <div class="p-6 text-center">
                 ${detailHtml}
+                ${zHtml}
                 <button onclick="resetPuzzleGame()" class="bg-red-500 text-white px-6 py-2 rounded-full font-bold">再玩一次</button>
             </div>
         </div>
