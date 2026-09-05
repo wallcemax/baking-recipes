@@ -267,6 +267,22 @@
                 <p class="text-2xl font-black text-sky-600 flex items-center justify-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/rare-candy.png" class="w-6 h-6" style="image-rendering:pixelated">+<span id="idle-pending-exp">0</span> EXP</p>
             </div>
             <button id="idle-collect-btn" onclick="collectIdle()" class="bg-yellow-500 text-white px-6 py-2 rounded-full font-bold">收取</button>
+            <!-- 【第二十五輪新增】使用者要求「一進入牧場就看到已經確定產出的道具，按收取以後
+                 放入背包，不是按下收取以後才骰」——這裡顯示的是worker.js
+                 handlePokemonIdlePeekDrops已經骰好、存在pendingIdleItems/pendingIdleBerries
+                 裡的「確定結果」，不是機率預測；沒有任何pending項目時整塊隱藏，見
+                 renderIdlePendingDrops -->
+            <div id="idle-pending-drops-wrap" class="hidden mt-3 pt-3 border-t border-gray-100 text-left">
+                <p class="text-xs font-bold text-gray-500 mb-1.5">🎁 目前已產出、尚未收取的道具/莓果：</p>
+                <div id="idle-pending-drops-list" class="flex flex-wrap gap-1.5"></div>
+            </div>
+            <!-- 【第二十五輪新增】即時預覽目前牧場的寶可夢組合觸發了哪些加成條件(見
+                 renderIdleBonusPreview)——使用者要求「只有金幣顯示%數，其它都不用顯示機率」，
+                 所以只有最後一條金幣效率秀百分比，其餘每一條只用打勾/空白表示有沒有觸發 -->
+            <div class="mt-3 pt-3 border-t border-gray-100 text-left">
+                <p class="text-xs font-bold text-gray-500 mb-1.5">📋 目前牧場組合加成(即時預覽)：</p>
+                <div id="idle-bonus-preview-list" class="space-y-1"></div>
+            </div>
         </div>
         <!-- 這個標題本來直接把圖示跟文字/計數span全部放在同一個flex容器裡，結果flexbox把
              「圖示」「span前的文字」「span」「span後的文字」各自拆成獨立的flex item，手機版
@@ -394,13 +410,21 @@
      本身的長寬比例不失真)——這樣不管是100px寬還是500px寬的原始圖，排版時都會統一換算成同一
      個目視尺寸，不會再有「某些劇情兩張圖大小不一樣」的情況。同時因應使用者「兩張圖片稍微再
      站開一點」的要求，父層容器從inset-x-[25%]縮小內縮量到inset-x-[16%]，讓兩邊站的位置往
-     外拉開一些(從25%/75%改成16%/84%) -->
+     外拉開一些(從25%/75%改成16%/84%)
+     【第二十五輪修正】使用者這次確認手機上兩邊立繪大小終於一致了，但反映角色像「浮空」，
+     腳沒有踩在畫面最下緣，要求「只是調上下不是圖的大小」(明確表示尺寸不用再動)。根因是
+     object-contain預設用object-position:center置中——固定width/height方框如果跟某張圖片
+     本身的長寬比例對不上，會在方框裡「置中留白」，如果留白發生在上下方向，等於角色的圖片
+     內容整體被往上推、方框下緣跟角色的腳之間會空出一截透明空白，看起來就像整個人是浮空的。
+     改成object-bottom(object-position:bottom)：一樣是等比例縮放置中，但留白只會出現在
+     方框「上緣」，方框下緣永遠貼齊圖片內容的最下緣(也就是角色腳的位置)，這樣才會是「腳踩在
+     畫面最下面」的站立效果——只調整了立繪在方框內的對齊方式，寬高／scale倍率完全沒有變動 -->
 <div id="story-modal" class="hidden fixed inset-0 bg-black z-[60] flex-col justify-end overflow-hidden" onclick="storyModalTap(event)">
     <img id="story-bg" class="absolute inset-0 w-full h-full object-cover transition-opacity duration-500" style="opacity:0;z-index:0" onerror="this.style.opacity='0'">
     <div class="absolute inset-0 bg-black/25" style="z-index:1"></div>
     <div class="absolute inset-x-[16%] bottom-[28px] flex justify-between items-end pointer-events-none" style="z-index:2">
-        <img id="story-portrait-left" class="w-[19vw] h-[34vh] object-contain transition-all duration-300" style="opacity:0;transform-origin:bottom center">
-        <img id="story-portrait-right" class="w-[19vw] h-[34vh] object-contain transition-all duration-300" style="opacity:0;transform-origin:bottom center">
+        <img id="story-portrait-left" class="w-[19vw] h-[34vh] object-contain object-bottom transition-all duration-300" style="opacity:0;transform-origin:bottom center">
+        <img id="story-portrait-right" class="w-[19vw] h-[34vh] object-contain object-bottom transition-all duration-300" style="opacity:0;transform-origin:bottom center">
     </div>
     <div class="relative flex justify-between items-center px-4 pt-3" style="z-index:3">
         <button id="story-ff-btn" onclick="event.stopPropagation();toggleStoryFastForward()" class="text-xs bg-white/20 text-white px-3 py-1.5 rounded-full active:scale-95 transition-transform">快進：關</button>
@@ -3117,6 +3141,86 @@ function toggleIdleRulesDetail() {
     const nowHidden = detail.classList.toggle('hidden');
     btn.textContent = nowHidden ? '查看完整牧場規則 ▾' : '收合牧場規則 ▴';
 }
+// 【第二十五輪新增】跟worker.js的IDLE_TYPE_COMBO_DROP_RULES/idleCoinEfficiencyBonusPct
+// 對應的前端鏡像清單，只用來即時顯示「目前牧場組合有沒有觸發」，不影響實際結算(實際數字
+// 一律以worker端settleIdleEarnings算出來的為準，這裡算錯最多只是預覽不準，不會多發/少發)。
+// 使用者要求「只有金幣顯示%數，其它都不用顯示機率」，所以除了金幣效率那一條，其餘每一條
+// 只顯示打勾/沒打勾，不秀任何機率數字
+const IDLE_TYPE_COMBO_RULES_CLIENT = [
+    { types: ['grass', 'water'], label: '恢復/解異常樹果' },
+    { types: ['rock', 'fighting'], label: '進化石' },
+    { types: ['fire', 'steel'], label: '屬性強化道具' },
+    { types: ['electric', 'ground'], label: '經驗糖果' },
+    { types: ['psychic', 'ghost'], label: '招式學習器' },
+    { types: ['grass', 'poison'], label: '抗性樹果' },
+    { types: ['dragon', 'dark'], label: '對戰攜帶增幅裝備' },
+    { types: ['flying', 'bug'], label: '改變能力值的核心增幅裝備' },
+    { types: ['ice', 'steel'], label: '機率與保命保底裝備' },
+];
+function idleCoinEfficiencyBonusPctClient(distinctTypeCount) {
+    if (distinctTypeCount < 8) return 0;
+    return 8 + (distinctTypeCount - 8);
+}
+function renderIdleBonusPreview(placedTypeSet) {
+    const box = document.getElementById('idle-bonus-preview-list');
+    if (!box) return;
+    const rows = IDLE_TYPE_COMBO_RULES_CLIENT.map(rule => {
+        const active = rule.types.every(t => placedTypeSet.has(t));
+        return `<div class="flex items-center gap-1.5 text-xs ${active ? 'text-green-600 font-bold' : 'text-gray-400'}">
+            <span>${active ? '✅' : '⬜'}</span>
+            <span class="flex gap-0.5">${typeBadgesHtml(rule.types, rule.types.map(t => TYPE_NAME_ZH_STATIC[t]))}</span>
+            <span>→ ${rule.label}</span>
+        </div>`;
+    });
+    const normalFairyActive = placedTypeSet.has('normal') && placedTypeSet.has('fairy');
+    rows.push(`<div class="flex items-center gap-1.5 text-xs ${normalFairyActive ? 'text-green-600 font-bold' : 'text-gray-400'}">
+        <span>${normalFairyActive ? '✅' : '⬜'}</span>
+        <span class="flex gap-0.5">${typeBadgesHtml(['normal', 'fairy'], ['一般', '妖精'])}</span>
+        <span>→ 牧場整體經驗值+1%</span>
+    </div>`);
+    const coinPct = idleCoinEfficiencyBonusPctClient(placedTypeSet.size);
+    rows.push(`<div class="flex items-center gap-1.5 text-xs ${coinPct > 0 ? 'text-yellow-600 font-bold' : 'text-gray-400'}">
+        <span>${coinPct > 0 ? '✅' : '⬜'}</span>
+        <span>🪙 屬性多樣性金幣效率(目前${placedTypeSet.size}種)</span>
+        <span>→ +${coinPct}%</span>
+    </div>`);
+    box.innerHTML = rows.join('');
+}
+// 【第二十五輪新增】牧場「目前已產出、尚未收取的道具/莓果」預覽：呼叫worker.js新增的
+// pokemon_idle_peek_drops動作，把「該骰的都先骰好、存在pendingIdleItems/pendingIdleBerries」
+// 的結果整包抓回來顯示——這是已經確定的結果，不是機率預測，按「收取」只是把這裡顯示的東西
+// banked進背包(見collectIdle)。跟renderIdleTab分開成獨立函式、不await它，是因為這裡還要
+// 額外查道具/莓果的中文名稱(fetchGenericItemNameZh/fetchBerryNameZh都可能要打PokéAPI)，
+// 不應該卡住牧場卡片本身的render
+let idlePendingDropsRenderToken = 0;
+async function renderIdlePendingDrops() {
+    const myToken = ++idlePendingDropsRenderToken;
+    const wrap = document.getElementById('idle-pending-drops-wrap');
+    const box = document.getElementById('idle-pending-drops-list');
+    if (!wrap || !box) return;
+    try {
+        const result = await callWorker('pokemon_idle_peek_drops');
+        if (myToken !== idlePendingDropsRenderToken) return;
+        const items = result.pendingIdleItems || {};
+        const berries = result.pendingIdleBerries || {};
+        const entries = [
+            ...Object.entries(items).map(([key, count]) => ({ key, count, isBerry: false })),
+            ...Object.entries(berries).map(([key, count]) => ({ key, count, isBerry: true })),
+        ];
+        if (entries.length === 0) { wrap.classList.add('hidden'); box.innerHTML = ''; return; }
+        const names = await Promise.all(entries.map(e => e.isBerry ? fetchBerryNameZh(e.key) : fetchGenericItemNameZh(e.key)));
+        if (myToken !== idlePendingDropsRenderToken) return;
+        wrap.classList.remove('hidden');
+        box.innerHTML = entries.map((e, idx) => `
+            <div class="flex items-center gap-1 bg-yellow-50 rounded-full px-2 py-1">
+                <img src="${e.isBerry ? berrySpriteUrl(e.key) : itemSpriteForKey(e.key)}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">
+                <span class="text-xs font-bold text-gray-600">${names[idx]} ×${e.count}</span>
+            </div>
+        `).join('');
+    } catch (err) {
+        // 這只是預覽用途，不影響代幣/EXP/道具實際結算——安靜失敗即可，不用跳錯誤toast打擾玩家
+    }
+}
 let idleRenderToken = 0; // 跟boxRenderToken同樣的道理(見renderBoxTab上面的說明)，擋掉短時間內連續觸發、疊加變慢的render
 async function renderIdleTab() {
     const myToken = ++idleRenderToken;
@@ -3125,8 +3229,7 @@ async function renderIdleTab() {
     const totalLevel = placed.reduce((sum, i) => sum + (i.level || 1), 0);
     const lastCollect = Number(currentPlayerData.lastIdleCollectAt) || Date.now();
     const elapsedHours = Math.min(24, Math.max(0, (Date.now() - lastCollect) / 3600000));
-    const pending = Math.floor(totalLevel * 2 * elapsedHours);
-    document.getElementById('idle-pending').textContent = pending;
+    const basePending = Math.floor(totalLevel * 2 * elapsedHours);
     // 牧場EXP：每小時發一次「牧場裡全體寶可夢等級總和」的經驗值，每一隻都各自拿到這整包——
     // 這裡只是前端自己算的預覽估算值(跟代幣預覽一樣)，真正入帳的計算跟寫入還是由worker的
     // settleIdleEarnings在按下「收取」的當下才會做，這裡算錯也不影響實際拿到的數字
@@ -3137,12 +3240,26 @@ async function renderIdleTab() {
     if (countEl) countEl.textContent = placed.length;
 
     const list = document.getElementById('idle-placed-list');
+    const displays = placed.length > 0 ? await Promise.all(placed.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny))) : [];
+    if (myToken !== idleRenderToken) return; // 半路已經有更新的render觸發了，這次放棄、不動DOM
+
+    // 【第二十五輪新增】屬性多樣性金幣效率加成：原本的basePending沒有把這個加成算進去
+    // (舊版預覽數字本來就沒算)，這裡補上，讓「收取」按鈕上方看到的金幣預覽跟worker實際
+    // 結算的金額更接近一致，同時把算出來的屬性集合餵給renderIdleBonusPreview做即時預覽(item4)
+    const placedTypeSet = new Set();
+    displays.forEach(d => (d.types || []).forEach(t => placedTypeSet.add(t)));
+    renderIdleBonusPreview(placedTypeSet);
+    const coinEfficiencyBonusPct = idleCoinEfficiencyBonusPctClient(placedTypeSet.size);
+    document.getElementById('idle-pending').textContent = Math.floor(basePending * (1 + coinEfficiencyBonusPct / 100));
+    renderIdlePendingDrops(); // 不await，讓「目前已產出道具」預覽獨立更新，不卡住牧場卡片本身
+
     if (placed.length === 0) {
         list.innerHTML = '<p class="col-span-full text-center text-gray-400 py-10">牧場裡還沒有寶可夢，去「我的寶可夢」放一些進來吧</p>';
         return;
     }
-    const displays = await Promise.all(placed.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
-    if (myToken !== idleRenderToken) return; // 半路已經有更新的render觸發了，這次放棄、不動DOM
+    // 【第二十五輪新增】卡片補上屬性標籤(typeBadgesHtml，跟收藏庫卡片同一套)跟「隊伍中」
+    // 狀態小標籤(跟收藏庫卡片line 2060一樣的樣式)——使用者要求牧場卡片也要看得到這兩項資訊，
+    // 不用點開詳細資料才知道
     list.innerHTML = placed.map((inst, idx) => `
         <div class="bg-white rounded-xl card-shadow p-3 text-center cursor-pointer relative" onclick="openDetailModal('${inst.id}')">
             ${heldItemBadgeHtml(inst)}
@@ -3150,6 +3267,8 @@ async function renderIdleTab() {
             <p class="text-xs font-bold truncate">${pokemonDisplayName(inst, displays[idx])}</p>
             <p class="text-[10px] leading-none">${starsHtml(inst.stars)}</p>
             <p class="text-[10px] text-gray-400">Lv.${inst.level}</p>
+            <div class="flex justify-center flex-wrap gap-1 mt-1">${typeBadgesHtml(displays[idx].types, displays[idx].typesZh)}</div>
+            ${inst.inParty ? '<span class="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold mt-1 inline-block">隊伍中</span>' : ''}
         </div>
     `).join('');
 }
@@ -3173,11 +3292,14 @@ async function collectIdle() {
         } else {
             showToast('目前還沒有可以收取的代幣/經驗值');
         }
-        // 屬性強化道具(對應屬性寶可夢)/莓果(草屬性寶可夢)的牧場隨機掉落——見worker.js的settleIdleEarnings
+        // 【第二十五輪修正】道具/莓果現在是「牧場畫面平常就先骰好、顯示在上面『目前已產出』
+        // 清單」(見renderIdlePendingDrops)，按收取只是把已經看過的確定結果banked進背包，
+        // 不再是開箱驚喜，所以文字從「撿到」改成「收進背包」——見worker.js的settleIdleEarnings
         const drops = result.drops || [];
         if (drops.length > 0) {
-            setTimeout(() => { showToastWithIcon(itemSpriteUrl('poke-ball'), `牧場的寶可夢還撿到了 ${drops.length} 個道具/莓果！`); SFX.itemGet(); }, 1200);
+            setTimeout(() => { showToastWithIcon(itemSpriteUrl('poke-ball'), `${drops.length} 個道具/莓果已收進背包！`); SFX.itemGet(); }, 1200);
         }
+        renderIdlePendingDrops(); // 收取後pending已經被worker清空，立刻重整這區塊，不用等30秒自動輪詢
     } catch (err) {
         showToast('收取失敗：' + err.message);
     } finally {
@@ -3248,6 +3370,11 @@ function openCreateRoomModal() {
     roomModalMode = 'create';
     pendingRoomInstanceId = null;
     document.getElementById('create-room-modal-title').textContent = '開一個連線對戰房間';
+    // 【第二十五輪補充】create-room-modal-hint這個提示文字元素是跟WPM共用的(見
+    // actuallyOpenGymChallengeModal)，那邊會把textContent暫時改成WPM專屬的3v3說明文字——
+    // 這裡每次打開連線對戰彈窗都要重設回連線對戰自己原本的說明，不然WPM挑戰過一次之後，
+    // 再開連線對戰彈窗會殘留WPM的提示文字
+    document.getElementById('create-room-modal-hint').textContent = '連線對戰用你「我的寶可夢」隊伍裡最多6隻的名單，雙方到齊後會先各自封鎖對方一隻，再各自從剩下的隊伍選3隻上場。';
     document.getElementById('create-room-modal-hint').classList.remove('hidden');
     document.getElementById('create-room-party-picker').innerHTML = '';
     document.getElementById('create-room-name').classList.remove('hidden');
@@ -3296,6 +3423,50 @@ async function renderPartyPicker(containerId, party, onPick) {
         });
     });
 }
+// 【第二十五輪新增】世界寶可夢大師賽專用的「選3隻出戰」多選版本——跟renderPartyPicker
+// (單選，野生/一般道館用)共用同一套卡片樣式，差異只在點擊行為：允許選到maxCount隻(用選取
+// 順序當卡片右上角的1/2/3小編號，順序同時也決定出戰時誰是先發、誰是候補)，選滿了再點別的
+// 會被擋下來，點已選的可以取消選取。onChange每次選取狀態變動都會被呼叫一次，回傳目前完整的
+// 已選instanceId陣列(依選取順序排列)
+async function renderPartyPickerMulti(containerId, party, maxCount, onChange) {
+    const container = document.getElementById(containerId);
+    const displays = await Promise.all(party.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
+    let selected = [];
+    container.innerHTML = party.map((inst, idx) => `
+        <div class="border-2 border-transparent rounded-xl p-2 text-center cursor-pointer party-pick-item relative" data-instance-id="${inst.id}">
+            <span class="party-pick-multi-badge hidden absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-black flex items-center justify-center">0</span>
+            <img src="${displays[idx].sprite}" class="w-12 h-12 mx-auto">
+            <p class="text-[10px] font-bold truncate">${pokemonDisplayName(inst, displays[idx])}</p>
+        </div>
+    `).join('');
+    const refreshBadges = () => {
+        container.querySelectorAll('.party-pick-item').forEach(el => {
+            const pos = selected.indexOf(el.dataset.instanceId);
+            const badge = el.querySelector('.party-pick-multi-badge');
+            if (pos === -1) {
+                el.classList.remove('border-red-500');
+                if (badge) badge.classList.add('hidden');
+            } else {
+                el.classList.add('border-red-500');
+                if (badge) { badge.classList.remove('hidden'); badge.textContent = pos + 1; }
+            }
+        });
+    };
+    container.querySelectorAll('.party-pick-item').forEach(el => {
+        el.addEventListener('click', () => {
+            const id = el.dataset.instanceId;
+            const pos = selected.indexOf(id);
+            if (pos !== -1) {
+                selected.splice(pos, 1);
+            } else {
+                if (selected.length >= maxCount) { showToast(`最多只能選${maxCount}隻出戰`); return; }
+                selected.push(id);
+            }
+            refreshBadges();
+            onChange(selected.slice());
+        });
+    });
+}
 // 把自己隊伍的每一隻(最多6隻)組成戰鬥用資料，寫進房間文件讓對方也能讀到——pokemonInstances
 // 的安全規則只有擁有者能讀，對方沒辦法直接查我的隊伍，所以要由「我自己」把資料寫進雙方都能讀寫的
 // pokemonBattleRooms文件裡，這是整個封鎖+選人機制能運作的關鍵
@@ -3330,6 +3501,8 @@ function openJoinRoomModal(roomId) {
     roomModalMode = 'join';
     pendingJoinRoomId = roomId;
     document.getElementById('create-room-modal-title').textContent = '加入這場連線對戰';
+    // 同openCreateRoomModal的理由：重設回連線對戰自己的提示文字，避免殘留WPM那邊寫入的文字
+    document.getElementById('create-room-modal-hint').textContent = '連線對戰用你「我的寶可夢」隊伍裡最多6隻的名單，雙方到齊後會先各自封鎖對方一隻，再各自從剩下的隊伍選3隻上場。';
     document.getElementById('create-room-modal-hint').classList.remove('hidden');
     document.getElementById('create-room-party-picker').innerHTML = '';
     document.getElementById('create-room-name').classList.add('hidden');
@@ -3710,11 +3883,26 @@ async function autoHandleTrainerSwitch(roomRef, roomData) {
     trainerAutoSwitchScheduled[scheduleKey] = true;
     // 換人前先等一下：isForced代表「剛打倒對方寶可夢」，此時畫面正在播放上一回合的攻擊/倒下動畫
     // (playBattleEvents，見renderRoomView)，太快把Firestore資料換成換人後的狀態，會讓倒下動畫都
-    // 還沒播完，畫面就跳去下一隻——等待時間抓在playBattleEvents一輪動畫大概播完的時間之後，
-    // 才真的送出換人的交易。主動換人(wantsAllySwitch)則不用等，因為此時沒有正在播放中的倒下動畫。
-    // (這個延遲要跟著playBattleEvents裡的動畫時長一起調整——動畫全面放慢後這裡也跟著拉長，
-    // 不然換人事件還是會搶在倒下動畫播完之前送出)
-    if (isForced) await sleep(2000);
+    // 還沒播完，畫面就跳去下一隻。主動換人(wantsAllySwitch)則不用等，因為此時沒有正在播放中的
+    // 倒下動畫。
+    // 【第二十五輪修正】這裡原本是固定sleep(2000)硬猜「一輪動畫大概兩秒內播得完」——但同一回合
+    // 如果KO前面還排了別的事件(對方也出招、能力變化、異常狀態持續傷害...)，playBattleEvents
+    // 實際播完的時間常常超過2秒，換人交易就會搶在KO動畫真正播到「倒下」那一步之前送出，畫面
+    // 因此被新的onSnapshot取代掉(見playBattleEvents裡isStale的說明)，玩家完全看不到攻擊特效/
+    // 倒下動畫，對手像是瞬間消失——這正是使用者回報「前面幾隻寶可夢被秒殺時常常沒有戰鬥感，
+    // 只有隊伍最後一隻(戰鬥直接結束、不會走到這段換人流程)才一定正常」的根本原因：只要「這一
+    // 輪還有候補要換人」，就一定會有這段固定延遲在跟本地動畫賽跑，猜輸的機率並不低。
+    // 改成不用猜的：直接等到renderRoomView真的回報「這一輪動畫已經完整播完，沒有被中途取代」
+    // (animatedResolvedRound[roomRef.id]追上這一輪的resolvedRound，見renderRoomView那邊的
+    // 設定時機)才送出換人交易；額外包一個6秒上限(withTimeout同樣的防呆精神)，避免動畫真的
+    // 卡住(例如分頁被瀏覽器暫停背景執行)時換人永遠等不到、戰鬥卡死
+    if (isForced) {
+        const targetRound = roomData.battleState.resolvedRound;
+        const deadline = Date.now() + 6000;
+        while (animatedResolvedRound[roomRef.id] !== targetRound && Date.now() < deadline) {
+            await sleep(150);
+        }
+    }
     try {
         await db.runTransaction(async tx => {
             const snap = await tx.get(roomRef);
@@ -4291,7 +4479,13 @@ function openZoneGymList(regionId, zoneId) {
 // 世界寶可夢大師賽是新增的sequential=true地區，關卡要照順序打完，鎖定邏輯跟區塊內部一樣
 function renderFlatGymList(region) {
     document.getElementById('gym-list-modal-title').textContent = region.name + ' 地區道館';
-    document.getElementById('gym-list-modal-body').innerHTML = region.gyms.map((g, idx) =>
+    // 【第二十五輪新增】使用者要求世界寶可夢大師賽的說明要直接寫「世界賽為3V3正規賽」——
+    // 這裡直接判斷region.id，不用另外在gen_regions.py的region()加一個沒有其他地方會用到
+    // 的description欄位，維持地區清單前端顯示的邏輯集中在這裡
+    const wpmNoteHtml = region.id === 'pasio-wpm'
+        ? '<p class="text-xs text-yellow-600 bg-yellow-50 rounded-xl px-3 py-2 mb-3 font-bold text-center">⚔️ 世界賽為3V3正規賽：出戰前只能從隊伍中選3隻寶可夢上場</p>'
+        : '';
+    document.getElementById('gym-list-modal-body').innerHTML = wpmNoteHtml + region.gyms.map((g, idx) =>
         gymRowHtml(region, g, region.sequential && sequentialLocked(region.gyms, idx))
     ).join('');
     document.getElementById('gym-list-modal-back-btn').classList.add('hidden');
@@ -4311,6 +4505,11 @@ function openGymChallengeModal(regionId, gymId) {
     }
     actuallyOpenGymChallengeModal(regionId, gymId);
 }
+// 【第二十五輪新增】世界寶可夢大師賽固定3v3——出戰名單改用多選(見renderPartyPickerMulti)，
+// 存在這個陣列裡(依選取順序：第一隻是先發，其餘依序是候補)，跟其他一般道館/野生對戰共用的
+// pendingRoomInstanceId(單選)分開，避免兩套選人邏輯互相干擾
+let pendingWpmTeamInstanceIds = [];
+const WPM_TEAM_SIZE = 3;
 function actuallyOpenGymChallengeModal(regionId, gymId) {
     const party = currentInstances.filter(i => i.inParty);
     if (party.length === 0) { showToast('要先在「我的寶可夢」把至少一隻加入隊伍才能挑戰道館'); return; }
@@ -4319,22 +4518,41 @@ function actuallyOpenGymChallengeModal(regionId, gymId) {
     closeGymListModal(); // 道館清單彈窗跟選寶可夢彈窗都是z-50的全螢幕遮罩，切換前一定要先關掉，不然選寶可夢畫面會被蓋住點不到
     roomModalMode = 'gym';
     pendingRoomInstanceId = null;
+    pendingWpmTeamInstanceIds = [];
     pendingGymConfig = { regionId, gymId };
-    document.getElementById('create-room-modal-title').textContent = (found ? found.gym.name : '道館戰') + '：選一隻寶可夢出戰';
-    document.getElementById('create-room-modal-hint').classList.add('hidden');
-    document.getElementById('create-room-name').classList.add('hidden');
-    document.getElementById('create-room-submit-btn').textContent = '出發挑戰！';
-    renderPartyPicker('create-room-party-picker', party, (id) => { pendingRoomInstanceId = id; });
+    // 世界寶可夢大師賽(pasio-wpm)：使用者要求改成正規賽規則，出戰名單固定只能選3隻(不是
+    // 平常道館戰那種「選1隻當先發、其餘隊伍成員自動全部當候補」最多帶6隻的規則)——這裡直接
+    // 用regionId判斷是不是WPM，走多選流程，其餘地區完全不受影響
+    if (regionId === 'pasio-wpm') {
+        document.getElementById('create-room-modal-title').textContent = (found ? found.gym.name : 'WPM') + `：選${WPM_TEAM_SIZE}隻寶可夢出戰`;
+        document.getElementById('create-room-modal-hint').classList.remove('hidden');
+        document.getElementById('create-room-modal-hint').textContent = `世界賽為3V3正規賽，請依「先發、候補、候補」的順序點選${WPM_TEAM_SIZE}隻寶可夢(點選的順序就是上場順序)。`;
+        document.getElementById('create-room-name').classList.add('hidden');
+        document.getElementById('create-room-submit-btn').textContent = '出發挑戰！';
+        renderPartyPickerMulti('create-room-party-picker', party, WPM_TEAM_SIZE, (ids) => { pendingWpmTeamInstanceIds = ids; });
+    } else {
+        document.getElementById('create-room-modal-title').textContent = (found ? found.gym.name : '道館戰') + '：選一隻寶可夢出戰';
+        document.getElementById('create-room-modal-hint').classList.add('hidden');
+        document.getElementById('create-room-name').classList.add('hidden');
+        document.getElementById('create-room-submit-btn').textContent = '出發挑戰！';
+        renderPartyPicker('create-room-party-picker', party, (id) => { pendingRoomInstanceId = id; });
+    }
     document.getElementById('create-room-modal').classList.remove('hidden');
     document.getElementById('create-room-modal').classList.add('flex');
 }
 async function submitGymBattleStart() {
-    if (!pendingRoomInstanceId) { showToast('先選一隻寶可夢出戰'); return; }
     if (!pendingGymConfig) { showToast('道館資料不見了，請重新選擇'); return; }
+    // 【第二十五輪修正】世界寶可夢大師賽(isWpm)用多選(pendingWpmTeamInstanceIds，最多3隻、
+    // 依選取順序決定先發/候補順序)，其餘地區維持原本單選(pendingRoomInstanceId，先發以外的
+    // 隊伍成員全部自動當候補)——這裡先統一整理成同一份selectedIds，下面共用同一套流程
+    const isWpm = pendingGymConfig.regionId === 'pasio-wpm';
+    const selectedIds = isWpm ? pendingWpmTeamInstanceIds : (pendingRoomInstanceId ? [pendingRoomInstanceId] : []);
+    if (selectedIds.length === 0) { showToast(isWpm ? `先選${WPM_TEAM_SIZE}隻寶可夢出戰` : '先選一隻寶可夢出戰'); return; }
     const found = findGym(pendingGymConfig.gymId);
     if (!found) { showToast('找不到這個道館的資料'); return; }
     if (isGymCleared(found.gym.id)) { showToast('這個道館已經攻略過了，沒辦法重複挑戰'); return; }
-    const inst = currentInstances.find(i => i.id === pendingRoomInstanceId);
+    const selectedInsts = selectedIds.map(id => currentInstances.find(i => i.id === id)).filter(Boolean);
+    const inst = selectedInsts[0];
     if (!inst) return;
     closeCreateRoomModal();
     showToast(`挑戰${found.gym.name}...`);
@@ -4345,7 +4563,11 @@ async function submitGymBattleStart() {
         const myDisplay = await fetchSpeciesDisplay(inst.speciesId, inst.isShiny);
         const myUid = auth.currentUser.uid;
         const myTeam = buildTeamDataFromInstData(inst.id, inst, pokemonDisplayName(inst, myDisplay));
-        const myBenchInsts = currentInstances.filter(i => i.inParty && i.id !== inst.id).slice(0, 5);
+        // 世界寶可夢大師賽固定3v3：候補只從玩家在選人彈窗裡明確挑選的其餘寶可夢來(selectedInsts
+        // 去掉先發那隻，最多再2隻)，不是像一般道館戰那樣自動把隊伍剩下的全部(最多5隻)都當候補
+        const myBenchInsts = isWpm
+            ? selectedInsts.slice(1)
+            : currentInstances.filter(i => i.inParty && i.id !== inst.id).slice(0, 5);
         const myBenchDisplays = await Promise.all(myBenchInsts.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
         const myBench = myBenchInsts.map((i, idx) => buildTeamDataFromInstData(i.id, i, pokemonDisplayName(i, myBenchDisplays[idx])));
         const fieldEff = entryFieldEffectsFor(leadWild);
@@ -4522,10 +4744,20 @@ function watchRoom(roomId) {
         if (!snap.exists) { leaveRoomView(); showToast('對方離開了房間'); return; }
         const roomData = snap.data();
         syncConsumedHeldItems(roomData);
+        // 【第二十五輪修正】這裡原本先呼叫autoHandleTrainerSwitch(可能立刻寫入NPC換人結果、
+        // 觸發新一輪onSnapshot)、才呼叫renderRoomView播放「這一輪」(通常就是剛打倒對方寶可夢
+        // 那一輪)的動畫——如果換人交易搶在renderRoomView真的開始播動畫之前就寫進Firestore，
+        // 新資料進來會讓playBattleEvents的isStale()判斷成立、整段KO動畫直接被中止跳過，
+        // 玩家只會看到怪物瞬間消失、完全沒有攻擊特效/倒下動畫，下一隻又幾乎立刻能按招式鍵——
+        // 這正是使用者回報「打倒非隊伍最後一隻寶可夢時常常沒有戰鬥感，只有最後一隻(沒有換人
+        // 流程要搶)才一定正常」的根本原因。改成先讓renderRoomView把這一輪的動畫完整播完
+        // (animatedResolvedRound確實記錄「這一輪播完了」)，才呼叫autoHandleTrainerSwitch——
+        // 這樣換人交易一定會排在KO動畫後面才送出，兩者不會再互相搶時間(autoHandleTrainerSwitch
+        // 內部原本用來爭取時間的等待邏輯，見它自己的說明，現在只當作最後一道防呆)
+        await renderRoomView({ id: snap.id, ...roomData });
         if (roomData.isGymBattle) {
             await autoHandleTrainerSwitch(db.collection('pokemonBattleRooms').doc(roomId), roomData);
         }
-        await renderRoomView({ id: snap.id, ...roomData });
     });
 }
 function leaveRoomView() {
