@@ -369,13 +369,26 @@
      比例內」的縮放方式，改成直接用CSS transform: scale()把原始圖片像素尺寸放大(不再受
      42vh/60vh這種跟裝置尺寸掛勾的上限影響)——scale是視覺層的變形，不會影響flex排版本身用的
      盒子大小，所以還是能維持25%/75%這個定位基準；倍率本身(第二十一輪定案為2倍/1.84倍，
-     見setStoryPortraitSlot()裡的說明)寫在JS那邊統一控制 -->
+     見setStoryPortraitSlot()裡的說明)寫在JS那邊統一控制
+     【第二十三輪修正】使用者回報電腦上顯示正常，但手機上兩邊立繪整個疊在一起、還出現半透明
+     疊影。根因是第十九輪拿掉max-h/object-contain之後，立繪的「排版用尺寸」(scale套用之前，
+     flex用來計算25%/75%定位的那個盒子大小)固定用圖片原始像素寬度(例如139px)，跟裝置螢幕寬度
+     完全無關——電腦螢幕動輒1500~2000px寬，139px的原始寬度相對螢幕只占一小塊，兩邊各自站在
+     25%/75%位置後還有很多空間，看起來剛剛好；但手機螢幕只有400px上下寬，同樣139px的原始寬度
+     已經占了螢幕三分之一，兩邊立繪各自的容許排版範圍(inset-x-[25%]切出來的中間50%，大約
+     200px)完全不夠兩張圖各自不重疊地站好，於是大量疊在一起，非目前說話者那邊opacity:0.55的
+     半透明立繪疊在目前說話者上面，就變成截圖裡看到的疊影。修法：幫兩張立繪的「排版用尺寸」
+     加上跟裝置寬度成比例的上限(max-w-[22vw]/max-h-[55vh])，電腦螢幕上22vw通常還是大於原始
+     圖片寬度(用不到，跟第十九～二十一輪定案的效果不變)，手機螢幕上22vw會比原始寬度小很多，
+     瀏覽器會自動把排版用尺寸壓到22vw、高度等比例縮小——這是CSS原生的max-width/max-height
+     行為，跟後面疊加的scale(2)倍率不衝突(scale永遠是在這個「已經視裝置寬度調整過」的尺寸上
+     再放大2倍)，同一份設定就能讓電腦/手機兩邊都不會互相疊到 -->
 <div id="story-modal" class="hidden fixed inset-0 bg-black z-[60] flex-col justify-end overflow-hidden" onclick="storyModalTap(event)">
     <img id="story-bg" class="absolute inset-0 w-full h-full object-cover transition-opacity duration-500" style="opacity:0;z-index:0" onerror="this.style.opacity='0'">
     <div class="absolute inset-0 bg-black/25" style="z-index:1"></div>
     <div class="absolute inset-x-[25%] bottom-[28px] flex justify-between items-end pointer-events-none" style="z-index:2">
-        <img id="story-portrait-left" class="transition-all duration-300" style="opacity:0;transform-origin:bottom center">
-        <img id="story-portrait-right" class="transition-all duration-300" style="opacity:0;transform-origin:bottom center">
+        <img id="story-portrait-left" class="max-w-[22vw] max-h-[55vh] transition-all duration-300" style="opacity:0;transform-origin:bottom center">
+        <img id="story-portrait-right" class="max-w-[22vw] max-h-[55vh] transition-all duration-300" style="opacity:0;transform-origin:bottom center">
     </div>
     <div class="relative flex justify-between items-center px-4 pt-3" style="z-index:3">
         <button id="story-ff-btn" onclick="event.stopPropagation();toggleStoryFastForward()" class="text-xs bg-white/20 text-white px-3 py-1.5 rounded-full active:scale-95 transition-transform">快進：關</button>
