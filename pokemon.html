@@ -418,13 +418,27 @@
      內容整體被往上推、方框下緣跟角色的腳之間會空出一截透明空白，看起來就像整個人是浮空的。
      改成object-bottom(object-position:bottom)：一樣是等比例縮放置中，但留白只會出現在
      方框「上緣」，方框下緣永遠貼齊圖片內容的最下緣(也就是角色腳的位置)，這樣才會是「腳踩在
-     畫面最下面」的站立效果——只調整了立繪在方框內的對齊方式，寬高／scale倍率完全沒有變動 -->
+     畫面最下面」的站立效果——只調整了立繪在方框內的對齊方式，寬高／scale倍率完全沒有變動
+     【第二十六輪修正】使用者實測「阿羅拉的新星！」這場，回報「馬瑪內是哈烏小很多」——這正是
+     第二十四輪那組固定width+height方框(19vw×34vh)的副作用，先前只顧到「不同角色原始像素
+     尺寸不一致」，卻忽略了「不同角色原始圖片的長寬比例本身也不一致」：馬瑪內這張圖(寬329px)
+     的長寬比例明顯比方框更「寬扁」(有可能是連同旁邊的寶可夢一起入鏡、或站姿本身左右幅度較大)，
+     用object-contain塞進19:34這個偏窄長的方框時，會被「寬度」卡住、等比例縮小到寬度貼齊方框，
+     這時候圖片的「高度」反而遠遠填不滿方框的34vh，上下留白暴增——玩家實際看到的角色本體，
+     高度(視覺上「這個人看起來多大」最關鍵的維度)因此比哈烏矮了一截，即使兩者共用同一個方框
+     尺寸，視覺大小還是不一致。改法：不再用「寬跟高都鎖死的方框」逼所有圖片套用同一個長寬比例，
+     改成只鎖「高度」(h-[34vh]，這才是決定「站立角色看起來多高大」的關鍵維度，統一以後每個
+     角色的視覺高度必定一致)，寬度改成w-auto讓圖片依自己原本的長寬比例自然延伸，另外加一個
+     max-w-[30vw]的安全上限(避免極端寬扁的圖片撐得太寬、跟對面的立繪疊在一起)——常見情況下
+     (圖片沒有寬到觸發上限)完全不會有任何留白，角色會直接以34vh的高度填滿方框，不同角色之間
+     的視覺大小終於是真的一致；只有極端寬扁、觸發max-w上限的罕見圖片，才會犧牲一點高度換取
+     不跟對面疊到，這是可以接受的例外情況 -->
 <div id="story-modal" class="hidden fixed inset-0 bg-black z-[60] flex-col justify-end overflow-hidden" onclick="storyModalTap(event)">
     <img id="story-bg" class="absolute inset-0 w-full h-full object-cover transition-opacity duration-500" style="opacity:0;z-index:0" onerror="this.style.opacity='0'">
     <div class="absolute inset-0 bg-black/25" style="z-index:1"></div>
     <div class="absolute inset-x-[16%] bottom-[28px] flex justify-between items-end pointer-events-none" style="z-index:2">
-        <img id="story-portrait-left" class="w-[19vw] h-[34vh] object-contain object-bottom transition-all duration-300" style="opacity:0;transform-origin:bottom center">
-        <img id="story-portrait-right" class="w-[19vw] h-[34vh] object-contain object-bottom transition-all duration-300" style="opacity:0;transform-origin:bottom center">
+        <img id="story-portrait-left" class="h-[34vh] w-auto max-w-[30vw] object-contain object-bottom transition-all duration-300" style="opacity:0;transform-origin:bottom center">
+        <img id="story-portrait-right" class="h-[34vh] w-auto max-w-[30vw] object-contain object-bottom transition-all duration-300" style="opacity:0;transform-origin:bottom center">
     </div>
     <div class="relative flex justify-between items-center px-4 pt-3" style="z-index:3">
         <button id="story-ff-btn" onclick="event.stopPropagation();toggleStoryFastForward()" class="text-xs bg-white/20 text-white px-3 py-1.5 rounded-full active:scale-95 transition-transform">快進：關</button>
