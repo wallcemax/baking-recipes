@@ -1653,12 +1653,23 @@ async function fetchSpeciesDisplay(speciesId, isShiny) {
     const cacheKey = speciesId + ':' + (shiny ? 1 : 0);
     if (speciesCache.has(cacheKey)) return speciesCache.get(cacheKey);
     try {
-        const [pokemonRes, speciesRes] = await Promise.all([
-            fetch(`https://pokeapi.co/api/v2/pokemon/${speciesId}`),
-            fetch(`https://pokeapi.co/api/v2/pokemon-species/${speciesId}`),
-        ]);
+        const pokemonRes = await fetch(`https://pokeapi.co/api/v2/pokemon/${speciesId}`);
         const data = await pokemonRes.json();
-        const speciesData = await speciesRes.json();
+        // 【第三十七輪修正：超級噴火龍X(10034)戰鬥畫面圖片壞掉】/pokemon-species/{id}這個
+        // 端點只認「原始物種」的全國圖鑑編號，Mega進化/超極巨化/地區形態這類「擴充版本」
+        // (圖鑑編號10001以上，例如這裡的charizard-mega-x=10034)在/pokemon/端點一定查得到
+        // 完整資料跟正確造型圖片，但/pokemon-species/端點完全沒有對應資料。原本這兩個端點
+        // 包在同一個try/catch、同一個Promise.all裡一起等，只要species那邊的回應不是預期
+        // 的JSON格式，就會連同其實已經成功抓到的pokemon資料(含正確的sprite造型圖網址)一起
+        // 被丟棄，整隻寶可夢變成完全沒有圖片可以顯示——這就是稱霸ＷＰＭ的人最後一戰超級
+        // 噴火龍X圖片壞掉的根本原因。改成species那段自己獨立抓、獨立try/catch，查不到就
+        // 退回「用英文代號當名字、沒有圖鑑故事」的預設值，但一定不會拖累前面已經成功拿到、
+        // 造型圖片顯示真正依賴的pokemonRes資料。
+        let speciesData = {};
+        try {
+            const speciesRes = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${speciesId}`);
+            if (speciesRes.ok) speciesData = await speciesRes.json();
+        } catch (speciesErr) { /* 查不到中文名/圖鑑故事就用預設值，不影響造型圖片本身 */ }
         const types = (data.types || []).map(t => t.type.name);
         const typesZh = await Promise.all(types.map(fetchTypeNameZh));
         const artwork = data.sprites?.other?.['official-artwork'];
