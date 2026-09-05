@@ -76,6 +76,18 @@
     .self-buff-glow { animation: selfBuffGlow 0.6s ease; }
     @keyframes selfBuffGlow { 0%{filter:brightness(1)} 40%{filter:brightness(1.6) drop-shadow(0 0 8px #facc15)} 100%{filter:brightness(1)} }
 
+    /* ---- Z招式動畫圖層(第四十八輪)：Z字覆蓋圖／字樣圖片／特效圖層／全畫面變暗與閃光——
+       整套結構跟時序邏輯是從獨立預覽工具zmove_preview.html逐一調校確認過後搬過來的，
+       這裡只是把原本預覽工具裡固定id(#stage/#fxLayer/...)的DOM，改成戰鬥畫面每次重繪都會
+       重新產生的版本(id前面統一加z-前綴，避免跟這個檔案原有的id/class撞名) */
+    .z-darken-overlay { position:absolute; inset:0; background:#000; opacity:0; z-index:20; pointer-events:none; }
+    .z-fx-layer { position:absolute; inset:0; z-index:30; pointer-events:none; overflow:hidden; }
+    .z-fx-img { position:absolute; pointer-events:none; }
+    .z-screen-flash-layer { position:absolute; inset:0; background:#fff; opacity:0; z-index:32; pointer-events:none; }
+    .z-badge { position:absolute; width:40px; height:40px; z-index:25; opacity:0; pointer-events:none; }
+    .z-nameplate-layer { position:absolute; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+    .z-nameplate-layer img { max-width:80%; max-height:65%; opacity:0; object-fit:contain; filter:drop-shadow(0 2px 6px rgba(0,0,0,.4)); }
+
     /* ---- 劇情立繪特效：震驚/激動時晃動、強烈情緒時閃光 ----
        【第二十二輪修正】原本這裡的keyframes直接寫死transform:scale(1)/scale(1.02)，但立繪
        本身的鏡像/放大倍率(scaleX(-1)、scale(2)/scale(1.84))是setStoryPortraitSlot()另外用
@@ -786,6 +798,42 @@ const SFX = (() => {
             noiseHit({ dur: 0.08, vol: 0.14, filterType: 'lowpass', freq: 500, Q: 1.1 });
             tone({ freq: 140, dur: 0.09, type: 'sine', vol: 0.08, delay: 0.005 });
         },
+        // ---- Z招式專用音效(第四十八輪，從獨立預覽工具zmove_preview.html的音效引擎移植過來)----
+        // zmove_preview.html裡另外寫了一整套獨立的音效引擎(noiseBurst/tone/chime)，簽名跟這裡
+        // 既有的tone()/noiseHit()完全不一樣(那邊是tone(freqStart,freqEnd,duration,opts)，這裡是
+        // tone({freq,dur,...})這種具名參數)，直接整套複製過來會跟這個檔案自己的tone()撞名、
+        // 也會變成兩顆AudioContext各管各的。這裡不搬第二套引擎，改成用「z」開頭替每一種Z招式
+        // 音效分類各自加一個新方法，內部照樣呼叫這個IIFE既有的tone()/noiseHit()(沿用同一顆
+        // AudioContext、同一個master音量/壓縮器/靜音狀態)，音量統一再壓低約4成，跟這個檔案
+        // 原本其他音效的音量級距對齊，Z招式音效才不會特別大聲、顯得突兀。皮卡皮卡必殺擊
+        // (Catastropika)要求的「皮卡丘叫聲」不需要在這裡另外做，直接沿用上面既有的cry(25)
+        // 真實叫聲素材即可(見下面Z_MOVE_ANIM_DATA/dispatchZMoveSound的特殊處理)。只列出35招
+        // 實際會用到的音效分類，沒用到的(例如原預覽工具裡定義過但從沒被引用的roar/drop2/
+        // continuousHit)不搬過來，避免留下沒人呼叫的死函式。
+        zImpact() { noiseHit({ dur: 0.18, vol: 0.3, filterType: 'lowpass', freq: 2200 }); tone({ freq: 180, dur: 0.15, type: 'square', vol: 0.15, glideTo: 60 }); },
+        zExplosion() { noiseHit({ dur: 0.5, vol: 0.36, filterType: 'lowpass', freq: 1600 }); tone({ freq: 140, dur: 0.4, type: 'sawtooth', vol: 0.18, glideTo: 40 }); },
+        zBigExplosion() { noiseHit({ dur: 0.7, vol: 0.42, filterType: 'lowpass', freq: 2000 }); tone({ freq: 120, dur: 0.6, type: 'sawtooth', vol: 0.24, glideTo: 30 }); },
+        zNoisyExplosion() { noiseHit({ dur: 0.55, vol: 0.39, filterType: 'lowpass', freq: 2400 }); tone({ freq: 200, dur: 0.45, type: 'square', vol: 0.18, glideTo: 50 }); },
+        zThunder() { noiseHit({ dur: 0.6, vol: 0.3, filterType: 'lowpass', freq: 2500 }); tone({ freq: 90, dur: 0.7, type: 'sawtooth', vol: 0.21, glideTo: 35 }); },
+        zWave() { noiseHit({ dur: 0.9, vol: 0.24, filterType: 'lowpass', freq: 600 }); },
+        zIce() { tone({ freq: 1800, dur: 0.25, type: 'sine', vol: 0.21 }); tone({ freq: 2400, dur: 0.3, type: 'sine', vol: 0.21, delay: 0.05 }); noiseHit({ dur: 0.3, vol: 0.12, filterType: 'lowpass', freq: 3000 }); },
+        zWind() { noiseHit({ dur: 0.7, vol: 0.21, filterType: 'lowpass', freq: 900 }); },
+        zWhoosh() { tone({ freq: 1200, dur: 0.35, type: 'sine', vol: 0.18, glideTo: 200 }); },
+        zDrill() { tone({ freq: 300, dur: 0.6, type: 'square', vol: 0.13, glideTo: 320 }); noiseHit({ dur: 0.6, vol: 0.12, filterType: 'lowpass', freq: 2600 }); },
+        zRain() { noiseHit({ dur: 1.0, vol: 0.15, filterType: 'lowpass', freq: 4000 }); },
+        zRadio() { tone({ freq: 900, dur: 0.15, type: 'square', vol: 0.12, glideTo: 1600 }); tone({ freq: 600, dur: 0.15, type: 'square', vol: 0.12, glideTo: 1200 }); },
+        zHeart() { tone({ freq: 1046, dur: 0.15, type: 'sine', vol: 0.21 }); tone({ freq: 1318, dur: 0.22, type: 'sine', vol: 0.21, delay: 0.08 }); },
+        zCute() { tone({ freq: 1568, dur: 0.12, type: 'sine', vol: 0.21 }); tone({ freq: 2093, dur: 0.18, type: 'sine', vol: 0.21, delay: 0.06 }); },
+        zDrop() { noiseHit({ dur: 0.35, vol: 0.27, filterType: 'lowpass', freq: 1000 }); tone({ freq: 150, dur: 0.3, type: 'square', vol: 0.15, glideTo: 40 }); },
+        zGroundSmash() { noiseHit({ dur: 0.5, vol: 0.36, filterType: 'lowpass', freq: 700 }); tone({ freq: 80, dur: 0.4, type: 'sawtooth', vol: 0.18, glideTo: 25 }); },
+        zCrack() { noiseHit({ dur: 0.3, vol: 0.24, filterType: 'lowpass', freq: 2800 }); },
+        zBubble() { tone({ freq: 700, dur: 0.1, type: 'sine', vol: 0.21 }); tone({ freq: 900, dur: 0.1, type: 'sine', vol: 0.21, delay: 0.1 }); tone({ freq: 1100, dur: 0.12, type: 'sine', vol: 0.21, delay: 0.2 }); },
+        zElectric() { tone({ freq: 1400, dur: 0.25, type: 'sawtooth', vol: 0.15, glideTo: 300 }); noiseHit({ dur: 0.2, vol: 0.12, filterType: 'lowpass', freq: 3500 }); },
+        zAscend() { for (let i = 0; i < 3; i++) tone({ freq: 500 + i * 150, dur: 0.5, type: 'sine', vol: 0.11, glideTo: 1400 + i * 150, delay: i * 0.09 }); },
+        zHit() { noiseHit({ dur: 0.15, vol: 0.24, filterType: 'lowpass', freq: 2000 }); },
+        zPunchMulti() { noiseHit({ dur: 0.08, vol: 0.21, filterType: 'lowpass', freq: 1800 }); },
+        zWindSlow() { noiseHit({ dur: 0.8, vol: 0.24, filterType: 'lowpass', freq: 700 }); },
+        zDeepRumble() { noiseHit({ dur: 1.1, vol: 0.33, filterType: 'lowpass', freq: 220 }); tone({ freq: 70, dur: 0.9, type: 'triangle', vol: 0.24, glideTo: 32 }); noiseHit({ dur: 0.6, vol: 0.21, filterType: 'lowpass', freq: 180, delay: 0.22 }); },
         // 給BGM模組借用同一顆AudioContext(共用同一次的使用者手勢解鎖)，不用另外開一個
         // AudioContext、也不用再解鎖一次——名稱故意加底線，提醒這是內部共用介面，不是給一般
         // 呼叫端用的音效函式
@@ -5555,8 +5603,14 @@ async function renderBattleStage(container, ctx) {
             ${terrain.type ? `<span class="bg-white/85 rounded-full px-2 py-0.5 text-[10px] font-bold flex items-center gap-1 shadow">${terrainIconHtml(terrain.type, 'w-3.5 h-3.5')}${TERRAIN_NAME_ZH[terrain.type]}</span>` : ''}
         </div>` : '';
     container.innerHTML = `
-        <div class="relative bg-gradient-to-b from-sky-100 to-emerald-50 rounded-2xl card-shadow p-4 mb-3 overflow-hidden" style="min-height:320px">
+        <div id="battle-stage" class="relative bg-gradient-to-b from-sky-100 to-emerald-50 rounded-2xl card-shadow p-4 mb-3 overflow-hidden" style="min-height:320px">
             ${weatherTerrainBadgeHtml}
+            <div id="z-darken-overlay" class="z-darken-overlay"></div>
+            <div id="z-fx-layer" class="z-fx-layer"></div>
+            <div id="z-screen-flash-layer" class="z-screen-flash-layer"></div>
+            <div id="z-nameplate-layer" class="z-nameplate-layer"></div>
+            <img id="z-badge-opp" class="z-badge" src="https://res.cloudinary.com/bumzwp9g/image/upload/v1788610351/Zmove_mbcynx.png">
+            <img id="z-badge-me" class="z-badge" src="https://res.cloudinary.com/bumzwp9g/image/upload/v1788610351/Zmove_mbcynx.png">
             <div class="absolute top-3 right-3 text-right" style="max-width:52%">
                 <div class="mb-1">
                     <span class="text-sm font-bold">${oppTeam.nickname}${oppTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(oppTeam)}${oppHazardsScreensBadge}
@@ -5613,6 +5667,738 @@ async function renderBattleStage(container, ctx) {
         const lb = document.getElementById('battle-log-box');
         if (lb) lb.scrollTop = lb.scrollHeight;
     }
+}
+
+// ============================================================
+// Ｚ招式動畫系統(第四十八輪)：把獨立預覽工具zmove_preview.html裡逐招調校確認過的35招Z招式
+// 動畫/音效資料表、26個動畫「原型」函式、跟5步驟時序主控整套搬進正式對戰畫面。三層架構
+// (資料表 → 原型函式 → 依primitive名稱分派執行 → 時序主控)跟預覽工具完全對應，差別只在於：
+//   1. 預覽工具用module-level變數快取spriteMe/spriteOpp/stage這些DOM元素(因為那邊整個
+//      畫面只會建立一次)；這裡改成每次要用就用document.getElementById現抓，呼叫端(playBattleEvents)
+//      也一樣在每個await之後都用既有的isStale()確認畫面沒有被新一輪onSnapshot觸發的重繪取代掉，
+//      跟這個檔案處理sprite-me/sprite-opp的既有慣例完全一致。
+//   2. 預覽工具自己另外寫了一整套獨立的音效引擎(跟這個檔案的SFX簽名不同、會撞名)；這裡音效
+//      改成呼叫上面SFX物件新增的z開頭方法(SFX.zImpact()...)，共用同一顆AudioContext/音量/
+//      靜音狀態，皮卡皮卡必殺擊(Catastropika)則直接沿用既有的SFX.cry(25)真實叫聲素材。
+//   3. Z_MOVE_ANIM_DATA用Z招式「修正過後」的中文名稱(zMoveNameZh)當key——這剛好對應
+//      resolveBattleRound幫Z招式event設定的ev.moveNameZh(兩邊都是從同一份Z_CRYSTAL_CATALOG.
+//      zMoveNameZh算出來的字串)，不用另外維護一份id對照表，以後改名字兩邊也會自動同步對上。
+// ============================================================
+const Z_MOVE_ANIM_DATA = {
+    '究極無敵大衝撞': { primitive: 'dashInto', sound: 'zImpact', soundWhen: 'impact', impactDelayMs: 550,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610099/%E7%A9%B6%E6%A5%B5%E7%84%A1%E6%95%B5%E5%A4%A7%E8%A1%9D%E6%92%9E_dxwoli.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603386/220px-%E7%A9%B6%E6%A5%B5%E7%84%A1%E6%95%B5%E5%A4%A7%E8%A1%9D%E6%92%9E_Sprite_g9vbsw.webp' },
+    '超強極限爆焰彈': { primitive: 'growFly', params: { fromHead: true, chargeThenThrow: true }, sound: 'zExplosion', soundWhen: 'impact', impactDelayMs: 950,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610105/%E8%B6%85%E5%BC%B7%E6%A5%B5%E9%99%90%E7%88%86%E7%84%B0%E5%BD%88_wmnpgq.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603389/220px-%E8%B6%85%E5%BC%B7%E6%A5%B5%E9%99%90%E7%88%86%E7%84%B0%E5%BD%88_Sprite_v26bm6.webp' },
+    '超級水流大漩渦': { primitive: 'growFly', params: { fromHead: false }, sound: 'zWave', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610121/%E8%B6%85%E7%B4%9A%E6%B0%B4%E6%B5%81%E5%A4%A7%E6%BC%A9%E6%B8%A6_pqgft7.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603390/220px-%E8%B6%85%E7%B4%9A%E6%B0%B4%E6%B5%81%E5%A4%A7%E6%BC%A9%E6%B8%A6_Sprite_pd9kxp.webp' },
+    '終極伏特狂雷閃': { primitive: 'screenFlash', sound: 'zThunder', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610117/%E7%B5%82%E6%A5%B5%E4%BC%8F%E7%89%B9%E7%8B%82%E9%9B%B7%E9%96%83_uvkxwl.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603386/220px-%E7%B5%82%E6%A5%B5%E4%BC%8F%E7%89%B9%E7%8B%82%E9%9B%B7%E9%96%83_Sprite_u9kpl0.webp' },
+    '絢爛繽紛花怒放': { primitive: 'appearOnTarget', sound: 'zDrop', soundWhen: 'impact', impactDelayMs: 300,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610103/%E7%B5%A2%E7%88%9B%E7%B9%BD%E7%B4%9B%E8%8A%B1%E6%80%92%E6%94%BE_x82tac.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603390/220px-%E7%B5%A2%E7%88%9B%E7%B9%BD%E7%B4%9B%E8%8A%B1%E6%80%92%E6%94%BE_Sprite_djhqyu.webp' },
+    '激狂大地萬里冰': { primitive: 'wipeAcrossScreen', mirror: true, params: { flipWhenOpponentCasts: true }, sound: 'zIce', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610119/%E6%BF%80%E7%8B%82%E5%A4%A7%E5%9C%B0%E8%90%AC%E9%87%8C%E5%86%B0_kk32du.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603392/220px-%E6%BF%80%E7%8B%82%E5%A4%A7%E5%9C%B0%E8%90%AC%E9%87%8C%E5%86%B0_Sprite_ioyxxs.webp' },
+    '全力無雙激烈拳': { primitive: 'punchStack', sound: 'zPunchMulti', soundInternal: true,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610098/%E5%85%A8%E5%8A%9B%E7%84%A1%E9%9B%99%E6%BF%80%E7%83%88%E6%8B%B3_nl4ic0.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603383/220px-%E5%85%A8%E5%8A%9B%E7%84%A1%E9%9B%99%E6%BF%80%E7%83%88%E6%8B%B3_Sprite_pa9l9r.webp' },
+    '強酸劇毒滅絕雨': { primitive: 'fadeInAboveDown', sound: 'zRain', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610100/%E5%BC%B7%E9%85%B8%E5%8A%87%E6%AF%92%E6%BB%85%E7%B5%95%E9%9B%A8_sek35u.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603387/220px-%E5%BC%BA%E9%85%B8%E5%8A%87%E6%AF%92%E6%BB%85%E7%B5%95%E9%9B%A8_Sprite_kwlh2c.webp' },
+    '地動山搖地裂崩': { primitive: 'screenShakeCracks', sound: 'zGroundSmash', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610101/%E5%9C%B0%E5%8B%95%E5%B1%B1%E6%90%96%E5%9C%B0%E8%A3%82%E5%B4%A9_uwkgsu.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603385/220px-%E5%9C%B0%E9%9A%86%E5%98%AF%E5%A4%A9%E5%A4%A7%E7%B5%82%E7%B5%90_Sprite_qb4zek.webp' },
+    '極速俯衝轟烈撞': { primitive: 'screenSweep', mirror: true, params: { flipWhenOpponentCasts: true }, sound: 'zWind', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610107/%E6%A5%B5%E9%80%9F%E4%BF%AF%E8%A1%9D%E8%BD%9F%E7%83%88%E6%92%9E_nqph7o.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603391/220px-%E6%A5%B5%E9%80%9F%E4%BF%AF%E8%A1%9D%E8%BD%9F%E7%83%88%E6%92%9E_Sprite_sdl0hc.webp' },
+    '至高精神破壞波': { primitive: 'flickerOnTarget', sound: 'zRadio', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610114/%E8%87%B3%E9%AB%98%E7%B2%BE%E7%A5%9E%E7%A0%B4%E5%A3%9E%E6%B3%A2_uhvctk.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603383/220px-%E8%87%B3%E9%AB%98%E7%B2%BE%E7%A5%9E%E7%A0%B4%E5%A3%9E%E6%B3%A2_Sprite_fyb97m.webp' },
+    '絕對捕食迴旋斬': { primitive: 'stackFly', sound: 'zWhoosh', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610102/%E7%B5%95%E5%B0%8D%E6%8D%95%E9%A3%9F%E8%BF%B4%E6%97%8B%E6%96%AC_gpurks.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603388/220px-%E7%B5%95%E5%B0%8D%E6%8D%95%E9%A3%9F%E8%BF%B4%E6%97%8B%E6%96%AC_Sprite_bh498b.webp' },
+    '毀天滅地巨岩墜': { primitive: 'fallTwice', sound: 'zGroundSmash', soundInternal: true,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610108/%E6%AF%80%E5%A4%A9%E6%BB%85%E5%9C%B0%E5%B7%A8%E5%B2%A9%E5%A2%9C_qybqcy.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603393/220px-%E6%AF%80%E5%A4%A9%E6%BB%85%E5%9C%B0%E5%B7%A8%E5%B2%A9%E5%A2%9C_Sprite_khsh4q.webp' },
+    '無盡暗夜之誘惑': { primitive: 'shrinkOnTarget', sound: 'zHeart', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610102/%E7%84%A1%E7%9B%A1%E6%9A%97%E5%A4%9C%E4%B9%8B%E8%AA%98%E6%83%91_lbidzc.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603392/220px-%E7%84%A1%E7%9B%A1%E6%9A%97%E5%A4%9C%E4%B9%8B%E8%AA%98%E6%83%91_Sprite_mbutxk.webp' },
+    '究極巨龍震天地': { primitive: 'flipDash', mirror: true, params: { flipWhenPlayerCasts: true }, sound: 'zDeepRumble', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610116/%E7%A9%B6%E6%A5%B5%E5%B7%A8%E9%BE%8D%E9%9C%87%E5%A4%A9%E5%9C%B0_m6ynj0.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603385/220px-%E7%A9%B6%E6%A5%B5%E5%B7%A8%E9%BE%8D%E9%9C%87%E5%A4%A9%E5%9C%B0_Sprite_cdzgqe.webp' },
+    '黑洞吞噬萬物滅': { primitive: 'shrinkOnTarget', sound: 'zWhoosh', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610107/%E9%BB%91%E6%B4%9E%E5%90%9E%E5%99%AC%E8%90%AC%E7%89%A9%E6%BB%85_p3rcm1.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603391/220px-%E9%BB%91%E6%B4%9E%E5%90%9E%E5%99%AC%E8%90%AC%E7%89%A9%E6%BB%85_Sprite_twbgip.webp' },
+    '超絕螺旋連擊': { primitive: 'appearFlashOnce', sound: 'zDrill', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610106/%E8%B6%85%E7%B5%95%E8%9E%BA%E6%97%8B%E9%80%A3%E6%93%8A%E7%A0%B4_f8ddlu.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603394/220px-%E8%B6%85%E7%B5%95%E8%9E%BA%E6%97%8B%E9%80%A3%E6%93%8A_Sprite_jlgmzj.webp' },
+    '可愛星星飛天撞': { primitive: 'starBurst', params: { size: 46 }, sound: 'zCute', soundWhen: 'impact', impactDelayMs: 500,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610096/%E5%8F%AF%E6%84%9B%E6%98%9F%E6%98%9F%E9%A3%9B%E5%A4%A9%E6%92%9E_h5jdo5.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603382/220px-%E5%8F%AF%E6%84%9B%E6%98%9F%E6%98%9F%E9%A3%9B%E5%A4%A9%E6%92%9E_Sprite_pgys5u.webp' },
+    '皮卡皮卡必殺擊': { primitive: 'dashIntoNoEffect', sound: 'pikaCry', soundWhen: 'impact', impactDelayMs: 550,
+        effect: null,
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/160px-%E7%9A%AE%E5%8D%A1%E7%9A%AE%E5%8D%A1%E5%BF%85%E6%AE%BA%E6%93%8A_Sprite_pngapo.webp' },
+    '千萬伏特': { primitive: 'flickerOnTarget', params: { size: 150 }, sound: 'zElectric', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610114/%E5%8D%83%E8%90%AC%E4%BC%8F%E7%89%B9_cmjeli.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603380/180px-%E5%8D%83%E8%90%AC%E4%BC%8F%E7%89%B9_Sprite_sbuzmj.webp' },
+    '駕雷馭電戲衝浪': { primitive: 'flickerOnTarget', sound: 'zElectric', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610111/%E9%A7%95%E9%9B%B7%E9%A6%AD%E9%9B%BB%E6%88%B2%E8%A1%9D%E6%B5%AA_ciabxa.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/140px-%E9%A7%95%E9%9B%B7%E9%A6%AD%E9%9B%BB%E6%88%B2%E8%A1%9D%E6%B5%AA_Sprite_pnabpu.webp' },
+    '認真起來大爆擊': { primitive: 'flickerOnTarget', params: { size: 150 }, sound: 'zExplosion', soundWhen: 'impact', impactDelayMs: 150,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610112/%E8%AA%8D%E7%9C%9F%E8%B5%B7%E4%BE%86%E5%A4%A7%E7%88%86%E6%93%8A_dpwv65.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603393/220px-%E8%AA%8D%E7%9C%9F%E8%B5%B7%E4%BE%86%E5%A4%A7%E7%88%86%E6%93%8A_Sprite_hnkmsz.webp' },
+    '九彩昇華齊聚頂': { primitive: 'nineBeamsAscend', sound: 'zAscend', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788617956/%E4%B9%9D%E5%BD%A9%E6%98%87%E8%8F%AF%E9%BD%8A%E8%81%9A%E9%A0%82_ry6fwg.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603381/191px-%E4%B9%9D%E5%BD%A9%E6%98%87%E8%8F%AF%E9%BD%8A%E8%81%9A%E9%A0%82_Sprite_mjjeyu.webp' },
+    '起源超新星大爆炸': { primitive: 'appearThenGone', sound: 'zBigExplosion', soundWhen: 'impact', impactDelayMs: 250,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610100/%E8%B5%B7%E6%BA%90%E8%B6%85%E6%96%B0%E6%98%9F%E5%A4%A7%E7%88%86%E7%82%B8_ey6eeb.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603376/140px-%E8%B5%B7%E6%BA%90%E8%B6%85%E6%96%B0%E6%98%9F%E5%A4%A7%E7%88%86%E7%82%B8T_Sprite_b00gqm.webp' },
+    '遮天蔽日暗影箭': { primitive: 'arrowShoot', mirror: true, sound: 'zWhoosh', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610108/%E9%81%AE%E5%A4%A9%E8%94%BD%E6%97%A5%E6%9A%97%E5%BD%B1%E7%AE%AD_nfhpzx.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603376/150px-%E9%81%AE%E5%A4%A9%E8%94%BD%E6%97%A5%E6%9A%97%E5%BD%B1%E7%AE%ADT_Sprite_sn9hmg.webp' },
+    '極惡飛躍粉碎擊': { primitive: 'flickerOnTarget', sound: 'zCrack', soundWhen: 'impact', impactDelayMs: 150,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610119/%E6%A5%B5%E6%83%A1%E9%A3%9B%E8%BA%8D%E7%B2%89%E7%A2%8E%E6%93%8A_d1erha.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603380/180px-%E6%A5%B5%E6%83%A1%E9%A3%9B%E8%BA%8D%E7%B2%89%E7%A2%8E%E6%93%8A_Sprite_oof7lq.webp' },
+    '海神莊嚴交響樂': { primitive: 'growFly', params: { fromHead: true, chargeThenThrow: true }, sound: 'zBubble', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610101/%E6%B5%B7%E7%A5%9E%E8%8E%8A%E5%9A%B4%E4%BA%A4%E9%9F%BF%E6%A8%82_h2xvlp.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603376/140px-%E6%B5%B7%E7%A5%9E%E8%8E%8A%E5%9A%B4%E4%BA%A4%E9%9F%BF%E6%A8%82_Sprite_inut24.webp' },
+    '巨人衛士・阿羅拉': { primitive: 'dropSmash', sound: 'zGroundSmash', soundWhen: 'impact', impactDelayMs: 550,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610098/%E5%B7%A8%E4%BA%BA%E8%A1%9B%E5%A3%AB_%E9%98%BF%E7%BE%85%E6%8B%89_pqdryv.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/150px-%E5%B7%A8%E4%BA%BA%E8%A1%9B%E5%A3%AB_%E9%98%BF%E7%BE%85%E6%8B%89_Sprite_y0yuoi.webp' },
+    '七星奪魂腿': { primitive: 'appearTwice', sound: 'zHit', soundWhen: 'impact', impactDelayMs: 200,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610096/%E4%B8%83%E6%98%9F%E5%A5%AA%E9%AD%82%E8%85%BF_xtunzi.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603384/220px-%E4%B8%83%E6%98%9F%E5%A5%AA%E9%AD%82%E8%85%BF_Sprite_xecldh.webp' },
+    '熾魂熱舞烈音爆': { primitive: 'flickerOnTarget', params: { size: 140 }, sound: 'zNoisyExplosion', soundWhen: 'impact', impactDelayMs: 150,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610112/%E7%86%BE%E9%AD%82%E7%86%B1%E8%88%9E%E7%83%88%E9%9F%B3%E7%88%86_vkuuog.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/165px-%E7%86%BE%E9%AD%82%E7%86%B1%E8%88%9E%E7%83%88%E9%9F%B3%E7%88%86_Sprite_biapef.webp' },
+    '狼嘯石牙颶風暴': { primitive: 'flipNTimes', params: { times: 4 }, sound: 'zWindSlow', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788612379/%E7%8B%BC%E5%98%AF%E7%9F%B3%E7%89%99%E9%A2%B6%E9%A2%A8%E6%9A%B4_pnk9i2.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/165px-%E7%8B%BC%E5%98%AF%E7%9F%B3%E7%89%99%E9%A2%B6%E9%A2%A8%E6%9A%B4_Sprite_fqyd1r.webp' },
+    '親密無間大亂揍': { primitive: 'darkenStackMulti', params: { count: 10 }, sound: 'zHit', soundInternal: true,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788624797/%E8%A6%AA%E5%AF%86%E7%84%A1%E9%96%93%E5%A4%A7%E4%BA%82%E9%AC%A5_lekori.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603381/181px-%E8%A6%AA%E5%AF%86%E7%84%A1%E9%96%93%E5%A4%A7%E4%BA%82%E6%8F%8D_Sprite_xrbx3m.webp' },
+    '日光回旋下蒼穹': { primitive: 'squishVertical', sound: 'zWhoosh', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610101/%E6%97%A5%E5%85%89%E5%9B%9E%E6%97%8B%E4%B8%8B%E8%92%BC%E7%A9%B9_abrj9v.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603380/168px-%E6%97%A5%E5%85%89%E8%BF%B4%E6%97%8B%E4%B8%8B%E8%92%BC%E7%A9%B9_Sprite_vpwsqt.webp' },
+    '月華飛濺落靈霄': { primitive: 'fadeInAboveTimed', params: { ms: 2000, onBody: true }, sound: 'zGroundSmash', soundWhen: 'start',
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788618782/%E6%9C%88%E8%8F%AF%E9%A3%9B%E6%BF%BA%E8%90%BD%E9%9D%88%E9%9C%84_m9ccad.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603377/163px-%E6%9C%88%E8%8F%AF%E9%A3%9B%E6%BF%BA%E8%90%BD%E9%9D%88%E9%9C%84_Sprite_o6jzov.webp' },
+    '焚天滅世熾光爆': { primitive: 'growFly', params: { fromHead: true, huge: true, chargeThenThrow: true, landOffsetY: -14 }, sound: 'zBigExplosion', soundWhen: 'impact', impactDelayMs: 1150,
+        effect: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610108/%E7%84%9A%E5%A4%A9%E6%BB%85%E4%B8%96%E7%86%BE%E5%85%89%E7%88%86_tcq6mx.png',
+        nameplate: 'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603388/220px-%E7%84%9A%E5%A4%A9%E6%BB%85%E4%B8%96%E7%86%BE%E5%85%89%E7%88%86_Sprite_jktijb.webp' },
+};
+
+// ---- Z招式舞台輔助函式：對應預覽工具的stageRect()/centerOf()/makeFxImg()，改成現抓DOM ----
+function zStageEl() { return document.getElementById('battle-stage'); }
+function zFxLayerEl() { return document.getElementById('z-fx-layer'); }
+function zStageRectOf(stageEl) { return stageEl.getBoundingClientRect(); }
+function zCenterOf(el) {
+    const stageEl = zStageEl();
+    const r = el.getBoundingClientRect();
+    const s = zStageRectOf(stageEl);
+    return { x: r.left - s.left + r.width / 2, y: r.top - s.top + r.height / 2, w: r.width, h: r.height };
+}
+function zMakeFxImg(src, size) {
+    const fxLayer = zFxLayerEl();
+    const img = document.createElement('img');
+    img.className = 'z-fx-img';
+    img.src = src;
+    img.style.width = (size || 110) + 'px';
+    img.style.opacity = '0';
+    img.onerror = () => { img.style.display = 'none'; }; // 圖片載入失敗就靜靜隱藏，不影響戰鬥其他流程(跟這個檔案cry()/tone()一貫的「音效/特效問題不該波及遊戲邏輯」原則一致)
+    if (fxLayer) fxLayer.appendChild(img);
+    return img;
+}
+function zWait(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+// ---- 26個動畫「原型」函式：逐一對應zmove_preview.html裡同名(去掉z前綴)的函式，邏輯完全相同 ----
+function zDashInto(casterEl, targetEl, effectUrl) {
+    const c = zCenterOf(casterEl), t = zCenterOf(targetEl);
+    const dx = (t.x - c.x) * 0.5, dy = (t.y - c.y) * 0.5;
+    const anim1 = casterEl.animate([
+        { transform: 'translate(0,0) scale(1)' },
+        { transform: `translate(${dx}px,${dy}px) scale(1.08)` },
+        { transform: 'translate(0,0) scale(1)' },
+    ], { duration: 600, easing: 'ease-in-out' });
+    return anim1.finished.then(() => {
+        if (!effectUrl) return;
+        const img = zMakeFxImg(effectUrl, 100);
+        img.style.left = (t.x - 50) + 'px'; img.style.top = (t.y - 50) + 'px';
+        const a = img.animate([
+            { opacity: 0, transform: 'scale(0.6)' },
+            { opacity: 1, transform: 'scale(1.15)' },
+            { opacity: 1, transform: 'scale(1)' },
+            { opacity: 0, transform: 'scale(1)' },
+        ], { duration: 600, easing: 'ease-out' });
+        return a.finished.then(() => img.remove());
+    });
+}
+function zDashIntoNoEffect(casterEl, targetEl) { return zDashInto(casterEl, targetEl, null); }
+
+function zGrowFly(casterEl, targetEl, effectUrl, params) {
+    params = params || {};
+    const c = zCenterOf(casterEl), t = zCenterOf(targetEl);
+    const startX = c.x;
+    const startY = params.fromHead ? c.y - c.h * 0.35 : c.y;
+    const landX = t.x, landY = t.y + (params.landOffsetY || 0);
+    const maxSize = params.huge ? 170 : 110;
+    const img = zMakeFxImg(effectUrl, maxSize);
+    img.style.left = (startX - maxSize / 2) + 'px'; img.style.top = (startY - maxSize / 2) + 'px';
+    const dx = landX - startX, dy = landY - startY;
+    let a;
+    if (params.chargeThenThrow) {
+        const chargeMs = params.huge ? 600 : 500, throwMs = params.huge ? 650 : 500;
+        const total = chargeMs + throwMs;
+        const chargeFrac = chargeMs / total;
+        a = img.animate([
+            { opacity: 0, transform: 'translate(0,0) scale(0.12)' },
+            { opacity: 1, transform: 'translate(0,0) scale(1)', offset: chargeFrac },
+            { opacity: 1, transform: `translate(${dx}px,${dy}px) scale(1.08)`, offset: 0.96 },
+            { opacity: 0, transform: `translate(${dx}px,${dy}px) scale(1.08)` },
+        ], { duration: total, easing: 'ease-in' });
+    } else {
+        a = img.animate([
+            { opacity: 0, transform: 'translate(0,0) scale(0.22)' },
+            { opacity: 1, transform: `translate(${dx * 0.3}px,${dy * 0.3}px) scale(0.45)`, offset: 0.3 },
+            { opacity: 1, transform: `translate(${dx}px,${dy}px) scale(1)`, offset: 0.9 },
+            { opacity: 0, transform: `translate(${dx}px,${dy}px) scale(1.08)` },
+        ], { duration: params.huge ? 1400 : 1000, easing: 'ease-in' });
+    }
+    return a.finished.then(() => img.remove());
+}
+
+function zScreenFlash(effectUrl) {
+    const stageEl = zStageEl();
+    const flashLayer = document.getElementById('z-screen-flash-layer');
+    const a = flashLayer.animate([
+        { opacity: 0 }, { opacity: 0.9, offset: 0.15 }, { opacity: 0.2, offset: 0.3 },
+        { opacity: 0.85, offset: 0.45 }, { opacity: 0 },
+    ], { duration: 900, easing: 'ease-in-out' });
+    let img = null;
+    if (effectUrl) {
+        const s = zStageRectOf(stageEl);
+        const size = Math.max(s.width, s.height) * 1.3;
+        img = zMakeFxImg(effectUrl, size);
+        img.style.height = size + 'px';
+        img.style.left = (s.width / 2 - size / 2) + 'px'; img.style.top = (s.height / 2 - size / 2) + 'px';
+        img.animate([{ opacity: 0 }, { opacity: 0.95, offset: 0.3 }, { opacity: 0 }], { duration: 900 });
+    }
+    return a.finished.then(() => { if (img) img.remove(); });
+}
+
+function zAppearOnTarget(targetEl, effectUrl) {
+    const t = zCenterOf(targetEl);
+    const img = zMakeFxImg(effectUrl, 110);
+    img.style.left = (t.x - 55) + 'px'; img.style.top = (t.y - 55) + 'px';
+    const a = img.animate([
+        { opacity: 0, transform: 'scale(0.8)' },
+        { opacity: 1, transform: 'scale(1)', offset: 0.3 },
+        { opacity: 1, transform: 'scale(1)', offset: 0.75 },
+        { opacity: 0, transform: 'scale(1)' },
+    ], { duration: 1000 });
+    return a.finished.then(() => img.remove());
+}
+function zAppearThenGone(targetEl, effectUrl) { return zAppearOnTarget(targetEl, effectUrl); }
+
+function zWipeAcrossScreen(effectUrl, mirrored, isMeCaster) {
+    const stageEl = zStageEl();
+    const s = zStageRectOf(stageEl);
+    const size = Math.max(s.width, s.height) * 1.2;
+    const fxLayer = zFxLayerEl();
+    const wrap = document.createElement('div');
+    wrap.style.position = 'absolute';
+    wrap.style.pointerEvents = 'none';
+    wrap.style.left = (s.width / 2 - size / 2) + 'px';
+    wrap.style.top = (s.height / 2 - size / 2) + 'px';
+    wrap.style.width = size + 'px';
+    wrap.style.height = size + 'px';
+    if (fxLayer) fxLayer.appendChild(wrap);
+    const img = zMakeFxImg(effectUrl, size);
+    wrap.appendChild(img);
+    img.style.left = '0px'; img.style.top = '0px';
+    img.style.height = size + 'px';
+    img.style.opacity = '1';
+    const flip = mirrored ? -1 : 1;
+    img.style.transform = `rotate(-90deg) scaleX(${flip})`;
+    const fromLeft = isMeCaster;
+    const startClip = fromLeft ? 'inset(0 100% 0 0)' : 'inset(0 0 0 100%)';
+    const fullClip = 'inset(0 0 0 0)';
+    wrap.style.clipPath = startClip;
+    const a = wrap.animate([
+        { opacity: 1, clipPath: startClip, offset: 0 },
+        { opacity: 1, clipPath: fullClip, offset: 0.7 },
+        { opacity: 1, clipPath: fullClip, offset: 0.85 },
+        { opacity: 0, clipPath: fullClip, offset: 1 },
+    ], { duration: 1100, easing: 'ease-in' });
+    return a.finished.then(() => wrap.remove());
+}
+
+function zPunchStack(targetEl, effectUrl) {
+    const t = zCenterOf(targetEl);
+    const n = 7;
+    let p = Promise.resolve();
+    for (let i = 0; i < n; i++) {
+        const idx = i;
+        p = p.then(() => {
+            SFX.zPunchMulti();
+            const img = zMakeFxImg(effectUrl, 108);
+            const ox = (Math.random() - 0.5) * 36, oy = (Math.random() - 0.5) * 36;
+            img.style.left = (t.x - 54 + ox) + 'px'; img.style.top = (t.y - 54 + oy) + 'px';
+            const rot = (idx % 3 === 0) ? 90 : (idx % 2 ? 8 : -8);
+            const a = img.animate([
+                { opacity: 0, transform: 'scale(0.5) rotate(0deg)' },
+                { opacity: 1, transform: `scale(1.25) rotate(${rot}deg)`, offset: 0.4 },
+                { opacity: 0, transform: `scale(0.9) rotate(${rot}deg)` },
+            ], { duration: 175 });
+            return a.finished.then(() => img.remove());
+        });
+    }
+    return p;
+}
+
+function zFadeInAboveDown(targetEl, effectUrl) {
+    const t = zCenterOf(targetEl);
+    const img = zMakeFxImg(effectUrl, 100);
+    img.style.left = (t.x - 50) + 'px'; img.style.top = (t.y - t.h - 40) + 'px';
+    const dy = t.h + 20;
+    const a = img.animate([
+        { opacity: 0, transform: 'translateY(0)' },
+        { opacity: 1, transform: 'translateY(0)', offset: 0.25 },
+        { opacity: 1, transform: `translateY(${dy}px)`, offset: 0.85 },
+        { opacity: 0, transform: `translateY(${dy}px)` },
+    ], { duration: 900, easing: 'ease-in' });
+    return a.finished.then(() => img.remove());
+}
+
+function zScreenShakeCracks(effectUrl) {
+    const stageEl = zStageEl();
+    const shakeAnim = stageEl.animate([
+        { transform: 'translate(0,0)' }, { transform: 'translate(-7px,5px)' }, { transform: 'translate(7px,-5px)' },
+        { transform: 'translate(-6px,-4px)' }, { transform: 'translate(6px,4px)' }, { transform: 'translate(-4px,3px)' }, { transform: 'translate(0,0)' },
+    ], { duration: 1000, iterations: 1 });
+    const s = zStageRectOf(stageEl);
+    const w = s.width * 1.15, h = s.height * 1.15;
+    const img = zMakeFxImg(effectUrl, w);
+    img.style.height = h + 'px';
+    img.style.left = (-(s.width * 0.075)) + 'px';
+    img.style.top = (-(s.height * 0.075)) + 'px';
+    img.style.objectFit = 'cover';
+    const a = img.animate([
+        { opacity: 0 }, { opacity: 0.9, offset: 0.15 }, { opacity: 0.3, offset: 0.3 },
+        { opacity: 0.95, offset: 0.45 }, { opacity: 0.3, offset: 0.6 }, { opacity: 0.9, offset: 0.8 }, { opacity: 0 },
+    ], { duration: 1000 });
+    return Promise.all([shakeAnim.finished, a.finished.then(() => img.remove())]);
+}
+
+function zScreenSweep(effectUrl, mirrored, isMeCaster) {
+    const stageEl = zStageEl();
+    const s = zStageRectOf(stageEl);
+    const img = zMakeFxImg(effectUrl, s.width * 0.9);
+    img.style.height = '70%';
+    img.style.top = '15%';
+    const fromLeft = isMeCaster;
+    img.style.left = fromLeft ? (-s.width) + 'px' : s.width + 'px';
+    if (mirrored) img.style.transform = 'scaleX(-1)';
+    const a = img.animate([
+        { opacity: 0.9, left: img.style.left },
+        { opacity: 1, left: (fromLeft ? '2%' : '8%') },
+        { opacity: 0, left: (fromLeft ? '2%' : '8%') },
+    ], { duration: 700, easing: 'ease-in' });
+    return a.finished.then(() => img.remove());
+}
+
+function zFlickerOnTarget(targetEl, effectUrl, size) {
+    size = size || 110;
+    const t = zCenterOf(targetEl);
+    const img = zMakeFxImg(effectUrl, size);
+    img.style.left = (t.x - size / 2) + 'px'; img.style.top = (t.y - size / 2) + 'px';
+    const a = img.animate([
+        { opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 0.2, offset: 0.3 },
+        { opacity: 1, offset: 0.45 }, { opacity: 0.2, offset: 0.6 }, { opacity: 1, offset: 0.75 }, { opacity: 0 },
+    ], { duration: 1000 });
+    return a.finished.then(() => img.remove());
+}
+
+function zStackFly(casterEl, targetEl, effectUrl) {
+    const c = zCenterOf(casterEl), t = zCenterOf(targetEl);
+    const n = 3;
+    const proms = [];
+    for (let i = 0; i < n; i++) {
+        const img = zMakeFxImg(effectUrl, 90);
+        img.style.left = (c.x - 45 + i * 8) + 'px'; img.style.top = (c.y - 45 - i * 8) + 'px';
+        const dx = t.x - c.x, dy = t.y - c.y;
+        const a = img.animate([
+            { opacity: 0, transform: 'translate(0,0) scale(0.7)' },
+            { opacity: 0.9, transform: 'translate(0,0) scale(1)', offset: 0.2 },
+            { opacity: 0.9, transform: `translate(${dx}px,${dy}px) scale(1)`, offset: 0.85 },
+            { opacity: 0, transform: `translate(${dx}px,${dy}px) scale(1)` },
+        ], { duration: 700, delay: i * 80 });
+        proms.push(a.finished.then(() => img.remove()));
+    }
+    return Promise.all(proms);
+}
+
+function zFallTwice(targetEl, effectUrl) {
+    function once() {
+        const t = zCenterOf(targetEl);
+        const img = zMakeFxImg(effectUrl, 100);
+        img.style.left = (t.x - 50) + 'px'; img.style.top = (t.y - t.h - 60) + 'px';
+        setTimeout(() => SFX.zGroundSmash(), 450);
+        const a = img.animate([
+            { opacity: 0, transform: 'translateY(0)' },
+            { opacity: 1, transform: 'translateY(0)', offset: 0.15 },
+            { opacity: 1, transform: `translateY(${t.h + 60}px)`, offset: 0.75 },
+            { opacity: 0, transform: `translateY(${t.h + 60}px)` },
+        ], { duration: 600 });
+        return a.finished.then(() => img.remove());
+    }
+    return once().then(() => zWait(120)).then(once);
+}
+
+function zShrinkOnTarget(targetEl, effectUrl) {
+    const t = zCenterOf(targetEl);
+    const img = zMakeFxImg(effectUrl, 120);
+    img.style.left = (t.x - 60) + 'px'; img.style.top = (t.y - 60) + 'px';
+    const a = img.animate([
+        { opacity: 0, transform: 'scale(1.2)' },
+        { opacity: 1, transform: 'scale(1)', offset: 0.3 },
+        { opacity: 1, transform: 'scale(1)', offset: 0.6 },
+        { opacity: 0, transform: 'scale(0.1)' },
+    ], { duration: 1000, easing: 'ease-in' });
+    return a.finished.then(() => img.remove());
+}
+
+function zFlipDash(casterEl, targetEl, effectUrl, flipped) {
+    const stageEl = zStageEl();
+    const shake = stageEl.animate([
+        { transform: 'translate(0,0)' }, { transform: 'translate(-4px,3px)' }, { transform: 'translate(4px,-3px)' }, { transform: 'translate(0,0)' },
+    ], { duration: 600 });
+    const c = zCenterOf(casterEl), t = zCenterOf(targetEl);
+    const img = zMakeFxImg(effectUrl, 110);
+    img.style.left = (c.x - 55) + 'px'; img.style.top = (c.y - 55) + 'px';
+    const dx = t.x - c.x, dy = t.y - c.y;
+    const flipScale = flipped ? -1 : 1;
+    const a = img.animate([
+        { opacity: 0, transform: `translate(0,0) scaleX(${flipScale})` },
+        { opacity: 1, transform: `translate(0,0) scaleX(${flipScale})`, offset: 0.15 },
+        { opacity: 1, transform: `translate(${dx}px,${dy}px) scaleX(${flipScale})`, offset: 0.85 },
+        { opacity: 0, transform: `translate(${dx}px,${dy}px) scaleX(${flipScale})` },
+    ], { duration: 700, easing: 'ease-in' });
+    return Promise.all([shake.finished, a.finished]).then(() => img.remove());
+}
+
+function zAppearFlashOnce(targetEl, effectUrl) {
+    const t = zCenterOf(targetEl);
+    const img = zMakeFxImg(effectUrl, 110);
+    img.style.left = (t.x - 55) + 'px'; img.style.top = (t.y - 55) + 'px';
+    const a = img.animate([
+        { opacity: 0, transform: 'scale(0.8)' },
+        { opacity: 1, transform: 'scale(1.15)', offset: 0.35 },
+        { opacity: 1, transform: 'scale(1)', offset: 0.6 },
+        { opacity: 0, transform: 'scale(1)' },
+    ], { duration: 800 });
+    return a.finished.then(() => img.remove());
+}
+
+function zStarBurst(casterEl, targetEl, effectUrl, size) {
+    size = size || 34;
+    const c = zCenterOf(casterEl), t = zCenterOf(targetEl);
+    const n = 6;
+    const proms = [];
+    for (let i = 0; i < n; i++) {
+        const img = zMakeFxImg(effectUrl, size);
+        const jitterX = (Math.random() - 0.5) * 40, jitterY = (Math.random() - 0.5) * 40;
+        img.style.left = (c.x - size / 2 + jitterX) + 'px'; img.style.top = (c.y - size / 2 + jitterY) + 'px';
+        const dx = t.x - c.x + (Math.random() - 0.5) * 30, dy = t.y - c.y + (Math.random() - 0.5) * 30;
+        const a = img.animate([
+            { opacity: 0, transform: 'translate(0,0) rotate(0deg) scale(0.6)' },
+            { opacity: 1, transform: 'translate(0,0) rotate(60deg) scale(1)', offset: 0.15 },
+            { opacity: 1, transform: `translate(${dx}px,${dy}px) rotate(300deg) scale(1)`, offset: 0.85 },
+            { opacity: 0, transform: `translate(${dx}px,${dy}px) rotate(360deg) scale(0.8)` },
+        ], { duration: 650, delay: i * 60 });
+        proms.push(a.finished.then(() => img.remove()));
+    }
+    return Promise.all(proms);
+}
+
+function zNineBeamsAscend(casterEl, effectUrl) {
+    const c = zCenterOf(casterEl);
+    const count = 9;
+    const apexX = c.x, apexY = c.y - c.h * 0.95;
+    const beamWidth = 26;
+    const radiusX = Math.max(55, c.w * 0.6), radiusY = Math.max(45, c.h * 0.55);
+    const proms = [];
+    for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 / count) * i + (Math.random() - 0.5) * 0.25;
+        const baseX = c.x + Math.cos(angle) * radiusX;
+        const baseY = c.y + c.h * 0.15 + Math.sin(angle) * radiusY * 0.9;
+        const dx = baseX - apexX, dy = baseY - apexY;
+        const length = Math.max(20, Math.sqrt(dx * dx + dy * dy));
+        const rotDeg = Math.atan2(dx, dy) * 180 / Math.PI;
+        const img = zMakeFxImg(effectUrl, beamWidth);
+        img.style.height = length + 'px';
+        img.style.left = (apexX - beamWidth / 2) + 'px';
+        img.style.top = apexY + 'px';
+        img.style.transformOrigin = '50% 0%';
+        img.style.transform = `rotate(${rotDeg}deg)`;
+        img.style.opacity = '1';
+        img.style.clipPath = 'inset(100% 0 0 0)';
+        const delay = Math.random() * 550;
+        const riseMs = 380, holdMs = 240, fallMs = 380, total = riseMs + holdMs + fallMs;
+        const a = img.animate([
+            { clipPath: 'inset(100% 0 0% 0)', offset: 0 },
+            { clipPath: 'inset(0% 0 0% 0)', offset: riseMs / total },
+            { clipPath: 'inset(0% 0 0% 0)', offset: (riseMs + holdMs) / total },
+            { clipPath: 'inset(0% 0 100% 0)', offset: 1 },
+        ], { duration: total, delay, easing: 'ease-in-out', fill: 'forwards' });
+        proms.push(a.finished.then(() => img.remove()));
+    }
+    return Promise.all(proms);
+}
+
+function zArrowShoot(casterEl, targetEl, effectUrl) {
+    const c = zCenterOf(casterEl), t = zCenterOf(targetEl);
+    const img = zMakeFxImg(effectUrl, 90);
+    img.style.left = (c.x - 45) + 'px'; img.style.top = (c.y - 45) + 'px';
+    const angle = Math.atan2(t.y - c.y, t.x - c.x) * 180 / Math.PI;
+    img.style.transformOrigin = 'center';
+    const dx = t.x - c.x, dy = t.y - c.y;
+    const a = img.animate([
+        { opacity: 0, transform: `translate(0,0) rotate(${angle}deg) scale(0.7)` },
+        { opacity: 1, transform: `translate(0,0) rotate(${angle}deg) scale(1)`, offset: 0.15 },
+        { opacity: 1, transform: `translate(${dx}px,${dy}px) rotate(${angle}deg) scale(1)`, offset: 0.85 },
+        { opacity: 0, transform: `translate(${dx}px,${dy}px) rotate(${angle}deg) scale(1)` },
+    ], { duration: 650, easing: 'ease-in' });
+    return a.finished.then(() => img.remove());
+}
+
+function zDropSmash(targetEl, effectUrl, mirror180) {
+    const stageEl = zStageEl();
+    const t = zCenterOf(targetEl);
+    const size = 145;
+    const img = zMakeFxImg(effectUrl, size);
+    img.style.left = (t.x - size / 2) + 'px'; img.style.top = (-(size + 20)) + 'px';
+    const flipX = mirror180 ? -1 : 1;
+    const dy = t.y + (size + 20) - size / 2;
+    const a = img.animate([
+        { opacity: 0, transform: `translateY(0) scale(0.8) scaleX(${flipX})` },
+        { opacity: 1, transform: `translateY(0) scale(0.9) scaleX(${flipX})`, offset: 0.2 },
+        { opacity: 1, transform: `translateY(${dy}px) scale(1.15) scaleX(${flipX})`, offset: 0.8 },
+        { opacity: 0, transform: `translateY(${dy}px) scale(1) scaleX(${flipX})` },
+    ], { duration: 650, easing: 'ease-in' });
+    const shakeP = a.finished.then(() => stageEl.animate([
+        { transform: 'translate(0,0)' }, { transform: 'translate(-5px,4px)' }, { transform: 'translate(5px,-4px)' }, { transform: 'translate(0,0)' },
+    ], { duration: 250 }).finished);
+    return a.finished.then(() => img.remove()).then(() => shakeP);
+}
+
+function zAppearTwice(targetEl, effectUrl) {
+    function once() {
+        const t = zCenterOf(targetEl);
+        const img = zMakeFxImg(effectUrl, 110);
+        img.style.left = (t.x - 55) + 'px'; img.style.top = (t.y - 55) + 'px';
+        const a = img.animate([
+            { opacity: 0, transform: 'scale(0.85)' },
+            { opacity: 1, transform: 'scale(1)', offset: 0.3 },
+            { opacity: 1, transform: 'scale(1)', offset: 0.7 },
+            { opacity: 0, transform: 'scale(1)' },
+        ], { duration: 500 });
+        return a.finished.then(() => img.remove());
+    }
+    return once().then(() => zWait(120)).then(once);
+}
+
+function zFlipNTimes(targetEl, effectUrl, params) {
+    const times = (params && params.times) || 4;
+    const t = zCenterOf(targetEl);
+    const radius = 32;
+    const img = zMakeFxImg(effectUrl, 110);
+    img.style.left = (t.x - 55) + 'px'; img.style.top = (t.y - 55) + 'px';
+    const steps = times * 2;
+    const kf = [{ opacity: 0, transform: 'translate(0,0) scaleX(1)' }];
+    for (let i = 1; i <= steps; i++) {
+        const frac = i / (steps + 1);
+        const angle = frac * Math.PI * 2 * 0.6;
+        const ox = Math.cos(angle) * radius, oy = Math.sin(angle) * radius * 0.5;
+        kf.push({ opacity: 1, transform: `translate(${ox}px,${oy}px) scaleX(${i % 2 ? -1 : 1})`, offset: frac });
+    }
+    kf.push({ opacity: 0, transform: 'translate(0,0) scaleX(1)' });
+    const a = img.animate(kf, { duration: 340 * times });
+    return a.finished.then(() => img.remove());
+}
+
+function zDarkenStackMulti(targetEl, effectUrl, params) {
+    const darkenOverlay = document.getElementById('z-darken-overlay');
+    const count = (params && params.count) || 10;
+    const t = zCenterOf(targetEl);
+    if (darkenOverlay) darkenOverlay.animate([{ opacity: 0 }, { opacity: 0.55 }], { duration: 300, fill: 'forwards' });
+    const proms = [];
+    let cumulative = 0;
+    for (let i = 0; i < count; i++) {
+        cumulative += 40 + Math.random() * 55;
+        const delay = cumulative;
+        proms.push(new Promise(resolve => {
+            setTimeout(() => {
+                SFX.zHit();
+                const img = zMakeFxImg(effectUrl, 95);
+                const ox = (Math.random() - 0.5) * 50, oy = (Math.random() - 0.5) * 50;
+                img.style.left = (t.x - 47 + ox) + 'px'; img.style.top = (t.y - 47 + oy) + 'px';
+                img.style.zIndex = 31;
+                const a = img.animate([
+                    { opacity: 0, transform: 'scale(0.6)' },
+                    { opacity: 1, transform: 'scale(1.15)', offset: 0.3 },
+                    { opacity: 0, transform: 'scale(0.9)' },
+                ], { duration: 150 });
+                a.finished.then(() => { img.remove(); resolve(); });
+            }, delay);
+        }));
+    }
+    return Promise.all(proms).then(() => {
+        if (!darkenOverlay) return;
+        return darkenOverlay.animate([{ opacity: 0.55 }, { opacity: 0 }], { duration: 300, fill: 'forwards' }).finished;
+    });
+}
+
+function zSquishVertical(targetEl, effectUrl) {
+    const t = zCenterOf(targetEl);
+    const img = zMakeFxImg(effectUrl, 110);
+    img.style.left = (t.x - 55) + 'px'; img.style.top = (t.y - 55) + 'px';
+    img.style.transformOrigin = 'center bottom';
+    const a = img.animate([
+        { opacity: 0, transform: 'scaleY(1)' },
+        { opacity: 1, transform: 'scaleY(1)', offset: 0.35 },
+        { opacity: 1, transform: 'scaleY(1)', offset: 0.55 },
+        { opacity: 1, transform: 'scaleY(0.15)', offset: 0.85 },
+        { opacity: 0, transform: 'scaleY(0.1)' },
+    ], { duration: 900 });
+    return a.finished.then(() => img.remove());
+}
+
+function zFadeInAboveTimed(targetEl, effectUrl, params) {
+    const ms = (params && params.ms) || 2000;
+    const t = zCenterOf(targetEl);
+    const size = 100;
+    const img = zMakeFxImg(effectUrl, size);
+    img.style.left = (t.x - size / 2) + 'px';
+    img.style.top = ((params && params.onBody) ? (t.y - size / 2) : (t.y - t.h - 40)) + 'px';
+    const a = img.animate([
+        { opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 1, offset: Math.min(0.95, 1 - 150 / (ms + 300)) }, { opacity: 0 },
+    ], { duration: ms + 300 });
+    return a.finished.then(() => img.remove());
+}
+
+// ---- 依primitive名稱分派引數執行(對應預覽工具的PRIMITIVES/runEffect)：isMeCaster取代預覽工具
+// 用「元素是不是===spriteMe」判斷施放方，這裡直接讓呼叫端(playBattleEvents)傳true/false進來 ----
+const Z_PRIMITIVES = {
+    dashInto: zDashInto, dashIntoNoEffect: zDashIntoNoEffect, growFly: zGrowFly, screenFlash: zScreenFlash,
+    appearOnTarget: zAppearOnTarget, appearThenGone: zAppearThenGone, wipeAcrossScreen: zWipeAcrossScreen,
+    punchStack: zPunchStack, fadeInAboveDown: zFadeInAboveDown, screenShakeCracks: zScreenShakeCracks,
+    screenSweep: zScreenSweep, flickerOnTarget: zFlickerOnTarget, stackFly: zStackFly, fallTwice: zFallTwice,
+    shrinkOnTarget: zShrinkOnTarget, flipDash: zFlipDash, appearFlashOnce: zAppearFlashOnce, starBurst: zStarBurst,
+    nineBeamsAscend: zNineBeamsAscend, arrowShoot: zArrowShoot, dropSmash: zDropSmash, appearTwice: zAppearTwice,
+    flipNTimes: zFlipNTimes, darkenStackMulti: zDarkenStackMulti, squishVertical: zSquishVertical,
+    fadeInAboveTimed: zFadeInAboveTimed,
+};
+function zRunEffect(data, casterEl, targetEl, isMeCaster) {
+    if (!Z_PRIMITIVES[data.primitive]) return Promise.resolve();
+    switch (data.primitive) {
+        case 'dashInto': return zDashInto(casterEl, targetEl, data.effect);
+        case 'dashIntoNoEffect': return zDashIntoNoEffect(casterEl, targetEl);
+        case 'growFly': return zGrowFly(casterEl, targetEl, data.effect, data.params);
+        case 'screenFlash': return zScreenFlash(data.effect);
+        case 'appearOnTarget': case 'appearThenGone': return zAppearOnTarget(targetEl, data.effect);
+        case 'wipeAcrossScreen': {
+            const mirrored = !!(data.params && data.params.flipWhenOpponentCasts && !isMeCaster);
+            return zWipeAcrossScreen(data.effect, mirrored, isMeCaster);
+        }
+        case 'punchStack': return zPunchStack(targetEl, data.effect);
+        case 'fadeInAboveDown': return zFadeInAboveDown(targetEl, data.effect);
+        case 'screenShakeCracks': return zScreenShakeCracks(data.effect);
+        case 'screenSweep': {
+            const mirrored = !!(data.params && data.params.flipWhenOpponentCasts && !isMeCaster);
+            return zScreenSweep(data.effect, mirrored, isMeCaster);
+        }
+        case 'flickerOnTarget': return zFlickerOnTarget(targetEl, data.effect, data.params && data.params.size);
+        case 'stackFly': return zStackFly(casterEl, targetEl, data.effect);
+        case 'fallTwice': return zFallTwice(targetEl, data.effect);
+        case 'shrinkOnTarget': return zShrinkOnTarget(targetEl, data.effect);
+        case 'flipDash': {
+            const flipped = !!(data.params && data.params.flipWhenPlayerCasts && isMeCaster);
+            return zFlipDash(casterEl, targetEl, data.effect, flipped);
+        }
+        case 'appearFlashOnce': return zAppearFlashOnce(targetEl, data.effect);
+        case 'starBurst': return zStarBurst(casterEl, targetEl, data.effect, data.params && data.params.size);
+        case 'nineBeamsAscend': return zNineBeamsAscend(casterEl, data.effect);
+        case 'arrowShoot': return zArrowShoot(casterEl, targetEl, data.effect);
+        case 'dropSmash': return zDropSmash(targetEl, data.effect, !isMeCaster);
+        case 'appearTwice': return zAppearTwice(targetEl, data.effect);
+        case 'flipNTimes': return zFlipNTimes(targetEl, data.effect, data.params);
+        case 'darkenStackMulti': return zDarkenStackMulti(targetEl, data.effect, data.params);
+        case 'squishVertical': return zSquishVertical(targetEl, data.effect);
+        case 'fadeInAboveTimed': return zFadeInAboveTimed(targetEl, data.effect, data.params);
+        default: return Promise.resolve();
+    }
+}
+
+// ---- 音效集中派送(對應預覽工具的dispatchMoveSound)：start類在特效一開始就播，impact類延遲到
+// 視覺落點命中的時間點才播，soundInternal的招式(全力無雙激烈拳/毀天滅地巨岩墜/親密無間大亂揍)
+// 音效已經寫在對應原型函式內部各自的時間點觸發，這裡略過不重複播 ----
+function zDispatchMoveSound(data) {
+    if (!data || !data.sound || data.soundInternal) return;
+    const fire = () => {
+        if (data.sound === 'pikaCry') SFX.cry(25); // 皮卡皮卡必殺擊：直接用既有的皮卡丘(25號)真實叫聲素材，不用另外合成音效
+        else if (typeof SFX[data.sound] === 'function') SFX[data.sound]();
+    };
+    if (data.soundWhen === 'impact') setTimeout(fire, data.impactDelayMs || 400);
+    else fire();
+}
+
+// ---- 5步驟時序主控(對應預覽工具的playZMove)：Z字覆蓋施放者→1秒後Z字淡出+字樣圖片出現
+// (顯示2秒)→字樣出現滿1秒後開始播特效動畫+音效→等字樣播完、特效播完兩者都結束才算播畢。
+// 呼叫端(playBattleEvents)拿到這個promise resolve之後，才會接著跑後面判定傷害的hit-flash/
+// 傷害數字/HP條動畫，等於「Z招式演出播完才讓判定結果登場」，跟預覽工具的節奏一致 ----
+function zPlayZMoveSequence(moveNameZh, isMeAttacking, casterEl, targetEl) {
+    const data = Z_MOVE_ANIM_DATA[moveNameZh];
+    if (!data) return Promise.resolve(); // 理論上不會發生(找不到對應資料)，保底不噴錯，戰鬥照樣正常結算
+    const zBadge = document.getElementById(isMeAttacking ? 'z-badge-me' : 'z-badge-opp');
+    const nameplateLayer = document.getElementById('z-nameplate-layer');
+    if (!zBadge || !nameplateLayer) return Promise.resolve();
+
+    const c = zCenterOf(casterEl);
+    zBadge.style.left = (c.x - 20) + 'px';
+    zBadge.style.top = (c.y - 20) + 'px';
+    zBadge.style.opacity = 0;
+    zBadge.animate([
+        { opacity: 0, transform: 'scale(0.5)' },
+        { opacity: 1, transform: 'scale(1.1)', offset: 0.5 },
+        { opacity: 1, transform: 'scale(1)' },
+    ], { duration: 400, fill: 'forwards' });
+
+    return zWait(1000).then(() => {
+        zBadge.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 250, fill: 'forwards' });
+        nameplateLayer.innerHTML = '';
+        const np = document.createElement('img');
+        np.src = data.nameplate;
+        nameplateLayer.appendChild(np);
+        const npAnim = np.animate([
+            { opacity: 0, transform: 'scale(0.85)' },
+            { opacity: 1, transform: 'scale(1)', offset: 0.15 },
+            { opacity: 1, transform: 'scale(1)', offset: 0.85 },
+            { opacity: 0, transform: 'scale(0.95)' },
+        ], { duration: 2000, fill: 'forwards' });
+        const nameplateDone = npAnim.finished.then(() => np.remove());
+
+        const effectDone = zWait(1000).then(() => {
+            zDispatchMoveSound(data);
+            return zRunEffect(data, casterEl, targetEl, isMeAttacking);
+        });
+
+        return Promise.all([nameplateDone, effectDone]);
+    });
 }
 
 // 依序播放一回合裡發生的每一件事：出招前被異常狀態擋下來(畏縮/冰凍/睡眠/麻痺/混亂)、沒有命中、
@@ -5867,12 +6653,21 @@ async function playBattleEvents(events, ctx) {
         // ---- 純自我強化招式(能力提升/回血，沒有直接攻擊對手)：原地發光，不撲向對手 ----
         const isSelfBuff = ev.moveTarget === 'user' && !ev.damage;
         if (isSelfBuff) {
-            appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}！`);
-            atkEl.classList.remove('self-buff-glow');
-            void atkEl.offsetWidth;
-            atkEl.classList.add('self-buff-glow');
-            await sleep(500);
-            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+            appendLog(ev.isZMove ? `${ev.attackerName} 使出了Ｚ招式「${ev.moveNameZh}」！` : `${ev.attackerName} 使出 ${ev.moveNameZh}！`);
+            if (ev.isZMove) {
+                // 【第四十八輪新增】Z招式(例如九彩昇華齊聚頂)：改播完整的Z字覆蓋圖→字樣圖片→特效+音效
+                // 演出，取代原本平淡的原地發光——這也順便修正了一個既有小問題：伊布Z「九彩昇華齊聚頂」
+                // 原本因為底層招式(平沙落雁)的target不是'user'，會被誤判走進一般攻擊分支、對手方向衝刺，
+                // 現在只要ev.isZMove為true一律優先播Z招式演出，不會再有這種方向錯亂的視覺
+                await zPlayZMoveSequence(ev.moveNameZh, isMeAttacking, atkEl, defEl);
+                if (isStale()) return; // 這段await等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+            } else {
+                atkEl.classList.remove('self-buff-glow');
+                void atkEl.offsetWidth;
+                atkEl.classList.add('self-buff-glow');
+                await sleep(500);
+                if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+            }
         } else {
             if (ev.damage > 0) {
                 appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，${ev.hitCount > 1 ? `打中了 ${ev.hitCount} 次，總共` : ''}造成 ${ev.damage} 點傷害${ev.effectiveness > 1 ? '，效果絕佳！' : ev.effectiveness < 1 ? '，效果不理想...' : ''}${ev.crit ? '，會心一擊！' : ''}`);
@@ -5881,12 +6676,20 @@ async function playBattleEvents(events, ctx) {
             } else {
                 appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}！`);
             }
-            // 攻擊方衝刺(往對手方向撲過去)
-            atkEl.classList.remove('lunge-right', 'lunge-left');
-            void atkEl.offsetWidth; // 強制reflow，讓同一個class能重新觸發animation
-            atkEl.classList.add(isMeAttacking ? 'lunge-right' : 'lunge-left');
-            await sleep(500);
-            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+            if (ev.isZMove) {
+                // 【第四十八輪新增】Z招式：改播完整的Z字覆蓋圖→字樣圖片→特效+音效演出，取代原本
+                // 平淡的「攻擊方衝刺」——播完之後，下面判定傷害的hit-flash/傷害數字/HP條動畫完全
+                // 不變，跟一般招式共用同一套邏輯，不用另外重複寫一份
+                await zPlayZMoveSequence(ev.moveNameZh, isMeAttacking, atkEl, defEl);
+                if (isStale()) return; // 這段await等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+            } else {
+                // 攻擊方衝刺(往對手方向撲過去)
+                atkEl.classList.remove('lunge-right', 'lunge-left');
+                void atkEl.offsetWidth; // 強制reflow，讓同一個class能重新觸發animation
+                atkEl.classList.add(isMeAttacking ? 'lunge-right' : 'lunge-left');
+                await sleep(500);
+                if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+            }
             if (!document.getElementById(isMeAttacking ? 'sprite-opp' : 'sprite-me')) return;
 
             if (ev.damage > 0 || ev.effectiveness === 0) {
@@ -6326,7 +7129,7 @@ const MEGA_RAYQUAZA = {"speciesId":384,"requiredMove":"dragon-ascent","megaSlug"
 // 特殊地區/融合型態)，這個遊戲的轉蛋池只有全國圖鑑1~1025號的「基本型態」、沒有這些特殊地區/融合
 // 型態，所以這裡都退而求其次比照對應的「基本型態」全國圖鑑編號放行(雷丘26號、索爾迦雷歐791號、
 // 露奈雅拉792號、奈克洛茲瑪800號)，讓這幾顆純晶在這個遊戲裡至少還有實際能用的對象，是刻意的簡化
-const Z_CRYSTAL_CATALOG = {"normalium-z":{"kind":"type","nameZh":"一般Ｚ","type":"normal","zMoveSlugPhysical":"breakneck-blitz--physical","zMoveSlugSpecial":"breakneck-blitz--special","zMoveNameZh":"究極無敵大爆炸"},"firium-z":{"kind":"type","nameZh":"火Ｚ","type":"fire","zMoveSlugPhysical":"inferno-overdrive--physical","zMoveSlugSpecial":"inferno-overdrive--special","zMoveNameZh":"超強極限爆焰彈"},"waterium-z":{"kind":"type","nameZh":"水Ｚ","type":"water","zMoveSlugPhysical":"hydro-vortex--physical","zMoveSlugSpecial":"hydro-vortex--special","zMoveNameZh":"超級水流大漩渦"},"electrium-z":{"kind":"type","nameZh":"電Ｚ","type":"electric","zMoveSlugPhysical":"gigavolt-havoc--physical","zMoveSlugSpecial":"gigavolt-havoc--special","zMoveNameZh":"終極伏特狂雷閃"},"grassium-z":{"kind":"type","nameZh":"草Ｚ","type":"grass","zMoveSlugPhysical":"bloom-doom--physical","zMoveSlugSpecial":"bloom-doom--special","zMoveNameZh":"絢爛繽紛花怒放"},"icium-z":{"kind":"type","nameZh":"冰Ｚ","type":"ice","zMoveSlugPhysical":"subzero-slammer--physical","zMoveSlugSpecial":"subzero-slammer--special","zMoveNameZh":"激烈暴風雪延綿"},"fightinium-z":{"kind":"type","nameZh":"格鬥Ｚ","type":"fighting","zMoveSlugPhysical":"all-out-pummeling--physical","zMoveSlugSpecial":"all-out-pummeling--special","zMoveNameZh":"全力無雙激烈拳"},"poisonium-z":{"kind":"type","nameZh":"毒Ｚ","type":"poison","zMoveSlugPhysical":"acid-downpour--physical","zMoveSlugSpecial":"acid-downpour--special","zMoveNameZh":"腐蝕劇毒蓄光爆"},"groundium-z":{"kind":"type","nameZh":"地面Ｚ","type":"ground","zMoveSlugPhysical":"tectonic-rage--physical","zMoveSlugSpecial":"tectonic-rage--special","zMoveNameZh":"地動山搖地裂崩"},"flyinium-z":{"kind":"type","nameZh":"飛行Ｚ","type":"flying","zMoveSlugPhysical":"supersonic-skystrike--physical","zMoveSlugSpecial":"supersonic-skystrike--special","zMoveNameZh":"至高精神飛天擊"},"psychium-z":{"kind":"type","nameZh":"超能力Ｚ","type":"psychic","zMoveSlugPhysical":"shattered-psyche--physical","zMoveSlugSpecial":"shattered-psyche--special","zMoveNameZh":"至高精神破壞波"},"buginium-z":{"kind":"type","nameZh":"蟲Ｚ","type":"bug","zMoveSlugPhysical":"savage-spin-out--physical","zMoveSlugSpecial":"savage-spin-out--special","zMoveNameZh":"絕對捕食巨網收"},"rockium-z":{"kind":"type","nameZh":"岩石Ｚ","type":"rock","zMoveSlugPhysical":"continental-crush--physical","zMoveSlugSpecial":"continental-crush--special","zMoveNameZh":"毀天滅地巨岩墜"},"ghostium-z":{"kind":"type","nameZh":"幽靈Ｚ","type":"ghost","zMoveSlugPhysical":"never-ending-nightmare--physical","zMoveSlugSpecial":"never-ending-nightmare--special","zMoveNameZh":"無盡暗夜怨咒波"},"dragonium-z":{"kind":"type","nameZh":"龍Ｚ","type":"dragon","zMoveSlugPhysical":"devastating-drake--physical","zMoveSlugSpecial":"devastating-drake--special","zMoveNameZh":"究極巨龍震天地"},"darkinium-z":{"kind":"type","nameZh":"惡Ｚ","type":"dark","zMoveSlugPhysical":"black-hole-eclipse--physical","zMoveSlugSpecial":"black-hole-eclipse--special","zMoveNameZh":"黑洞吞噬萬物滅"},"steelium-z":{"kind":"type","nameZh":"鋼Ｚ","type":"steel","zMoveSlugPhysical":"corkscrew-crash--physical","zMoveSlugSpecial":"corkscrew-crash--special","zMoveNameZh":"超絕螺旋連擊破"},"fairium-z":{"kind":"type","nameZh":"妖精Ｚ","type":"fairy","zMoveSlugPhysical":"twinkle-tackle--physical","zMoveSlugSpecial":"twinkle-tackle--special","zMoveNameZh":"可愛星星飛天撞"},"pikashunium-z":{"kind":"species","nameZh":"皮卡丘Ｚ","speciesIds":[25],"requiredMove":"volt-tackle","zMoveSlug":"catastropika","zMoveNameZh":"皮卡皮卡必殺擊","type":"electric","category":"physical","power":210,"special":null},"pikanium-z":{"kind":"species","nameZh":"智皮卡Ｚ","speciesIds":[25],"requiredMove":"thunderbolt","zMoveSlug":"10-000-000-volt-thunderbolt","zMoveNameZh":"千萬伏特","type":"electric","category":"special","power":195,"special":null},"aloraichium-z":{"kind":"species","nameZh":"阿羅雷Ｚ","speciesIds":[26],"requiredMove":"thunderbolt","zMoveSlug":"stoked-sparksurfer","zMoveNameZh":"駕雷馭電戲衝浪","type":"electric","category":"special","power":175,"special":null},"snorlium-z":{"kind":"species","nameZh":"卡比獸Ｚ","speciesIds":[143],"requiredMove":"giga-impact","zMoveSlug":"pulverizing-pancake","zMoveNameZh":"認真起來大爆擊","type":"normal","category":"physical","power":210,"special":null},"eevium-z":{"kind":"species","nameZh":"伊布Ｚ","speciesIds":[133],"requiredMove":"last-resort","zMoveSlug":"extreme-evoboost","zMoveNameZh":"九彩昇華齊聚頂","type":"normal","category":"status","power":null,"special":"evoboost"},"mewnium-z":{"kind":"species","nameZh":"夢幻Ｚ","speciesIds":[151],"requiredMove":"psychic","zMoveSlug":"genesis-supernova","zMoveNameZh":"起源超新星大爆炸","type":"psychic","category":"special","power":185,"special":null},"decidium-z":{"kind":"species","nameZh":"狙射樹梟Ｚ","speciesIds":[724],"requiredMove":"spirit-shackle","zMoveSlug":"sinister-arrow-raid","zMoveNameZh":"遮天蔽日暗影箭","type":"ghost","category":"physical","power":180,"special":null},"incinium-z":{"kind":"species","nameZh":"熾焰咆哮虎Ｚ","speciesIds":[727],"requiredMove":"darkest-lariat","zMoveSlug":"malicious-moonsault","zMoveNameZh":"極惡飛躍粉碎擊","type":"dark","category":"physical","power":180,"special":null},"primarium-z":{"kind":"species","nameZh":"西獅海壬Ｚ","speciesIds":[730],"requiredMove":"sparkling-aria","zMoveSlug":"oceanic-operetta","zMoveNameZh":"海神莊嚴交響樂","type":"water","category":"special","power":195,"special":null},"tapunium-z":{"kind":"species","nameZh":"卡璞Ｚ","speciesIds":[785,786,787,788],"requiredMove":"natures-madness","zMoveSlug":"guardian-of-alola","zMoveNameZh":"巨人衛士・阿羅拉","type":"fairy","category":"special","power":null,"special":"fixedFractionDamage"},"marshadium-z":{"kind":"species","nameZh":"瑪夏多Ｚ","speciesIds":[802],"requiredMove":"spectral-thief","zMoveSlug":"soul-stealing-7-star-strike","zMoveNameZh":"七星奪魂腿","type":"ghost","category":"physical","power":195,"special":null},"kommonium-z":{"kind":"species","nameZh":"杖尾鱗甲龍Ｚ","speciesIds":[784],"requiredMove":"clanging-scales","zMoveSlug":"clangorous-soulblaze","zMoveNameZh":"熾魂熱舞型碎裂擊","type":"dragon","category":"special","power":185,"special":null},"lycanium-z":{"kind":"species","nameZh":"鬃岩狼人Ｚ","speciesIds":[745],"requiredMove":"stone-edge","zMoveSlug":"splintered-stormshards","zMoveNameZh":"狼嚎碎天地","type":"rock","category":"physical","power":190,"special":null},"mimikium-z":{"kind":"species","nameZh":"謎擬ＱＺ","speciesIds":[778],"requiredMove":"play-rough","zMoveSlug":"lets-snuggle-forever","zMoveNameZh":"親密無間大亂鬥","type":"fairy","category":"physical","power":190,"special":null},"solganium-z":{"kind":"species","nameZh":"索爾迦雷歐Ｚ","speciesIds":[791],"requiredMove":"sunsteel-strike","zMoveSlug":"searing-sunraze-smash","zMoveNameZh":"日光回旋下蒼穹","type":"steel","category":"physical","power":200,"special":null},"lunalium-z":{"kind":"species","nameZh":"露奈雅拉Ｚ","speciesIds":[792],"requiredMove":"moongeist-beam","zMoveSlug":"menacing-moonraze-maelstrom","zMoveNameZh":"月華飛濺落靈霄","type":"ghost","category":"special","power":200,"special":null},"ultranecrozium-z":{"kind":"species","nameZh":"究極奈克洛Ｚ","speciesIds":[800],"requiredMove":"photon-geyser","zMoveSlug":"light-that-burns-the-sky","zMoveNameZh":"焚天滅世熾光爆","type":"psychic","category":"special","power":200,"special":null}};
+const Z_CRYSTAL_CATALOG = {"normalium-z":{"kind":"type","nameZh":"一般Ｚ","type":"normal","zMoveSlugPhysical":"breakneck-blitz--physical","zMoveSlugSpecial":"breakneck-blitz--special","zMoveNameZh":"究極無敵大衝撞"},"firium-z":{"kind":"type","nameZh":"火Ｚ","type":"fire","zMoveSlugPhysical":"inferno-overdrive--physical","zMoveSlugSpecial":"inferno-overdrive--special","zMoveNameZh":"超強極限爆焰彈"},"waterium-z":{"kind":"type","nameZh":"水Ｚ","type":"water","zMoveSlugPhysical":"hydro-vortex--physical","zMoveSlugSpecial":"hydro-vortex--special","zMoveNameZh":"超級水流大漩渦"},"electrium-z":{"kind":"type","nameZh":"電Ｚ","type":"electric","zMoveSlugPhysical":"gigavolt-havoc--physical","zMoveSlugSpecial":"gigavolt-havoc--special","zMoveNameZh":"終極伏特狂雷閃"},"grassium-z":{"kind":"type","nameZh":"草Ｚ","type":"grass","zMoveSlugPhysical":"bloom-doom--physical","zMoveSlugSpecial":"bloom-doom--special","zMoveNameZh":"絢爛繽紛花怒放"},"icium-z":{"kind":"type","nameZh":"冰Ｚ","type":"ice","zMoveSlugPhysical":"subzero-slammer--physical","zMoveSlugSpecial":"subzero-slammer--special","zMoveNameZh":"激狂大地萬里冰"},"fightinium-z":{"kind":"type","nameZh":"格鬥Ｚ","type":"fighting","zMoveSlugPhysical":"all-out-pummeling--physical","zMoveSlugSpecial":"all-out-pummeling--special","zMoveNameZh":"全力無雙激烈拳"},"poisonium-z":{"kind":"type","nameZh":"毒Ｚ","type":"poison","zMoveSlugPhysical":"acid-downpour--physical","zMoveSlugSpecial":"acid-downpour--special","zMoveNameZh":"強酸劇毒滅絕雨"},"groundium-z":{"kind":"type","nameZh":"地面Ｚ","type":"ground","zMoveSlugPhysical":"tectonic-rage--physical","zMoveSlugSpecial":"tectonic-rage--special","zMoveNameZh":"地動山搖地裂崩"},"flyinium-z":{"kind":"type","nameZh":"飛行Ｚ","type":"flying","zMoveSlugPhysical":"supersonic-skystrike--physical","zMoveSlugSpecial":"supersonic-skystrike--special","zMoveNameZh":"極速俯衝轟烈撞"},"psychium-z":{"kind":"type","nameZh":"超能力Ｚ","type":"psychic","zMoveSlugPhysical":"shattered-psyche--physical","zMoveSlugSpecial":"shattered-psyche--special","zMoveNameZh":"至高精神破壞波"},"buginium-z":{"kind":"type","nameZh":"蟲Ｚ","type":"bug","zMoveSlugPhysical":"savage-spin-out--physical","zMoveSlugSpecial":"savage-spin-out--special","zMoveNameZh":"絕對捕食迴旋斬"},"rockium-z":{"kind":"type","nameZh":"岩石Ｚ","type":"rock","zMoveSlugPhysical":"continental-crush--physical","zMoveSlugSpecial":"continental-crush--special","zMoveNameZh":"毀天滅地巨岩墜"},"ghostium-z":{"kind":"type","nameZh":"幽靈Ｚ","type":"ghost","zMoveSlugPhysical":"never-ending-nightmare--physical","zMoveSlugSpecial":"never-ending-nightmare--special","zMoveNameZh":"無盡暗夜之誘惑"},"dragonium-z":{"kind":"type","nameZh":"龍Ｚ","type":"dragon","zMoveSlugPhysical":"devastating-drake--physical","zMoveSlugSpecial":"devastating-drake--special","zMoveNameZh":"究極巨龍震天地"},"darkinium-z":{"kind":"type","nameZh":"惡Ｚ","type":"dark","zMoveSlugPhysical":"black-hole-eclipse--physical","zMoveSlugSpecial":"black-hole-eclipse--special","zMoveNameZh":"黑洞吞噬萬物滅"},"steelium-z":{"kind":"type","nameZh":"鋼Ｚ","type":"steel","zMoveSlugPhysical":"corkscrew-crash--physical","zMoveSlugSpecial":"corkscrew-crash--special","zMoveNameZh":"超絕螺旋連擊"},"fairium-z":{"kind":"type","nameZh":"妖精Ｚ","type":"fairy","zMoveSlugPhysical":"twinkle-tackle--physical","zMoveSlugSpecial":"twinkle-tackle--special","zMoveNameZh":"可愛星星飛天撞"},"pikashunium-z":{"kind":"species","nameZh":"皮卡丘Ｚ","speciesIds":[25],"requiredMove":"volt-tackle","zMoveSlug":"catastropika","zMoveNameZh":"皮卡皮卡必殺擊","type":"electric","category":"physical","power":210,"special":null},"pikanium-z":{"kind":"species","nameZh":"智皮卡Ｚ","speciesIds":[25],"requiredMove":"thunderbolt","zMoveSlug":"10-000-000-volt-thunderbolt","zMoveNameZh":"千萬伏特","type":"electric","category":"special","power":195,"special":null},"aloraichium-z":{"kind":"species","nameZh":"阿羅雷Ｚ","speciesIds":[26],"requiredMove":"thunderbolt","zMoveSlug":"stoked-sparksurfer","zMoveNameZh":"駕雷馭電戲衝浪","type":"electric","category":"special","power":175,"special":null},"snorlium-z":{"kind":"species","nameZh":"卡比獸Ｚ","speciesIds":[143],"requiredMove":"giga-impact","zMoveSlug":"pulverizing-pancake","zMoveNameZh":"認真起來大爆擊","type":"normal","category":"physical","power":210,"special":null},"eevium-z":{"kind":"species","nameZh":"伊布Ｚ","speciesIds":[133],"requiredMove":"last-resort","zMoveSlug":"extreme-evoboost","zMoveNameZh":"九彩昇華齊聚頂","type":"normal","category":"status","power":null,"special":"evoboost"},"mewnium-z":{"kind":"species","nameZh":"夢幻Ｚ","speciesIds":[151],"requiredMove":"psychic","zMoveSlug":"genesis-supernova","zMoveNameZh":"起源超新星大爆炸","type":"psychic","category":"special","power":185,"special":null},"decidium-z":{"kind":"species","nameZh":"狙射樹梟Ｚ","speciesIds":[724],"requiredMove":"spirit-shackle","zMoveSlug":"sinister-arrow-raid","zMoveNameZh":"遮天蔽日暗影箭","type":"ghost","category":"physical","power":180,"special":null},"incinium-z":{"kind":"species","nameZh":"熾焰咆哮虎Ｚ","speciesIds":[727],"requiredMove":"darkest-lariat","zMoveSlug":"malicious-moonsault","zMoveNameZh":"極惡飛躍粉碎擊","type":"dark","category":"physical","power":180,"special":null},"primarium-z":{"kind":"species","nameZh":"西獅海壬Ｚ","speciesIds":[730],"requiredMove":"sparkling-aria","zMoveSlug":"oceanic-operetta","zMoveNameZh":"海神莊嚴交響樂","type":"water","category":"special","power":195,"special":null},"tapunium-z":{"kind":"species","nameZh":"卡璞Ｚ","speciesIds":[785,786,787,788],"requiredMove":"natures-madness","zMoveSlug":"guardian-of-alola","zMoveNameZh":"巨人衛士・阿羅拉","type":"fairy","category":"special","power":null,"special":"fixedFractionDamage"},"marshadium-z":{"kind":"species","nameZh":"瑪夏多Ｚ","speciesIds":[802],"requiredMove":"spectral-thief","zMoveSlug":"soul-stealing-7-star-strike","zMoveNameZh":"七星奪魂腿","type":"ghost","category":"physical","power":195,"special":null},"kommonium-z":{"kind":"species","nameZh":"杖尾鱗甲龍Ｚ","speciesIds":[784],"requiredMove":"clanging-scales","zMoveSlug":"clangorous-soulblaze","zMoveNameZh":"熾魂熱舞烈音爆","type":"dragon","category":"special","power":185,"special":null},"lycanium-z":{"kind":"species","nameZh":"鬃岩狼人Ｚ","speciesIds":[745],"requiredMove":"stone-edge","zMoveSlug":"splintered-stormshards","zMoveNameZh":"狼嘯石牙颶風暴","type":"rock","category":"physical","power":190,"special":null},"mimikium-z":{"kind":"species","nameZh":"謎擬ＱＺ","speciesIds":[778],"requiredMove":"play-rough","zMoveSlug":"lets-snuggle-forever","zMoveNameZh":"親密無間大亂揍","type":"fairy","category":"physical","power":190,"special":null},"solganium-z":{"kind":"species","nameZh":"索爾迦雷歐Ｚ","speciesIds":[791],"requiredMove":"sunsteel-strike","zMoveSlug":"searing-sunraze-smash","zMoveNameZh":"日光回旋下蒼穹","type":"steel","category":"physical","power":200,"special":null},"lunalium-z":{"kind":"species","nameZh":"露奈雅拉Ｚ","speciesIds":[792],"requiredMove":"moongeist-beam","zMoveSlug":"menacing-moonraze-maelstrom","zMoveNameZh":"月華飛濺落靈霄","type":"ghost","category":"special","power":200,"special":null},"ultranecrozium-z":{"kind":"species","nameZh":"究極奈克洛Ｚ","speciesIds":[800],"requiredMove":"photon-geyser","zMoveSlug":"light-that-burns-the-sky","zMoveNameZh":"焚天滅世熾光爆","type":"psychic","category":"special","power":200,"special":null}};
 
 // 官方「Z招式威力對照表」：屬性通用Z招式(不含寶可夢限定的固定威力Z招式)的威力完全由原本招式的
 // 威力換算而來，跟原招式屬性/招式本身完全無關，這張表是公版規則，寫死沒問題
@@ -7736,7 +8539,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (act.zMove && !zMoveUsedState[uid]) {
             const zResult = findZMoveInfoFor(state[uid], moveOf[uid]);
             if (zResult) {
-                moveOf[uid] = { ...moveOf[uid], power: zResult.power, nameZh: zResult.zMoveNameZh, __zSpecial: zResult.special || null };
+                moveOf[uid] = { ...moveOf[uid], power: zResult.power, nameZh: zResult.zMoveNameZh, __zSpecial: zResult.special || null, __isZMove: true };
                 zMoveUsedState[uid] = true;
                 log.push(`${state[uid].nickname} 拿出了純晶的力量！`);
             } else {
@@ -7930,6 +8733,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             attackerKey: attackerUid, defenderKey: defenderUid,
             attackerName: atkName, defenderName: defName,
             moveName: move.name, moveNameZh: move.nameZh, moveType: move.type, moveTarget: move.target,
+            isZMove: !!move.__isZMove, // 【第四十八輪新增】true時playBattleEvents會改播完整的Z招式動畫(Z字覆蓋圖→字樣圖片→特效+音效)，取代原本平淡的衝刺/自我強化發光
         };
 
         // 守住連續使用的成功率是「這次選的招式還是不是守住」決定的——只要這回合改選別的招式
