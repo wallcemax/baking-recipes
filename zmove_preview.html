@@ -396,7 +396,7 @@ var MOVES = [
 {id:23, zh:'九彩昇華齊聚頂', en:'Extreme Evoboost',
  nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603381/191px-%E4%B9%9D%E5%BD%A9%E6%98%87%E8%8F%AF%E9%BD%8A%E8%81%9A%E9%A0%82_Sprite_mjjeyu.webp',
  effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788617956/%E4%B9%9D%E5%BD%A9%E6%98%87%E8%8F%AF%E9%BD%8A%E8%81%9A%E9%A0%82_ry6fwg.png',
- desc:'在放招者頭上出現特效後結束（自身增益，特效不飛向對手）（修改建議：改成從出招者身邊九道特效從底部淡入到上方，像九道光昇天的感覺；特效圖也換新的）',
+ desc:'在放招者頭上出現特效後結束（自身增益，特效不飛向對手）（修改建議：特效圖換新的；改了3次——最新版是9根固定不動的光柱，頂端疊在頭頂上方同一點、底端圍繞在放招者身上，各自從底部往上淡入再往上淡出，呈現「九道光從地面升起、匯聚成一點後消失」的感覺，不是用位移動畫）',
  primitive:'nineBeamsAscend',
  sound:'ascend', soundWhen:'start'},
 {id:24, zh:'起源超新星大爆炸', en:'Genesis Supernova',
@@ -980,34 +980,45 @@ function selfHeadFx(caster, effectUrl){
 }
 
 function nineBeamsAscend(caster, effectUrl){
-  // 修改建議2次(九彩昇華齊聚頂)：第一版是「橫向錯開、各自原地往上飄」，使用者這輪回饋
-  // 要的其實是「圍繞放招者一圈、九道光各自不同步地啟動、全部往上方同一個匯聚點集中」——
-  // 改成：9道光分布在放招者身體周圍一整圈(用橢圓分佈把左右/上下都包住，而不是只排在下方一排)，
-  // 每一道各自從自己的起點同時往「頭頂上方同一個匯聚點」移動+淡入淡出，起始時間用亂數打散
-  // (不是照順序i*固定間隔排隊)，看起來才會像「一道一道不同步地」冒出來，而不是整齊的波浪。
+  // 第三次修改建議(九彩昇華齊聚頂)：使用者這次明確要求「圖片不要用移動的」——不是位移動畫，
+  // 而是9張圖片各自固定不動：每張圖的頂端(旋轉軸心)都疊在放招者頭頂上方同一個匯聚點，
+  // 圖片底端則各自呈放射狀分布圍繞在放招者身上，每張各自旋轉不同角度、讓自己的頭尾對齊
+  // 「匯聚點→身上某個定點」這條方向；再用clip-path做「從底部往上淡入、又從底部往上淡出」
+  // 的wipe效果(不是搬動圖片位置)：先讓top-inset從100%降到0%，可視範圍等於從底部往上長出來
+  // (淡入)；接著讓bottom-inset從0%升到100%，可視範圍等於從底部往上收掉(淡出)。兩段疊起來，
+  // 固定不動的9根光柱看起來就會像「光從地面沿著同一根柱子往上爬、到頭頂匯聚成一點、
+  // 再往上收光消失」，符合使用者說的「九道光從地面往上到頭頂匯集成一個點以後消失」的感覺。
+  // 每根光柱的啟動時間仍保留隨機打散(不同步)，呼應更早一輪「一個一個光束不同步」的要求。
   var c = centerOf(caster);
   var count = 9;
-  var radiusX = Math.max(60, c.w * 0.65);
-  var radiusY = Math.max(40, c.h * 0.4);
-  var convergeX = c.x, convergeY = c.y - c.h*0.85; // 匯聚點：放招者頭頂上方同一點
+  var apexX = c.x, apexY = c.y - c.h*0.95; // 匯聚點：固定在頭頂上方同一點，9張圖共用同一個頂點
+  var beamWidth = 26;
+  var radiusX = Math.max(55, c.w*0.6), radiusY = Math.max(45, c.h*0.55);
   var proms = [];
   for(var i=0;i<count;i++){
     (function(i){
-      var size = 24 + Math.random()*10;
-      var angle = (Math.PI*2/count)*i + (Math.random()-0.5)*0.35;
-      var startX = c.x + Math.cos(angle)*radiusX;
-      var startY = c.y + Math.sin(angle)*radiusY;
-      var img = makeFxImg(effectUrl, size);
-      img.style.left = (startX - size/2) + 'px';
-      img.style.top = (startY - size/2) + 'px';
-      var dx = convergeX - startX, dy = convergeY - startY;
-      var delay = Math.random()*700; // 不同步：起始時間整個隨機打散，不排隊
+      var angle = (Math.PI*2/count)*i + (Math.random()-0.5)*0.25;
+      var baseX = c.x + Math.cos(angle)*radiusX;
+      var baseY = c.y + c.h*0.15 + Math.sin(angle)*radiusY*0.9; // 底端圍繞身體一圈，貼合站姿略偏下
+      var dx = baseX - apexX, dy = baseY - apexY;
+      var length = Math.max(20, Math.sqrt(dx*dx + dy*dy));
+      var rotDeg = Math.atan2(dx, dy) * 180/Math.PI; // 以「正下方」當0度基準的旋轉角度
+      var img = makeFxImg(effectUrl, beamWidth);
+      img.style.height = length + 'px';
+      img.style.left = (apexX - beamWidth/2) + 'px';
+      img.style.top = apexY + 'px';
+      img.style.transformOrigin = '50% 0%'; // 旋轉軸心固定在頂端(匯聚點)，圖片本身完全不位移
+      img.style.transform = 'rotate(' + rotDeg + 'deg)';
+      img.style.opacity = '1'; // 可見範圍改由clip-path控制，蓋掉makeFxImg預設的opacity:0
+      img.style.clipPath = 'inset(100% 0 0 0)';
+      var delay = Math.random()*550; // 每根光柱各自不同步啟動
+      var riseMs = 380, holdMs = 240, fallMs = 380, total = riseMs+holdMs+fallMs;
       var a = img.animate([
-        {opacity:0, transform:'translate(0,0) scale(0.6)'},
-        {opacity:1, transform:'translate('+(dx*0.3)+'px,'+(dy*0.3)+'px) scale(0.9)', offset:0.25},
-        {opacity:1, transform:'translate('+(dx*0.8)+'px,'+(dy*0.8)+'px) scale(1)', offset:0.8},
-        {opacity:0, transform:'translate('+dx+'px,'+dy+'px) scale(0.7)'}
-      ], {duration:700, delay:delay});
+        {clipPath:'inset(100% 0 0% 0)', offset:0},
+        {clipPath:'inset(0% 0 0% 0)', offset: riseMs/total},
+        {clipPath:'inset(0% 0 0% 0)', offset: (riseMs+holdMs)/total},
+        {clipPath:'inset(0% 0 100% 0)', offset:1}
+      ], {duration: total, delay:delay, easing:'ease-in-out', fill:'forwards'});
       proms.push(a.finished.then(function(){ img.remove(); }));
     })(i);
   }
