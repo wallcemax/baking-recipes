@@ -247,7 +247,7 @@
                          跑JS產生 -->
                     <ul class="space-y-1.5">
                         <li class="flex items-center flex-wrap gap-1"><span class="type-badge" style="background:#78C850">草</span><span class="text-gray-400 text-[10px]">+</span><span class="type-badge" style="background:#6890F0">水</span><span class="ml-0.5">→ 恢復/解異常樹果</span></li>
-                        <li class="flex items-center flex-wrap gap-1"><span class="type-badge" style="background:#B8A038">岩石</span><span class="text-gray-400 text-[10px]">+</span><span class="type-badge" style="background:#C03028">格鬥</span><span class="ml-0.5">→ 進化石</span></li>
+                        <li class="flex items-center flex-wrap gap-1"><span class="type-badge" style="background:#B8A038">岩石</span><span class="text-gray-400 text-[10px]">+</span><span class="type-badge" style="background:#C03028">格鬥</span><span class="ml-0.5">→ 進化石(極低機率是超級石)</span></li>
                         <li class="flex items-center flex-wrap gap-1"><span class="type-badge" style="background:#F08030">火</span><span class="text-gray-400 text-[10px]">+</span><span class="type-badge" style="background:#B8B8D0">鋼</span><span class="ml-0.5">→ 屬性強化道具</span></li>
                         <li class="flex items-center flex-wrap gap-1"><span class="type-badge" style="background:#A8A878">一般</span><span class="text-gray-400 text-[10px]">+</span><span class="type-badge" style="background:#EE99AC">妖精</span><span class="ml-0.5">→ 牧場整體經驗值多一點</span></li>
                         <li class="flex items-center flex-wrap gap-1"><span class="type-badge" style="background:#F8D030">電</span><span class="text-gray-400 text-[10px]">+</span><span class="type-badge" style="background:#E0C068">地面</span><span class="ml-0.5">→ 經驗糖果</span></li>
@@ -2131,7 +2131,9 @@ async function openDetailModal(instanceId) {
             <p class="text-xs text-gray-400 mb-1">${typeBadgesHtml(d.types, d.typesZh)}</p>
             <p class="text-xs text-gray-400">Lv.${inst.level} · EXP ${inst.exp} · 親密度 ${inst.friendship} · ${inst.flavor}口味</p>
             ${inst.heldItem ? `<p class="text-xs text-blue-600 mt-1 inline-flex items-center gap-1"><img src="${COMMON_BERRIES.includes(inst.heldItem) ? berrySpriteUrl(inst.heldItem) : itemSpriteForKey(inst.heldItem)}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">攜帶著${heldItemNameZh}</p>` : ''}
+            ${inst.ability ? `<p class="text-xs text-purple-600 mt-1">特性：${abilityDisplayInfo(inst.ability) ? abilityDisplayInfo(inst.ability).nameZh : inst.ability}</p>` : ''}
         </div>
+        ${inst.ability && abilityDisplayInfo(inst.ability) ? `<p class="text-xs text-gray-500 bg-purple-50 rounded-xl p-3 mb-3 leading-relaxed"><span class="font-bold text-purple-600">${abilityDisplayInfo(inst.ability).nameZh}：</span>${abilityDisplayInfo(inst.ability).descZh}</p>` : ''}
         ${d.flavorTextZh ? `<p class="text-xs text-gray-500 bg-gray-50 rounded-xl p-3 mb-3 leading-relaxed">${d.flavorTextZh}</p>` : ''}
         <div class="grid grid-cols-3 gap-1 text-center text-xs mb-3">
             <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">HP</p><p class="font-bold">${maxHpOf(inst)}</p></div>
@@ -2598,8 +2600,9 @@ async function openBagModal() {
     if (itemKeys.length === 0 && berryKeys.length === 0) {
         content.innerHTML = `
             <h3 class="font-bold text-lg mb-3 text-center">🎒 背包</h3>
-            <p class="text-sm text-gray-400 text-center py-8">背包目前是空的，去玩「猜猜看」分頁賺一些道具/莓果吧！</p>
+            <p class="text-sm text-gray-400 text-center py-8">背包目前是空的，去玩「猜猜看」「拼圖」分頁，或到「牧場」放置寶可夢，都有機會賺到道具/莓果！</p>
             <button onclick="closeBagModal(); switchTab('guess');" class="w-full bg-green-100 text-green-700 py-2 rounded-xl font-bold text-sm mb-2">前往猜猜看</button>
+            <button onclick="closeBagModal(); switchTab('idle');" class="w-full bg-amber-100 text-amber-700 py-2 rounded-xl font-bold text-sm mb-2">前往牧場</button>
             <button onclick="closeBagModal()" class="w-full text-gray-400 text-sm">關閉</button>
         `;
         return;
@@ -3356,7 +3359,7 @@ function toggleIdleRulesDetail() {
 // 只顯示打勾/沒打勾，不秀任何機率數字
 const IDLE_TYPE_COMBO_RULES_CLIENT = [
     { types: ['grass', 'water'], label: '恢復/解異常樹果' },
-    { types: ['rock', 'fighting'], label: '進化石' },
+    { types: ['rock', 'fighting'], label: '進化石(極低機率是超級石)' },
     { types: ['fire', 'steel'], label: '屬性強化道具' },
     { types: ['electric', 'ground'], label: '經驗糖果' },
     { types: ['psychic', 'ghost'], label: '心之鱗' },
@@ -5749,6 +5752,7 @@ async function playBattleEvents(events, ctx) {
                 imprison: `${ev.attackerName} 的招式被封印了！`,
                 silence: `${ev.attackerName} 被封住了聲音，無法使出音波系招式！`,
                 encore: `${ev.attackerName} 被要求再來一次，沒辦法使用別的招式！`,
+                truant: `${ev.attackerName} 正在偷懶，無法出招！`,
             }[ev.blocked] || `${ev.attackerName} 無法動彈！`;
             appendLog(blockedText);
             atkEl.classList.remove('miss-shake');
@@ -5951,6 +5955,14 @@ function buildTeamDataFromInstData(instanceId, inst, nickname, forceLevel) {
         isShiny: !!inst.isShiny,
         heldItem: inst.heldItem || null, // 攜帶道具/莓果，效果見resolveBattleRound裡的持有道具邏輯區塊
         starMult: mult, // 【第三十輪新增】Mega進化中途要用「Mega後的種族值」重新算數值，得記住這隻原本的星級加成倍率，不然沒辦法重算
+        // 【第三十一輪新增】特性：inst.ability是worker.js抽蛋時(rollAndCreatePokemonInstance)隨機
+        // 決定、寫進pokemonInstances文件的欄位；沒有這個欄位的舊寶可夢(這次更新之前就已經抓到的)
+        // 一律當成null(沒有特性效果)，需要用管理員補發腳本(pokemon_admin_backfill_abilities)才會
+        // 補上——這跟第七輪進化限定招式缺欄位時的處理方式(先讓舊資料優雅退化，再用補發腳本補齊)
+        // 是同一套模式。這次只有「玩家自己隊伍」的寶可夢(PvP雙方、野生/道館戰裡玩家這一側)會有
+        // 真正的特性效果；道館NPC/野生寶可夢對手沒有走這個函式(NPC走的是buildTrainerTeamMember，
+        // 這次沒有加特性)，是刻意縮小這輪範圍的簡化，見交付紀錄說明
+        ability: inst.ability || null,
     };
 }
 
@@ -6251,6 +6263,50 @@ function zPowerForBasePower(basePower) {
 // 這兩張表算出來，const宣告順序上必須排在那兩張表後面。跟worker.js的同名常數要保持一致
 const POKEMON_MEGA_STONE_ITEMS = Object.keys(MEGA_STONE_CATALOG);
 const POKEMON_Z_CRYSTAL_ITEMS = Object.keys(Z_CRYSTAL_CATALOG);
+
+// ============================================================
+// 【第三十一輪新增】特性(Ability)系統
+// ============================================================
+// 資料來源：PokéAPI ability端點(id 1~307，取dex 1~1025全國圖鑑實際會用到的284種)，
+// 中文名稱/說明文字都是PokéAPI的names/flavor_text_entries官方zh-hant資料，只有36種
+// 太新(第九世代)、PokéAPI還沒有官方中文簡介的，才由我方依照英文說明文字自己翻譯
+// (跟MOVE_DESC_ZH_OVERRIDE/SPECIES_DESC_ZH_OVERRIDE同樣的處理模式)。這張表本身只是
+// 「顯示用」的名稱/說明資料，實際的戰鬥效果邏輯在resolveBattleRound裡另外用ability
+// 欄位(字串代號，跟這裡的key共用同一套)分別判斷，兩者是分開的兩件事。
+const ABILITY_DATA_ZH = {"battle-bond":{"nameZh":"羈絆變身","descZh":"打倒對手的寶可夢後，會受到羈絆的力量覺醒，變身型態，水手裏劍的威力提高、必定連續攻擊3次。"},"tangling-hair":{"nameZh":"紊亂毛髮","descZh":"受到接觸類招式攻擊時，會讓碰到自己的對手速度下降。"},"stench":{"nameZh":"惡臭","descZh":"發出臭氣，在攻擊的時候，有時會使對手畏縮。"},"drizzle":{"nameZh":"降雨","descZh":"出場時，會將天氣變為下雨。"},"speed-boost":{"nameZh":"加速","descZh":"每一回合速度會變快。"},"battle-armor":{"nameZh":"戰鬥盔甲","descZh":"被堅硬的甲殼守護著，不會被對手的攻擊擊中要害。"},"sturdy":{"nameZh":"結實","descZh":"受到對手的招式攻擊時不會被一擊打倒。一擊必殺的招式也沒有效果。"},"damp":{"nameZh":"濕氣","descZh":"透過把周圍都弄濕，使誰都無法使用自爆等爆炸類的招式。"},"limber":{"nameZh":"柔軟","descZh":"因為身體柔軟，不會陷入麻痺狀態。"},"sand-veil":{"nameZh":"沙隱","descZh":"在沙暴中閃避率會提高。"},"static":{"nameZh":"靜電","descZh":"身上帶有靜電，有時會令接觸到的對手麻痺。"},"volt-absorb":{"nameZh":"蓄電","descZh":"受到電屬性的招式攻擊時，不會受到傷害，而是會回復。"},"water-absorb":{"nameZh":"儲水","descZh":"受到水屬性的招式攻擊時，不會受到傷害，而是會回復。"},"oblivious":{"nameZh":"遲鈍","descZh":"感覺遲鈍，不會陷入著迷和被挑釁狀態。"},"cloud-nine":{"nameZh":"無關天氣","descZh":"任何天氣的影響都會消失。"},"compound-eyes":{"nameZh":"複眼","descZh":"因為擁有複眼，會提高招式的命中率。"},"insomnia":{"nameZh":"不眠","descZh":"因為有著睡不著的體質，所以不會陷入睡眠狀態。"},"color-change":{"nameZh":"變色","descZh":"自己的屬性會變為擊中自己的對手招式的屬性。"},"immunity":{"nameZh":"免疫","descZh":"因為體內擁有免疫能力，不會陷入中毒狀態。"},"flash-fire":{"nameZh":"引火","descZh":"受到火屬性的招式攻擊時，吸收火焰，讓自己使出的火屬性招式變強。"},"shield-dust":{"nameZh":"鱗粉","descZh":"被鱗粉守護著，不會受到招式的追加效果影響。"},"own-tempo":{"nameZh":"我行我素","descZh":"因為我行我素，不會陷入混亂狀態。"},"suction-cups":{"nameZh":"吸盤","descZh":"用吸盤將自己牢牢吸附在地面上，讓替換寶可夢的招式和道具失效。"},"intimidate":{"nameZh":"威嚇","descZh":"出場時威嚇對手，使其退縮，從而降低對手的攻擊。"},"shadow-tag":{"nameZh":"踩影","descZh":"踩住對手的影子使其無法逃走或替換。"},"rough-skin":{"nameZh":"粗糙皮膚","descZh":"受到攻擊時，用粗糙的皮膚弄傷接觸到自己的對手。"},"wonder-guard":{"nameZh":"神奇守護","descZh":"不可思議的力量，只有效果絕佳的招式才會擊中自己。"},"levitate":{"nameZh":"飄浮","descZh":"從地面浮起，從而不會受到地面屬性招式的攻擊。"},"effect-spore":{"nameZh":"孢子","descZh":"受到攻擊時，有時會讓接觸到自己的對手陷入中毒、麻痺或睡眠狀態。"},"synchronize":{"nameZh":"同步","descZh":"將自己的中毒、麻痺或灼傷狀態傳染給對手。"},"clear-body":{"nameZh":"恆淨之軀","descZh":"不會因對手的招式或特性而被降低能力。"},"natural-cure":{"nameZh":"自然回復","descZh":"異常狀態會在離場後治癒。"},"lightning-rod":{"nameZh":"避雷針","descZh":"將電屬性的招式吸引到自己身上，不但不會受到傷害，反而會提高特攻。"},"serene-grace":{"nameZh":"天恩","descZh":"受到上天保佑，容易出現招式的追加效果。"},"swift-swim":{"nameZh":"悠游自如","descZh":"天氣為下雨時，速度會提高。"},"chlorophyll":{"nameZh":"葉綠素","descZh":"天氣為晴朗時，速度會提高。"},"illuminate":{"nameZh":"發光","descZh":"透過讓周圍變亮，變得容易遇見野生的寶可夢。"},"trace":{"nameZh":"複製","descZh":"出場時，複製對手的特性，變為與之相同的特性。"},"huge-power":{"nameZh":"大力士","descZh":"物理攻擊的威力會變為２倍。"},"poison-point":{"nameZh":"毒刺","descZh":"有時會讓接觸到自己的對手陷入中毒狀態。"},"inner-focus":{"nameZh":"精神力","descZh":"靠著經過鍛鍊的精神，不會因對手的攻擊而畏縮。"},"magma-armor":{"nameZh":"熔岩鎧甲","descZh":"將熾熱的熔岩覆蓋在身上，不會陷入冰凍狀態。"},"water-veil":{"nameZh":"水幕","descZh":"將水幕裹在身上，不會陷入灼傷狀態。"},"magnet-pull":{"nameZh":"磁力","descZh":"用磁力吸住鋼屬性的寶可夢，使其無法逃走。"},"soundproof":{"nameZh":"隔音","descZh":"透過遮蔽聲音，不受到聲音招式的攻擊。"},"rain-dish":{"nameZh":"雨盤","descZh":"天氣為下雨時，會漸漸回復ＨＰ。"},"sand-stream":{"nameZh":"揚沙","descZh":"出場時，會把天氣變為沙暴。"},"pressure":{"nameZh":"壓迫感","descZh":"給予對手壓迫感，大量減少其使用招式的ＰＰ。"},"thick-fat":{"nameZh":"厚脂肪","descZh":"被厚厚的脂肪保護著，能夠讓火屬性和冰屬性招式的傷害減半。"},"early-bird":{"nameZh":"早起","descZh":"即使陷入睡眠狀態，也能以２倍的速度提早醒來。"},"flame-body":{"nameZh":"火焰之軀","descZh":"有時會讓接觸到自己的對手陷入灼傷狀態。"},"run-away":{"nameZh":"逃跑","descZh":"一定能從野生寶可夢那裡逃走。"},"keen-eye":{"nameZh":"銳利目光","descZh":"靠著銳利的目光，命中率不會被降低。"},"hyper-cutter":{"nameZh":"怪力鉗","descZh":"因為擁有以力量為傲的鉗子，不會被對手降低攻擊。"},"pickup":{"nameZh":"撿拾","descZh":"有時會撿來對手用過的道具。冒險過程中也會撿來。"},"truant":{"nameZh":"懶惰","descZh":"如果使出招式，下一回合就需要休息。"},"hustle":{"nameZh":"活力","descZh":"自己的攻擊雖會變高，但命中率會降低。"},"cute-charm":{"nameZh":"迷人之軀","descZh":"有時會讓接觸到自己的對手陷入著迷狀態。"},"plus":{"nameZh":"正電","descZh":"場上的夥伴之中，如果有正電或負電特性的寶可夢，自己的特攻會提高。"},"minus":{"nameZh":"負電","descZh":"場上的夥伴之中，如果有正電或負電特性的寶可夢，自己的特攻會提高。"},"forecast":{"nameZh":"陰晴不定","descZh":"在天氣的影響下，會變成水屬性、火屬性或冰屬性之中的一種。"},"sticky-hold":{"nameZh":"黏著","descZh":"道具會黏在具有黏性的身體上，不會被對手奪走。"},"shed-skin":{"nameZh":"蛻皮","descZh":"透過蛻去身上的皮，有時會治癒異常狀態。"},"guts":{"nameZh":"毅力","descZh":"陷入異常狀態時，會拿出毅力，攻擊會提高。"},"marvel-scale":{"nameZh":"神奇鱗片","descZh":"陷入異常狀態時，神奇鱗片會發生反應，防禦會提高。"},"liquid-ooze":{"nameZh":"污泥漿","descZh":"吸收了污泥漿的對手會因為強烈的惡臭而使得ＨＰ減少。"},"overgrow":{"nameZh":"茂盛","descZh":"ＨＰ減少的時候，草屬性的招式威力會提高。"},"blaze":{"nameZh":"猛火","descZh":"ＨＰ減少的時候，火屬性的招式威力會提高。"},"torrent":{"nameZh":"激流","descZh":"ＨＰ減少的時候，水屬性的招式威力會提高。"},"swarm":{"nameZh":"蟲之預感","descZh":"ＨＰ減少的時候，蟲屬性的招式威力會提高。"},"rock-head":{"nameZh":"堅硬腦袋","descZh":"即使使出會受反作用力傷害的招式，ＨＰ也不會減少。"},"drought":{"nameZh":"日照","descZh":"出場時，會將天氣變為晴朗。"},"arena-trap":{"nameZh":"沙穴","descZh":"在戰鬥中讓對手無法逃走。"},"vital-spirit":{"nameZh":"幹勁","descZh":"透過激發出幹勁，不會陷入睡眠狀態。"},"white-smoke":{"nameZh":"白色煙霧","descZh":"被白色煙霧保護著，不會被對手降低能力。"},"pure-power":{"nameZh":"瑜伽之力","descZh":"因瑜伽的力量，物理攻擊的威力會變為２倍。"},"shell-armor":{"nameZh":"硬殼盔甲","descZh":"被堅硬的殼保護著，對手的攻擊不會擊中要害。"},"air-lock":{"nameZh":"氣閘","descZh":"所有天氣的影響都會消失。"},"tangled-feet":{"nameZh":"蹣跚","descZh":"陷入混亂狀態時，閃避率會提高。"},"motor-drive":{"nameZh":"電氣引擎","descZh":"受到電屬性的招式攻擊時，不但不會受到傷害，反而速度會提高。"},"rivalry":{"nameZh":"鬥爭心","descZh":"面對性別相同的對手，會燃起鬥爭心，變得更強。面對性別不同的對手時則會變弱。"},"steadfast":{"nameZh":"不屈之心","descZh":"每次畏縮時，不屈之心就會燃起，速度也會提高。"},"snow-cloak":{"nameZh":"雪隱","descZh":"天氣為冰雹時，閃避率會提高。"},"gluttony":{"nameZh":"貪吃鬼","descZh":"原本ＨＰ變得很少時才會吃的樹果，在ＨＰ還有一半時就會把它吃掉。"},"anger-point":{"nameZh":"憤怒穴位","descZh":"要害被擊中時會大發雷霆。攻擊力會提高到最大。"},"unburden":{"nameZh":"輕裝","descZh":"失去所持有的道具時，速度會提高。"},"heatproof":{"nameZh":"耐熱","descZh":"靠著耐熱的體質，讓火屬性的招式威力減半。"},"simple":{"nameZh":"單純","descZh":"能力變化會變為平時的２倍。"},"dry-skin":{"nameZh":"乾燥皮膚","descZh":"下雨天氣時和受到水屬性的招式攻擊時，ＨＰ會回復。晴朗天氣時和受到火屬性的招式攻擊時，ＨＰ會減少。"},"download":{"nameZh":"下載","descZh":"比較對手的防禦和特防，根據較低的那項能力相應地提高自己的攻擊或特攻。"},"iron-fist":{"nameZh":"鐵拳","descZh":"使用到拳頭的招式威力會提高。"},"poison-heal":{"nameZh":"毒療","descZh":"陷入中毒狀態時，ＨＰ不會減少，反而會漸漸增加。"},"adaptability":{"nameZh":"適應力","descZh":"與自身同屬性的招式威力會提高。"},"skill-link":{"nameZh":"連續攻擊","descZh":"使用連續招式時，每回都能以最多次數進行攻擊。"},"hydration":{"nameZh":"濕潤之軀","descZh":"天氣為下雨時，會治癒異常狀態。"},"solar-power":{"nameZh":"太陽之力","descZh":"天氣為晴朗時特攻會提高，但每回合ＨＰ會減少。"},"quick-feet":{"nameZh":"飛毛腿","descZh":"陷入異常狀態時，速度會提高。"},"normalize":{"nameZh":"一般皮膚","descZh":"無論是什麼屬性的招式，全部都會變為一般屬性。威力會少量提高。"},"sniper":{"nameZh":"狙擊手","descZh":"擊中要害時，威力會進一步提高。"},"magic-guard":{"nameZh":"魔法防守","descZh":"不會受到攻擊以外的傷害。"},"no-guard":{"nameZh":"無防守","descZh":"由於無防守戰術，雙方使出的招式都必定會擊中。"},"stall":{"nameZh":"慢出","descZh":"使出招式的順序必定會變為最後。"},"technician":{"nameZh":"技術高手","descZh":"可讓威力低的招式提高威力來進行攻擊。"},"leaf-guard":{"nameZh":"葉子防守","descZh":"天氣為晴朗時，不會陷入異常狀態。"},"klutz":{"nameZh":"笨拙","descZh":"無法使用持有的道具。"},"mold-breaker":{"nameZh":"破格","descZh":"可不受特性影響，向對手使出招式。"},"super-luck":{"nameZh":"超幸運","descZh":"因為非常幸運，容易擊中對手的要害。"},"aftermath":{"nameZh":"引爆","descZh":"瀕死時，會對接觸到自己的對手造成傷害。"},"anticipation":{"nameZh":"危險預知","descZh":"察覺對手持有的危險招式。"},"forewarn":{"nameZh":"預知夢","descZh":"出場時，預見１個對手持有的招式。"},"unaware":{"nameZh":"純樸","descZh":"可無視對手能力的變化，進行攻擊。"},"tinted-lens":{"nameZh":"有色眼鏡","descZh":"可將效果不好的招式以正常的威力使出。"},"filter":{"nameZh":"過濾","descZh":"受到效果絕佳的攻擊時，可減弱其威力。"},"slow-start":{"nameZh":"慢啟動","descZh":"在５回合內，攻擊和速度會減半。"},"scrappy":{"nameZh":"膽量","descZh":"一般屬性和格鬥屬性的招式可擊中幽靈屬性的寶可夢。"},"storm-drain":{"nameZh":"引水","descZh":"將水屬性的招式引到自己身上，不但不會受到傷害，反而會提高特攻。"},"ice-body":{"nameZh":"冰凍之軀","descZh":"天氣為冰雹時，會漸漸回復ＨＰ。"},"solid-rock":{"nameZh":"堅硬岩石","descZh":"受到效果絕佳的攻擊時，可減弱其威力。"},"snow-warning":{"nameZh":"降雪","descZh":"出場時，會將天氣變為冰雹。"},"honey-gather":{"nameZh":"採蜜","descZh":"戰鬥結束時，有時候會撿來甜甜蜜。"},"frisk":{"nameZh":"察覺","descZh":"出場時，可以察覺對手的持有物。"},"reckless":{"nameZh":"捨身","descZh":"會讓自己因反作用力而受傷的招式威力會提高。"},"multitype":{"nameZh":"多屬性","descZh":"自己的屬性會依持有的石板或Ｚ純晶的屬性而改變。"},"flower-gift":{"nameZh":"花之禮","descZh":"天氣為晴朗時，自己和同伴的攻擊和特防能力會提高。"},"bad-dreams":{"nameZh":"夢魘","descZh":"給予陷入睡眠狀態的對手傷害。"},"pickpocket":{"nameZh":"順手牽羊","descZh":"盜取接觸到自己的對手的道具。"},"sheer-force":{"nameZh":"強行","descZh":"招式會失去追加效果，但可以用更高的威力使出招式。"},"contrary":{"nameZh":"唱反調","descZh":"能力的變化會逆轉，原本提高時會降低，原本降低時會提高。"},"unnerve":{"nameZh":"緊張感","descZh":"讓對手感到緊張，無法吃樹果。"},"defiant":{"nameZh":"不服輸","descZh":"能力被降低時，攻擊會大幅提高。"},"defeatist":{"nameZh":"軟弱","descZh":"ＨＰ降到一半以下時，會變得軟弱而使得攻擊和特攻減半。"},"cursed-body":{"nameZh":"詛咒之軀","descZh":"受到攻擊時，有時會把對手的招式變為定身法狀態。"},"healer":{"nameZh":"治癒之心","descZh":"有時會治癒同伴的異常狀態。"},"friend-guard":{"nameZh":"友情防守","descZh":"可以減少我方受到的傷害。"},"weak-armor":{"nameZh":"碎裂鎧甲","descZh":"因物理招式受到傷害時，防禦會降低，速度會大幅提高。"},"heavy-metal":{"nameZh":"重金屬","descZh":"自己的重量會變為２倍。"},"light-metal":{"nameZh":"輕金屬","descZh":"自己的重量會減半。"},"multiscale":{"nameZh":"多重鱗片","descZh":"ＨＰ全滿時，受到的傷害會變少。"},"toxic-boost":{"nameZh":"中毒激升","descZh":"陷入中毒狀態時，物理招式的威力會提高。"},"flare-boost":{"nameZh":"受熱激升","descZh":"陷入灼傷狀態時，特殊招式的威力會提高。"},"harvest":{"nameZh":"收穫","descZh":"可多次採收已被使用過的樹果。"},"telepathy":{"nameZh":"心靈感應","descZh":"預測我方的攻擊，並閃避其招式。"},"moody":{"nameZh":"心情不定","descZh":"每一回合，能力中的某項會大幅提高，相對地某項會降低。"},"overcoat":{"nameZh":"防塵","descZh":"不會受到沙暴或冰雹等的傷害。不會受到粉末類招式的攻擊。"},"poison-touch":{"nameZh":"毒手","descZh":"有時僅是接觸就能讓對手中毒。"},"regenerator":{"nameZh":"再生力","descZh":"退回同行隊伍後，ＨＰ會少量回復。"},"big-pecks":{"nameZh":"健壯胸肌","descZh":"不會受到降低防禦的效果影響。"},"sand-rush":{"nameZh":"撥沙","descZh":"天氣為沙暴時，速度會提高。"},"wonder-skin":{"nameZh":"奇跡皮膚","descZh":"不易受到變化類招式攻擊的身體。"},"analytic":{"nameZh":"分析","descZh":"如果在最後使出招式，招式的威力就會變強。"},"illusion":{"nameZh":"幻覺","descZh":"假扮成同行隊伍中的最後一隻寶可夢出場，迷惑對手。"},"imposter":{"nameZh":"變身者","descZh":"變身為當前面對的寶可夢。"},"infiltrator":{"nameZh":"穿透","descZh":"可穿透對手的屏障或替身進行攻擊。"},"mummy":{"nameZh":"木乃伊","descZh":"被對手接觸到時，會將對手變成木乃伊。"},"moxie":{"nameZh":"自信過度","descZh":"如果打倒對手，會充滿自信並提高攻擊。"},"justified":{"nameZh":"正義之心","descZh":"受到惡屬性的招式攻擊時，因為正義感，攻擊會提高。"},"rattled":{"nameZh":"膽怯","descZh":"受到惡屬性、幽靈屬性和蟲屬性的招式攻擊時，會因膽怯而使得速度提高。"},"magic-bounce":{"nameZh":"魔法鏡","descZh":"可不受到由對手使出的變化類招式所影響，並將其反彈。"},"sap-sipper":{"nameZh":"食草","descZh":"受到草屬性的招式攻擊時，不但不會受到傷害，反而攻擊會提高。"},"prankster":{"nameZh":"惡作劇之心","descZh":"可以搶先使出變化類招式。"},"sand-force":{"nameZh":"沙之力","descZh":"天氣為沙暴時，岩石屬性、地面屬性和鋼屬性招式的威力會提高。"},"iron-barbs":{"nameZh":"鐵刺","descZh":"用鐵刺給予接觸到自己的對手傷害。"},"zen-mode":{"nameZh":"達摩模式","descZh":"ＨＰ變為一半以下時，樣子會改變。"},"victory-star":{"nameZh":"勝利之星","descZh":"自己和同伴的命中率會提高。"},"turboblaze":{"nameZh":"渦輪火焰","descZh":"可以不受對手特性的干擾，向對手使出招式。"},"teravolt":{"nameZh":"兆級電壓","descZh":"可以不受對手特性的干擾，向對手使出招式。"},"aroma-veil":{"nameZh":"芳香幕","descZh":"可防住向自己和同伴發出的心靈攻擊。"},"flower-veil":{"nameZh":"花幕","descZh":"我方的草屬性寶可夢能力不會降低。也不會陷入異常狀態。"},"cheek-pouch":{"nameZh":"頰囊","descZh":"無論是哪種樹果，吃下去後ＨＰ都會回復。"},"protean":{"nameZh":"變幻自如","descZh":"變為與自己使出的招式相同的屬性。"},"fur-coat":{"nameZh":"毛皮大衣","descZh":"對手的物理招式造成的傷害會減半。"},"magician":{"nameZh":"魔術師","descZh":"奪走被自己招式擊中的對手的道具。"},"bulletproof":{"nameZh":"防彈","descZh":"可防住對手的球和彈類的招式。"},"competitive":{"nameZh":"好勝","descZh":"能力被降低時，特攻會大幅提高。"},"strong-jaw":{"nameZh":"強壯之顎","descZh":"顎部強壯，會提高啃咬類招式的威力。"},"refrigerate":{"nameZh":"冰凍皮膚","descZh":"一般屬性的招式會變為冰屬性。威力會少量提高。"},"sweet-veil":{"nameZh":"甜幕","descZh":"我方的寶可夢不會陷入睡眠狀態。"},"stance-change":{"nameZh":"戰鬥切換","descZh":"若使出攻擊招式，會變為刀劍形態，若使出招式「王者盾牌」，會變為盾牌形態。"},"gale-wings":{"nameZh":"疾風之翼","descZh":"ＨＰ全滿時，可以搶先在對手之前使出飛行屬性的招式。"},"mega-launcher":{"nameZh":"超級發射器","descZh":"波動和波導類招式的威力會提高。"},"grass-pelt":{"nameZh":"草之毛皮","descZh":"在青草場地時，防禦會提高。"},"symbiosis":{"nameZh":"共生","descZh":"同伴使用道具時，會把自己持有的道具交給同伴。"},"tough-claws":{"nameZh":"硬爪","descZh":"接觸到對手的招式威力會提高。"},"pixilate":{"nameZh":"妖精皮膚","descZh":"一般屬性的招式會變為妖精屬性。威力會少量提高。"},"gooey":{"nameZh":"黏滑","descZh":"對手用攻擊接觸到自己時，降低此對手的速度。"},"dark-aura":{"nameZh":"暗黑氣場","descZh":"全體的惡屬性招式變強。"},"fairy-aura":{"nameZh":"妖精氣場","descZh":"全體的妖精屬性招式變強。"},"aura-break":{"nameZh":"氣場破壞","descZh":"讓氣場的效果逆轉，並降低威力。"},"stamina":{"nameZh":"持久力","descZh":"受到攻擊時，防禦會提高。"},"wimp-out":{"nameZh":"躍躍欲逃","descZh":"ＨＰ變為一半時，會慌慌張張逃走，退回同行隊伍裡面。"},"emergency-exit":{"nameZh":"危險迴避","descZh":"ＨＰ減到一半時，為了避開危險，會退回同行隊伍裡面。"},"water-compaction":{"nameZh":"遇水凝固","descZh":"受到水屬性的招式攻擊時，防禦會大幅提高。"},"merciless":{"nameZh":"不仁不義","descZh":"攻擊中毒狀態的對手時，必定會擊中要害。"},"shields-down":{"nameZh":"界限盾殼","descZh":"ＨＰ變為一半時，殼會壞掉，變得更有攻擊性。"},"stakeout":{"nameZh":"監視","descZh":"可以向替換出場的對手以２倍的傷害進行攻擊。"},"water-bubble":{"nameZh":"水泡","descZh":"降低自己受到的火屬性招式的威力。不會灼傷。"},"steelworker":{"nameZh":"鋼能力者","descZh":"鋼屬性的招式威力會提高。"},"berserk":{"nameZh":"怒火沖天","descZh":"ＨＰ因對手的攻擊降到一半時，特攻會提高。"},"slush-rush":{"nameZh":"撥雪","descZh":"天氣為冰雹時，速度會提高。"},"long-reach":{"nameZh":"遠隔","descZh":"可以不接觸對手就使出所有的招式。"},"liquid-voice":{"nameZh":"濕潤之聲","descZh":"所有的聲音招式都變為水屬性。"},"triage":{"nameZh":"先行治療","descZh":"可以搶先使出回復招式。"},"schooling":{"nameZh":"魚群","descZh":"ＨＰ多的時候會聚起來變強。ＨＰ剩餘量變少時，群體會分崩離析。"},"disguise":{"nameZh":"畫皮","descZh":"用畫皮覆蓋住身體，可防住１次攻擊。"},"corrosion":{"nameZh":"腐蝕","descZh":"就算對方是鋼屬性或毒屬性寶可夢，也可讓對方陷入中毒狀態。"},"comatose":{"nameZh":"絕對睡眠","descZh":"總是半夢半醒的狀態，絕對不會醒來。可在睡著的狀況下進行攻擊。"},"queenly-majesty":{"nameZh":"女王的威嚴","descZh":"向對手施加威懾力，使其無法對我方使出先制招式。"},"innards-out":{"nameZh":"飛出的內在物","descZh":"被對手打倒的時候，會給予對手相當於ＨＰ剩餘量的傷害。"},"dancer":{"nameZh":"舞者","descZh":"當有誰使出跳舞招式時，自己也能接著使出跳舞招式。"},"battery":{"nameZh":"蓄電池","descZh":"會提高我方的特殊招式的威力。"},"fluffy":{"nameZh":"毛茸茸","descZh":"會將對手所給予的接觸類招式的傷害減半，但火屬性招式的傷害會變為２倍。"},"dazzling":{"nameZh":"鮮艷之軀","descZh":"讓對手嚇一跳，使其無法對我方使出先制招式。"},"soul-heart":{"nameZh":"魂心","descZh":"每當場上有寶可夢陷入瀕死狀態時，特攻就會提高。"},"receiver":{"nameZh":"接球手","descZh":"繼承被打倒的同伴的特性，變為相同的特性。"},"beast-boost":{"nameZh":"異獸提升","descZh":"打倒對手的時候，會提高自己最高的那項能力。"},"rks-system":{"nameZh":"ＡＲ系統","descZh":"根據持有的記憶碟，自己的屬性會改變。"},"electric-surge":{"nameZh":"電氣製造者","descZh":"出場時，會布下電氣場地。"},"psychic-surge":{"nameZh":"精神製造者","descZh":"出場時，會布下精神場地。"},"misty-surge":{"nameZh":"薄霧製造者","descZh":"出場時，會布下薄霧場地。"},"grassy-surge":{"nameZh":"青草製造者","descZh":"出場時，會布下青草場地。"},"full-metal-body":{"nameZh":"金屬防護","descZh":"不會因對手的招式或特性而被降低能力。"},"shadow-shield":{"nameZh":"幻影防守","descZh":"ＨＰ全滿時，受到的傷害會變少。"},"prism-armor":{"nameZh":"稜鏡裝甲","descZh":"受到效果絕佳的攻擊時，可減弱其威力。"},"intrepid-sword":{"nameZh":"不撓之劍","descZh":"出場時，攻擊會提高。"},"dauntless-shield":{"nameZh":"不屈之盾","descZh":"出場時，防禦會提高。"},"libero":{"nameZh":"自由者","descZh":"變為與自己使出的招式相同的屬性。"},"ball-fetch":{"nameZh":"撿球","descZh":"當寶可夢沒有攜帶道具時，會撿回第１個投出後捕捉失敗的精靈球。"},"cotton-down":{"nameZh":"棉絮","descZh":"受到攻擊時會撒下棉絮，降低除自己以外的所有寶可夢的速度。"},"propeller-tail":{"nameZh":"螺旋尾鰭","descZh":"能無視具有吸引對手招式效果的特性或招式的影響。"},"mirror-armor":{"nameZh":"鏡甲","descZh":"只反彈自己受到的能力降低效果。"},"gulp-missile":{"nameZh":"一口飛彈","descZh":"衝浪或潛水時會叼來獵物。當受到傷害時，會吐出獵物攻擊對手。"},"stalwart":{"nameZh":"堅毅","descZh":"能無視具有吸引對手招式效果的特性或招式的影響。"},"steam-engine":{"nameZh":"蒸汽機","descZh":"受到水屬性或火屬性招式攻擊時，速度會極大幅提高。"},"punk-rock":{"nameZh":"龐克搖滾","descZh":"聲音招式的威力會提高。受到聲音招式的傷害會減半。"},"sand-spit":{"nameZh":"吐沙","descZh":"受到攻擊時，會刮起沙暴。"},"ice-scales":{"nameZh":"冰鱗粉","descZh":"得到冰鱗粉的守護，受到的特殊攻擊傷害會減半。"},"ripen":{"nameZh":"熟成","descZh":"讓樹果成熟，使效果變為２倍。"},"ice-face":{"nameZh":"結凍頭","descZh":"頭部的冰會代替自己承受物理攻擊，但是樣子會改變。下冰雹時，冰會回復原狀。"},"power-spot":{"nameZh":"能量點","descZh":"只要站在旁邊，招式的威力就會提高。"},"screen-cleaner":{"nameZh":"除障","descZh":"出場時，敵方和我方的光牆、反射壁和極光幕的效果會消失。"},"steely-spirit":{"nameZh":"鋼之意志","descZh":"我方的鋼屬性攻擊威力會提高。"},"perish-body":{"nameZh":"滅亡之軀","descZh":"在受到接觸類招式攻擊時，３個回合後雙方都會陷入瀕死。替換寶可夢後效果就會消失。"},"wandering-spirit":{"nameZh":"遊魂","descZh":"與使用接觸類招式攻擊自己的寶可夢互換特性。"},"neutralizing-gas":{"nameZh":"化學變化氣體","descZh":"當場上有特性是化學變化氣體的寶可夢時，所有寶可夢的特性效果都會消失或無法發動。"},"hunger-switch":{"nameZh":"飽了又餓","descZh":"在每個回合結束時，會在滿腹花紋和空腹花紋之間交替改變樣子。"},"unseen-fist":{"nameZh":"無形拳","descZh":"只要是接觸到對手的招式，就可以無視對手的防守效果進行攻擊。"},"transistor":{"nameZh":"電晶體","descZh":"電屬性的招式威力會提高。"},"dragons-maw":{"nameZh":"龍顎","descZh":"龍屬性的招式威力會提高。"},"chilling-neigh":{"nameZh":"蒼白嘶鳴","descZh":"打倒對手時會用冰冷的聲音嘶鳴並提高攻擊。"},"grim-neigh":{"nameZh":"漆黑嘶鳴","descZh":"打倒對手時會用恐怖的聲音嘶鳴並提高特攻。"},"lingering-aroma":{"nameZh":"甩不掉的氣味","descZh":"接觸到的對手，特性會被改寫成甩不掉的氣味。"},"seed-sower":{"nameZh":"掉出種子","descZh":"被攻擊命中時，會把場地變成青草場地。"},"thermal-exchange":{"nameZh":"熱交換","descZh":"被火屬性招式打中時攻擊會提高，而且不會被燒傷。"},"anger-shell":{"nameZh":"憤怒甲殼","descZh":"ＨＰ減少到一半以下時，防禦和特防會降低，攻擊、特攻和速度會提高。"},"purifying-salt":{"nameZh":"潔淨之鹽","descZh":"不會陷入異常狀態，而且受到的幽靈屬性招式傷害會減半。"},"well-baked-body":{"nameZh":"焦香之軀","descZh":"完全不會受到火屬性招式的傷害，而且防禦會大幅提高。"},"wind-rider":{"nameZh":"乘風","descZh":"不會受到風系招式的影響，被風系招式打中時攻擊還會提高。"},"guard-dog":{"nameZh":"看門犬","descZh":"被威嚇時攻擊反而會提高，而且不會被招式或道具強制換下場。"},"rocky-payload":{"nameZh":"搬岩","descZh":"岩石屬性招式的威力會提高。"},"wind-power":{"nameZh":"風力發電","descZh":"被風系招式打中後，下一次使用的電屬性招式威力會加倍。"},"zero-to-hero":{"nameZh":"全能變身","descZh":"換下場的時候會變身成英雄形態。"},"commander":{"nameZh":"發號施令","descZh":"場上有夥伴的多多冰時，會鑽進牠的嘴裡發號施令。"},"electromorphosis":{"nameZh":"電力轉換","descZh":"被攻擊打中後，下一次使用的電屬性招式威力會加倍。"},"protosynthesis":{"nameZh":"古代活性","descZh":"在強烈陽光下(或持有能量寶珠時)，數值最高的能力會提高。"},"quark-drive":{"nameZh":"夸克充能","descZh":"在電氣場地上(或持有能量寶珠時)，數值最高的能力會提高。"},"good-as-gold":{"nameZh":"黃金之軀","descZh":"不會受到變化招式的影響。"},"vessel-of-ruin":{"nameZh":"災禍之鼎","descZh":"讓自己以外所有寶可夢的特攻降低。"},"sword-of-ruin":{"nameZh":"災禍之劍","descZh":"讓自己以外所有寶可夢的防禦降低。"},"tablets-of-ruin":{"nameZh":"災禍之簡","descZh":"讓自己以外所有寶可夢的攻擊降低。"},"beads-of-ruin":{"nameZh":"災禍之玉","descZh":"讓自己以外所有寶可夢的特防降低。"},"orichalcum-pulse":{"nameZh":"緋紅脈動","descZh":"出場時會讓陽光變得強烈，而且日照期間攻擊會提高。"},"hadron-engine":{"nameZh":"強子引擎","descZh":"出場時會把場地變成電氣場地，而且場地期間特攻會提高。"},"opportunist":{"nameZh":"跟風","descZh":"對手的能力提高時，自己的能力也會跟著提高。"},"cud-chew":{"nameZh":"反芻","descZh":"吃掉樹果後，下下回合會再反芻一次同一顆樹果的效果。"},"sharpness":{"nameZh":"鋒銳","descZh":"使用切割系招式的威力會提高。"},"supreme-overlord":{"nameZh":"大將","descZh":"隊伍裡倒下的寶可夢越多，攻擊和特攻就提高越多。"},"costar":{"nameZh":"同台共演","descZh":"出場時會複製夥伴的能力等級變化。"},"toxic-debris":{"nameZh":"毒滿地","descZh":"受到物理招式攻擊時，會在對手腳下散布毒菱。"},"armor-tail":{"nameZh":"尾甲","descZh":"讓對手沒辦法使用先制招式攻擊自己。"},"earth-eater":{"nameZh":"食土","descZh":"受到地面屬性招式攻擊時不但不會受傷，還會回復ＨＰ。"},"mycelium-might":{"nameZh":"菌絲之力","descZh":"使用變化招式時一定最後出手，但不會受到對手特性影響。"},"supersweet-syrup":{"nameZh":"甘露之蜜","descZh":"整場戰鬥限一次，出場時會讓周圍對手的閃避率降低。"},"hospitality":{"nameZh":"款待","descZh":"出場時會幫夥伴回復25%的ＨＰ。"},"toxic-chain":{"nameZh":"毒鎖鏈","descZh":"招式打中對手時，有機率讓對方陷入劇毒狀態。"},"tera-shift":{"nameZh":"太晶變形","descZh":"帖拉帕格斯出場時會變成太晶形態，直到戰鬥結束。"},"poison-puppeteer":{"nameZh":"毒傀儡","descZh":"被沛可西魔的招式陷入中毒狀態時，也會同時陷入混亂。"}};
+// 特性名稱/說明查詢用的小工具，openDetailModal等UI顯示會用到
+function abilityDisplayInfo(abilitySlug) {
+    if (!abilitySlug || !ABILITY_DATA_ZH[abilitySlug]) return null;
+    return ABILITY_DATA_ZH[abilitySlug];
+}
+// ---- 特性戰鬥效果會用到的招式分類清單：PokéAPI沒有穩定可用的「拳頭/啃咬/波動/切割系」旗標欄位
+// 可以查(跟SOUND_MOVES同樣的情況，見第十一輪的說明)，這裡用手動整理的清單頂替，涵蓋這個遊戲
+// 76+28座道館+轉蛋池會用到的常見招式，不是PokéAPI全部930幾招的完整清單 ----
+const PUNCH_MOVES = new Set(['ice-punch', 'fire-punch', 'thunder-punch', 'mach-punch', 'bullet-punch', 'drain-punch', 'focus-punch', 'dynamic-punch', 'mega-punch', 'shadow-punch', 'sky-uppercut', 'comet-punch', 'hammer-arm', 'meteor-mash', 'power-up-punch', 'double-iron-bash', 'plasma-fists', 'ice-hammer', 'jet-punch', 'headlong-rush']);
+const BITE_MOVES = new Set(['bite', 'crunch', 'ice-fang', 'fire-fang', 'thunder-fang', 'poison-fang', 'hyper-fang', 'fishious-rend', 'jaw-lock', 'psychic-fangs', 'thunder-cage']);
+const PULSE_MOVES = new Set(['aura-sphere', 'dark-pulse', 'dragon-pulse', 'water-pulse', 'heal-pulse', 'terrain-pulse', 'origin-pulse']);
+const SLICING_MOVES = new Set(['cut', 'night-slash', 'x-scissor', 'leaf-blade', 'sacred-sword', 'air-cutter', 'aerial-ace', 'slash', 'psycho-cut', 'razor-shell', 'stone-axe', 'kowtow-cleave', 'cross-poison', 'solar-blade', 'behemoth-blade', 'secret-sword', 'razor-leaf', 'sacred-sword']);
+const WIND_MOVES = new Set(['hurricane', 'gust', 'twister', 'icy-wind', 'petal-blizzard', 'heat-wave', 'fairy-wind', 'whirlwind', 'bleakwind-storm', 'springtide-storm', 'wildbolt-storm', 'sandsear-storm', 'tailwind']);
+// 災禍系特性(第九世代柱子四天王：蕭瑟之鈴/嚴刑之劍/滿盈之杯/塗漆之杖)：讓自己以外的寶可夢
+// 對應的能力視為打了0.75折——因為這個遊戲只有1對1單打，「自己以外的所有寶可夢」在場上實際上
+// 就是「對手」一個對象，不用處理雙打友軍。實際的0.75倍判斷直接寫在下面傷害計算區塊的
+// atkStat/defStat(ruinAtkMult/ruinDefMult)那裡，這裡不需要額外的對照表
+// 接觸判定：PokéAPI沒有穩定的「有沒有接觸」旗標(跟move.flags相關的資料在這個專案能拿到的
+// 版本裡全部是null，見第三十輪之前就有的凸凸頭盔/生命寶珠反傷判斷)，這個遊戲一律沿用既有的
+// 「物理招式=接觸」簡化判斷(凸凸頭盔就是這樣做的)，特性系統的接觸類判定(靜電/粗糙皮膚/黏滑等)
+// 全部沿用同一條規則，並排除遠隔(long-reach)/穿透彈幕系(這個簡化版遊戲沒做，先略過)
+function moveMakesContact(move, attacker) {
+    if (!move || move.damageClass !== 'physical') return false;
+    if (attacker && attacker.ability === 'long-reach') return false;
+    return true;
+}
+// 破格/渦輪火焰/兆級電壓：這幾個特性讓「本來會阻擋/減弱招式效果的對方特性」失效，這裡只套用在
+// 這次新增的「屬性免疫類」特性上(飄浮/神奇守護/各種屬性吸收/主要異常狀態免疫)，不影響傷害
+// 減免類特性(堅硬岩石/多重鱗片等)——這跟正統規則裡「阻止/妨礙招式生效」跟「單純減少傷害」
+// 兩種特性受破格影響程度不同的分野大致吻合
+function attackerBypassesAbilities(attacker) {
+    return !!attacker && ['mold-breaker', 'turboblaze', 'teravolt'].includes(attacker.ability);
+}
 async function fetchMoveData(moveName) {
     if (moveName === 'struggle') return STRUGGLE_MOVE;
     if (moveDataCache.has(moveName)) return moveDataCache.get(moveName);
@@ -6375,11 +6431,11 @@ async function fetchTypeEffectiveness(attackType, defendTypes) {
         return 1;
     }
 }
-function computeDamage(attackerLevel, attackerAtk, defenderDef, power, typeEff, isStab, critMult) {
+function computeDamage(attackerLevel, attackerAtk, defenderDef, power, typeEff, stabMult, critMult) {
     if (typeEff === 0 || power <= 0) return 0;
     const base = ((2 * attackerLevel / 5 + 2) * power * (attackerAtk / defenderDef)) / 50 + 2;
     const rand = 0.85 + Math.random() * 0.15;
-    return Math.max(1, Math.floor(base * typeEff * (isStab ? 1.5 : 1) * (critMult || 1) * rand));
+    return Math.max(1, Math.floor(base * typeEff * (stabMult || 1) * (critMult || 1) * rand));
 }
 
 // ============================================================
@@ -6427,6 +6483,16 @@ function freshBattleStatus() {
         // 只是觸發條件、資料來源不同(Mega進化是玩家主動選、種族值來自即時查詢的Mega型態；變身是
         // 招式效果、直接複製對方目前的樣子)
         megaEvolvedFrom: null,
+        // 【第三十一輪新增】特性系統的揮發性欄位：switchInAbilityFired(這一次上場的威嚇/天氣/場地
+        // 特性等「上場時觸發」的效果，這個「上場階段」有沒有已經觸發過了——每次上場(不管是第一回合
+        // 的初始出戰、還是中途換人)都要重新觸發一次，靠這個旗標保證只觸發一次，不會每回合重複觸發)、
+        // flashFireBoosted(引火：吸收過火屬性招式之後，整場戰鬥剩餘時間自己的火屬性招式都會變強)、
+        // lastEatenBerry(收穫特性用：記錄「上一顆被自動吃掉的莓果」是哪一種，才有東西可以反芻回來)、
+        // turnsOnField(這一次上場後，已經完整經過幾個回合——慢啟動用來判斷還在不在減益的前5回合內)
+        flashFireBoosted: false,
+        lastEatenBerry: null,
+        turnsOnField: 0,
+        switchInAbilityFired: false,
     };
 }
 // 一隻寶可夢從場上換下去時(不管是自願替換、還是被吼叫/咆哮/龍尾/圓環摔這類招式強制換下場)，
@@ -6483,6 +6549,14 @@ function resetVolatileForBench(battler) {
     // 也要用同一套復原邏輯——不然「贏了那一局、但贏的那隻還維持著Mega後的樣子」會一路帶到下一場
     // 戰鬥的初始狀態，變成一隻打不掉的假Mega
     revertMegaEvolution(outgoing);
+    // 【第三十一輪新增】特性系統的揮發性欄位換人也要重置——尤其switchInAbilityFired一定要
+    // 明確歸零，不然這隻寶可夢帶著「已經觸發過」的舊值換上場，威嚇/天氣/場地這類上場觸發特性
+    // 下次換上來就不會再發動了(因為resetVolatileForBench是先展開{...battler}整份複製舊值，
+    // 沒有另外明確歸零的欄位就會維持退場前的舊值，不會自動被上面的freshBattleStatus()蓋掉)
+    outgoing.flashFireBoosted = false;
+    outgoing.lastEatenBerry = null;
+    outgoing.turnsOnField = 0;
+    outgoing.switchInAbilityFired = false;
     return outgoing;
 }
 function revertMegaEvolution(battler) {
@@ -7127,6 +7201,266 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     const displayOf = { [uidA]: displayA, [uidB]: displayB };
     const nameOf = { [uidA]: state[uidA].nickname, [uidB]: state[uidB].nickname };
 
+    // 天氣/場地：從房間資料帶過來的「這回合開始前」狀態，招式效果/回合結束的持續效果都會更新這份本地副本，
+    // 最後才整份寫回Firestore——【第三十一輪】從原本比較後面的位置挪到這裡，因為底下新增的
+    // 上場觸發特性(降雨/日照/揚沙/降雪/各種場地製造者等)需要在這裡就能寫入weatherState/terrainState
+    let weatherState = { ...(roomData.battleState.weather || { type: null, turnsLeft: 0 }) };
+    let terrainState = { ...(roomData.battleState.terrain || { type: null, turnsLeft: 0 }) };
+
+    // ============================================================
+    // 【第三十一輪新增】特性系統——上場觸發類特性(威嚇/天氣製造者/場地製造者/複製/變身者/
+    // 下載/察覺等)，統一放在這個函式集中處理，每一次真正上場(不管是這場戰鬥一開始的初始
+    // 出戰、還是中途主動/被迫換人)都只會觸發一次，靠state[uid].switchInAbilityFired把關
+    // (見freshBattleStatus()的說明)——因為resolveBattleRound每個回合都會被完整呼叫一次，
+    // 用這個旗標而不是「這回合有沒有換人」來判斷，可以同時涵蓋「第一回合的初始出戰」跟
+    // 「中途換人」兩種情況，不用另外去改battle room建立的地方
+    // ------------------------------------------------------------
+    function runSwitchInAbility(uid, opponentUid) {
+        const t = state[uid];
+        const opp = state[opponentUid];
+        const ability = t.ability;
+        if (!ability) return;
+        const setWeather = (type, label) => {
+            if (weatherState.type === type) return;
+            weatherState = { type, turnsLeft: 999 };
+            log.push(`${nameOf[uid]} 的特性讓天氣變成了${label}！`);
+        };
+        const setTerrain = (type, label) => {
+            if (terrainState.type === type) return;
+            terrainState = { type, turnsLeft: 999 };
+            log.push(`${nameOf[uid]} 的特性把場地變成了${label}！`);
+        };
+        if (ability === 'drought' || ability === 'orichalcum-pulse') setWeather('sun', '晴朗');
+        else if (ability === 'drizzle') setWeather('rain', '下雨');
+        else if (ability === 'sand-stream') setWeather('sandstorm', '沙暴');
+        else if (ability === 'snow-warning') setWeather('hail', '冰雹');
+        if (ability === 'electric-surge' || ability === 'hadron-engine') setTerrain('electric', '電氣場地');
+        else if (ability === 'grassy-surge') setTerrain('grassy', '青草場地');
+        else if (ability === 'misty-surge') setTerrain('misty', '薄霧場地');
+        else if (ability === 'psychic-surge') setTerrain('psychic', '精神場地');
+
+        if (ability === 'intimidate') {
+            if (opp.currentHp > 0) applyOpponentStatDrop(opponentUid, uid, 'atk', 1, `${nameOf[uid]} 威嚇了對手！`);
+        } else if (ability === 'download') {
+            const key = opp.def >= opp.spDef ? 'spAtk' : 'atk';
+            t.stages[key] = Math.min(6, (t.stages[key] || 0) + 1);
+            log.push(`${nameOf[uid]} 的下載發動了，${STAGE_KEY_ZH[key]}提高了！`);
+        } else if (ability === 'trace') {
+            // 簡化：只複製對方特性代號，不會讓被複製的特性重新觸發一次「上場效果」
+            // (正統規則裡複製到威嚇等上場特性也會立刻觸發，這裡為了不無限遞迴/不重複觸發簡化掉)
+            if (opp.ability && !['trace', 'wonder-guard', 'multitype', 'illusion', 'imposter'].includes(opp.ability)) {
+                t.ability = opp.ability;
+                log.push(`${nameOf[uid]} 複製了對手的特性，變成了${abilityDisplayInfo(opp.ability) ? abilityDisplayInfo(opp.ability).nameZh : opp.ability}！`);
+            }
+        } else if (ability === 'imposter') {
+            // 變身者：重用既有的變身(Transform)機制，一上場就自動對現在對面的寶可夢變身一次
+            if (!t.transformedInto && opp.currentHp > 0) {
+                t.transformedInto = { speciesId: t.speciesId, isShiny: t.isShiny, atk: t.atk, def: t.def, spAtk: t.spAtk, spDef: t.spDef, spd: t.spd, moves: t.moves, movePp: t.movePp ? { ...t.movePp } : {} };
+                t.speciesId = opp.speciesId;
+                t.isShiny = opp.isShiny;
+                t.atk = opp.atk; t.def = opp.def; t.spAtk = opp.spAtk; t.spDef = opp.spDef; t.spd = opp.spd;
+                t.stages = { ...opp.stages };
+                t.moves = opp.moves ? opp.moves.slice() : t.moves;
+                t.movePp = {};
+                (t.moves || []).forEach(mv => { t.movePp[mv] = 5; });
+                log.push(`${nameOf[uid]} 變身者發動了，變成了 ${nameOf[opponentUid]} 的樣子！`);
+            }
+        } else if (ability === 'frisk') {
+            if (opp.heldItem) log.push(`${nameOf[uid]} 察覺到對手帶著道具！`);
+            else log.push(`${nameOf[uid]} 察覺到對手沒有帶著道具！`);
+        } else if (ability === 'supersweet-syrup') {
+            if (opp.currentHp > 0) {
+                const before = opp.stages.eva || 0;
+                opp.stages.eva = Math.max(-6, before - 1);
+                if (opp.stages.eva !== before) log.push(`${nameOf[uid]} 撒出了甘露之蜜，${nameOf[opponentUid]} 的閃避率下降了！`);
+            }
+        }
+    }
+    // 能力被對手/對手特性降低時的共用入口：套用恆淨之軀家族/怪力鉗/健壯胸肌/銳利目光的免疫、
+    // 看門犬的反向提升、不服輸/好勝的反擊提升——上場觸發的威嚇跟一般招式降能力共用這一個函式，
+    // 這樣兩種來源的「被降能力」防護/反擊規則完全一致，不用寫兩套
+    function applyOpponentStatDrop(targetUid, sourceUid, statKey, amount, sourceLogMsg) {
+        const target = state[targetUid];
+        if (target.currentHp <= 0) return;
+        const ability = target.ability;
+        if (ability === 'guard-dog' && statKey === 'atk') {
+            const before = target.stages.atk || 0;
+            target.stages.atk = Math.min(6, before + 1);
+            if (sourceLogMsg) log.push(sourceLogMsg);
+            log.push(`${nameOf[targetUid]} 的看門犬發動了，攻擊反而提高了！`);
+            return;
+        }
+        const fullBlockAbilities = ['clear-body', 'white-smoke', 'full-metal-body'];
+        const singleStatBlock = { 'hyper-cutter': 'atk', 'big-pecks': 'def', 'keen-eye': 'acc' };
+        const blocked = !attackerBypassesAbilities(state[sourceUid]) && (fullBlockAbilities.includes(ability) || singleStatBlock[ability] === statKey);
+        if (blocked) {
+            if (sourceLogMsg) log.push(sourceLogMsg);
+            log.push(`${nameOf[targetUid]} 的特性讓能力沒有下降！`);
+            if (ability === 'mirror-armor' && sourceUid && state[sourceUid].currentHp > 0) {
+                const before = state[sourceUid].stages[statKey] || 0;
+                state[sourceUid].stages[statKey] = Math.max(-6, before - amount);
+                log.push(`${nameOf[targetUid]} 的鏡甲把能力下降反彈回去了！`);
+            }
+            return;
+        }
+        const before = target.stages[statKey] || 0;
+        target.stages[statKey] = Math.max(-6, before - amount);
+        if (sourceLogMsg) log.push(sourceLogMsg);
+        if (target.stages[statKey] !== before) {
+            log.push(`${nameOf[targetUid]} 的${STAGE_KEY_ZH[statKey]}下降了！`);
+            if (ability === 'defiant') {
+                target.stages.atk = Math.min(6, (target.stages.atk || 0) + 2);
+                log.push(`${nameOf[targetUid]} 的不服輸發動了，攻擊大幅提高了！`);
+            } else if (ability === 'competitive') {
+                target.stages.spAtk = Math.min(6, (target.stages.spAtk || 0) + 2);
+                log.push(`${nameOf[targetUid]} 的好勝發動了，特攻大幅提高了！`);
+            }
+        }
+    }
+    // ---- 特性造成的主要異常狀態免疫：柔軟(麻痺)、不眠/精神力(睡眠，甜甜香氣簡化成單體版本也算)、
+    // 免疫(中毒)、水幕/水泡(灼傷)、熔岩鎧甲/水泡(冰凍)、純淨之鹽(全部免疫)、達爾文(晴天下才生效)——
+    // 混亂用our-tempo另外在專屬的confusion分支處理，不算在這裡的PRIMARY_STATUS_AILMENTS範圍內 ----
+    function abilityBlocksStatus(target, statusKey) {
+        const ab = target && target.ability;
+        if (!ab) return false;
+        if (ab === 'purifying-salt') return true;
+        if (ab === 'leaf-guard' && weatherState.type === 'sun') return true;
+        if (statusKey === 'paralysis' && ab === 'limber') return true;
+        if (statusKey === 'sleep' && ['insomnia', 'vital-spirit', 'sweet-veil'].includes(ab)) return true;
+        if (statusKey === 'poison' && ab === 'immunity') return true;
+        if (statusKey === 'burn' && ['water-veil', 'water-bubble'].includes(ab)) return true;
+        if (statusKey === 'freeze' && ['magma-armor', 'water-bubble'].includes(ab)) return true;
+        return false;
+    }
+    // ---- 接觸/命中觸發的被動特性：放在單獨函式裡統一在「這次攻擊的傷害/連段全部結算完」之後
+    // 呼叫一次(不是每一段多段攻擊都觸發，粗糙皮膚/靜電這類正統規則本來就是「整次出招只算一次」)。
+    // moveMakesContact已經排除了「長腳(long-reach)無視接觸」跟「招式本身不是物理」的情況 ----
+    function applyContactAndHitAbilities(attackerUid, defenderUid, move, totalDamage, defHpBeforeHits, defSubActiveBeforeHit, crit) {
+        if (totalDamage <= 0) return;
+        const atkT = state[attackerUid], defT = state[defenderUid];
+        if (defT.currentHp <= 0) {
+            // 防禦方已經被打倒：只有殘暴(接觸打倒對方反傷1/4)、破釜沉舟(把剩餘傷害原封不動彈回去)
+            // 這兩個「倒下才觸發」的特性還有意義，其餘全部略過
+            if (!defSubActiveBeforeHit && defT.ability === 'aftermath' && moveMakesContact(move, atkT) && atkT.currentHp > 0 && atkT.ability !== 'magic-guard') {
+                const dmg = Math.max(1, Math.floor(atkT.maxHp / 4));
+                atkT.currentHp = Math.max(0, atkT.currentHp - dmg);
+                log.push(`${nameOf[attackerUid]} 因為 ${nameOf[defenderUid]} 的殘暴，受到了 ${dmg} 點傷害！`);
+                if (atkT.currentHp <= 0) { log.push(`${nameOf[attackerUid]} 倒下了！`); handleFaint(attackerUid); }
+            } else if (!defSubActiveBeforeHit && defT.ability === 'innards-out' && atkT.currentHp > 0) {
+                const dmg = Math.min(atkT.currentHp, totalDamage);
+                atkT.currentHp = Math.max(0, atkT.currentHp - dmg);
+                log.push(`${nameOf[defenderUid]} 的破釜沉舟發動了，${nameOf[attackerUid]} 受到了 ${dmg} 點傷害！`);
+                if (atkT.currentHp <= 0) { log.push(`${nameOf[attackerUid]} 倒下了！`); handleFaint(attackerUid); }
+            }
+            return;
+        }
+        if (defSubActiveBeforeHit) return; // 替身還在的話，簡化成這批接觸/受傷類特性一律不觸發
+        const isContact = moveMakesContact(move, atkT);
+        // 攻擊方特性：中毒觸點(接觸30%機率讓對手中毒)、劇毒鎖鏈(不需要接觸，任何命中都有30%機率
+        // 讓對手陷入劇毒)
+        if (!defT.status) {
+            if (isContact && atkT.ability === 'poison-touch' && rollChance(30)) {
+                defT.status = 'poison'; defT.toxicCounter = 0;
+                log.push(`${nameOf[attackerUid]} 的特性讓 ${nameOf[defenderUid]} 中毒了！`);
+            } else if (atkT.ability === 'toxic-chain' && rollChance(30)) {
+                defT.status = 'poison'; defT.toxicCounter = 1;
+                log.push(`${nameOf[attackerUid]} 的特性讓 ${nameOf[defenderUid]} 陷入了劇毒！`);
+            }
+        }
+        if (isContact) {
+            // 防禦方特性：粗糙皮膚/鐵蒺藜(接觸反傷1/8，魔法防守可以讓攻擊方免疫)
+            if ((defT.ability === 'rough-skin' || defT.ability === 'iron-barbs') && atkT.currentHp > 0 && atkT.ability !== 'magic-guard') {
+                const dmg = Math.max(1, Math.floor(atkT.maxHp / 8));
+                atkT.currentHp = Math.max(0, atkT.currentHp - dmg);
+                log.push(`${nameOf[attackerUid]} 因為 ${nameOf[defenderUid]} 的特性，受到了 ${dmg} 點傷害！`);
+                if (atkT.currentHp <= 0) { log.push(`${nameOf[attackerUid]} 倒下了！`); handleFaint(attackerUid); }
+            }
+            // 靜電/毒刺/引火焰(接觸30%機率異常狀態)、孢子(接觸30%機率中毒/麻痺/睡眠三選一)——
+            // 都要檢查攻擊方本來就沒有異常狀態、而且沒有被特性免疫
+            if (atkT.currentHp > 0 && !atkT.status) {
+                const contactStatusAbility = { static: 'paralysis', 'poison-point': 'poison', 'flame-body': 'burn' }[defT.ability];
+                if (contactStatusAbility && rollChance(30) && !abilityBlocksStatus(atkT, contactStatusAbility)) {
+                    atkT.status = contactStatusAbility;
+                    if (contactStatusAbility === 'poison') atkT.toxicCounter = 0;
+                    log.push(`${nameOf[attackerUid]} 碰到了 ${nameOf[defenderUid]}，陷入了${STATUS_NAME_ZH[contactStatusAbility]}！`);
+                } else if (defT.ability === 'effect-spore' && rollChance(30)) {
+                    const candidates = ['poison', 'paralysis', 'sleep'].filter(s => !abilityBlocksStatus(atkT, s));
+                    if (candidates.length) {
+                        const pick = candidates[Math.floor(Math.random() * candidates.length)];
+                        atkT.status = pick;
+                        if (pick === 'poison') atkT.toxicCounter = 0;
+                        if (pick === 'sleep') atkT.statusTurns = 1 + Math.floor(Math.random() * 3);
+                        log.push(`${nameOf[attackerUid]} 碰到了孢子，陷入了${STATUS_NAME_ZH[pick]}！`);
+                    }
+                }
+            }
+            // 黏黏/貼身毛髮：接觸讓攻擊方速度-1
+            if (atkT.currentHp > 0 && (defT.ability === 'gooey' || defT.ability === 'tangling-hair')) {
+                const before = atkT.stages.spd || 0;
+                atkT.stages.spd = Math.max(-6, before - 1);
+                if (atkT.stages.spd !== before) log.push(`${nameOf[attackerUid]} 碰到了 ${nameOf[defenderUid]}，速度下降了！`);
+            }
+            // 感染特性：破損樹皮(mummy)/纏綿香氣(lingering-aroma)，接觸後把攻擊方的特性直接感染成自己這個
+            const infectAbilities = ['mummy', 'lingering-aroma'];
+            if (infectAbilities.includes(defT.ability)) {
+                const uninfectable = ['mummy', 'lingering-aroma', 'multitype', 'illusion', 'disguise', 'rks-system', 'battle-bond', 'stance-change', 'schooling', 'wonder-guard'];
+                if (atkT.ability && atkT.ability !== defT.ability && !uninfectable.includes(atkT.ability)) {
+                    atkT.ability = defT.ability;
+                    const info = abilityDisplayInfo(defT.ability);
+                    log.push(`${nameOf[attackerUid]} 被感染了，特性變成了${info ? info.nameZh : defT.ability}！`);
+                }
+            }
+        }
+        // 破損盔甲(weak-armor)：被物理招式打中(不用接觸)防禦-1、速度+2
+        if (defT.ability === 'weak-armor' && move.damageClass === 'physical') {
+            const beforeDef = defT.stages.def || 0, beforeSpd = defT.stages.spd || 0;
+            defT.stages.def = Math.max(-6, beforeDef - 1);
+            defT.stages.spd = Math.min(6, beforeSpd + 2);
+            if (defT.stages.def !== beforeDef || defT.stages.spd !== beforeSpd) log.push(`${nameOf[defenderUid]} 的破損盔甲發動了，防禦下降、速度提高了！`);
+        }
+        // 水壓(water-compaction，水屬性招式打中防禦大幅提高)、儲力(stamina，任何命中都防禦提高)
+        if (defT.ability === 'water-compaction' && move.type === 'water') {
+            const before = defT.stages.def || 0;
+            defT.stages.def = Math.min(6, before + 2);
+            if (defT.stages.def !== before) log.push(`${nameOf[defenderUid]} 的水壓發動了，防禦大幅提高了！`);
+        } else if (defT.ability === 'stamina') {
+            const before = defT.stages.def || 0;
+            defT.stages.def = Math.min(6, before + 1);
+            if (defT.stages.def !== before) log.push(`${nameOf[defenderUid]} 的儲力發動了，防禦提高了！`);
+        }
+        // 觸即怒(anger-point)：被會心一擊打中，攻擊直接衝到最高
+        if (crit && defT.ability === 'anger-point') {
+            defT.stages.atk = 6;
+            log.push(`${nameOf[defenderUid]} 的觸即怒發動了，攻擊衝到最高！`);
+        }
+        // 狂躁(berserk)：這次攻擊之前HP還過半、打完掉到一半(含)以下，特攻提高
+        if (defT.ability === 'berserk' && defHpBeforeHits > defT.maxHp / 2 && defT.currentHp <= defT.maxHp / 2) {
+            const before = defT.stages.spAtk || 0;
+            defT.stages.spAtk = Math.min(6, before + 1);
+            if (defT.stages.spAtk !== before) log.push(`${nameOf[defenderUid]} 的狂躁發動了，特攻提高了！`);
+        }
+        // 正義之心(被惡屬性招式打中攻擊+1)、戰慄(被惡/幽靈/蟲屬性招式打中速度+1)——不需要接觸
+        if (move.type === 'dark' && defT.ability === 'justified') {
+            const before = defT.stages.atk || 0;
+            defT.stages.atk = Math.min(6, before + 1);
+            if (defT.stages.atk !== before) log.push(`${nameOf[defenderUid]} 的正義之心發動了，攻擊提高了！`);
+        }
+        if (['dark', 'ghost', 'bug'].includes(move.type) && defT.ability === 'rattled') {
+            const before = defT.stages.spd || 0;
+            defT.stages.spd = Math.min(6, before + 1);
+            if (defT.stages.spd !== before) log.push(`${nameOf[defenderUid]} 的戰慄發動了，速度提高了！`);
+        }
+    }
+    // 依序觸發雙方的上場特性(A先、B後——1v1沒有真正的速度同時判定需求，固定順序簡單且結果一致)；
+    // 只有還沒觸發過(這一次上場之後第一次呼叫resolveBattleRound)的那一方才會真的執行
+    if (!state[uidA].switchInAbilityFired) { runSwitchInAbility(uidA, uidB); state[uidA].switchInAbilityFired = true; }
+    if (!state[uidB].switchInAbilityFired) { runSwitchInAbility(uidB, uidA); state[uidB].switchInAbilityFired = true; }
+    // 慢啟動(slow-start)/怠惰(truant)都需要知道「這隻寶可夢這次上場已經經歷了幾個回合」，
+    // 每次resolveBattleRound(=一整個回合)呼叫，雙方都活著的話各自+1(resetVolatileForBench換人時
+    // 會歸零，所以這個數字天然就是「這次上場的第幾輪」)
+    if (state[uidA].currentHp > 0) state[uidA].turnsOnField = (state[uidA].turnsOnField || 0) + 1;
+    if (state[uidB].currentHp > 0) state[uidB].turnsOnField = (state[uidB].turnsOnField || 0) + 1;
+
     // ---- 原地變身(第十二輪第二版，取代原本「候補遞補上場+換人文案改講變化」的做法)：
     // 使用者明確要求「更強烈的原地變身，不要有倒下的畫面」，這裡改成在「這隻真的要判定倒下」的
     // 那一刻攔截，完全不讓牠進入fainted/mustSwitch狀態——沒有「倒下了」訊息、沒有精靈球收回/
@@ -7156,6 +7490,57 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     const moveUids = [];
     if (actionA && actionA.type === 'move') moveUids.push(uidA);
     if (actionB && actionB.type === 'move') moveUids.push(uidB);
+    // 【第三十一輪新增】特性對「招式本身」的加成/覆寫：型態轉換類(一般皮膚/冰凍皮膚/妖精皮膚/
+    // 濕潤之聲)、威力加成類(技術高手/鐵拳/強壯之顎/超級發射器/硬爪/鋒銳/龐克搖滾自身加成/搬岩/
+    // 龍顎/電晶體/鋼能力者/捨身/沙之力/茂盛系/強行/天恩/活力)、出招優先度類(惡作劇之心/疾風之翼/
+    // 先行治療)全部用同一個函式集中處理，用淺拷貝更新moveOf[uid]，跟Ｚ招式那段的做法一致
+    // (不會動到moveDataCache共用的原始物件)——只影響「這次使用」的顯示/威力/優先度，不影響
+    // PP/命中率/招式代號等其餘欄位，後續相剋倍率/扣PP/命中判定完全不受影響
+    function applyAbilityMoveModifiers(uid) {
+        const t = state[uid];
+        const ability = t.ability;
+        const mv = moveOf[uid];
+        if (!ability || mv.__zSpecial || mv.isStruggle) return;
+        let type = mv.type, power = mv.power, priority = mv.priority;
+        let ailmentChance = mv.ailmentChance, flinchChance = mv.flinchChance, statChance = mv.statChance;
+        if (ability === 'normalize' && type !== 'normal') { type = 'normal'; if (power > 0) power = Math.round(power * 1.2); }
+        else if (ability === 'refrigerate' && type === 'normal') { type = 'ice'; if (power > 0) power = Math.round(power * 1.2); }
+        else if (ability === 'pixilate' && type === 'normal') { type = 'fairy'; if (power > 0) power = Math.round(power * 1.2); }
+        else if (ability === 'liquid-voice' && SOUND_MOVES.has(mv.name)) { type = 'water'; }
+        if (power > 0) {
+            if (ability === 'technician' && power <= 60) power = Math.round(power * 1.5);
+            else if (ability === 'iron-fist' && PUNCH_MOVES.has(mv.name)) power = Math.round(power * 1.2);
+            else if (ability === 'strong-jaw' && BITE_MOVES.has(mv.name)) power = Math.round(power * 1.5);
+            else if (ability === 'mega-launcher' && PULSE_MOVES.has(mv.name)) power = Math.round(power * 1.5);
+            else if (ability === 'tough-claws' && mv.damageClass === 'physical') power = Math.round(power * 1.33);
+            else if (ability === 'sharpness' && SLICING_MOVES.has(mv.name)) power = Math.round(power * 1.5);
+            else if (ability === 'punk-rock' && SOUND_MOVES.has(mv.name)) power = Math.round(power * 1.3);
+            else if (ability === 'rocky-payload' && type === 'rock') power = Math.round(power * 1.5);
+            else if (ability === 'dragons-maw' && type === 'dragon') power = Math.round(power * 1.5);
+            else if (ability === 'transistor' && type === 'electric') power = Math.round(power * 1.3);
+            else if (ability === 'steelworker' && type === 'steel') power = Math.round(power * 1.5);
+            else if (ability === 'reckless' && mv.drain < 0) power = Math.round(power * 1.2);
+            else if (ability === 'sand-force' && weatherState.type === 'sandstorm' && ['rock', 'ground', 'steel'].includes(type)) power = Math.round(power * 1.3);
+            else if (['overgrow', 'blaze', 'torrent', 'swarm'].includes(ability)) {
+                const abilityType = { overgrow: 'grass', blaze: 'fire', torrent: 'water', swarm: 'bug' }[ability];
+                if (type === abilityType && t.currentHp <= t.maxHp / 3) power = Math.round(power * 1.5);
+            } else if (ability === 'sheer-force') {
+                const hasSecondary = (ailmentChance > 0 && mv.category !== 'ailment') || flinchChance > 0 ||
+                    (statChance > 0 && !['net-good-stats', 'swagger'].includes(mv.category));
+                if (hasSecondary) { power = Math.round(power * 1.3); ailmentChance = 0; flinchChance = 0; statChance = 0; }
+            }
+            if (ability === 'hustle' && mv.damageClass === 'physical') power = Math.round(power * 1.5);
+        }
+        if (ability === 'serene-grace') {
+            ailmentChance = Math.min(100, (ailmentChance || 0) * 2);
+            flinchChance = Math.min(100, (flinchChance || 0) * 2);
+            statChance = Math.min(100, (statChance || 0) * 2);
+        }
+        if (ability === 'prankster' && mv.damageClass === 'status') priority = (priority || 0) + 1;
+        else if (ability === 'gale-wings' && type === 'flying' && t.currentHp === t.maxHp) priority = (priority || 0) + 1;
+        else if (ability === 'triage' && mv.healing > 0) priority = (priority || 0) + 3;
+        moveOf[uid] = { ...mv, type, power, priority, ailmentChance, flinchChance, statChance };
+    }
     const moveOf = {};
     for (const uid of moveUids) {
         const act = uid === uidA ? actionA : actionB;
@@ -7175,6 +7560,22 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 log.push(`${state[uid].nickname} 現在沒辦法使出Ｚ招式，${moveOf[uid].nameZh}照原本的威力使出！`);
             }
         }
+        applyAbilityMoveModifiers(uid);
+    }
+    // ---- 暗黑氣場/妖精氣場/氣場破壞：跟一般「自己特性加成自己招式」不同，這是「全場只要有人帶著
+    // 這個特性，雙方的對應屬性招式都會變強」的場地級效果，所以獨立在Ｚ招式/上面那批自身特性
+    // 加成都處理完之後、效果計算之前，統一掃一次雙方特性 ----
+    {
+        const auraAbilities = [state[uidA].ability, state[uidB].ability];
+        const hasAuraBreak = auraAbilities.includes('aura-break');
+        const darkAuraOn = auraAbilities.includes('dark-aura');
+        const fairyAuraOn = auraAbilities.includes('fairy-aura');
+        for (const uid of moveUids) {
+            const mv = moveOf[uid];
+            if (mv.__zSpecial || !(mv.power > 0)) continue;
+            if (mv.type === 'dark' && darkAuraOn) moveOf[uid] = { ...mv, power: Math.round(mv.power * (hasAuraBreak ? 0.75 : 1.33)) };
+            else if (mv.type === 'fairy' && fairyAuraOn) moveOf[uid] = { ...mv, power: Math.round(mv.power * (hasAuraBreak ? 0.75 : 1.33)) };
+        }
     }
     const effOf = {};
     // 看穿/識破/定身術(miracle eye/odor-sleuth/foresight)的正統效果之一：讓幽靈系不再免疫一般/格鬥、
@@ -7185,11 +7586,70 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (moveType === 'psychic' && defenderTypes.includes('dark')) return true;
         return false;
     }
+    // ---- 特性造成的屬性免疫/吸收：飄浮(levitate)免疫地面、乾燥皮膚等一批「吸收系」特性免疫
+    // 對應屬性並觸發額外效果(回血/能力提升)、看門犬以外的兩用清除者用不到這裡。這些特性本來就是
+    // 「防禦方」的效果，所以進攻方是打破特性(mold-breaker等)就整批跳過 ----
+    const ABILITY_TYPE_IMMUNITY = { levitate: 'ground', 'flash-fire': 'fire', 'water-absorb': 'water', 'volt-absorb': 'electric', 'sap-sipper': 'grass', 'storm-drain': 'water', 'lightning-rod': 'electric', 'motor-drive': 'electric', 'earth-eater': 'ground', 'well-baked-body': 'fire', 'dry-skin': 'water' };
+    function applyAbilityAbsorb(defenderUid, attackerUid, ability) {
+        const def = state[defenderUid];
+        const log2 = (msg) => log.push(msg);
+        if (ability === 'flash-fire') {
+            if (!def.flashFireBoosted) { def.flashFireBoosted = true; log2(`${nameOf[defenderUid]} 的引火發動了，火系招式威力提高了！`); }
+        } else if (ability === 'water-absorb' || ability === 'dry-skin' || ability === 'earth-eater') {
+            if (def.currentHp < def.maxHp) {
+                def.currentHp = Math.min(def.maxHp, def.currentHp + Math.max(1, Math.floor(def.maxHp / 4)));
+                log2(`${nameOf[defenderUid]} 的特性吸收了招式，回復了一些HP！`);
+            }
+        } else if (ability === 'volt-absorb') {
+            if (def.currentHp < def.maxHp) {
+                def.currentHp = Math.min(def.maxHp, def.currentHp + Math.max(1, Math.floor(def.maxHp / 4)));
+                log2(`${nameOf[defenderUid]} 的蓄電吸收了招式，回復了一些HP！`);
+            }
+        } else if (ability === 'sap-sipper') {
+            def.stages.atk = Math.min(6, (def.stages.atk || 0) + 1);
+            log2(`${nameOf[defenderUid]} 的食草發動了，攻擊提高了！`);
+        } else if (ability === 'storm-drain' || ability === 'lightning-rod') {
+            def.stages.spAtk = Math.min(6, (def.stages.spAtk || 0) + 1);
+            log2(`${nameOf[defenderUid]} 的特性發動了，特攻提高了！`);
+        } else if (ability === 'motor-drive') {
+            def.stages.spd = Math.min(6, (def.stages.spd || 0) + 1);
+            log2(`${nameOf[defenderUid]} 的電氣引擎發動了，速度提高了！`);
+        } else if (ability === 'well-baked-body') {
+            def.stages.def = Math.min(6, (def.stages.def || 0) + 2);
+            log2(`${nameOf[defenderUid]} 的烤焦身軀發動了，防禦大幅提高了！`);
+        }
+    }
     for (const uid of moveUids) {
         const opponentUid = uid === uidA ? uidB : uidA;
         let mult = await fetchTypeEffectiveness(moveOf[uid].type, displayOf[opponentUid].types);
         if (mult === 0 && state[opponentUid].identified && bypassIdentifyImmunity(moveOf[uid].type, displayOf[opponentUid].types)) {
             mult = 1;
+        }
+        // ---- 校正者(scrappy)：讓一般/格鬥系招式可以打中飄浮的幽靈系(無視幽靈的屬性免疫)；
+        // 破格系特性(mold-breaker/turboblaze/teravolt)不影響「屬性天生免疫」，只影響下面的
+        // 特性造成的免疫，所以校正者這條規則跟破格無關，獨立處理 ----
+        if (mult === 0 && state[uid].ability === 'scrappy' && ['normal', 'fighting'].includes(moveOf[uid].type) && displayOf[opponentUid].types.includes('ghost')) {
+            mult = 1;
+        }
+        const defAbility = state[opponentUid] && state[opponentUid].ability;
+        if (mult > 0 && moveOf[uid].power > 0 && defAbility && !attackerBypassesAbilities(state[uid])) {
+            if (defAbility === 'wonder-guard' && mult < 2) {
+                mult = 0;
+            } else if (ABILITY_TYPE_IMMUNITY[defAbility] === moveOf[uid].type) {
+                mult = 0;
+                applyAbilityAbsorb(opponentUid, uid, defAbility);
+            } else if (defAbility === 'wind-rider' && WIND_MOVES.has(moveOf[uid].name)) {
+                // 乘風特性：完全免疫風系招式，還會讓自己攻擊提高
+                mult = 0;
+                const before = state[opponentUid].stages.atk || 0;
+                state[opponentUid].stages.atk = Math.min(6, before + 1);
+                if (state[opponentUid].stages.atk !== before) log.push(`${nameOf[opponentUid]} 的乘風發動了，攻擊提高了！`);
+            }
+        }
+        // ---- 銳眼鏡片(tinted-lens)：攻擊方特性，招式打出「效果不太好」(0<倍率<1)時威力加倍，
+        // 等於把不利屬性相剋抵銷掉一半 ----
+        if (mult > 0 && mult < 1 && state[uid].ability === 'tinted-lens') {
+            mult *= 2;
         }
         // ---- 地區對戰王牌寶可夢的特殊AI指令(directives，見POKEMON_REGIONS)：屬性免疫(typeImmunity，
         // 例如滴蛛霸的水泡特性火系無效)直接把相剋倍率蓋成0，沿用底下既有的「沒有效果」處理流程；
@@ -7205,11 +7665,6 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         }
         effOf[uid] = mult;
     }
-
-    // 天氣/場地：從房間資料帶過來的「這回合開始前」狀態，招式效果/回合結束的持續效果都會更新這份本地副本，
-    // 最後才整份寫回Firestore
-    let weatherState = { ...(roomData.battleState.weather || { type: null, turnsLeft: 0 }) };
-    let terrainState = { ...(roomData.battleState.terrain || { type: null, turnsLeft: 0 }) };
 
     // 出招順序：優先度高的先出手(不管速度，保護/先制拳那種招式就是這樣)，優先度相同再比
     // 「有效速度」= 種族速度 × 能力等級倍率 × (麻痺的話再打對折，這是經典的麻痺副作用)
@@ -7293,6 +7748,14 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             atk.flinched = false;
             ev.blocked = 'flinch';
             log.push(`${atkName} 畏縮了，無法出招！`);
+            events.push(ev);
+            continue;
+        }
+        // 怠惰(truant)：這次上場後每隔一回合就會偷懶一次(turnsOnField在上面已經每回合先+1，
+        // 上場的第1回合是奇數可以出招，第2回合是偶數就會偷懶，以此類推)
+        if (atk.ability === 'truant' && (atk.turnsOnField || 1) % 2 === 0) {
+            ev.blocked = 'truant';
+            log.push(`${atkName} 正在偷懶，無法出招！`);
             events.push(ev);
             continue;
         }
@@ -7443,9 +7906,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // ev.attackerKey/defenderKey要一併補上對調後的值，不然播放動畫時「哪一邊中招」會顯示錯邊；
         // eff(相剋倍率)原本是「原施放者對原目標」算好的，對調後要改成「原施放者對原目標」變成
         // 「原目標(現在是新攻擊方)對原施放者(現在是新防禦方)」，沒有現成值可以沿用，得重新查一次 ----
-        if (def.magicCoatActive && isMagicCoatBounceable(move)) {
+        if ((def.magicCoatActive || (def.ability === 'magic-bounce' && !attackerBypassesAbilities(atk))) && isMagicCoatBounceable(move)) {
             def.magicCoatActive = false;
-            log.push(`${defName} 的魔法反射把 ${atkName} 的 ${move.nameZh} 彈了回去！`);
+            log.push(`${defName} 的${def.ability === 'magic-bounce' ? '魔法反射特性' : '魔法反射'}把 ${atkName} 的 ${move.nameZh} 彈了回去！`);
             [attackerUid, defenderUid] = [defenderUid, attackerUid];
             atk = state[attackerUid];
             def = state[defenderUid];
@@ -7519,6 +7982,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && !isFieldSideMoveForHit && defVanished) {
             hit = false;
         } else if (move.accuracy != null) {
+            // 不會犯規(no-guard)：任何一方帶著這個特性，這次攻擊一律必中(不看命中率也不看閃避率)
+            if (atk.ability === 'no-guard' || def.ability === 'no-guard') {
+                hit = true;
+            } else {
             // 正統規則：被看穿/識破/定身術鎖定(identified)之後，閃避率等級一律當作0——
             // 不管原本閃避堆了幾階，命中判定都不會再被閃避率影響
             const defEvaStage = def.identified ? 0 : (def.stages.eva || 0);
@@ -7530,8 +7997,18 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (atk.heldItem === 'wide-lens') chance *= 1.1;
             if (atk.heldItem === 'zoom-lens' && order.indexOf(attackerUid) > order.indexOf(defenderUid)) chance *= 1.2;
             if (def.heldItem === 'bright-powder') chance *= 0.9;
+            // 特性對命中率的影響：複眼(+30%)、勝利之星(+10%)、蠻力(物理招式-20%，配合威力
+            // 加成一起是官方正統的「加威力但降命中」設計)；防禦方沙隱(沙暴中-20%)/雪隱(冰雹中
+            // -20%)/亂亂步伐(混亂狀態下閃避加倍，這裡直接換算成對方命中-50%)
+            if (atk.ability === 'compound-eyes') chance *= 1.3;
+            else if (atk.ability === 'victory-star') chance *= 1.1;
+            if (atk.ability === 'hustle' && move.damageClass === 'physical') chance *= 0.8;
+            if (def.ability === 'sand-veil' && weatherState.type === 'sandstorm') chance *= 0.8;
+            else if (def.ability === 'snow-cloak' && weatherState.type === 'hail') chance *= 0.8;
+            if (def.ability === 'tangled-feet' && def.confusedTurns > 0) chance *= 0.5;
             chance = Math.max(0, Math.min(100, chance));
             hit = rollChance(chance);
+            }
         }
         if (!hit) {
             ev.missed = true;
@@ -7550,7 +8027,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 複製對方的資料，不管對方是什麼屬性都一定會生效(除非被守住/替身擋下來，那是後面
         // protectedThisTurn/substituteHp各自的判斷，跟這裡的屬性免疫是兩回事)，這正是玩家
         // 回報「變身怎樣都說沒有效果」的成因 ----
-        const powderBlocked = POWDER_MOVES.has(move.name) && displayOf[defenderUid].types.includes('grass');
+        const powderBlocked = POWDER_MOVES.has(move.name) && (displayOf[defenderUid].types.includes('grass') || def.ability === 'overcoat');
         // 入場障礙/光牆系：正統規則裡這批招式是打在「己方/對方那一整側的場地」上，不是打在某一隻
         // 寶可夢身上，不該被「這隻寶可夢的屬性剛好對這個招式屬性免疫」擋下來——例如毒菱(毒屬性)
         // 對上鋼屬性的對手、撒菱(地面屬性)對上飛行屬性的對手，招式本身的屬性只是資料庫裡的分類
@@ -7572,10 +8049,22 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             continue;
         }
 
+        // ---- 女王的威嚴/耀眼身軀/破格盔尾：對方帶著這幾個特性的話，優先度大於0的招式完全打不中
+        // 牠(跟守住一樣整招失敗，但這是「特性造成的」而不是「主動擺出的招式」)，破格系特性攻擊方
+        // 一樣可以無視 ----
+        if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && !isFieldSideMove && move.priority > 0 &&
+            ['queenly-majesty', 'dazzling', 'armor-tail'].includes(def.ability) && !attackerBypassesAbilities(atk)) {
+            ev.protectedBlock = true;
+            log.push(`${defName} 的特性讓 ${atkName} 的優先度招式完全發揮不出來！`);
+            events.push(ev);
+            continue;
+        }
+
         // ---- 對方擺出了守住：這回合的攻擊完全被擋下來，不會造成傷害或附加效果。入場障礙/光牆系
         // 一樣不受守住影響(打在場地上，不是打在寶可夢身上)，跟上面屬性免疫的bypassesTypeImmunity
-        // 共用同一個isFieldSideMove判斷 ----
-        if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && !isFieldSideMove && def.protectedThisTurn) {
+        // 共用同一個isFieldSideMove判斷；看不見的拳頭(unseen-fist)：接觸類招式無視守住 ----
+        if (!isSelfTargetMove(move.target) && move.target !== 'entire-field' && !isFieldSideMove && def.protectedThisTurn &&
+            !(atk.ability === 'unseen-fist' && moveMakesContact(move, atk))) {
             ev.protectedBlock = true;
             log.push(`${defName} 防住了攻擊！`);
             events.push(ev);
@@ -7583,6 +8072,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         }
 
         const isStab = displayOf[attackerUid].types.includes(move.type);
+        // 適應力(adaptability)：本系加成從1.5倍提高到2倍
+        const stabMult = isStab ? (atk.ability === 'adaptability' ? 2 : 1.5) : 1;
         let totalDamage = 0, hitCount = 0, crit = false, fainted = false, subBroke = false;
         // 這一下攻擊命中前，替身是否還在場——用來決定附加效果要不要被擋掉。這裡統一算(而不是
         // 只在有威力的招式分支裡才算)，這樣挑釁/定身法/瞌睡這類純變化招式也能正確被替身擋下來
@@ -7594,6 +8085,14 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 三種分支都要用到
         const defWasFullHp = def.currentHp === def.maxHp;
         function tryFocusSash() {
+            // 結實(sturdy)：滿血被打到會死的攻擊，一定保留1點HP——跟氣勢披帶不同的是這是特性、
+            // 不會被用掉，破格系特性攻擊方可以無視(這裡簡化成「保留1點HP」，不是嚴格意義上讓
+            // 一擊必殺類招式完全沒有效果，但實際結果一樣是防禦方不會被打倒)
+            if (defWasFullHp && def.currentHp <= 0 && def.ability === 'sturdy' && !attackerBypassesAbilities(atk)) {
+                def.currentHp = 1;
+                log.push(`${defName} 的結實發動了，驚險地保留了1點HP！`);
+                return true;
+            }
             if (defWasFullHp && def.currentHp <= 0 && def.heldItem === 'focus-sash') {
                 def.currentHp = 1;
                 def.heldItem = null;
@@ -7737,15 +8236,52 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             atk.magicCoatActive = true;
             log.push(`${atkName} 豎起了魔法反射！`);
         } else if (move.power > 0) {
-            const hits = rollMultiHitCount(move.minHits, move.maxHits);
+            // 技巧鏈(skill-link)：連續攻擊招式一律固定打出最大次數
+            const hits = (atk.ability === 'skill-link' && move.maxHits) ? move.maxHits : rollMultiHitCount(move.minHits, move.maxHits);
             // 物理/特殊分流：move.damageClass是'physical'還是'special'決定這一下要吃攻擊/防禦
             // 這組數值、還是特攻/特防那組——以前這裡不管招式分類一律用同一組atk.atk/def.def，
             // 玩家反映百萬吨拳(物理)、噴射火焰(特殊)這種完全不同類型的招式打起來卻共用同一組
             // 攻防數值，這正是根本原因。isSpecial只在damageClass真的是'special'時才成立，
             // 其餘(physical，以及少數沒有damage_class資料、退化成預設值的招式)一律當物理處理
             const isSpecial = move.damageClass === 'special';
-            const atkStat = (isSpecial ? atk.spAtk : atk.atk) * statStageMult(isSpecial ? atk.stages.spAtk : atk.stages.atk);
-            let defStat = (isSpecial ? def.spDef : def.def) * statStageMult(isSpecial ? def.stages.spDef : def.stages.def);
+            // ---- 特性造成的自身攻擊/特攻倍率：怪力鉗/瑜珈超能力(物理×2)、幹勁(異常狀態下物理×1.5)、
+            // 毒膽(中毒下物理×1.5)、太陽之力(晴天下特攻×1.5)、耀焰(燒傷下特攻×1.5)、無精打采(HP過半
+            // 以下攻擊/特攻都×0.5，兩種分類各自判斷一次)、慢啟動(出場前5回合物理×0.5，沿用
+            // turnsOnField這個新增的揮發性計數器) ----
+            let abilityAtkMult = 1;
+            if (!isSpecial) {
+                if (atk.ability === 'huge-power' || atk.ability === 'pure-power') abilityAtkMult = 2;
+                else if (atk.ability === 'guts' && atk.status) abilityAtkMult = 1.5;
+                else if (atk.ability === 'toxic-boost' && atk.status === 'poison') abilityAtkMult = 1.5;
+                else if (atk.ability === 'slow-start' && (atk.turnsOnField || 0) <= 5) abilityAtkMult = 0.5;
+            } else {
+                if (atk.ability === 'solar-power' && weatherState.type === 'sun') abilityAtkMult = 1.5;
+                else if (atk.ability === 'flare-boost' && atk.status === 'burn') abilityAtkMult = 1.5;
+            }
+            if (atk.ability === 'defeatist' && atk.currentHp <= atk.maxHp / 2) abilityAtkMult *= 0.5;
+            // ---- 支配之盤四天王特性(蕭瑟之鈴/嚴刑之劍/滿盈之杯/塗漆之杖)：不是加強自己，是壓制
+            // 「對方」對應那項能力25%——所以要看對手(state[defenderUid])身上有沒有這個特性 ----
+            let ruinAtkMult = 1;
+            if (!isSpecial && def.ability === 'tablets-of-ruin') ruinAtkMult = 0.75;
+            else if (isSpecial && def.ability === 'vessel-of-ruin') ruinAtkMult = 0.75;
+            // ---- 不知不覺(unaware)：計算傷害時無視「對方」的能力等級變化——自己是不知不覺的話，
+            // 無視對方的防禦/特防等級；對方是不知不覺的話，無視自己的攻擊/特攻等級 ----
+            const atkStageMultForCalc = def.ability === 'unaware' ? 1 : statStageMult(isSpecial ? atk.stages.spAtk : atk.stages.atk);
+            const atkStat = (isSpecial ? atk.spAtk : atk.atk) * atkStageMultForCalc * abilityAtkMult * ruinAtkMult;
+            const defStageMultForCalc = atk.ability === 'unaware' ? 1 : statStageMult(isSpecial ? def.stages.spDef : def.stages.def);
+            // ---- 特性造成的自身防禦/特防倍率：毛皮大衣(物理×2)、鱗粉盾/龍鱗盾這裡簡化成特防×2
+            // (等效於「受到的特殊傷害減半」，跟毛皮大衣的物理版本對稱)、奇蹟鱗片(異常狀態下物理
+            // 防禦×1.5)、青草絨毯(青草場地下物理防禦×1.5) ----
+            let abilityDefMult = 1;
+            if (!isSpecial) {
+                if (def.ability === 'fur-coat') abilityDefMult = 2;
+                else if (def.ability === 'marvel-scale' && def.status) abilityDefMult = 1.5;
+                else if (def.ability === 'grass-pelt' && terrainState.type === 'grassy') abilityDefMult = 1.5;
+            } else if (def.ability === 'ice-scales') abilityDefMult = 2;
+            let ruinDefMult = 1;
+            if (!isSpecial && atk.ability === 'sword-of-ruin') ruinDefMult = 0.75;
+            else if (isSpecial && atk.ability === 'beads-of-ruin') ruinDefMult = 0.75;
+            let defStat = (isSpecial ? def.spDef : def.def) * defStageMultForCalc * abilityDefMult * ruinDefMult;
             // 正統規則：沙暴天氣下岩石屬性的特防視為1.5倍(只對特殊招式生效，物理招式不受影響)
             if (weatherState.type === 'sandstorm' && isSpecial && displayOf[defenderUid].types.includes('rock')) {
                 defStat *= 1.5;
@@ -7778,21 +8314,46 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 atk.rolloutCount = Math.min(5, (atk.rolloutCount || 0) + 1);
                 if (rolloutMult > 1) log.push(`${atkName} 的${move.nameZh}威力提升到了${rolloutMult}倍！`);
             }
-            const itemDmgMult = (atk.heldItem && atk.heldItem === typeBoostKey ? 1.2 : 1) * (atk.heldItem === 'life-orb' ? 1.3 : 1) * chargeElectricBoost * rolloutMult;
-            // 焦點鏡(scope-lens)：會心一擊機率+1階
-            const effectiveCritRate = (move.critRate || 0) + (atk.heldItem === 'scope-lens' ? 1 : 0);
+            // ---- 特性造成的傷害後乘倍率(跟威力無關，直接乘在算好的傷害上)：結實岩/濾鏡/多重鱗片
+            // 效果絕佳時減傷、多重鱗片/影子盾滿血時減傷、厚脂肪(冰/火)、耐熱(火)、龐克搖滾(音波系
+            // 招式減傷，跟龐克搖滾自己使出音波系招式時的威力加成是相反方向的兩個效果)、純淨之鹽
+            // (幽靈系減傷)、蓬鬆(接觸招式減傷、火屬性招式反而加倍)、乾燥皮膚(火屬性招式反而加成)——
+            // 破格系特性一律無視這整批(跟屬性免疫那邊的攻方無視邏輯一致) ----
+            let abilityDmgPostMult = 1;
+            const defAbilityForDmg = def.ability;
+            if (defAbilityForDmg && !attackerBypassesAbilities(atk)) {
+                if (['solid-rock', 'filter', 'prism-armor'].includes(defAbilityForDmg) && eff > 1) abilityDmgPostMult *= 0.75;
+                if ((defAbilityForDmg === 'multiscale' || defAbilityForDmg === 'shadow-shield') && defWasFullHp) abilityDmgPostMult *= 0.5;
+                if (defAbilityForDmg === 'thick-fat' && (move.type === 'fire' || move.type === 'ice')) abilityDmgPostMult *= 0.5;
+                if (defAbilityForDmg === 'heatproof' && move.type === 'fire') abilityDmgPostMult *= 0.5;
+                if (defAbilityForDmg === 'punk-rock' && SOUND_MOVES.has(move.name)) abilityDmgPostMult *= 0.5;
+                if (defAbilityForDmg === 'purifying-salt' && move.type === 'ghost') abilityDmgPostMult *= 0.5;
+                if (defAbilityForDmg === 'fluffy') {
+                    if (moveMakesContact(move, atk)) abilityDmgPostMult *= 0.5;
+                    if (move.type === 'fire') abilityDmgPostMult *= 2;
+                }
+                if (defAbilityForDmg === 'dry-skin' && move.type === 'fire') abilityDmgPostMult *= 1.25;
+            }
+            const itemDmgMult = (atk.heldItem && atk.heldItem === typeBoostKey ? 1.2 : 1) * (atk.heldItem === 'life-orb' ? 1.3 : 1) * chargeElectricBoost * rolloutMult * abilityDmgPostMult;
+            // 焦點鏡(scope-lens)/實戰之爪(super-luck)：會心一擊機率+1階
+            const effectiveCritRate = (move.critRate || 0) + (atk.heldItem === 'scope-lens' ? 1 : 0) + (atk.ability === 'super-luck' ? 1 : 0);
+            // 戰鬥盔甲/貝殼盔甲：完全免疫會心一擊(除非攻擊方是破格系特性)；狠毒：對中毒的對手
+            // 必定會心一擊
+            const critBlockedByAbility = ['battle-armor', 'shell-armor'].includes(def.ability) && !attackerBypassesAbilities(atk);
+            const forcedCritByAbility = atk.ability === 'merciless' && def.status === 'poison';
             // 光牆/反射壁/極光幕：防禦方那一側如果有張開，對應分類的傷害減半——正統規則裡雙打是
             // 2/3、單打(這個遊戲只有單打)是直接減半，會心一擊無視這些減傷(下面isCrit成立時不套用)
             const defScreens = screensState[defenderUid];
             // 屬性抗性莓果：被剋到(或chilan抗一般屬性，不分剋不剋)的那一下傷害減半，一次性——
             // 只在多段攻擊的「第一次」符合條件的那下觸發，觸發後道具就消失了，後面的攻次不會再減
             let resistBerryConsumed = false;
+            const defHpBeforeHits = def.currentHp; // 狂躁(berserk)要看「這次攻擊之前」的HP有沒有跨過一半
             for (let i = 0; i < hits; i++) {
                 if (def.currentHp <= 0) break;
                 if (defSubActiveBeforeHit && def.substituteHp <= 0) break; // 替身已經被打破了，連續攻擊剩下的次數不會再打到本體
-                const isCrit = rollChance(critChance(effectiveCritRate) * 100);
+                const isCrit = !critBlockedByAbility && (forcedCritByAbility || rollChance(critChance(effectiveCritRate) * 100));
                 if (isCrit) crit = true;
-                let dmg = computeDamage(atk.level, atkStat, defStat, move.power, eff, isStab, isCrit ? 1.5 : 1);
+                let dmg = computeDamage(atk.level, atkStat, defStat, move.power, eff, stabMult, isCrit ? (atk.ability === 'sniper' ? 2.25 : 1.5) : 1);
                 dmg = Math.max(1, Math.floor(dmg * wDmgMult * tDmgMult * itemDmgMult));
                 if (!isCrit && defScreens) {
                     if (defScreens.auroraVeil > 0) dmg = Math.max(1, Math.floor(dmg * 0.5));
@@ -7828,14 +8389,14 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (subBroke) log.push(`${defName} 的替身消失了！`);
             // 生命寶珠(life-orb)反傷：只要有造成傷害就扣攻擊方1/10最大HP，跟招式本身有沒有命中
             // /有沒有效果無關(這裡totalDamage>0已經隱含命中且有效果)
-            if (totalDamage > 0 && atk.heldItem === 'life-orb') {
+            if (totalDamage > 0 && atk.heldItem === 'life-orb' && atk.ability !== 'magic-guard') {
                 const recoil = Math.max(1, Math.floor(atk.maxHp / 10));
                 atk.currentHp = Math.max(0, atk.currentHp - recoil);
                 log.push(`${atkName} 因為生命寶珠，反彈了 ${recoil} 點傷害！`);
                 if (atk.currentHp <= 0) { log.push(`${atkName} 倒下了！`); handleFaint(attackerUid); }
             }
-            // 凸凸頭盔(rocky-helmet)：物理招式打中(不含替身)時，攻擊方被反彈1/6最大HP
-            if (totalDamage > 0 && !defSubActiveBeforeHit && move.damageClass === 'physical' && def.heldItem === 'rocky-helmet' && atk.currentHp > 0) {
+            // 凸凸頭盔(rocky-helmet)：物理招式打中(不含替身)時，攻擊方被反彈1/6最大HP(魔法防守免疫)
+            if (totalDamage > 0 && !defSubActiveBeforeHit && move.damageClass === 'physical' && def.heldItem === 'rocky-helmet' && atk.currentHp > 0 && atk.ability !== 'magic-guard') {
                 const helmetDmg = Math.max(1, Math.floor(atk.maxHp / 6));
                 atk.currentHp = Math.max(0, atk.currentHp - helmetDmg);
                 log.push(`${atkName} 被 ${defName} 的凸凸頭盔反彈了 ${helmetDmg} 點傷害！`);
@@ -7860,6 +8421,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 def.trapped = true;
                 log.push(`${defName} 被困住了，沒辦法替換寶可夢！`);
             }
+            // 【第三十一輪新增】接觸/命中觸發的被動特性(粗糙皮膚/靜電/孢子/黏黏/破損盔甲/水壓/
+            // 儲力/觸即怒/狂躁/正義之心/戰慄/中毒觸點/劇毒鎖鏈/感染特性/殘暴/破釜沉舟)，統一在
+            // 這裡呼叫一次，函式內部會自己重新讀取最新的def.currentHp判斷防禦方是否已經倒下
+            applyContactAndHitAbilities(attackerUid, defenderUid, move, totalDamage, defHpBeforeHits, defSubActiveBeforeHit, crit);
         } else {
             // 招式本身沒有威力(純變化/狀態招式)，傷害留在0——底下的回血/異常狀態/能力等級
             // 區塊才是這種招式真正的效果
@@ -7943,13 +8508,19 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 「互斥的主要異常狀態」線——這是修正扎根之前完全沒有回血邏輯的關鍵，把它從共用status
         // 特例出來，並且被替身擋下來時不會附加(defSubActiveBeforeHit) ----
         if (!isHardcodedSpecialMove && move.ailment && (isSelfTargetMove(move.target) || eff !== 0) && !(!isSelfTargetMove(move.target) && defSubActiveBeforeHit)) {
-            const chance = move.category === 'ailment' ? 100 : (move.ailmentChance || 0);
+            // 鱗粉(shield-dust)：只擋「附加效果」性質的異常狀態(category不是'ailment'，例如
+            // 火焰放射10%燒傷這種順帶效果)，不會擋像十萬伏特毒粉這種以異常狀態為主要目的的招式
+            const shieldDustBlocked = move.category !== 'ailment' && !isSelfTargetMove(move.target) && def.ability === 'shield-dust' && !attackerBypassesAbilities(atk);
+            const chance = shieldDustBlocked ? 0 : (move.category === 'ailment' ? 100 : (move.ailmentChance || 0));
             if (chance > 0 && rollChance(chance)) {
                 const ailmentTarget = isSelfTargetMove(move.target) ? atk : def;
                 if (move.ailment === 'confusion') {
                     // 神秘守護：保護自己這一側不被對方附加混亂(自己招式讓自己混亂——這個簡化版
-                    // 遊戲目前沒有這種招式——不受影響，只擋「對方對我方生效」的部分)
-                    if (ailmentTarget === def && screensState[defenderUid] && screensState[defenderUid].safeguard > 0) {
+                    // 遊戲目前沒有這種招式——不受影響，只擋「對方對我方生效」的部分)。
+                    // 我行我素(own-tempo)：不看是不是自己招式，一律不會陷入混亂(破格系特性可以無視)
+                    if (ailmentTarget.ability === 'own-tempo' && !attackerBypassesAbilities(atk)) {
+                        log.push(`${ailmentTarget === atk ? atkName : defName} 我行我素，沒有陷入混亂！`);
+                    } else if (ailmentTarget === def && screensState[defenderUid] && screensState[defenderUid].safeguard > 0) {
                         log.push(`${defName} 被神秘守護保護著，沒有陷入混亂！`);
                     } else if (!ailmentTarget.confusedTurns) {
                         ailmentTarget.confusedTurns = 1 + Math.floor(Math.random() * 4);
@@ -7984,12 +8555,18 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 } else if (PRIMARY_STATUS_AILMENTS.has(move.ailment) && !ailmentTarget.status) {
                     const isToxic = move.name === 'toxic';
                     // 正統規則：特定屬性天生免疫特定的主要異常狀態(不看招式本身屬性)——
-                    // 火免疫燒傷、電免疫麻痺、冰免疫冰凍、毒/鋼免疫中毒與劇毒
+                    // 火免疫燒傷、電免疫麻痺、冰免疫冰凍、毒/鋼免疫中毒與劇毒。
+                    // 腐蝕(corrosion)：攻擊方帶著這個特性的話，可以無視「毒/鋼免疫中毒」這條屬性
+                    // 免疫(只對中毒生效，其餘屬性免疫規則不受影響)
                     const ailTargetTypes = (ailmentTarget === atk ? displayOf[attackerUid] : displayOf[defenderUid]).types || [];
                     const immuneTypesList = STATUS_TYPE_IMMUNITY[move.ailment];
-                    const typeImmune = immuneTypesList && immuneTypesList.some(ty => ailTargetTypes.includes(ty));
-                    if (typeImmune) {
-                        log.push(`${ailmentTarget === atk ? atkName : defName} 的屬性免疫了${isToxic ? '劇毒' : (STATUS_NAME_ZH[move.ailment] || move.ailment)}！`);
+                    const corrosionBypass = atk.ability === 'corrosion' && move.ailment === 'poison';
+                    const typeImmune = !!(immuneTypesList && immuneTypesList.some(ty => ailTargetTypes.includes(ty)) && !corrosionBypass);
+                    // 特性造成的異常狀態免疫(柔軟/不眠/精神力/甜甜香氣/免疫/水幕/水泡/熔岩鎧甲/純淨之鹽/
+                    // 晴天下的達爾文)：破格系特性的攻擊方可以無視這批(跟屬性免疫是分開的兩條規則)
+                    const abilityImmune = !typeImmune && !attackerBypassesAbilities(atk) && abilityBlocksStatus(ailmentTarget, move.ailment);
+                    if (typeImmune || abilityImmune) {
+                        log.push(`${ailmentTarget === atk ? atkName : defName} 的${typeImmune ? '屬性' : '特性'}免疫了${isToxic ? '劇毒' : (STATUS_NAME_ZH[move.ailment] || move.ailment)}！`);
                     } else {
                         ailmentTarget.status = move.ailment;
                         ailmentTarget.statusTurns = move.ailment === 'sleep' ? (1 + Math.floor(Math.random() * 3)) : 0;
@@ -8156,6 +8733,18 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 const mistBlocks = statTarget === def && isLowering && screensState[defenderUid] && screensState[defenderUid].mist > 0;
                 if (mistBlocks) {
                     log.push(`${defName} 被薄霧保護著，能力沒有下降！`);
+                } else if (statTarget === def && isLowering) {
+                    // ---- 對手身上的能力下降：交給applyOpponentStatDrop統一處理特性互動(恆淨之軀/
+                    // 銳角/大嘴巴/銳眼免疫、鏡甲反彈、不服輸/好勝反而暴衝、看門犬攻擊反升)——
+                    // 這裡另外組一份ev.statChanges，讓客戶端既有的能力升降動畫繼續正常顯示 ----
+                    const applied = [];
+                    move.statChanges.forEach(sc => {
+                        const before = def.stages[sc.statKey] || 0;
+                        applyOpponentStatDrop(defenderUid, attackerUid, sc.statKey, -sc.change, null);
+                        const after = def.stages[sc.statKey] || 0;
+                        if (after !== before) applied.push({ statKey: sc.statKey, statNameZh: STAGE_KEY_ZH[sc.statKey], change: after - before });
+                    });
+                    if (applied.length) ev.statChanges = { onSelf: false, changes: applied };
                 } else {
                     const applied = [];
                     move.statChanges.forEach(sc => {
@@ -8178,8 +8767,18 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // (跟招式本身的畏縮機率相加，不是覆蓋) ----
         const kingsRockBonus = (totalDamage > 0 && atk.heldItem === 'kings-rock') ? 10 : 0;
         const effectiveFlinchChance = (move.flinchChance || 0) + kingsRockBonus;
-        if (effectiveFlinchChance > 0 && def.currentHp > 0 && !defSubActiveBeforeHit && order.indexOf(defenderUid) > order.indexOf(attackerUid)) {
-            if (rollChance(effectiveFlinchChance)) def.flinched = true;
+        // 直覺(inner-focus)/鱗粉(shield-dust)：完全不會畏縮(破格系特性攻擊方可以無視)；
+        // 堅毅(steadfast)：真的畏縮的話反而讓自己速度提高
+        const flinchImmune = ['inner-focus', 'shield-dust'].includes(def.ability) && !attackerBypassesAbilities(atk);
+        if (!flinchImmune && effectiveFlinchChance > 0 && def.currentHp > 0 && !defSubActiveBeforeHit && order.indexOf(defenderUid) > order.indexOf(attackerUid)) {
+            if (rollChance(effectiveFlinchChance)) {
+                def.flinched = true;
+                if (def.ability === 'steadfast') {
+                    const before = def.stages.spd || 0;
+                    def.stages.spd = Math.min(6, before + 1);
+                    if (def.stages.spd !== before) log.push(`${defName} 的堅毅發動了，速度提高了！`);
+                }
+            }
         }
 
         events.push(ev);
@@ -8204,6 +8803,25 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 if (defenderUid === uidA) switchedA = true; else switchedB = true;
             } else {
                 log.push(`${defName} 倒下了！`);
+                // ---- 撃倒對手觸發的能力提升特性：自信過度(攻擊+1)、齜牙裂嘴/心眼(速度+1)、
+                // 締造記錄(攻擊/特攻/速度看種族最高的那項+1)、心靈之火(特攻+1)、大軍師(自己的
+                // 水系招式威力提升，這裡簡化成特攻+1，跟其他撃倒提升類特性維持一致的呈現方式)——
+                // 攻擊方本身要還活著才有意義
+                if (atk.currentHp > 0) {
+                    const koAbility = atk.ability;
+                    const koStatBoost = { moxie: 'atk', 'chilling-neigh': 'atk', 'grim-neigh': 'spAtk', 'soul-heart': 'spAtk', 'supreme-overlord': 'spAtk' }[koAbility];
+                    if (koStatBoost) {
+                        const before = atk.stages[koStatBoost] || 0;
+                        atk.stages[koStatBoost] = Math.min(6, before + 1);
+                        if (atk.stages[koStatBoost] !== before) log.push(`${atkName} 的特性發動了，${STAGE_KEY_ZH[koStatBoost]}提高了！`);
+                    } else if (koAbility === 'beast-boost') {
+                        const statMap = { atk: atk.atk, def: atk.def, spAtk: atk.spAtk, spDef: atk.spDef, spd: atk.spd };
+                        const bestKey = Object.keys(statMap).reduce((a, b) => statMap[a] >= statMap[b] ? a : b);
+                        const before = atk.stages[bestKey] || 0;
+                        atk.stages[bestKey] = Math.min(6, before + 1);
+                        if (atk.stages[bestKey] !== before) log.push(`${atkName} 的異獸提升發動了，${STAGE_KEY_ZH[bestKey]}提高了！`);
+                    }
+                }
                 handleFaint(defenderUid);
                 // 亡語之約：如果剛剛倒下的正是稍早設下亡語之約的一方，打倒牠的攻擊方(atk.currentHp
                 // 已經在上面被歸零了)也要在這裡一起結算，沿用同一次events/break，不用重複push
@@ -8296,7 +8914,21 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             const opponentUid = uid === uidA ? uidB : uidA;
             if (t.currentHp <= 0) continue;
 
-            if (t.status === 'poison' || t.status === 'burn') {
+            // 毒癒(poison-heal)：中毒/劇毒狀態下，回合結束不會扣血，反而回復1/8最大HP——
+            // 魔法防守(magic-guard)：完全不受中毒/燒傷這類「間接傷害」影響，一律跳過
+            if ((t.status === 'poison' || t.status === 'burn') && t.ability === 'magic-guard') {
+                // 什麼都不做，魔法防守免疫這下持續傷害
+            } else if (t.status === 'poison' && t.ability === 'poison-heal') {
+                if (!(t.healBlockTurns > 0)) {
+                    const heal = Math.max(1, Math.floor(t.maxHp / 8));
+                    const before = t.currentHp;
+                    t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                    if (t.currentHp > before) {
+                        log.push(`${nameOf[uid]} 的毒癒發動了，回復了 ${t.currentHp - before} 點HP！`);
+                        events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                    }
+                }
+            } else if (t.status === 'poison' || t.status === 'burn') {
                 const isToxic = t.status === 'poison' && t.toxicCounter > 0;
                 const pct = t.status === 'burn' ? 6.25 : (isToxic ? Math.min(25, 6.25 * t.toxicCounter) : 12.5);
                 const dmg = Math.max(1, Math.floor(t.maxHp * pct / 100));
@@ -8369,14 +9001,28 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (weatherState.type === 'sandstorm' || weatherState.type === 'hail') {
                 const immuneTypes = weatherState.type === 'sandstorm' ? ['ground', 'rock', 'steel'] : ['ice'];
                 const types = (displayOf[uid] && displayOf[uid].types) || [];
-                const immune = types.some(ty => immuneTypes.includes(ty));
-                if (!immune) {
-                    const dmg = Math.max(1, Math.floor(t.maxHp / 16));
-                    t.currentHp = Math.max(0, t.currentHp - dmg);
-                    const label = weatherState.type === 'sandstorm' ? '沙暴' : '冰雹';
-                    log.push(`${nameOf[uid]} 受到${label}的傷害，損失了 ${dmg} 點HP！`);
-                    events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: weatherState.type, damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
-                    if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+                // 冰雹中的結凍身軀(ice-body)：不但不會受傷，還會回1/16最大HP，比單純免疫更好
+                if (weatherState.type === 'hail' && t.ability === 'ice-body' && !(t.healBlockTurns > 0)) {
+                    const heal = Math.max(1, Math.floor(t.maxHp / 16));
+                    const before = t.currentHp;
+                    t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                    if (t.currentHp > before) {
+                        log.push(`${nameOf[uid]} 的結凍身軀發動了，回復了 ${t.currentHp - before} 點HP！`);
+                        events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                    }
+                } else {
+                    // 沙隱/隔音等特性不影響天氣傷害；免疫沙暴/冰雹傷害的除了對應屬性，還有
+                    // 魔法防守(全免疫間接傷害)、乾燥皮膚/大衣化石(overcoat，這個特性同時免疫粉塵
+                    // 招式跟天氣傷害)
+                    const immune = types.some(ty => immuneTypes.includes(ty)) || t.ability === 'magic-guard' || t.ability === 'overcoat';
+                    if (!immune) {
+                        const dmg = Math.max(1, Math.floor(t.maxHp / 16));
+                        t.currentHp = Math.max(0, t.currentHp - dmg);
+                        const label = weatherState.type === 'sandstorm' ? '沙暴' : '冰雹';
+                        log.push(`${nameOf[uid]} 受到${label}的傷害，損失了 ${dmg} 點HP！`);
+                        events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: weatherState.type, damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                        if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+                    }
                 }
             }
             if (t.currentHp <= 0) continue;
@@ -8397,6 +9043,53 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             }
             if (t.currentHp <= 0) continue;
 
+            // 【第三十一輪新增】特性造成的回合結束被動效果：加速(每回合速度+1)、恢復體力
+            // (shed-skin，30%機率自動治好主要異常狀態)、豐潤(hydration，下雨天100%治好)、
+            // 雨盤(rain-dish，下雨回1/16)、乾燥皮膚(下雨回1/8、大晴天扣1/8)、太陽之力
+            // (大晴天扣1/8，配合上面attack calc的特攻加成一起是官方正統設計)、噩夢
+            // (bad-dreams，對手在睡覺就讓對手扣1/8) ----
+            if (t.ability === 'speed-boost') {
+                const before = t.stages.spd || 0;
+                t.stages.spd = Math.min(6, before + 1);
+                if (t.stages.spd !== before) log.push(`${nameOf[uid]} 的加速發動了，速度提高了！`);
+            }
+            if (t.status && t.ability === 'shed-skin' && rollChance(30)) {
+                log.push(`${nameOf[uid]} 的恢復體力發動了，治好了${STATUS_NAME_ZH[t.status] || t.status}！`);
+                t.status = null; t.statusTurns = 0; t.toxicCounter = 0;
+            } else if (t.status && t.ability === 'hydration' && weatherState.type === 'rain') {
+                log.push(`${nameOf[uid]} 的豐潤發動了，治好了${STATUS_NAME_ZH[t.status] || t.status}！`);
+                t.status = null; t.statusTurns = 0; t.toxicCounter = 0;
+            }
+            if (!(t.healBlockTurns > 0)) {
+                let regenPct = 0;
+                if (t.ability === 'rain-dish' && weatherState.type === 'rain') regenPct = 1 / 16;
+                else if (t.ability === 'dry-skin' && weatherState.type === 'rain') regenPct = 1 / 8;
+                if (regenPct > 0) {
+                    const before = t.currentHp;
+                    t.currentHp = Math.min(t.maxHp, t.currentHp + Math.max(1, Math.floor(t.maxHp * regenPct)));
+                    if (t.currentHp > before) {
+                        log.push(`${nameOf[uid]} 的特性發動了，回復了 ${t.currentHp - before} 點HP！`);
+                        events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                    }
+                }
+            }
+            if (weatherState.type === 'sun' && (t.ability === 'dry-skin' || t.ability === 'solar-power')) {
+                const dmg = Math.max(1, Math.floor(t.maxHp / 8));
+                t.currentHp = Math.max(0, t.currentHp - dmg);
+                log.push(`${nameOf[uid]} 因為特性，在大晴天下損失了 ${dmg} 點HP！`);
+                events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'ability-drain', damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+            }
+            if (t.currentHp <= 0) continue;
+            if (state[opponentUid] && state[opponentUid].ability === 'bad-dreams' && t.status === 'sleep' && state[opponentUid].currentHp > 0) {
+                const dmg = Math.max(1, Math.floor(t.maxHp / 8));
+                t.currentHp = Math.max(0, t.currentHp - dmg);
+                log.push(`${nameOf[uid]} 因為 ${nameOf[opponentUid]} 的惡夢特性，損失了 ${dmg} 點HP！`);
+                events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'bad-dreams', damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+            }
+            if (t.currentHp <= 0) continue;
+
             // ---- 持有道具/莓果的回合結束被動效果：剩飯(leftovers，每回合回1/16)、殘血系莓果
             // (oran/sitrus/figy家族回血，liechi/petaya殘血提升攻擊)——統一放在這裡結算(而不是
             // 傷害發生的當下)，代表這些效果一回合只會觸發一次，用「這回合結束時的HP」判斷 ----
@@ -8409,28 +9102,57 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
                 }
             }
+            // 收穫(harvest)：手上沒有道具、而且之前吃過莓果的話，大晴天下必定、其餘天氣50%機率
+            // 長出同一顆莓果——用新增的lastEatenBerry欄位記錄「上次吃的是哪顆」
+            if (!t.heldItem && t.lastEatenBerry && t.ability === 'harvest') {
+                if (rollChance(weatherState.type === 'sun' ? 100 : 50)) {
+                    t.heldItem = t.lastEatenBerry;
+                    t.lastEatenBerry = null;
+                    log.push(`${nameOf[uid]} 的收穫發動了，長出了新的樹果！`);
+                }
+            }
+            // 貪吃鬼(cheek-pouch)：不管吃了哪一種樹果，額外多回1/3最大HP
+            function applyCheekPouchBonus() {
+                if (t.ability === 'cheek-pouch' && t.currentHp > 0 && t.currentHp < t.maxHp && !(t.healBlockTurns > 0)) {
+                    const bonus = Math.max(1, Math.floor(t.maxHp / 3));
+                    const before = t.currentHp;
+                    t.currentHp = Math.min(t.maxHp, t.currentHp + bonus);
+                    if (t.currentHp > before) log.push(`${nameOf[uid]} 的貪吃鬼發動了，額外回復了 ${t.currentHp - before} 點HP！`);
+                }
+            }
+            // 大胃王(gluttony)：殘血系樹果的自動吃下門檻從1/4提高到1/2最大HP
+            const berryEatThreshold = t.ability === 'gluttony' ? 0.5 : 0.25;
             if (t.heldItem && !(t.healBlockTurns > 0) && (t.heldItem === 'oran' || t.heldItem === 'sitrus') && t.currentHp <= t.maxHp * 0.5) {
                 const heal = t.heldItem === 'oran' ? 10 : Math.round(t.maxHp * 0.25);
                 const before = t.currentHp;
                 t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
                 log.push(`${nameOf[uid]} 自動吃下了手上的莓果，回復了 ${t.currentHp - before} 點HP！`);
                 events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                t.lastEatenBerry = t.heldItem;
                 t.heldItem = null;
-            } else if (t.heldItem && ['figy', 'wiki', 'mago', 'aguav', 'iapapa'].includes(t.heldItem) && !(t.healBlockTurns > 0) && t.currentHp <= t.maxHp * 0.25) {
-                const heal = Math.max(1, Math.round(t.maxHp / 8));
+                applyCheekPouchBonus();
+            } else if (t.heldItem && ['figy', 'wiki', 'mago', 'aguav', 'iapapa'].includes(t.heldItem) && !(t.healBlockTurns > 0) && t.currentHp <= t.maxHp * berryEatThreshold) {
+                // 熟成(ripen)：這批殘血系回血莓果的效果加倍
+                const heal = Math.max(1, Math.round(t.maxHp / 8) * (t.ability === 'ripen' ? 2 : 1));
                 const before = t.currentHp;
                 t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
                 log.push(`${nameOf[uid]} 自動吃下了手上的莓果，回復了 ${t.currentHp - before} 點HP！`);
                 events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                t.lastEatenBerry = t.heldItem;
                 t.heldItem = null;
-            } else if (t.heldItem && (t.heldItem === 'liechi' || t.heldItem === 'petaya') && t.currentHp <= t.maxHp * 0.25) {
+                applyCheekPouchBonus();
+            } else if (t.heldItem && (t.heldItem === 'liechi' || t.heldItem === 'petaya') && t.currentHp <= t.maxHp * berryEatThreshold) {
                 // 正統規則：芝居果(liechi)提升攻擊、巴堅果(petaya)提升特攻——以前這個遊戲沒有拆
-                // 特攻，兩種莓果只好都加在同一個攻擊階級上，現在拆開了，各自對應各自的階級
+                // 特攻，兩種莓果只好都加在同一個攻擊階級上，現在拆開了，各自對應各自的階級。
+                // 熟成(ripen)一樣讓這兩顆莓果的能力提升效果加倍
                 const statKey = t.heldItem === 'liechi' ? 'atk' : 'spAtk';
+                const bonus = t.ability === 'ripen' ? 2 : 1;
                 const before = t.stages[statKey] || 0;
-                t.stages[statKey] = Math.min(6, before + 1);
-                if (t.stages[statKey] !== before) log.push(`${nameOf[uid]} 自動吃下了手上的莓果，${STAGE_KEY_ZH[statKey]}上升了！`);
+                t.stages[statKey] = Math.min(6, before + bonus);
+                if (t.stages[statKey] !== before) log.push(`${nameOf[uid]} 自動吃下了手上的莓果，${STAGE_KEY_ZH[statKey]}${bonus > 1 ? '大幅' : ''}上升了！`);
+                t.lastEatenBerry = t.heldItem;
                 t.heldItem = null;
+                applyCheekPouchBonus();
             }
             if (t.currentHp <= 0) continue;
 
@@ -8848,6 +9570,7 @@ function renderPuzzleStartScreen() {
                     ⏱️ 1分鐘內解完 → 100代幣・超過1分鐘 → 50代幣<br>
                     👣 100步內解完 → 100代幣・超過100步 → 50代幣<br>
                     拼好至少拿100代幣，兩個條件都達成直接拿200代幣！<br>
+                    ✨ 完成還有10%機率額外獲得Ｚ純晶（絕不重複已擁有的種類）！<br>
                     使用合法移動方式打亂，每一局都保證有解。</p>
                 <button onclick="startPuzzleGame()" id="puzzle-start-btn" class="bg-red-500 text-white px-8 py-3 rounded-full font-bold">開始遊戲</button>
             </div>
