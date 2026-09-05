@@ -443,10 +443,10 @@ var MOVES = [
  desc:'在對方身上出現並且一直做180度水平翻轉4次後結束（修改建議：翻轉慢一些、在對方身上稍微圍繞）',
  primitive:'flipNTimes', params:{times:4},
  sound:'windSlow', soundWhen:'start'},
-{id:32, zh:"親密無間大亂鬥", en:"Let's Snuggle Forever",
+{id:32, zh:"親密無間大亂揍", en:"Let's Snuggle Forever",
  nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603381/181px-%E8%A6%AA%E5%AF%86%E7%84%A1%E9%96%93%E5%A4%A7%E4%BA%82%E6%8F%8D_Sprite_xrbx3m.webp',
  effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610114/%E8%A6%AA%E5%AF%86%E7%84%A1%E9%96%93%E5%A4%A7%E4%BA%82%E9%AC%A5_phmtmp.png',
- desc:'整個畫面變暗多處出現這個圖片的堆疊特效後結束(字樣不可被變暗覆蓋)（修改建議：保留變暗，特效改成集中在對手身上一直隨機閃爍）',
+ desc:'整個畫面變暗多處出現這個圖片的堆疊特效後結束(字樣不可被變暗覆蓋)（修改建議：保留變暗，特效改成集中在對手身上一直隨機閃爍；這輪再改名為「親密無間大亂揍」，並且每次閃爍同時加上下180度翻轉）',
  primitive:'darkenStackMulti', params:{count:7},
  sound:'hit', soundInternal:true},
 {id:33, zh:'日光回旋下蒼穹', en:'Searing Sunrazer Smash',
@@ -1107,6 +1107,9 @@ function darkenStackMulti(target, effectUrl, params){
   // 但特效不再散佈在畫面各處，改成疊在目標(target)身上的位置，用隨機間隔閃爍好幾次。
   // 音效(不斷受擊的聲音)是每次閃爍各自觸發一次playSFX('hit')，對應資料表裡的
   // soundInternal:true，不透過集中式的start/impact單次派送。
+  // 這輪再修改(親密無間大亂揍)：每次閃爍同時搭配「上下180度翻轉」——用scaleY從1
+  // 翻到-1再翻回1(跟scale疊乘後，中間會經過0，視覺上就像卡片翻面)，是上下方向的翻轉，
+  // 跟flipNTimes那種scaleX左右翻轉不同方向；翻轉的最高點剛好對齊閃爍最亮的那一瞬間(offset:0.35)。
   var count = (params && params.count) || 7;
   var t = centerOf(target);
   darkenOverlay.animate([{opacity:0},{opacity:0.55}], {duration:300, fill:'forwards'});
@@ -1123,9 +1126,9 @@ function darkenStackMulti(target, effectUrl, params){
           img.style.left=(t.x-47+ox)+'px'; img.style.top=(t.y-47+oy)+'px';
           img.style.zIndex = 31;
           var a = img.animate([
-            {opacity:0, transform:'scale(0.6)'},
-            {opacity:1, transform:'scale(1.1)', offset:0.35},
-            {opacity:0, transform:'scale(0.9)'}
+            {opacity:0, transform:'scale(0.6) scaleY(1)'},
+            {opacity:1, transform:'scale(1.1) scaleY(-1)', offset:0.35},
+            {opacity:0, transform:'scale(0.9) scaleY(1)'}
           ], {duration:260});
           a.finished.then(function(){ img.remove(); resolve(); });
         }, delay);
@@ -1271,7 +1274,7 @@ function runEffect(move, caster, target){
 // 修改建議2：判定聲音是特效一出來就播放、還是擊中才播放——依每招描述分類：
 // 環境音/自身增益/飛行途中類的聲音(如海浪、打雷、龍吟、結冰)在特效一開始就播放(soundWhen:'start')；
 // 碰撞/爆炸/擊中類的聲音(如爆炸聲、打擊聲)延遲到大約視覺落點命中的時間才播放(soundWhen:'impact'，
-// 用impactDelayMs微調每招不同的時間差)。另外有3招(全力無雙激烈拳/毀天滅地巨岩墜/親密無間大亂鬥)
+// 用impactDelayMs微調每招不同的時間差)。另外有3招(全力無雙激烈拳/毀天滅地巨岩墜/親密無間大亂揍)
 // 因為animation本身會多次觸發音效(每一拳/每次落下/每次閃爍)，用soundInternal:true跳過這裡的
 // 集中派送，改由對應的primitive函式自己在對的時間點各自呼叫playSFX。
 function dispatchMoveSound(move){
