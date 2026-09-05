@@ -7160,17 +7160,35 @@ function abilityDisplayInfo(abilitySlug) {
     if (!abilitySlug || !ABILITY_DATA_ZH[abilitySlug]) return null;
     return ABILITY_DATA_ZH[abilitySlug];
 }
-// 【第三十二輪新增】戰鬥畫面用的特性小標籤——NPC訓練家/野生寶可夢現在也會抽到特性
-// (見buildTrainerTeamMember/rollWildOpponent的rollAbilityFromPokemonData)，但牠們不是
-// 玩家自己的pokemonInstances資料，沒辦法像玩家的寶可夢一樣點開openDetailModal查看詳情，
-// 所以直接把「目前在場這隻」的特性名稱顯示在戰鬥畫面暱稱底下(不分我方/對方都適用)，
-// 滑鼠移上去(手機長按)title屬性會顯示完整效果說明；沒有特性(ability是null，例如舊資料
+// 【第三十二輪新增，第四十八輪修正手機看不到說明的問題】戰鬥畫面用的特性小標籤——NPC訓練家/
+// 野生寶可夢現在也會抽到特性(見buildTrainerTeamMember/rollWildOpponent的
+// rollAbilityFromPokemonData)，但牠們不是玩家自己的pokemonInstances資料，沒辦法像玩家的
+// 寶可夢一樣點開openDetailModal查看詳情，所以直接把「目前在場這隻」的特性名稱顯示在戰鬥畫面
+// 暱稱底下(不分我方/對方都適用)。原本說明文字放在title屬性，滑鼠移上去會顯示，但手機瀏覽器
+// 沒有「滑鼠移過去」這個概念——長按文字只會觸發系統的選取/複製選單，看不到title提示，玩家因此
+// 反映在手機上不知道要怎麼看。這裡改成不分手機/電腦，直接「點一下」就跳出showAbilityInfo()
+// 的置底小卡片顯示完整說明；select-none防止手機長按誤觸發文字選取，title屬性繼續保留給
+// 桌面版滑鼠移過去的額外提示，兩種操作方式互不衝突。沒有特性(ability是null，例如舊資料
 // 還沒補發過)就不顯示任何東西
 function battlerAbilityBadgeHtml(abilitySlug) {
     const info = abilityDisplayInfo(abilitySlug);
     if (!info) return '';
     const safeDesc = String(info.descZh || '').replace(/"/g, '&quot;');
-    return `<div class="text-[10px] text-purple-600 font-bold truncate" title="${safeDesc}">特性：${info.nameZh}</div>`;
+    return `<div class="text-[10px] text-purple-600 font-bold truncate select-none cursor-pointer active:opacity-60" title="${safeDesc}" onclick="showAbilityInfo('${abilitySlug}')">特性：${info.nameZh} <span class="text-gray-400">ⓘ</span></div>`;
+}
+// 上面battlerAbilityBadgeHtml點擊後呼叫的小卡片：跟showToast共用同一個#toast-container，
+// 但特性說明通常比一般提示訊息長不少，改用比較寬鬆的圓角卡片(不是純圓角膠囊)讓文字能正常
+// 換行，顯示時間也拉長到4.2秒，多留一點時間讓玩家看完整段說明
+function showAbilityInfo(slug) {
+    const info = abilityDisplayInfo(slug);
+    if (!info) return;
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const item = document.createElement('div');
+    item.className = 'bg-gray-900 text-white text-xs px-4 py-2.5 rounded-2xl shadow-lg max-w-[85vw] text-center leading-relaxed';
+    item.innerHTML = `<span class="font-bold text-purple-300">特性：${info.nameZh}</span><br>${info.descZh}`;
+    container.appendChild(item);
+    setTimeout(() => item.remove(), 4200);
 }
 // ---- 特性戰鬥效果會用到的招式分類清單：PokéAPI沒有穩定可用的「拳頭/啃咬/波動/切割系」旗標欄位
 // 可以查(跟SOUND_MOVES同樣的情況，見第十一輪的說明)，這裡用手動整理的清單頂替，涵蓋這個遊戲
