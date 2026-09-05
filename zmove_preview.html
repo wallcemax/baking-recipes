@@ -445,9 +445,9 @@ var MOVES = [
  sound:'windSlow', soundWhen:'start'},
 {id:32, zh:"親密無間大亂揍", en:"Let's Snuggle Forever",
  nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603381/181px-%E8%A6%AA%E5%AF%86%E7%84%A1%E9%96%93%E5%A4%A7%E4%BA%82%E6%8F%8D_Sprite_xrbx3m.webp',
- effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788610114/%E8%A6%AA%E5%AF%86%E7%84%A1%E9%96%93%E5%A4%A7%E4%BA%82%E9%AC%A5_phmtmp.png',
- desc:'整個畫面變暗多處出現這個圖片的堆疊特效後結束(字樣不可被變暗覆蓋)（修改建議：保留變暗，特效改成集中在對手身上一直隨機閃爍；改名為「親密無間大亂揍」；每次閃爍同時加上下180度翻轉，且每一下交替+180/-180，不是每次都同方向）',
- primitive:'darkenStackMulti', params:{count:7},
+ effect:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788624797/%E8%A6%AA%E5%AF%86%E7%84%A1%E9%96%93%E5%A4%A7%E4%BA%82%E9%AC%A5_lekori.png',
+ desc:'整個畫面變暗多處出現這個圖片的堆疊特效後結束(字樣不可被變暗覆蓋)（修改建議：保留變暗，特效集中在對手身上；改名為「親密無間大亂揍」；特效圖換新的；翻轉版本使用者不滿意，最後改成單純隨機快速閃爍，類似連續多次受擊）',
+ primitive:'darkenStackMulti', params:{count:10},
  sound:'hit', soundInternal:true},
 {id:33, zh:'日光回旋下蒼穹', en:'Searing Sunrazer Smash',
  nameplate:'https://res.cloudinary.com/bumzwp9g/image/upload/v1788603380/168px-%E6%97%A5%E5%85%89%E8%BF%B4%E6%97%8B%E4%B8%8B%E8%92%BC%E7%A9%B9_Sprite_vpwsqt.webp',
@@ -1107,19 +1107,19 @@ function darkenStackMulti(target, effectUrl, params){
   // 但特效不再散佈在畫面各處，改成疊在目標(target)身上的位置，用隨機間隔閃爍好幾次。
   // 音效(不斷受擊的聲音)是每次閃爍各自觸發一次playSFX('hit')，對應資料表裡的
   // soundInternal:true，不透過集中式的start/impact單次派送。
-  // 這輪再修改(親密無間大亂揍)：每次閃爍同時搭配「上下180度翻轉」，第一版用scaleY(-1)
-  // 讓每一下都翻同一個方向，使用者指正：要「一下+180一下-180，每閃一下都不同方向」，
-  // 不是每次都翻一樣的方向。scaleY(-1)沒辦法區分+180跟-180(數學上是同一件事)，改用
-  // 真正的3D旋轉rotateX並加上perspective讓翻轉有立體感、兩個方向才會看起來不一樣，
-  // 依閃爍的順序(idx)單雙數交替決定這一下是rotateX(180deg)還是rotateX(-180deg)。
-  var count = (params && params.count) || 7;
+  // 這輪最終改法(親密無間大亂揍)：中間試過「邊閃爍邊上下180度翻轉」，來回兩輪調整方向交替、
+  // 調整時間點都還是不理想，使用者這輪直接明確說改成「隨機快速閃爍，類似多次受擊」——
+  // 拿掉翻轉，回到單純的縮放淡入淡出閃現，但把節奏加快、次數加多(7→10次)、每次觸發間隔
+  // 縮短(90~160ms→40~95ms)、每次閃現的持續時間也縮短(260ms→150ms)，讓整體感覺更密集、
+  // 更像連續挨了好幾下攻擊，而不是慢條斯理的單次閃爍。
+  var count = (params && params.count) || 10;
   var t = centerOf(target);
   darkenOverlay.animate([{opacity:0},{opacity:0.55}], {duration:300, fill:'forwards'});
   var proms = [];
   var cumulative = 0;
   for(var i=0;i<count;i++){
-    cumulative += 90 + Math.random()*70;
-    (function(delay, idx){
+    cumulative += 40 + Math.random()*55;
+    (function(delay){
       proms.push(new Promise(function(resolve){
         setTimeout(function(){
           playSFX('hit');
@@ -1127,16 +1127,15 @@ function darkenStackMulti(target, effectUrl, params){
           var ox = (Math.random()-0.5)*50, oy=(Math.random()-0.5)*50;
           img.style.left=(t.x-47+ox)+'px'; img.style.top=(t.y-47+oy)+'px';
           img.style.zIndex = 31;
-          var rot = (idx % 2 === 0) ? 180 : -180; // 交替：偶數次+180、奇數次-180
           var a = img.animate([
-            {opacity:0, transform:'scale(0.6) perspective(320px) rotateX(0deg)'},
-            {opacity:1, transform:'scale(1.1) perspective(320px) rotateX('+rot+'deg)', offset:0.5},
-            {opacity:0, transform:'scale(0.9) perspective(320px) rotateX('+rot+'deg)'}
-          ], {duration:260});
+            {opacity:0, transform:'scale(0.6)'},
+            {opacity:1, transform:'scale(1.15)', offset:0.3},
+            {opacity:0, transform:'scale(0.9)'}
+          ], {duration:150});
           a.finished.then(function(){ img.remove(); resolve(); });
         }, delay);
       }));
-    })(cumulative, i);
+    })(cumulative);
   }
   return Promise.all(proms).then(function(){
     return darkenOverlay.animate([{opacity:0.55},{opacity:0}], {duration:300, fill:'forwards'}).finished;
