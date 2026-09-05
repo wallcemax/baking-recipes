@@ -745,29 +745,44 @@ function appearThenGone(target, effectUrl){ return appearOnTarget(target, effect
 function wipeAcrossScreen(caster, target, effectUrl, mirrored){
   // 修改建議(激狂大地萬里冰，取代原本會位移的rotateSlideIn)：使用者要求「圖片不要移動」——
   // 圖片本身固定鋪滿全螢幕、角度維持原本設計(逆時針轉90度、對手施放時水平鏡像)完全不變，
-  // 不再用translate位移動畫，改用clip-path控制「目前顯示到哪裡」：可視範圍固定從施放者
-  // 那一側開始，隨時間逐漸往對手那一側展開、覆蓋整個畫面，看起來就像結冰從施放者那一端
-  // 一路蔓延到對手那一端；蔓延完全覆蓋畫面之後，不是往回收(不是wipe out)，而是整張圖
-  // 一起淡出消失，符合「到對手後才整個消失」的說法。
+  // 不再用translate位移動畫，改用clip-path控制「目前顯示到哪裡」，讓可視範圍從施放者
+  // 那一側逐漸展開到對手那一側，蔓延完全覆蓋畫面後整張圖一起淡出消失。
+  // 【回報修正】第一版把clip-path直接設在會旋轉的img元素自己身上，但clip-path是照元素
+  // 「旋轉前」的本地座標算的，套上rotate(-90deg)之後，本來設計的左右方向蔓延，畫面上
+  // 看起來變成上下蔓延——使用者實測回報「方向搞錯了，我方是左到右、對方是右到左，
+  // 不是上下」，就是這個原因。改成用一個不旋轉的外層div負責clip-path(裁切方向完全對應
+  // 螢幕的左右方向，不受任何旋轉影響)，裡面再放一張有旋轉角度的圖片，兩件事分開處理、
+  // 互不干擾，這樣畫面上的蔓延方向才會真的是左右方向，跟旋轉角度無關。
   var s = stageRect();
-  var w = Math.max(s.width, s.height) * 1.2;
-  var img = makeFxImg(effectUrl, w);
-  img.style.height = w + 'px';
-  img.style.left = (s.width/2 - w/2) + 'px';
-  img.style.top = (s.height/2 - w/2) + 'px';
+  var size = Math.max(s.width, s.height) * 1.2;
+  var wrap = document.createElement('div');
+  wrap.style.position = 'absolute';
+  wrap.style.pointerEvents = 'none';
+  wrap.style.left = (s.width/2 - size/2) + 'px';
+  wrap.style.top = (s.height/2 - size/2) + 'px';
+  wrap.style.width = size + 'px';
+  wrap.style.height = size + 'px';
+  fxLayer.appendChild(wrap);
+
+  var img = makeFxImg(effectUrl, size); // 先用makeFxImg建立(沿用圖片載入失敗時的提示機制)
+  wrap.appendChild(img); // 再搬進不旋轉的外層容器裡，圖片本身的旋轉角度不會影響外層的裁切方向
+  img.style.left = '0px'; img.style.top = '0px';
+  img.style.height = size + 'px';
+  img.style.opacity = '1';
   var flip = mirrored ? -1 : 1;
   img.style.transform = 'rotate(-90deg) scaleX(' + flip + ')';
+
   var fromLeft = (caster === spriteMe);
-  var startClip = fromLeft ? 'inset(0 100% 0 0)' : 'inset(0 0 0 100%)'; // 固定從施放者那一側開始展開
+  var startClip = fromLeft ? 'inset(0 100% 0 0)' : 'inset(0 0 0 100%)'; // 固定從施放者那一側開始展開(左右方向，套在不旋轉的外層上)
   var fullClip = 'inset(0 0 0 0)';
-  img.style.clipPath = startClip;
-  var a = img.animate([
+  wrap.style.clipPath = startClip;
+  var a = wrap.animate([
     {opacity:1, clipPath: startClip, offset:0},
     {opacity:1, clipPath: fullClip, offset:0.7},
     {opacity:1, clipPath: fullClip, offset:0.85},
     {opacity:0, clipPath: fullClip, offset:1}
   ], {duration:1100, easing:'ease-in'});
-  return a.finished.then(function(){ img.remove(); });
+  return a.finished.then(function(){ wrap.remove(); });
 }
 
 function punchStack(target, effectUrl){
