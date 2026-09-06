@@ -76,6 +76,19 @@
     .self-buff-glow { animation: selfBuffGlow 0.6s ease; }
     @keyframes selfBuffGlow { 0%{filter:brightness(1)} 40%{filter:brightness(1.6) drop-shadow(0 0 8px #facc15)} 100%{filter:brightness(1)} }
 
+    /* 【第五十一輪新增】極巨化/超極巨化：sprite本身放大200%(scale(2))是battlerMirrorFlipStyle
+       產生的inline transform負責的(見該函式註解，跟這裡的鏡像翻轉合併成單一個transform屬性)，
+       這裡的CSS只負責發光的flourish特效——刻意全部只用filter(不去動transform)，這樣播放期間
+       不會像上面「劇情立繪特效」註解說明的那樣，把inline style設定的scale(2)暫時蓋成沒放大的
+       原始尺寸(CSS animation播放時，keyframe裡有列出的屬性會暫時蓋過inline style，沒列出的
+       屬性維持不受影響)。.dynamax-scale是「正在極巨化中」的持續狀態，一直帶著淡淡的紅色光暈；
+       .dynamax-grow/.dynamax-shrink是啟動/解除那一瞬間播放一次的過場特效 */
+    .dynamax-scale { filter: drop-shadow(0 0 6px rgba(239,68,68,0.45)); }
+    .dynamax-grow { animation: dynamaxGrow 0.9s ease-out; }
+    @keyframes dynamaxGrow { 0%{filter:brightness(1) drop-shadow(0 0 0 rgba(239,68,68,0))} 45%{filter:brightness(1.5) drop-shadow(0 0 18px rgba(239,68,68,0.95))} 100%{filter:brightness(1) drop-shadow(0 0 6px rgba(239,68,68,0.45))} }
+    .dynamax-shrink { animation: dynamaxShrink 0.7s ease-in; }
+    @keyframes dynamaxShrink { 0%{filter:brightness(1.3) drop-shadow(0 0 12px rgba(239,68,68,0.7))} 100%{filter:brightness(1) drop-shadow(0 0 0 rgba(239,68,68,0))} }
+
     /* ---- Z招式動畫圖層(第四十八輪)：Z字覆蓋圖／字樣圖片／特效圖層／全畫面變暗與閃光——
        整套結構跟時序邏輯是從獨立預覽工具zmove_preview.html逐一調校確認過後搬過來的，
        這裡只是把原本預覽工具裡固定id(#stage/#fxLayer/...)的DOM，改成戰鬥畫面每次重繪都會
@@ -1752,8 +1765,20 @@ async function fetchSpeciesDisplay(speciesId, isShiny) {
 // 【第三十九輪新增】超級噴火龍X(圖鑑編號10034，稱霸ＷＰＭ的人最終戰的Mega噴火龍X)這隻
 // NPC限定寶可夢，使用者反映牠的官方靜態造型圖(official-artwork)朝向看起來是反的，要求
 // 水平鏡像翻轉——這裡只認這一個特定圖鑑編號，不影響其他任何寶可夢的造型圖片方向
-function battlerMirrorFlipStyle(speciesId){
-    return speciesId === 10034 ? 'transform:scaleX(-1);' : '';
+// 【第五十一輪新增isDynamax參數】極巨化時圖片放大200%(=scale(2))——玩家特別要求「不要把圖片
+// 壓扁」，這裡故意用CSS transform:scale()而不是直接改img的width/height，scale()天生會等比例
+// 縮放兩個維度，不會有壓扁變形的問題。要跟原本超級噴火龍X的水平鏡像翻轉合併成同一個transform
+// 屬性(CSS的transform只認最後一個宣告，兩個transform:各自宣告會互相蓋掉，不會疊加)，所以這裡
+// 把原本回傳單一字串的函式改成同時接受isDynamax，兩種效果都要生效時用空白隔開組合成一個值
+// (例如'transform:scaleX(-1) scale(2);')。極巨化時額外加上transform-origin:center bottom，
+// 讓放大的效果以「腳底」為基準點往上長大，比較符合「變大」的視覺直覺(預設的center會讓寶可夢
+// 看起來像整個往畫面外膨脹，腳的位置也會跟著飄走)
+function battlerMirrorFlipStyle(speciesId, isDynamax){
+    const parts = [];
+    if (speciesId === 10034) parts.push('scaleX(-1)');
+    if (isDynamax) parts.push('scale(2)');
+    if (!parts.length) return '';
+    return `transform:${parts.join(' ')};${isDynamax ? 'transform-origin:center bottom;' : ''}`;
 }
 const TYPE_COLORS = { normal:'#A8A878',fire:'#F08030',water:'#6890F0',electric:'#F8D030',grass:'#78C850',ice:'#98D8D8',fighting:'#C03028',poison:'#A040A0',ground:'#E0C068',flying:'#A890F0',psychic:'#F85888',bug:'#A8B820',rock:'#B8A038',ghost:'#705898',dragon:'#7038F8',dark:'#705848',steel:'#B8B8D0',fairy:'#EE99AC' };
 // 屬性圖示：PokéAPI的/type/{id}端點本身就附官方的屬性symbol_icon圖檔(依世代分)，
@@ -5278,6 +5303,19 @@ function toggleSwitchPicker(show) {
 let battlePendingMega = false;
 function toggleMegaPending() {
     battlePendingMega = !battlePendingMega;
+    // 【第五十一輪新增】Mega進化/極巨化「一場對戰三選一」在UI層也做成互斥的勾選(跟Ｚ招式的
+    // 「Ｚ」徽章是另外點擊觸發、天然互斥不同，Mega/極巨化都是checkbox，需要手動清掉另一個)，
+    // 這樣玩家不會不小心同時勾選兩個，送出時才在resolveBattleRound發現衝突
+    if (battlePendingMega) battlePendingDynamax = false;
+    if (lastRenderedRoom) renderRoomView(lastRenderedRoom);
+}
+// 【第五十一輪新增】battlePendingDynamax：跟battlePendingMega同樣的做法，是純前端UI狀態
+// (玩家有沒有勾選「這回合順便極巨化」)，不寫進Firestore，切換時手動重新呼叫renderRoomView。
+// 每次真正送出招式(submitMove/submitWildMove)後要記得歸零
+let battlePendingDynamax = false;
+function toggleDynamaxPending() {
+    battlePendingDynamax = !battlePendingDynamax;
+    if (battlePendingDynamax) battlePendingMega = false;
     if (lastRenderedRoom) renderRoomView(lastRenderedRoom);
 }
 
@@ -5567,19 +5605,48 @@ async function renderBattleStage(container, ctx) {
         // (megaUsed/zMoveUsed這兩個「整場戰鬥只能用一次」的名額，見resolveBattleRound的說明)
         const megaAlreadyUsed = !!(room.battleState && room.battleState.megaUsed && room.battleState.megaUsed[myUid]);
         const zAlreadyUsed = !!(room.battleState && room.battleState.zMoveUsed && room.battleState.zMoveUsed[myUid]);
-        const megaInfoNow = !megaAlreadyUsed && !myTeam.megaEvolvedFrom ? findMegaInfoFor(myTeam) : null;
+        // 【第五十一輪新增】極巨化的「整場戰鬥只能用一次」名額，跟上面兩個一樣的防呆寫法
+        const dynamaxAlreadyUsed = !!(room.battleState && room.battleState.dynamaxUsed && room.battleState.dynamaxUsed[myUid]);
+        const megaInfoNow = !megaAlreadyUsed && !zAlreadyUsed && !dynamaxAlreadyUsed && !myTeam.megaEvolvedFrom ? findMegaInfoFor(myTeam) : null;
         const megaToggleHtml = megaInfoNow ? `
             <label class="flex items-center gap-1.5 mb-1.5 text-xs font-bold text-purple-600 select-none">
                 <input type="checkbox" ${battlePendingMega ? 'checked' : ''} onchange="toggleMegaPending()" class="w-4 h-4 accent-purple-600">
                 這回合順便Mega進化(這場戰鬥只能用一次)
             </label>` : '';
+        // 【第五十一輪新增】極巨化/超極巨化：能量條(dynamaxCharge，累積到DYNAMAX_CHARGE_NEEDED次
+        // 出招才充滿)、種族限制(DYNAMAX_BANNED_SPECIES_IDS，蒼響/藏瑪然特天生不能極巨化)、跟
+        // Mega/Ｚ招式共用的三選一名額互斥。超極巨寶可夢(在GMAX_MOVE_TABLE查得到)顯示「超極巨化」，
+        // 其餘一般寶可夢顯示「極巨化」
+        const dynamaxCharge = (room.battleState && room.battleState.dynamaxCharge && room.battleState.dynamaxCharge[myUid]) || 0;
+        const dynamaxChargeReady = dynamaxCharge >= DYNAMAX_CHARGE_NEEDED;
+        const mySpeciesNum = parseInt(myTeam.speciesId, 10);
+        const dynamaxBanned = DYNAMAX_BANNED_SPECIES_IDS.includes(mySpeciesNum);
+        const myGmaxInfo = GMAX_MOVE_TABLE[mySpeciesNum] || null;
+        const dynamaxLabel = myGmaxInfo ? '超極巨化' : '極巨化';
+        const dynamaxEligibleNow = !dynamaxAlreadyUsed && !megaAlreadyUsed && !zAlreadyUsed && !dynamaxBanned && dynamaxChargeReady && !myTeam.isDynamaxed;
+        let dynamaxToggleHtml = '';
+        if (myTeam.isDynamaxed) {
+            dynamaxToggleHtml = `<div class="mb-1.5 text-xs font-bold text-red-500">${myTeam.isGigantamax ? '超極巨化' : '極巨化'}中(剩餘${myTeam.dynamaxTurnsLeft || 0}回合解除)</div>`;
+        } else if (dynamaxEligibleNow) {
+            dynamaxToggleHtml = `
+            <label class="flex items-center gap-1.5 mb-1.5 text-xs font-bold text-red-500 select-none">
+                <input type="checkbox" ${battlePendingDynamax ? 'checked' : ''} onchange="toggleDynamaxPending()" class="w-4 h-4 accent-red-500">
+                這回合順便${dynamaxLabel}(這場戰鬥只能用一次)
+            </label>`;
+        } else if (!dynamaxAlreadyUsed && !dynamaxBanned && !megaAlreadyUsed && !zAlreadyUsed) {
+            dynamaxToggleHtml = `
+            <div class="mb-1.5">
+                <div class="flex items-center justify-between text-[0.6rem] text-gray-400 mb-0.5"><span>極巨能量</span><span>${Math.min(dynamaxCharge, DYNAMAX_CHARGE_NEEDED)}/${DYNAMAX_CHARGE_NEEDED}</span></div>
+                <div class="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden"><div class="h-1.5 rounded-full bg-red-400" style="width:${Math.min(100, Math.round(dynamaxCharge / DYNAMAX_CHARGE_NEEDED * 100))}%"></div></div>
+            </div>`;
+        }
         if (usableCount === 0) {
-            movesHtml = `${megaToggleHtml}<button onclick="submitMove('struggle', {mega: battlePendingMega})" class="w-full h-full min-h-[110px] rounded-2xl bg-gray-500 text-white font-black text-base active:scale-95 transition-transform">所有招式都沒辦法使用了，使出掙扎！</button>`;
+            movesHtml = `${megaToggleHtml}${dynamaxToggleHtml}<button onclick="submitMove('struggle', {mega: battlePendingMega, dynamax: battlePendingDynamax})" class="w-full h-full min-h-[110px] rounded-2xl bg-gray-500 text-white font-black text-base active:scale-95 transition-transform">所有招式都沒辦法使用了，使出掙扎！</button>`;
         } else {
-            movesHtml = `${megaToggleHtml}<div class="grid grid-cols-2 gap-2">${usableList.map(({ m, pp, blockReason }) => {
+            movesHtml = `${megaToggleHtml}${dynamaxToggleHtml}<div class="grid grid-cols-2 gap-2">${usableList.map(({ m, pp, blockReason }) => {
                 const disabled = pp <= 0 || !!blockReason;
-                const zInfo = (!disabled && !zAlreadyUsed) ? findZMoveInfoFor(myTeam, m) : null;
-                return `<button ${disabled ? 'disabled' : ''} onclick="submitMove('${m.name}', {mega: battlePendingMega})" class="relative rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden ${disabled ? 'opacity-40' : ''}" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
+                const zInfo = (!disabled && !zAlreadyUsed && !dynamaxAlreadyUsed) ? findZMoveInfoFor(myTeam, m) : null;
+                return `<button ${disabled ? 'disabled' : ''} onclick="submitMove('${m.name}', {mega: battlePendingMega, dynamax: battlePendingDynamax})" class="relative rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden ${disabled ? 'opacity-40' : ''}" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
                     <span class="flex items-center gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 shrink-0" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span class="text-white text-sm font-black truncate">${m.nameZh}</span>${DAMAGE_CLASS_BADGE_PILL[m.damageClass] || ''}</span>
                     <span class="block text-[0.6rem] text-white/85 mt-0.5 truncate">${blockReason || m.descZh || ' '}</span>
                     <span class="block text-[0.6rem] text-white/70 mt-0.5">PP ${pp}/${m.pp || '?'}</span>
@@ -5603,7 +5670,7 @@ async function renderBattleStage(container, ctx) {
             ${terrain.type ? `<span class="bg-white/85 rounded-full px-2 py-0.5 text-[10px] font-bold flex items-center gap-1 shadow">${terrainIconHtml(terrain.type, 'w-3.5 h-3.5')}${TERRAIN_NAME_ZH[terrain.type]}</span>` : ''}
         </div>` : '';
     container.innerHTML = `
-        <div id="battle-stage" class="relative bg-gradient-to-b from-sky-100 to-emerald-50 rounded-2xl card-shadow p-4 mb-3 overflow-hidden" style="min-height:320px">
+        <div id="battle-stage" class="relative bg-gradient-to-b from-sky-100 to-emerald-50 rounded-2xl card-shadow p-4 mb-3 overflow-hidden" style="min-height:${(myTeam.isDynamaxed || oppTeam.isDynamaxed) ? 420 : 320}px">
             ${weatherTerrainBadgeHtml}
             <div id="z-darken-overlay" class="z-darken-overlay"></div>
             <div id="z-fx-layer" class="z-fx-layer"></div>
@@ -5625,7 +5692,7 @@ async function renderBattleStage(container, ctx) {
                     <div id="popupwrap-opp" class="absolute inset-x-0 top-0 flex justify-end z-10"></div>
                     <div class="relative w-24 h-32">
                         <img id="pokeball-opp" src="${itemSpriteUrl('poke-ball')}" class="pokeball-icon">
-                        <img id="sprite-opp" src="${oppDisplay.spriteAnimated || oppDisplay.sprite}" class="w-24 h-32 battle-sprite ${oppFainted ? 'sprite-fainted' : ''}" style="image-rendering:pixelated;object-fit:contain;${battlerMirrorFlipStyle(oppTeam.speciesId)}">
+                        <img id="sprite-opp" src="${oppDisplay.spriteAnimated || oppDisplay.sprite}" class="w-24 h-32 battle-sprite ${oppFainted ? 'sprite-fainted' : ''} ${oppTeam.isDynamaxed ? 'dynamax-scale' : ''}" style="image-rendering:pixelated;object-fit:contain;${battlerMirrorFlipStyle(oppTeam.speciesId, oppTeam.isDynamaxed)}">
                     </div>
                 </div>
             </div>
@@ -5635,7 +5702,7 @@ async function renderBattleStage(container, ctx) {
                     <div id="popupwrap-me" class="absolute inset-x-0 top-0 flex justify-start z-10"></div>
                     <div class="relative w-28 h-36 ${allowSwitchTap ? 'cursor-pointer' : ''}" ${allowSwitchTap ? `onclick="toggleSwitchPicker(true)" title="點擊替換寶可夢"` : ''}>
                         <img id="pokeball-me" src="${itemSpriteUrl('poke-ball')}" class="pokeball-icon">
-                        <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-36 battle-sprite ${myFainted ? 'sprite-fainted' : ''}" style="image-rendering:pixelated;object-fit:contain;${battlerMirrorFlipStyle(myTeam.speciesId)}">
+                        <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-36 battle-sprite ${myFainted ? 'sprite-fainted' : ''} ${myTeam.isDynamaxed ? 'dynamax-scale' : ''}" style="image-rendering:pixelated;object-fit:contain;${battlerMirrorFlipStyle(myTeam.speciesId, myTeam.isDynamaxed)}">
                         ${allowSwitchTap ? `<img src="${itemSpriteUrl('luxury-ball')}" class="absolute -bottom-1 -right-1 w-5 h-5 pointer-events-none drop-shadow" style="image-rendering:pixelated">` : ''}
                     </div>
                 </div>
@@ -6494,6 +6561,32 @@ async function playBattleEvents(events, ctx) {
             if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             continue;
         }
+        // 【第五十一輪新增】極巨化/超極巨化生效：renderBattleStage在這個事件播放之前就已經
+        // 用最新的room資料重繪過場景了(跟Mega進化的megaEvolveEvent是同一種既有做法——sprite的
+        // scale(2)放大早就透過battlerMirrorFlipStyle的inline transform套用上去了，不用在這裡
+        // 另外處理「從小變大」的位移動畫)，這裡只負責補上一個發光的flourish特效跟log訊息，
+        // 讓玩家能明確感受到「這一下有事情發生」。刻意用filter(box-shadow/brightness系的
+        // drop-shadow)做發光效果，不去動transform，才不會跟持續存在的scale(2)inline樣式打架
+        if (ev.dynamaxEvent) {
+            const isMe = ev.uid === ctx.myUid;
+            appendLog(`${ev.nickname} 極巨能量解放...${ev.isGigantamax ? '超極巨化' : '極巨化'}了！`);
+            const el = document.getElementById(isMe ? 'sprite-me' : 'sprite-opp');
+            if (el) { el.classList.remove('dynamax-grow'); void el.offsetWidth; el.classList.add('dynamax-grow'); }
+            await sleep(900);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+            continue;
+        }
+        // 【第五十一輪新增】極巨化/超極巨化3回合時間到、自然解除：跟上面dynamaxEvent同樣道理，
+        // 圖片已經在重繪時縮回原本大小了，這裡只補一個消散的flourish特效跟log訊息
+        if (ev.dynamaxRevertEvent) {
+            const isMe = ev.uid === ctx.myUid;
+            appendLog(`${ev.nickname} 的極巨化解除了！`);
+            const el = document.getElementById(isMe ? 'sprite-me' : 'sprite-opp');
+            if (el) { el.classList.remove('dynamax-shrink'); void el.offsetWidth; el.classList.add('dynamax-shrink'); }
+            await sleep(700);
+            if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+            continue;
+        }
         // ---- 天氣/場地被改變：這個分支原本沒有檢查ev.fieldEffect.kind，只要有fieldEffect
         // 就套用「天氣/場地」的文字模板——但後來新增的入場障礙(hazard)/光牆系(screen)也一樣會設
         // ev.fieldEffect(用來讓別的地方知道場上狀態變了)，那兩種kind的type值(例如'lightScreen'/
@@ -6617,6 +6710,7 @@ async function playBattleEvents(events, ctx) {
                 silence: `${ev.attackerName} 被封住了聲音，無法使出音波系招式！`,
                 encore: `${ev.attackerName} 被要求再來一次，沒辦法使用別的招式！`,
                 truant: `${ev.attackerName} 正在偷懶，無法出招！`,
+                infatuation: `${ev.attackerName} 因為著迷而無法出招！`, // 【第五十一輪新增】
             }[ev.blocked] || `${ev.attackerName} 無法動彈！`;
             appendLog(blockedText);
             atkEl.classList.remove('miss-shake');
@@ -6674,6 +6768,9 @@ async function playBattleEvents(events, ctx) {
                 // 跟一般被守住完全擋下(ev.protectedBlock，上面另一個分支)的文字分開，避免玩家誤以為
                 // 沒有效果
                 appendLog(`${ev.defenderName} 想要防住攻擊，但是Ｚ招式的力量太強了，還是受到了 ${ev.damage} 點傷害！${ev.crit ? '(會心一擊！)' : ''}`);
+            } else if (ev.maxPierceProtect) {
+                // 【第五十一輪新增】極巨招式突破守住：跟上面的Ｚ招式突破守住是同樣的文字提示邏輯
+                appendLog(`${ev.defenderName} 想要防住攻擊，但是極巨招式的力量太強了，還是受到了 ${ev.damage} 點傷害！${ev.crit ? '(會心一擊！)' : ''}`);
             } else if (ev.damage > 0) {
                 appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，${ev.hitCount > 1 ? `打中了 ${ev.hitCount} 次，總共` : ''}造成 ${ev.damage} 點傷害${ev.effectiveness > 1 ? '，效果絕佳！' : ev.effectiveness < 1 ? '，效果不理想...' : ''}${ev.crit ? '，會心一擊！' : ''}`);
             } else if (ev.effectiveness === 0) {
@@ -7151,6 +7248,124 @@ const POKEMON_MEGA_STONE_ITEMS = Object.keys(MEGA_STONE_CATALOG);
 const POKEMON_Z_CRYSTAL_ITEMS = Object.keys(Z_CRYSTAL_CATALOG);
 
 // ============================================================
+// 【第五十一輪新增】極巨化(Dynamax)／超極巨化(Gigantamax)系統
+// ============================================================
+// 資料來源：使用者提供的「極巨化招式.xlsx」，18種屬性通用的極巨招式(狀態招式一律變成極巨防壁，
+// 不分屬性，另外處理，不在這張表裡)＋33種(32個全國圖鑑編號，武道熊師一擊流/連擊流共用892號)
+// 寶可夢限定的超極巨招式。跟Mega進化/Ｚ招式不同的地方：極巨化不換種類/不換屬性/不換能力值，
+// 純粹是「變大＋招式全部變成極巨招式＋HP上限提高」，所以不需要megaSlug那種查詢新種族值的機制，
+// 直接在原本的state[uid]上動態加成/動態轉換招式就好。
+// kind值說明(跟下面applyMaxMoveEffect的switch一一對應)：
+//   weather/terrain：5回合天氣/場地(跟招式本身的天氣/場地招式共用同一份weatherState/terrainState)
+//   statBoostSelf/statDropOpp：能力等級變化(跟能力等級變化共用stages機制，statDropOpp額外
+//     套用applyOpponentStatDrop處理鏡甲/不服輸等特性互動)
+const MAX_MOVE_CATALOG = {
+    "normal": { nameZh: "極巨攻擊", kind: "statDropOpp", stat: "spd", stages: 1 },
+    "fire": { nameZh: "極巨火爆", kind: "weather", weatherType: "sun" },
+    "water": { nameZh: "極巨水流", kind: "weather", weatherType: "rain" },
+    "electric": { nameZh: "極巨閃電", kind: "terrain", terrainType: "electric" },
+    "grass": { nameZh: "極巨草原", kind: "terrain", terrainType: "grassy" },
+    "ice": { nameZh: "極巨寒冰", kind: "weather", weatherType: "hail" },
+    "fighting": { nameZh: "極巨拳鬥", kind: "statBoostSelf", stat: "atk", stages: 1 },
+    "poison": { nameZh: "極巨酸毒", kind: "statBoostSelf", stat: "spAtk", stages: 1 },
+    "ground": { nameZh: "極巨大地", kind: "statBoostSelf", stat: "spDef", stages: 1 },
+    "flying": { nameZh: "極巨飛衝", kind: "statBoostSelf", stat: "spd", stages: 1 },
+    "psychic": { nameZh: "極巨超能", kind: "terrain", terrainType: "psychic" },
+    "bug": { nameZh: "極巨蟲蠱", kind: "statDropOpp", stat: "spAtk", stages: 1 },
+    "rock": { nameZh: "極巨岩石", kind: "weather", weatherType: "sandstorm" },
+    "ghost": { nameZh: "極巨幽魂", kind: "statDropOpp", stat: "def", stages: 1 },
+    "dragon": { nameZh: "極巨龍騎", kind: "statDropOpp", stat: "atk", stages: 1 },
+    "dark": { nameZh: "極巨惡霸", kind: "statDropOpp", stat: "spDef", stages: 1 },
+    "steel": { nameZh: "極巨鋼鐵", kind: "statBoostSelf", stat: "def", stages: 1 },
+    "fairy": { nameZh: "極巨妖精", kind: "terrain", terrainType: "misty" },
+};
+// 極巨防壁(Max Guard)：狀態招式(不管原本屬性/效果是什麼)一律變成這招，跟守住共用同一套
+// 連續使用成功率遞減機制(PROTECT_MOVES那組判斷)，但正統規則裡「傷害型極巨招式」可以打穿
+// 極巨防壁造成1/4傷害(而且附加效果依然會生效，這點特別跟Ｚ招式突破守住不一樣，Ｚ招式那邊
+// 附加效果依然完全被擋掉)——見resolveBattleRound裡的maxPierceProtect判斷
+const MAX_GUARD_NAME_ZH = "極巨防壁";
+// 超極巨招式對照表：key是全國圖鑑編號(整數)，只有能超極巨化的33種寶可夢(合併武道熊師兩型態
+// 共用892號後剩32個key)才查得到。武道熊師的一擊流/連擊流因為這個簡化版遊戲沒有實作牠的
+// 型態分支(PokéAPI雖然有兩個variety，但這裡的inst.speciesId只會存892這個單一編號，沒有額外
+// 欄位記錄「當初是用哪張御札進化的」)，這裡統一固定顯示一擊流的超極巨奪命一擊，是刻意的簡化
+const GMAX_MOVE_TABLE = {
+    3: { nameZh: "超極巨灰飛鞭滅", type: "grass", kind: "gmaxDot", immuneType: "grass" },
+    6: { nameZh: "超極巨地獄滅焰", type: "fire", kind: "gmaxDot", immuneType: "fire" },
+    9: { nameZh: "超極巨水砲轟滅", type: "water", kind: "gmaxDot", immuneType: "water" },
+    12: { nameZh: "超極巨蝶影蠱惑", type: "bug", kind: "gmaxRandomStatus", statuses: ["poison", "paralysis", "sleep"] },
+    25: { nameZh: "超極巨萬雷轟頂", type: "electric", kind: "gmaxStatus", status: "paralysis" },
+    52: { nameZh: "超極巨特大金幣", type: "normal", kind: "gmaxConfuse" },
+    68: { nameZh: "超極巨會心一擊", type: "fighting", kind: "gmaxCritBoost" },
+    94: { nameZh: "超極巨幻影幽魂", type: "ghost", kind: "gmaxTrapNoDamage" },
+    99: { nameZh: "超極巨激漩泡渦", type: "water", kind: "statDropOpp", stat: "spd", stages: 2 },
+    131: { nameZh: "超極巨極光旋律", type: "ice", kind: "gmaxAuroraVeil" },
+    133: { nameZh: "超極巨熱情擁抱", type: "normal", kind: "gmaxInfatuate" },
+    143: { nameZh: "超極巨資源再生", type: "normal", kind: "gmaxBerryRefund" },
+    569: { nameZh: "超極巨臭氣沖天", type: "poison", kind: "gmaxStatus", status: "poison" },
+    809: { nameZh: "超極巨液金熔擊", type: "steel", kind: "gmaxTorment", turns: 3 },
+    812: { nameZh: "超極巨狂擂亂打", type: "grass", kind: "gmaxIgnoreAbility" },
+    815: { nameZh: "超極巨破陣火球", type: "fire", kind: "gmaxIgnoreAbility" },
+    818: { nameZh: "超極巨狙擊神射", type: "water", kind: "gmaxIgnoreAbility" },
+    823: { nameZh: "超極巨旋風襲捲", type: "flying", kind: "gmaxHazardClear" },
+    826: { nameZh: "超極巨天道七星", type: "psychic", kind: "gmaxGravity", turns: 5 },
+    834: { nameZh: "超極巨岩陣以待", type: "water", kind: "gmaxStealthRock" },
+    839: { nameZh: "超極巨炎石噴發", type: "rock", kind: "gmaxDot", immuneType: "rock" },
+    841: { nameZh: "超極巨酸不溜丟", type: "grass", kind: "statDropOpp", stat: "eva", stages: 1 },
+    842: { nameZh: "超極巨瓊漿玉液", type: "grass", kind: "gmaxCureStatus" },
+    844: { nameZh: "超極巨沙塵漫天", type: "ground", kind: "gmaxBind" },
+    849: { nameZh: "超極巨異毒電場", type: "electric", kind: "gmaxRandomStatus", statuses: ["poison", "paralysis"] },
+    851: { nameZh: "超極巨百火焚野", type: "fire", kind: "gmaxBind" },
+    858: { nameZh: "超極巨天譴雷誅", type: "fairy", kind: "gmaxConfuse" },
+    861: { nameZh: "超極巨睡魔降臨", type: "dark", kind: "gmaxDrowsyChance", chance: 50 },
+    869: { nameZh: "超極巨幸福圓滿", type: "fairy", kind: "gmaxHealSelf", fraction: 6 },
+    879: { nameZh: "超極巨鋼鐵陣法", type: "steel", kind: "gmaxSteelsurge" },
+    884: { nameZh: "超極巨劣化衰變", type: "dragon", kind: "gmaxPpReduce", amount: 3 },
+    892: { nameZh: "超極巨奪命一擊", type: "dark", kind: "gmaxIgnoreGuard" },
+};
+const GMAX_ELIGIBLE_SPECIES_IDS = Object.keys(GMAX_MOVE_TABLE).map(Number);
+// 蒼響／藏瑪然特：正統規則裡這兩隻(不管是不是牠們專屬的劍王/盾王型態)天生無法極巨化——
+// 官方沒有明講理由，普遍推測是牠們已經有自己專屬的變身機制(生鏽的劍/生鏽的盾)，劇情定位上
+// 也是「壓制極巨化亂象根源(無極汰那)」的伽勒爾傳說寶可夢，讓牠們也能極巨化在世界觀上矛盾
+const DYNAMAX_BANNED_SPECIES_IDS = [888, 889];
+// 需要連續出招幾次，極巨能量才會集滿——這是這個遊戲自訂的資源機制(正統遊戲裡極巨化本身不需要
+// 累積能量，這裡為了讓「一場戰鬥三選一」的資源取得更有節奏感，改成使用招式4次才能用)
+const DYNAMAX_CHARGE_NEEDED = 4;
+// 官方「極巨招式威力對照表」：一般傷害型極巨招式跟格鬥/毒屬性另外有一張威力較低的專屬對照表
+// (官方特意讓格鬥/毒系極巨招式威力低一截，避免這兩個屬性的極巨招式過強)，兩張表都是「原招式
+// 威力落在哪個區間」決定極巨招式的固定威力，跟屬性/招式本身完全無關
+const MAX_MOVE_POWER_TABLE_STD = [[1, 44, 90], [45, 54, 100], [55, 64, 110], [65, 74, 120], [75, 109, 130], [110, 149, 140], [150, 999, 150]];
+const MAX_MOVE_POWER_TABLE_FP = [[1, 44, 70], [45, 54, 75], [55, 64, 80], [65, 74, 85], [75, 109, 90], [110, 149, 95], [150, 999, 100]];
+// 少數招式本身威力不是「一般固定數字」(一擊必殺/固定傷害/威力隨情況變動/連續攻擊招式)，
+// 正統規則另外把這些招式手動分到對應的威力級距，不是照原始power欄位直接套表——這裡直接把
+// 換算好的最終極巨威力寫死(依資料來源bulbapedia的Max Move條目逐一比對過)
+const MAX_MOVE_POWER_OVERRIDE_STD = {
+    "pin-missile": 130, "power-trip": 130, "punishment": 130, "dragon-darts": 130, "dual-chop": 130, "electro-ball": 130,
+    "heat-crash": 130, "bullet-seed": 130, "grass-knot": 130, "bonemerang": 130, "bone-rush": 130, "fissure": 130,
+    "guillotine": 130, "sheer-cold": 130, "horn-drill": 130, "weather-ball": 130, "tail-slap": 130, "flail": 130,
+    "return": 130, "frustration": 130, "endeavor": 130, "natural-gift": 130, "trump-card": 130, "stored-power": 130,
+    "rock-blast": 130, "gear-grind": 130, "gyro-ball": 130, "heavy-slam": 130, "icicle-spear": 130,
+    "twineedle": 100, "beat-up": 100, "fling": 100, "dragon-rage": 100, "sonic-boom": 100, "natures-madness": 100,
+    "night-shade": 100, "comet-punch": 100, "fury-swipes": 100, "bide": 100, "super-fang": 100, "present": 100,
+    "spit-up": 100, "psywave": 100, "mirror-coat": 100, "metal-burst": 100,
+};
+const MAX_MOVE_POWER_OVERRIDE_FP = {
+    "double-kick": 80, "triple-kick": 80,
+    "counter": 75, "seismic-toss": 75,
+    "low-kick": 100, "reversal": 100, "final-gambit": 100,
+};
+// 依原招式代號/威力/屬性，算出這一下極巨招式(或超極巨招式，威力算法跟一般極巨招式完全一樣，
+// 只有招式名稱/附加效果不同)固定要用多少威力
+function maxMovePowerFor(moveName, basePower, moveType) {
+    const isFP = moveType === 'fighting' || moveType === 'poison';
+    const overrideTable = isFP ? MAX_MOVE_POWER_OVERRIDE_FP : MAX_MOVE_POWER_OVERRIDE_STD;
+    if (overrideTable[moveName] != null) return overrideTable[moveName];
+    const table = isFP ? MAX_MOVE_POWER_TABLE_FP : MAX_MOVE_POWER_TABLE_STD;
+    const bp = basePower || 1;
+    for (const [lo, hi, p] of table) { if (bp >= lo && bp <= hi) return p; }
+    return isFP ? 100 : 150;
+}
+
+// ============================================================
 // 【第三十一輪新增】特性(Ability)系統
 // ============================================================
 // 資料來源：PokéAPI ability端點(id 1~307，取dex 1~1025全國圖鑑實際會用到的284種)，
@@ -7224,7 +7439,11 @@ function moveMakesContact(move, attacker) {
 // 減免類特性(堅硬岩石/多重鱗片等)——這跟正統規則裡「阻止/妨礙招式生效」跟「單純減少傷害」
 // 兩種特性受破格影響程度不同的分野大致吻合
 function attackerBypassesAbilities(attacker) {
-    return !!attacker && ['mold-breaker', 'turboblaze', 'teravolt'].includes(attacker.ability);
+    // 【第五十一輪新增】超極巨魔幻美夢(Gmax Foam Burst等「無視特性」的超極巨招式)：這一次攻擊
+    // 期間暫時無視對方特性，用一個一次性旗標實作(見applyMaxMoveEffect的gmaxIgnoreAbility分支)，
+    // 而不是另外新增一個永久的能力欄位——這樣才不用逐一修改這個函式的十幾個呼叫端，只要在這裡
+    // 多判斷一個條件就能讓所有既有呼叫端一起生效
+    return !!attacker && (['mold-breaker', 'turboblaze', 'teravolt'].includes(attacker.ability) || !!attacker.__gmaxIgnoreAbilityThisMove);
 }
 async function fetchMoveData(moveName) {
     if (moveName === 'struggle') return STRUGGLE_MOVE;
@@ -7371,6 +7590,7 @@ function freshBattleStatus() {
         mustSwitch: false, // 主動寶可夢倒下、但還有備用寶可夢時，強制要求這一方先選新的上場，戰鬥還不算結束
         chargingMove: null, // 雙回合蓄力招式(日光烈焰等)：記錄「正在蓄力、下一回合要直接放」的招式代號
         protectStreak: 0, protectedThisTurn: false, // 守住連續使用會遞減成功率；protectedThisTurn只在單一回合內有效
+        protectedWithMaxGuard: false, // 【第五十一輪新增】這回合的守住是不是「極巨防壁」——只在單一回合內有效，用來判斷極巨招式能不能突破(見maxPierceProtect)
         substituteHp: 0, // 替身還剩多少HP，>0時擋著本體、傷害/大部分附加效果都打在替身上
         // ---- 這一輪新補齊的異常/變化狀態欄位：之前完全沒做的挑釁/折磨/定身法/再來一次/封印/
         // 瞌睡/惡夢/道具封印/治癒封印/束縛/封聲/亡語歌/看穿系，通通是「只在場上時才有意義」的
@@ -7420,6 +7640,20 @@ function freshBattleStatus() {
         unburdenActive: false,
         cudChewBerry: null,
         cudChewTurns: 0,
+        // 【第五十一輪新增】極巨化(Dynamax)/超極巨化(Gigantamax)系統的揮發性欄位：isDynamaxed(現在
+        // 是不是極巨化狀態)、isGigantamax(這次極巨化是「超極巨化」而不是普通極巨化——取決於這隻寶可夢
+        // 的種類在GMAX_MOVE_TABLE裡有沒有專屬超極巨招式)、dynamaxTursLeft見下方dynamaxTurnsLeft、
+        // dynamaxOriginalMaxHp(極巨化前的maxHp快照，回合數用完/被強制换下場時要用這個復原、並且把
+        // currentHp按百分比等比例縮回去，道理跟Mega進化的megaEvolvedFrom快照一樣，只是極巨化不改變
+        // 種類/樣子/能力值，只放大HP跟招式，所以不需要整包snapshot，單存一個數字就夠)
+        isDynamaxed: false,
+        isGigantamax: false,
+        dynamaxTurnsLeft: 0, // 極巨化剩餘回合數(3回合制)，每回合結束遞減，歸零時強制解除
+        dynamaxOriginalMaxHp: null,
+        gmaxCritStage: 0, // 超極巨螯蝦(Gmax Sandblast等致命一擊系)疊加的「必定會心一擊」等級加成
+        gmaxDotTurns: 0, gmaxDotType: null, // 超極巨激流/超極巨重炮等「每回合持續傷害」類超極巨招式
+        infatuatedWith: null, // 超極巨魅力(如超極巨黏黏怪)：被迷住的對象uid，跟一般「魅力」招式共用「有50%機率無法出招」的判定
+        tormentedTurns: 0, // 超極巨蜻蜓(Gmax Stun Shock等)的「折磨」效果版本，跟一般tormented(無倒數)不同，這個是有回合數限制的版本
     };
 }
 // 一隻寶可夢從場上換下去時(不管是自願替換、還是被吼叫/咆哮/龍尾/圓環摔這類招式強制換下場)，
@@ -7435,7 +7669,7 @@ function resetVolatileForBench(battler) {
     const outgoing = { ...battler };
     outgoing.stages = { atk: 0, def: 0, spAtk: 0, spDef: 0, spd: 0, acc: 0, eva: 0 };
     outgoing.confusedTurns = 0; outgoing.flinched = false; outgoing.chargingMove = null;
-    outgoing.protectStreak = 0; outgoing.protectedThisTurn = false; outgoing.mustSwitch = false;
+    outgoing.protectStreak = 0; outgoing.protectedThisTurn = false; outgoing.protectedWithMaxGuard = false; outgoing.mustSwitch = false;
     outgoing.rooted = false; outgoing.seeded = false; outgoing.seederKey = null; outgoing.substituteHp = 0;
     outgoing.lastMoveUsed = null;
     outgoing.tauntTurns = 0; outgoing.tormented = false;
@@ -7476,6 +7710,17 @@ function resetVolatileForBench(battler) {
     // 也要用同一套復原邏輯——不然「贏了那一局、但贏的那隻還維持著Mega後的樣子」會一路帶到下一場
     // 戰鬥的初始狀態，變成一隻打不掉的假Mega
     revertMegaEvolution(outgoing);
+    // 【第五十一輪新增】極巨化復原：換人(不管自願還是被強制換下場)就會立刻解除極巨化狀態——
+    // 正統規則裡極巨化在「退場」的當下也會直接解除(跟Mega進化一樣)，不會保留到下一次上場，
+    // 也不會延續到下一場戰鬥。抽成獨立函式revertDynamax是因為除了這裡以外，回合數用完的自然
+    // 解除、以及戰鬥真正結束時都要套用同一套復原邏輯
+    revertDynamax(outgoing);
+    // 【第五十一輪新增】超極巨魅力/折磨的回合限制版本效果也是「只在場上時才有意義」的揮發性狀態，
+    // 換人要清空，不然换上另一隻寶可夢卻還帶著「被迷住」的舊狀態
+    outgoing.infatuatedWith = null;
+    outgoing.tormentedTurns = 0;
+    outgoing.gmaxDotTurns = 0;
+    outgoing.gmaxDotType = null;
     // 【第三十一輪新增】特性系統的揮發性欄位換人也要重置——尤其switchInAbilityFired一定要
     // 明確歸零，不然這隻寶可夢帶著「已經觸發過」的舊值換上場，威嚇/天氣/場地這類上場觸發特性
     // 下次換上來就不會再發動了(因為resetVolatileForBench是先展開{...battler}整份複製舊值，
@@ -7523,6 +7768,23 @@ function revertMegaEvolution(battler) {
     // 才夾住(理論上不會發生，Mega通常HP種族值不會比原本低太多，這裡純粹防呆)
     battler.currentHp = Math.min(battler.currentHp, original.maxHp);
     battler.megaEvolvedFrom = null;
+}
+// 【第五十一輪新增】極巨化復原：把maxHp從極巨化前的快照(dynamaxOriginalMaxHp)復原回去，
+// 並且把currentHp「按百分比等比例縮小」而不是直接夾住——正統規則裡極巨化/解除都會這樣換算HP
+// (例如極巨化時100/100變成200/200，這時候如果現在是150/200，解除時要變回75/100而不是100/100
+// 或是被夾成100/100損失血量)，四捨五入一律無條件進位(Math.ceil)以避免解除的瞬間HP歸零
+function revertDynamax(battler) {
+    if (!battler.isDynamaxed && !battler.isGigantamax) return;
+    const originalMaxHp = battler.dynamaxOriginalMaxHp;
+    if (originalMaxHp && battler.maxHp) {
+        const ratio = battler.currentHp / battler.maxHp;
+        battler.maxHp = originalMaxHp;
+        battler.currentHp = Math.max(battler.currentHp > 0 ? 1 : 0, Math.min(originalMaxHp, Math.ceil(originalMaxHp * ratio)));
+    }
+    battler.isDynamaxed = false;
+    battler.isGigantamax = false;
+    battler.dynamaxTurnsLeft = 0;
+    battler.dynamaxOriginalMaxHp = null;
 }
 // 能力等級(-6~+6)換算成倍率：官方公式，攻/防/速用同一張表
 function statStageMult(stage) {
@@ -7672,6 +7934,9 @@ function battleStatusBadgesHtml(team) {
     // 【第三十輪新增】Mega進化中：借用超級石(如果知道具體是哪一顆的話)或通用的「妙蛙花進化石」
     // 圖示提示玩家「現在是Mega後的樣子，退場就會變回原本種類」
     if (team.megaEvolvedFrom) html += genericIconHtml(itemSpriteUrl('venusaurite'), 'w-3.5 h-3.5', 'Mega進化中');
+    // 【第五十一輪新增】極巨化/超極巨化中：這個badge同時用在myTeam跟oppTeam兩邊(跟其他所有
+    // 狀態小圖示共用同一個函式)，所以對方極巨化的時候玩家也看得到提示，不是只有自己這邊才顯示
+    if (team.isDynamaxed) html += genericIconHtml(itemSpriteUrl('dynamax-candy'), 'w-3.5 h-3.5', `${team.isGigantamax ? '超極巨化' : '極巨化'}中(剩餘${team.dynamaxTurnsLeft || 0}回合)`);
     return html;
 }
 // ---------- 天氣/場地：圖示素材(天氣用道具庫的「天氣石」，場地用道具庫的「場地種子」，
@@ -7754,8 +8019,10 @@ async function submitMove(moveName, opts) {
     // findZMoveInfoFor)
     const mega = !!(opts && opts.mega);
     const zMove = !!(opts && opts.zMove);
+    const dynamax = !!(opts && opts.dynamax); // 【第五十一輪新增】這回合順便極巨化/超極巨化
     battlePendingMega = false; // 送出後歸零，避免沿用到下一次選招式/下一隻寶可夢身上
-    if (currentRoomIsWild) return submitWildMove(moveName, { mega, zMove });
+    battlePendingDynamax = false; // 【第五十一輪新增】道理跟battlePendingMega一樣
+    if (currentRoomIsWild) return submitWildMove(moveName, { mega, zMove, dynamax });
     const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
     const myUid = auth.currentUser.uid;
     let roomDataAfter = null;
@@ -7766,7 +8033,7 @@ async function submitMove(moveName, opts) {
             if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
             const pending = { ...(data.pendingMoves || {}) };
             if (pending[myUid]) throw new Error('這回合已經送出過招式了');
-            pending[myUid] = { type: 'move', move: moveName, mega, zMove };
+            pending[myUid] = { type: 'move', move: moveName, mega, zMove, dynamax };
             tx.update(roomRef, { pendingMoves: pending });
             roomDataAfter = { ...data, pendingMoves: pending };
         });
@@ -7925,6 +8192,7 @@ async function submitForcedSwitch(instanceId) {
 async function submitWildMove(moveName, opts) {
     const mega = !!(opts && opts.mega);
     const zMove = !!(opts && opts.zMove);
+    const dynamax = !!(opts && opts.dynamax); // 【第五十一輪新增】
     const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
     const myUid = auth.currentUser.uid;
     let roomDataAfter = null;
@@ -7935,7 +8203,7 @@ async function submitWildMove(moveName, opts) {
             if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
             const wildTeamNow = data.battleState.teams.wild || { moves: ['tackle'] };
             const aiMoveName = decideTrainerMoveName(wildTeamNow, data.battleState.round || 1);
-            const pending = { [myUid]: { type: 'move', move: moveName, mega, zMove }, wild: { type: 'move', move: aiMoveName } };
+            const pending = { [myUid]: { type: 'move', move: moveName, mega, zMove, dynamax }, wild: { type: 'move', move: aiMoveName } };
             tx.update(roomRef, { pendingMoves: pending });
             roomDataAfter = { ...data, pendingMoves: pending };
         });
@@ -8048,6 +8316,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     // 不能沿用上一回合寫進Firestore的舊值(否則守住的效果會一直卡著不會消失)
     state[uidA].protectedThisTurn = false;
     state[uidB].protectedThisTurn = false;
+    state[uidA].protectedWithMaxGuard = false;
+    state[uidB].protectedWithMaxGuard = false;
     // 魔法反射(magicCoatActive)也是「只在單一回合內有意義」的旗標，理由跟protectedThisTurn一樣：
     // 不能沿用上一回合寫進Firestore的舊值，不然反射效果會一直卡著(這一回合設下之後，要等到「這
     // 回合稍早」被觸發或這回合結束都會清掉，下面出招迴圈裡任何一方用了magic-coat才會重新設true)
@@ -8068,6 +8338,17 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     const zMoveUsedAll = roomData.battleState.zMoveUsed || {};
     const megaUsedState = { [uidA]: !!megaUsedAll[uidA], [uidB]: !!megaUsedAll[uidB] };
     const zMoveUsedState = { [uidA]: !!zMoveUsedAll[uidA], [uidB]: !!zMoveUsedAll[uidB] };
+    // 【第五十一輪新增】極巨化「整場戰鬥只能用一次」的名額(dynamaxUsed)跟能量條累積次數
+    // (dynamaxCharge，累積到DYNAMAX_CHARGE_NEEDED次出招才會充滿)，防呆寫法跟上面的
+    // megaUsed/zMoveUsed一樣：舊房間文件沒有這兩個欄位，預設當作「還沒用過/能量還是0」
+    const dynamaxUsedAll = roomData.battleState.dynamaxUsed || {};
+    const dynamaxChargeAll = roomData.battleState.dynamaxCharge || {};
+    const dynamaxUsedState = { [uidA]: !!dynamaxUsedAll[uidA], [uidB]: !!dynamaxUsedAll[uidB] };
+    const dynamaxChargeState = { [uidA]: dynamaxChargeAll[uidA] || 0, [uidB]: dynamaxChargeAll[uidB] || 0 };
+    // 【第五十一輪新增】重力(Gravity，超極巨馬麥拉的超極巨招式)：全場共用的場地效果，跟天氣
+    // (weatherState)是相同層級的概念，用{turnsLeft}紀錄還剩幾回合，0代表沒有重力
+    const gravityAll = roomData.battleState.gravity || {};
+    const gravityState = { turnsLeft: gravityAll.turnsLeft || 0 };
 
     const log = [];
     const events = []; // 結構化的事件，給前端播放動畫用
@@ -8153,6 +8434,11 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (!action || action.type !== 'move' || !action.mega) return;
         if (state[uid].currentHp <= 0) return; // 防呆：已經倒下的不能Mega進化
         if (megaUsedState[uid]) { log.push(`${state[uid].nickname} 這場對戰的Mega進化名額已經用掉了！`); return; }
+        // 【第五十一輪新增】Mega進化/Ｚ招式/極巨化「一場對戰三選一」互斥檢查：這場對戰已經用過
+        // Ｚ招式或極巨化名額的一方，就不能再Mega進化——三個系統共用同一份「特殊強化名額」。
+        // action.zMove/action.dynamax則是防呆「同一次出招」不小心同時勾選了兩種以上(例如UI上
+        // 同時勾了Mega/極巨化checkbox，或勾了Mega又點了Ｚ招式徽章)，這種情況一律只承認Mega進化
+        if (zMoveUsedState[uid] || dynamaxUsedState[uid] || action.zMove || action.dynamax) { log.push(`${state[uid].nickname} 這場對戰已經使用過其他強化招式的名額，沒辦法再Mega進化了！`); return; }
         const megaInfo = findMegaInfoFor(state[uid]);
         if (!megaInfo) { log.push(`${state[uid].nickname} 現在沒辦法Mega進化！`); return; }
         const beforeName = state[uid].nickname;
@@ -8163,6 +8449,38 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     }
     await tryProcessMegaAction(uidA, actionA);
     await tryProcessMegaAction(uidB, actionB);
+
+    // 【第五十一輪新增】極巨化(Dynamax)/超極巨化(Gigantamax)：處理時機比照Mega進化，放在
+    // 換人結束、抓種類資料之前——極巨化不會改變種類(跟Mega不同)，但要在下面的moveOf轉換
+    // 成極巨招式之前先確定isDynamaxed/isGigantamax狀態。同樣是「三選一」的其中一個名額，
+    // 而且蒼響/藏瑪然特這兩隻種族天生不能極巨化(DYNAMAX_BANNED_SPECIES_IDS)
+    async function tryProcessDynamaxAction(uid, action) {
+        if (!action || action.type !== 'move' || !action.dynamax) return;
+        if (state[uid].currentHp <= 0) return; // 防呆：已經倒下的不能極巨化
+        if (dynamaxUsedState[uid]) { log.push(`${state[uid].nickname} 這場對戰的極巨化名額已經用掉了！`); return; }
+        // 【第五十一輪新增】跟上面tryProcessMegaAction同樣道理，action.mega/action.zMove是防呆
+        // 「同一次出招」不小心同時勾選/點了兩種以上特殊強化，這種情況一律不承認極巨化
+        if (megaUsedState[uid] || zMoveUsedState[uid] || action.mega || action.zMove) { log.push(`${state[uid].nickname} 這場對戰已經使用過其他強化招式的名額，沒辦法再極巨化了！`); return; }
+        if (dynamaxChargeState[uid] < DYNAMAX_CHARGE_NEEDED) { log.push(`${state[uid].nickname} 的極巨能量還沒充滿！`); return; }
+        const speciesNum = parseInt(state[uid].speciesId, 10);
+        if (DYNAMAX_BANNED_SPECIES_IDS.includes(speciesNum)) { log.push(`${state[uid].nickname} 沒辦法極巨化！`); return; }
+        const isGmax = GMAX_ELIGIBLE_SPECIES_IDS.includes(speciesNum);
+        state[uid].dynamaxOriginalMaxHp = state[uid].maxHp;
+        // 正統規則的極巨化Level系統(1.0倍~2.0倍)在這個簡化版遊戲固定用2倍——見交付紀錄的
+        // 範圍說明。currentHp按百分比等比例放大(無條件進位)，不是直接補滿血
+        const ratio = state[uid].maxHp > 0 ? state[uid].currentHp / state[uid].maxHp : 1;
+        state[uid].maxHp = state[uid].maxHp * 2;
+        state[uid].currentHp = Math.min(state[uid].maxHp, Math.max(1, Math.ceil(state[uid].maxHp * ratio)));
+        state[uid].isDynamaxed = true;
+        state[uid].isGigantamax = isGmax;
+        state[uid].dynamaxTurnsLeft = 3;
+        dynamaxUsedState[uid] = true;
+        const beforeName = state[uid].nickname;
+        log.push(`${beforeName} 極巨能量解放...${isGmax ? '超極巨化' : '極巨化'}了！`);
+        events.push({ dynamaxEvent: true, uid, isGigantamax: isGmax, nickname: state[uid].nickname });
+    }
+    await tryProcessDynamaxAction(uidA, actionA);
+    await tryProcessDynamaxAction(uidB, actionB);
 
     // 換人之後才抓「現在真正在場上」的種類資料——如果剛剛換過人，要用新上場那隻的speciesId查屬性
     const displayA = await fetchSpeciesDisplay(state[uidA].speciesId, state[uidA].isShiny);
@@ -8553,13 +8871,21 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     const moveOf = {};
     for (const uid of moveUids) {
         const act = uid === uidA ? actionA : actionB;
+        // 【第五十一輪新增】極巨能量累積：這場對戰還沒用過極巨化名額的一方，每次真的選了招式
+        // (不管這一招最後有沒有命中/被打斷)就會累積一次能量，累積到DYNAMAX_CHARGE_NEEDED次
+        // 就算充滿——這是這個遊戲自訂的資源機制(正統遊戲極巨化不需要累積能量，見上面
+        // DYNAMAX_CHARGE_NEEDED常數旁的說明)，累積到上限之後就不再繼續往上加，避免數字無限增長
+        if (!dynamaxUsedState[uid]) dynamaxChargeState[uid] = Math.min(DYNAMAX_CHARGE_NEEDED, (dynamaxChargeState[uid] || 0) + 1);
         moveOf[uid] = await fetchMoveData(act.move);
         // 【第三十輪新增】Ｚ招式：只覆寫「威力」跟「顯示名稱」這兩個欄位(用淺拷貝，不會動到
         // moveDataCache裡共用的原始物件)，屬性/分類/命中率/PP/招式代號完全不變——這樣後面
         // 算相剋倍率/扣PP/命中判定全部自動沿用原招式的資料，只有傷害計算讀到的power、跟戰鬥
         // 紀錄文字讀到的nameZh是強化過的版本。special('evoboost'/'fixedFractionDamage')
         // 這兩個例外會在下面攻擊迴圈裡各自用專門的分支處理，不會走一般的computeDamage流程
-        if (act.zMove && !zMoveUsedState[uid]) {
+        // 【第五十一輪新增】act.mega/act.dynamax是防呆「同一次出招」不小心同時勾選/點了兩種以上
+        // 特殊強化，這種情況一律不承認Ｚ招式(前面tryProcessMegaAction/tryProcessDynamaxAction
+        // 也已經用同樣的道理各自擋掉了自己那一種)
+        if (act.zMove && !zMoveUsedState[uid] && !act.mega && !act.dynamax) {
             const zResult = findZMoveInfoFor(state[uid], moveOf[uid]);
             if (zResult) {
                 moveOf[uid] = { ...moveOf[uid], power: zResult.power, nameZh: zResult.zMoveNameZh, __zSpecial: zResult.special || null, __isZMove: true };
@@ -8567,6 +8893,44 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 log.push(`${state[uid].nickname} 拿出了純晶的力量！`);
             } else {
                 log.push(`${state[uid].nickname} 現在沒辦法使出Ｚ招式，${moveOf[uid].nameZh}照原本的威力使出！`);
+            }
+        }
+        // 【第五十一輪新增】極巨化後的招式轉換：有威力的傷害招式轉換成極巨招式(威力/名稱改用
+        // maxMovePowerFor()查官方對照表，屬性/分類/命中率/PP完全沿用原招式，後續相剋倍率/扣PP/
+        // 命中判定完全不用另外處理，跟上面的Ｚ招式威力覆寫是同一套淺拷貝作法)；狀態招式(威力<=0)
+        // 一律變成極巨防壁(不分屬性，正統規則沒有例外)。超極巨寶可夢使用「跟自己超極巨屬性相同」
+        // 的招式時，改用牠專屬的超極巨招式(GMAX_MOVE_TABLE)，其餘屬性的招式依然只能用一般極巨招式。
+        // Bulbapedia確認：原招式自帶的追加效果(異常狀態機率/畏縮機率/能力等級變化機率/連續攻擊
+        // 次數/吸血或反作用力)全部被極巨招式自己「依屬性固定」的追加效果取代，不會疊加原招式的
+        // 效果，這裡明確清空這些欄位(minHits/maxHits/drain/ailmentChance/flinchChance/statChance/
+        // healing)，避免沿用原招式資料造成雙重效果
+        if (state[uid].isDynamaxed) {
+            const mv = moveOf[uid];
+            // 一擊必殺(OHKO_MOVES)/固定傷害(FIXED_DAMAGE_MOVES)這幾招在PokéAPI裡power欄位都是0
+            // (傷害另外用category==='ohko'或招式名稱查表算)，不能只看mv.power>0判斷是不是傷害型
+            // 招式——這幾招在maxMovePowerFor的override表裡都有對應的固定極巨威力，一樣要轉換成
+            // 傷害型極巨招式，而不是被誤判成狀態招式變成極巨防壁
+            const isDamagingBase = mv.power > 0 || mv.category === 'ohko' || OHKO_MOVES.has(mv.name) || !!FIXED_DAMAGE_MOVES[mv.name];
+            if (!mv.isStruggle) {
+                if (isDamagingBase) {
+                    const speciesNum = parseInt(state[uid].speciesId, 10);
+                    const gmaxInfo = state[uid].isGigantamax ? GMAX_MOVE_TABLE[speciesNum] : null;
+                    const newPower = maxMovePowerFor(mv.name, mv.power, mv.type);
+                    // category改成'damage'，避免下面主要傷害流程的OHKO/固定傷害分支(靠category跟
+                    // 招式名稱判斷，不看power)誤把轉換後的極巨招式當成原本的一擊必殺/固定傷害處理
+                    const clearedFields = { minHits: null, maxHits: null, drain: 0, healing: 0, ailmentChance: 0, flinchChance: 0, statChance: 0, ailment: null, statChanges: [], category: 'damage' };
+                    if (gmaxInfo && gmaxInfo.type === mv.type) {
+                        moveOf[uid] = {
+                            ...mv, ...clearedFields, power: newPower, nameZh: gmaxInfo.nameZh, __isMaxMove: true,
+                            __gmaxInfo: gmaxInfo, __gmaxIgnoreGuard: gmaxInfo.kind === 'gmaxIgnoreGuard',
+                        };
+                    } else {
+                        const catalogInfo = MAX_MOVE_CATALOG[mv.type] || MAX_MOVE_CATALOG.normal;
+                        moveOf[uid] = { ...mv, ...clearedFields, power: newPower, nameZh: catalogInfo.nameZh, __isMaxMove: true, __gmaxInfo: catalogInfo };
+                    }
+                } else {
+                    moveOf[uid] = { ...mv, nameZh: MAX_GUARD_NAME_ZH, power: 0, __isMaxGuard: true };
+                }
             }
         }
         applyAbilityMoveModifiers(uid);
@@ -8728,6 +9092,176 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         order = moveUids.slice(); // 這回合0或1個人真的出招(另一方在換寶可夢)，不用排序
     }
 
+    // 【第五十一輪新增】極巨招式(Max Move)/超極巨招式「依屬性固定」的追加效果——跟一般招式的
+    // ailmentChance/statChanges不同，這裡列出的效果只要極巨招式真的命中(不管是不是靠maxPierceProtect
+    // 突破守住打進來的)就一定會觸發，不看機率(GMAX_MOVE_TABLE裡少數本來就帶機率的效果，例如
+    // gmaxDrowsyChance/gmaxRandomStatus，機率判斷寫在各自的case裡面)。attackerUid固定是使出這招
+    // 的一方，defenderUid固定是對方
+    function applyMaxMoveEffect(attackerUid, defenderUid, info) {
+        const atkT = state[attackerUid], defT = state[defenderUid];
+        function tryInflictStatus(statusKey) {
+            if (defT.currentHp <= 0 || defT.status) return false;
+            const defTypes = (displayOf[defenderUid] && displayOf[defenderUid].types) || [];
+            const immuneTypesList = STATUS_TYPE_IMMUNITY[statusKey];
+            if (immuneTypesList && immuneTypesList.some(ty => defTypes.includes(ty))) return false;
+            if (abilityBlocksStatus(defT, statusKey)) return false;
+            defT.status = statusKey;
+            if (statusKey === 'sleep') defT.statusTurns = 1 + Math.floor(Math.random() * 3);
+            if (statusKey === 'poison') defT.toxicCounter = 0;
+            log.push(`${nameOf[defenderUid]} 陷入了${STATUS_NAME_ZH[statusKey] || statusKey}狀態！`);
+            return true;
+        }
+        switch (info.kind) {
+            case 'weather':
+                weatherState = { type: info.weatherType, turnsLeft: 5 };
+                log.push(`${nameOf[attackerUid]} 的極巨招式讓天氣變成了${WEATHER_NAME_ZH[info.weatherType]}！`);
+                break;
+            case 'terrain':
+                terrainState = { type: info.terrainType, turnsLeft: 5 };
+                log.push(`${nameOf[attackerUid]} 的極巨招式讓場地變成了${TERRAIN_NAME_ZH[info.terrainType]}！`);
+                break;
+            case 'statBoostSelf':
+                if (atkT.currentHp > 0) {
+                    const before = atkT.stages[info.stat] || 0;
+                    atkT.stages[info.stat] = Math.min(6, before + info.stages);
+                    if (atkT.stages[info.stat] !== before) log.push(`${nameOf[attackerUid]} 的${STAGE_KEY_ZH[info.stat]}提升了！`);
+                }
+                break;
+            case 'statDropOpp':
+                if (defT.currentHp > 0) applyOpponentStatDrop(defenderUid, attackerUid, info.stat, info.stages);
+                break;
+            case 'gmaxDot': {
+                if (defT.currentHp <= 0) break;
+                const defTypes = (displayOf[defenderUid] && displayOf[defenderUid].types) || [];
+                if (info.immuneType && defTypes.includes(info.immuneType)) {
+                    log.push(`${nameOf[defenderUid]} 的屬性免疫了這個持續傷害效果！`);
+                } else {
+                    defT.gmaxDotTurns = 3;
+                    defT.gmaxDotType = info.immuneType;
+                    log.push(`${nameOf[defenderUid]} 陷入了持續傷害狀態！`);
+                }
+                break;
+            }
+            case 'gmaxRandomStatus': {
+                const pick = info.statuses[Math.floor(Math.random() * info.statuses.length)];
+                tryInflictStatus(pick);
+                break;
+            }
+            case 'gmaxStatus':
+                tryInflictStatus(info.status);
+                break;
+            case 'gmaxConfuse':
+                if (defT.currentHp > 0 && !defT.confusedTurns && !(defT.ability === 'own-tempo')) {
+                    defT.confusedTurns = 1 + Math.floor(Math.random() * 4);
+                    log.push(`${nameOf[defenderUid]} 陷入混亂了！`);
+                }
+                break;
+            case 'gmaxCritBoost':
+                atkT.gmaxCritStage = (atkT.gmaxCritStage || 0) + 1;
+                log.push(`${nameOf[attackerUid]} 的攻擊變得更容易擊中要害了！`);
+                break;
+            case 'gmaxTrapNoDamage':
+                if (defT.currentHp > 0 && !defT.trapped) {
+                    defT.trapped = true; defT.trapDamage = false; defT.trapperKey = attackerUid;
+                    defT.trapTurns = 4 + Math.floor(Math.random() * 2);
+                    log.push(`${nameOf[defenderUid]} 被困住了，沒辦法替換寶可夢！`);
+                }
+                break;
+            case 'gmaxBind':
+                if (defT.currentHp > 0 && !defT.trapped) {
+                    defT.trapped = true; defT.trapDamage = true; defT.trapperKey = attackerUid;
+                    defT.trapTurns = 4 + Math.floor(Math.random() * 2);
+                    log.push(`${nameOf[defenderUid]} 被束縛住了！`);
+                }
+                break;
+            case 'gmaxAuroraVeil':
+                if (!screensState[attackerUid].auroraVeil) {
+                    screensState[attackerUid].auroraVeil = 5;
+                    log.push(`${nameOf[attackerUid]} 這一側張開了極光幕！`);
+                }
+                break;
+            case 'gmaxInfatuate':
+                if (defT.currentHp > 0 && !defT.infatuatedWith && defT.ability !== 'oblivious' && defT.ability !== 'aroma-veil') {
+                    defT.infatuatedWith = attackerUid;
+                    log.push(`${nameOf[defenderUid]} 被迷住了！`);
+                }
+                break;
+            case 'gmaxBerryRefund':
+                // 資源再生：這個簡化版遊戲沒有「已使用過的樹果」歷史紀錄可以查，簡化成「自己現在
+                // 沒有持有道具的話，補一顆蘋野果」，聊表資源再生的效果
+                if (!atkT.heldItem) {
+                    atkT.heldItem = 'leppa';
+                    log.push(`${nameOf[attackerUid]} 補充了道具！`);
+                }
+                break;
+            case 'gmaxTorment':
+                if (defT.currentHp > 0) {
+                    defT.tormented = true;
+                    defT.tormentedTurns = info.turns || 3;
+                    log.push(`${nameOf[defenderUid]} 被折磨了，沒辦法連續使用同一招式！`);
+                }
+                break;
+            case 'gmaxIgnoreAbility':
+                // atk.__gmaxIgnoreAbilityThisMove已經在攻擊迴圈最前面設定好了(整個這次出招期間
+                // 都生效，見attackerBypassesAbilities)，這裡不用再另外處理
+                break;
+            case 'gmaxHazardClear':
+                // 超極巨旋風襲捲(G-Max Wind Rage)：官方效果是清除雙方場上所有的入場障礙跟光牆系
+                // (光牆/反射壁/極光幕/神秘守護/薄霧)，不含天氣/場地——這裡刻意不動weatherState/
+                // terrainState，只清hazards跟screens兩份
+                [uidA, uidB].forEach(u => { hazardsState[u] = freshHazardsSide(); screensState[u] = freshScreensSide(); });
+                log.push(`${nameOf[attackerUid]} 使出的招式清除了雙方場上所有的入場障礙跟光牆效果！`);
+                break;
+            case 'gmaxGravity':
+                gravityState.turnsLeft = info.turns || 5;
+                log.push(`${nameOf[attackerUid]} 使出的招式讓重力增強了！`);
+                break;
+            case 'gmaxStealthRock':
+            case 'gmaxSteelsurge':
+                if (!hazardsState[defenderUid].stealthRock) {
+                    hazardsState[defenderUid].stealthRock = true;
+                    log.push(`${nameOf[attackerUid]} 在對方腳下放置了隱形岩！`);
+                }
+                break;
+            case 'gmaxCureStatus':
+                if (atkT.status) {
+                    atkT.status = null; atkT.statusTurns = 0; atkT.toxicCounter = 0;
+                    log.push(`${nameOf[attackerUid]} 的異常狀態被治好了！`);
+                }
+                break;
+            case 'gmaxDrowsyChance':
+                if (defT.currentHp > 0 && !defT.drowsyTurns && !defT.status && rollChance(info.chance || 50)) {
+                    defT.drowsyTurns = 2;
+                    log.push(`${nameOf[defenderUid]} 開始想睡覺了！`);
+                }
+                break;
+            case 'gmaxHealSelf':
+                if (atkT.currentHp > 0 && atkT.currentHp < atkT.maxHp) {
+                    const heal = Math.max(1, Math.floor(atkT.maxHp / (info.fraction || 6)));
+                    const before = atkT.currentHp;
+                    atkT.currentHp = Math.min(atkT.maxHp, atkT.currentHp + heal);
+                    log.push(`${nameOf[attackerUid]} 回復了 ${atkT.currentHp - before} 點HP！`);
+                }
+                break;
+            case 'gmaxPpReduce':
+                if (defT.lastMoveUsed && defT.lastMoveUsed !== 'struggle') {
+                    if (!defT.movePp) defT.movePp = {};
+                    const cachedMove = moveDataCache.get(defT.lastMoveUsed);
+                    const before = Object.prototype.hasOwnProperty.call(defT.movePp, defT.lastMoveUsed) ? defT.movePp[defT.lastMoveUsed] : (cachedMove ? cachedMove.pp : 10);
+                    const after = Math.max(0, before - (info.amount || 3));
+                    defT.movePp[defT.lastMoveUsed] = after;
+                    log.push(`${nameOf[defenderUid]} 的招式PP減少了！`);
+                }
+                break;
+            case 'gmaxIgnoreGuard':
+                // 無視守住：已經在isProtectedTarget/maxPierceProtect那邊處理完了，這裡不需要
+                // 額外的效果(超極巨奪命一擊純粹就是傷害，沒有其他附加效果)
+                break;
+            default:
+                break;
+        }
+    }
+
     // 亡語之約(destiny-bond)：只用一個函式內的區域變數追蹤「稍早設下亡語之約的是誰」，不用寫進
     // 永久狀態——官方規則本來就只在「設下的那一回合、下一次真正行動之前」有效，resolveBattleRound
     // 每次呼叫剛好處理一整個回合，範圍天然吻合，不需要額外的跨回合持續狀態
@@ -8758,10 +9292,16 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             moveName: move.name, moveNameZh: move.nameZh, moveType: move.type, moveTarget: move.target,
             isZMove: !!move.__isZMove, // 【第四十八輪新增】true時playBattleEvents會改播完整的Z招式動畫(Z字覆蓋圖→字樣圖片→特效+音效)，取代原本平淡的衝刺/自我強化發光
         };
+        // 【第五十一輪新增】超極巨狂擂亂打/破陣火球/狙擊神射(gmaxIgnoreAbility)：這次出招期間
+        // 暫時無視對方特性，透過attackerBypassesAbilities()裡多判斷的這個一次性旗標生效，涵蓋
+        // 整個這次出招從命中判定到傷害計算的所有既有呼叫端，不用逐一修改十幾個呼叫點。每次攻擊方
+        // 行動開始都要重新設定(不管這次是不是極巨招式)，避免沿用上一次出招殘留的true值
+        atk.__gmaxIgnoreAbilityThisMove = !!(move.__gmaxInfo && move.__gmaxInfo.kind === 'gmaxIgnoreAbility');
 
         // 守住連續使用的成功率是「這次選的招式還是不是守住」決定的——只要這回合改選別的招式
         // (不管有沒有真的出招成功)，連續紀錄就重置，下次守住又會回到100%成功率
-        if (!PROTECT_MOVES.has(move.name)) atk.protectStreak = 0;
+        // 【第五十一輪新增】極巨防壁跟守住共用同一份連續使用成功率遞減紀錄(atk.protectStreak)
+        if (!PROTECT_MOVES.has(move.name) && !move.__isMaxGuard) atk.protectStreak = 0;
         // 滾動/冰球的連續使用次數比照守住的重置邏輯：只要這回合改選別的招式，連續紀錄就重置，
         // 下次重新選滾動又會從基礎威力開始算——玩家回報「滾動5回合內擊中威力也沒有提高」，查證
         // 後這招之前完全沒實作連續使用威力遞增的機制，PokéAPI本身也沒有「連續使用第幾次」這種
@@ -8833,6 +9373,18 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             events.push(ev);
             if (atk.currentHp <= 0) { log.push(`${atkName} 倒下了！`); handleFaint(attackerUid); break; }
             continue;
+        }
+
+        // 【第五十一輪新增】著迷(超極巨熱情擁抱等效果附加)：跟一般攻擊招式的「著迷」機制一樣，
+        // 50%機率完全無法出招——這個簡化版遊戲沒有寶可夢性別資料可以判斷「異性才會著迷」，
+        // atk.infatuatedWith單純記錄「是被哪一側迷住的」，只要現在面對的還是那一側就有效
+        if (atk.infatuatedWith === defenderUid && atk.currentHp > 0) {
+            if (rollChance(50)) {
+                ev.blocked = 'infatuation';
+                log.push(`${atkName} 因為著迷而無法出招！`);
+                events.push(ev);
+                continue;
+            }
         }
 
         // ---- 挑釁／折磨／定身法／封印／封聲／再來一次：這些「這一招現在不能用」的效果之前
@@ -8966,18 +9518,20 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         }
         if (alreadyCharging) atk.chargingMove = null; // 這回合是「放」的那一下，蓄力狀態解除
 
-        // ---- 守住/替身：完全客製化的成功率/資源邏輯，不走一般的命中/傷害流程 ----
-        if (PROTECT_MOVES.has(move.name)) {
+        // ---- 守住/替身：完全客製化的成功率/資源邏輯，不走一般的命中/傷害流程。
+        // 【第五十一輪新增】極巨防壁(move.__isMaxGuard)沿用完全相同的連續使用成功率遞減邏輯 ----
+        if (PROTECT_MOVES.has(move.name) || move.__isMaxGuard) {
             const successChance = Math.pow(0.5, atk.protectStreak || 0) * 100;
             if (rollChance(successChance)) {
                 atk.protectedThisTurn = true;
+                atk.protectedWithMaxGuard = !!move.__isMaxGuard;
                 atk.protectStreak = (atk.protectStreak || 0) + 1;
                 ev.protectSuccess = true;
-                log.push(`${atkName} 擺出了防禦姿態！`);
+                log.push(move.__isMaxGuard ? `${atkName} 擺出了${MAX_GUARD_NAME_ZH}！` : `${atkName} 擺出了防禦姿態！`);
             } else {
                 atk.protectStreak = 0;
                 ev.protectFail = true;
-                log.push(`${atkName} 想要防禦，但是失敗了！`);
+                log.push(move.__isMaxGuard ? `${atkName} 想要使出${MAX_GUARD_NAME_ZH}，但是失敗了！` : `${atkName} 想要防禦，但是失敗了！`);
             }
             events.push(ev);
             continue;
@@ -9016,8 +9570,11 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         } else if (move.accuracy != null) {
             // 不會犯規(no-guard)：任何一方帶著這個特性，這次攻擊一律必中(不看命中率也不看閃避率)。
             // 【第五十輪新增】正統規則：有威力的傷害型Ｚ招式無視命中率判定、一律必中(但上面的
-            // defVanished「對方蓄力中消失」判斷已經先跑過、不受這裡影響——飛翔/挖洞中還是躲得掉)
-            if (move.__isZMove || atk.ability === 'no-guard' || def.ability === 'no-guard') {
+            // defVanished「對方蓄力中消失」判斷已經先跑過、不受這裡影響——飛翔/挖洞中還是躲得掉)。
+            // 【第五十一輪新增】極巨招式(Max Move/G-Max Move)也是同樣的規則——Bulbapedia:
+            // "Max Moves also never miss, unless the target is semi-invulnerable."，跟Ｚ招式
+            // 完全一樣的例外(飛翔/挖洞躲得掉，其餘一律必中)
+            if (move.__isZMove || move.__isMaxMove || atk.ability === 'no-guard' || def.ability === 'no-guard') {
                 hit = true;
             } else {
             // 正統規則：被看穿/識破/定身術鎖定(identified)之後，閃避率等級一律當作0——
@@ -9126,13 +9683,25 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // ---- 對方擺出了守住：這回合的攻擊完全被擋下來，不會造成傷害或附加效果。入場障礙/光牆系
         // 一樣不受守住影響(打在場地上，不是打在寶可夢身上)，跟上面屬性免疫的bypassesTypeImmunity
         // 共用同一個isFieldSideMove判斷；看不見的拳頭(unseen-fist)：接觸類招式無視守住 ----
+        // 【第五十一輪新增】超極巨武道熊師(奪命一擊/連擊流，這裡合併成單一個gmaxIgnoreGuard旗標)
+        // 的超極巨招式無視所有守住系效果(不管是普通守住還是極巨防壁)，完全不會被擋下來——
+        // Bulbapedia原文："G-Max One Blow, G-Max Rapid Flow, and Feint deal full damage
+        // through Max Guard"，這裡直接讓這類招式的isProtectedTarget恆為false，連「被擋住」
+        // 的判定都不成立，比照一般沒被守住時的正常傷害流程走
         const isProtectedTarget = !isSelfTargetMove(move.target) && move.target !== 'entire-field' && !isFieldSideMove && def.protectedThisTurn &&
-            !(atk.ability === 'unseen-fist' && moveMakesContact(move, atk));
+            !(atk.ability === 'unseen-fist' && moveMakesContact(move, atk)) && !move.__gmaxIgnoreGuard;
         // 【第五十輪新增】正統規則：有威力的傷害型Ｚ招式沒辦法被守住完全擋下來，還是會突破守住
         // 造成原本傷害1/4的傷害——但招式本身其他的附加效果(異常狀態/能力等級變化/吸血/畏縮等)
         // 依然完全被守住擋掉，只有傷害本身會透過，下面會另外用zPierceProtect把那些效果擋掉
         const zPierceProtect = isProtectedTarget && move.__isZMove && move.power > 0;
-        if (isProtectedTarget && !zPierceProtect) {
+        // 【第五十一輪新增】正統規則：有威力的傷害型極巨招式(Max Move/G-Max Move)一樣可以突破
+        // 「守住系」招式造成原本傷害的1/4——但跟Ｚ招式相反，招式本身的附加效果(異常狀態/能力
+        // 等級變化/吸血/畏縮等)依然會正常觸發，不會被擋掉(下面的附加效果判斷不會排除
+        // maxPierceProtect，只有zPierceProtect才會排除，這是兩者刻意不同的地方)。但如果對方
+        // 擺出的剛好是「極巨防壁」本身(def.protectedWithMaxGuard)，正統規則是極巨防壁能完全防住
+        // 極巨招式(不像一般守住只能防住1/4)，這裡就不能突破，直接跟一般招式一樣被完全擋掉
+        const maxPierceProtect = isProtectedTarget && move.__isMaxMove && move.power > 0 && !def.protectedWithMaxGuard;
+        if (isProtectedTarget && !zPierceProtect && !maxPierceProtect) {
             ev.protectedBlock = true;
             log.push(`${defName} 防住了攻擊！`);
             events.push(ev);
@@ -9171,12 +9740,15 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             return false;
         }
 
-        if (zPierceProtect) {
-            // 【第五十輪新增】Ｚ招式突破守住：只計算「這一下攻擊本身」的傷害(跟一般傷害招式同一套
-            // 基礎公式：能力等級/特性攻防倍率/支配之盤/天氣場地/屬性強化道具/生命寶珠/光牆系減傷/
-            // 會心一擊都照算)，但固定只打一下(不管原招式是不是連續攻擊，正統規則Ｚ招式一律單發)，
-            // 最後把算出來的傷害砍到1/4(至少1點)。招式本身其他附加效果(異常狀態/能力等級變化/
-            // 吸血/畏縮/生命寶珠反傷等)一律不觸發——守住依然完全擋掉這些，只有傷害本身穿透得過去
+        if (zPierceProtect || maxPierceProtect) {
+            // 【第五十輪新增，第五十一輪擴充支援極巨招式】Ｚ招式/極巨招式突破守住：只計算「這一下
+            // 攻擊本身」的傷害(跟一般傷害招式同一套基礎公式：能力等級/特性攻防倍率/支配之盤/天氣
+            // 場地/屬性強化道具/生命寶珠/光牆系減傷/會心一擊都照算)，但固定只打一下(不管原招式是
+            // 不是連續攻擊，正統規則Ｚ招式跟極巨招式一律單發)，最後把算出來的傷害砍到1/4(至少1點)。
+            // 兩者附加效果的處理方式刻意不同：Ｚ招式的附加效果(異常狀態/能力等級變化/吸血/畏縮/
+            // 生命寶珠反傷等)一律不觸發(守住依然完全擋掉這些，只有傷害本身穿透得過去)；極巨招式
+            // 則相反，附加效果依然正常觸發(下面各段附加效果判斷式只會排除zPierceProtect，不會
+            // 排除maxPierceProtect，就是為了讓這個差異生效)
             const isSpecialZ = move.damageClass === 'special';
             const atkStageMultZ = def.ability === 'unaware' ? 1 : statStageMult(isSpecialZ ? atk.stages.spAtk : atk.stages.atk);
             let abilityAtkMultZ = 1;
@@ -9245,14 +9817,18 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             def.currentHp = Math.max(0, def.currentHp - totalDamage);
             hitCount = 1;
             fainted = def.currentHp <= 0 && !tryFocusSash();
-            log.push(`${defName} 想要防住攻擊，但是Ｚ招式的力量太強了，還是受到了 ${totalDamage} 點傷害！${crit ? '(會心一擊！)' : ''}`);
-        } else if (move.category === 'ohko' || OHKO_MOVES.has(move.name)) {
+            if (zPierceProtect) {
+                log.push(`${defName} 想要防住攻擊，但是Ｚ招式的力量太強了，還是受到了 ${totalDamage} 點傷害！${crit ? '(會心一擊！)' : ''}`);
+            } else {
+                log.push(`${defName} 想要防住攻擊，但是極巨招式的力量太強了，還是受到了 ${totalDamage} 點傷害！${crit ? '(會心一擊！)' : ''}`);
+            }
+        } else if (!move.__isMaxMove && (move.category === 'ohko' || OHKO_MOVES.has(move.name))) {
             totalDamage = def.currentHp;
             hitCount = 1;
             def.currentHp = 0;
             fainted = !tryFocusSash();
             log.push(`${atkName} 使出 ${move.nameZh}，一擊必殺！`);
-        } else if (FIXED_DAMAGE_MOVES[move.name]) {
+        } else if (!move.__isMaxMove && FIXED_DAMAGE_MOVES[move.name]) {
             totalDamage = Math.max(0, Math.min(def.currentHp, FIXED_DAMAGE_MOVES[move.name](atk, def)));
             hitCount = totalDamage > 0 ? 1 : 0;
             def.currentHp = Math.max(0, def.currentHp - totalDamage);
@@ -9582,6 +10158,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         ev.hitCount = hitCount;
         ev.crit = crit;
         ev.zPierceProtect = zPierceProtect; // 【第五十輪新增】true代表這次攻擊是Ｚ招式突破守住，client端要顯示對應的專屬文字
+        ev.maxPierceProtect = maxPierceProtect; // 【第五十一輪新增】true代表這次攻擊是極巨招式突破守住，client端要顯示對應的專屬文字
+        ev.isMaxMove = !!move.__isMaxMove; // 【第五十一輪新增】client端用來判斷要不要播放極巨招式的專屬演出
         ev.defenderHpAfter = def.currentHp;
         ev.attackerHpAfter = atk.currentHp; // 讓生命寶珠反傷/凸凸頭盔反彈/貝殼之鈴回血都能即時反映在攻擊方HP條動畫上
         ev.fainted = fainted;
@@ -9951,6 +10529,13 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     if (def.stages.spd !== before) log.push(`${defName} 的堅毅發動了，速度提高了！`);
                 }
             }
+        }
+
+        // 【第五十一輪新增】極巨招式/超極巨招式「依屬性固定」的追加效果：只要這下攻擊真的命中
+        // 就會觸發(不管是不是靠maxPierceProtect突破守住打進來的傷害)，放在這裡(所有一般附加效果
+        // 都處理完、events.push(ev)之前)確保log訊息的先後順序自然(先看到傷害，再看到追加效果)
+        if (move.__isMaxMove && move.__gmaxInfo) {
+            applyMaxMoveEffect(attackerUid, defenderUid, move.__gmaxInfo);
         }
 
         events.push(ev);
@@ -10451,6 +11036,43 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 t.stages[lowerKey] = Math.max(-6, (t.stages[lowerKey] || 0) - 1);
                 log.push(`${nameOf[uid]} 的心情不定發動了，${STAGE_KEY_ZH[raiseKey]}大幅提高，${STAGE_KEY_ZH[lowerKey]}降低了！`);
             }
+
+            // 【第五十一輪新增】超極巨持續傷害(gmaxDot，例如超極巨灰飛鞭滅/超極巨地獄滅焰)：每回合
+            // 結束對中招的一方造成固定1/16最大HP傷害，是跟中毒/燒傷分開的獨立倒數，倒數到0就解除。
+            // 免疫類型(跟自己屬性一樣就不會中招)已經在applyMaxMoveEffect觸發當下判斷過了，這裡只
+            // 單純負責倒數跟扣血
+            if (t.gmaxDotTurns > 0) {
+                const dmg = Math.max(1, Math.floor(t.maxHp / 16));
+                t.currentHp = Math.max(0, t.currentHp - dmg);
+                t.gmaxDotTurns -= 1;
+                log.push(`${nameOf[uid]} 受到超極巨招式的持續傷害，損失了 ${dmg} 點HP！`);
+                events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'gmax-dot', damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                if (t.gmaxDotTurns <= 0) t.gmaxDotType = null;
+                if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+            }
+            if (t.currentHp <= 0) continue;
+
+            // 【第五十一輪新增】超極巨液金熔擊(gmaxTorment)的回合限制版折磨效果，跟一般的
+            // tormented(沒有時間限制、只能靠換人解除)共用同一個檢查條件(atk.tormented)，這裡是
+            // 「有時間限制」的版本，時間到了要記得把tormented本身也一併清掉，不然折磨效果會卡住
+            // 不會消失(一般的tormented欄位平常只靠換人=resetVolatileForBench解除，這裡才是唯一
+            // 會自動計時解除的情境)
+            if (t.tormentedTurns > 0) {
+                t.tormentedTurns -= 1;
+                if (t.tormentedTurns <= 0) { t.tormented = false; log.push(`${nameOf[uid]} 的折磨效果解除了！`); }
+            }
+
+            // 【第五十一輪新增】極巨化剩餘回合數：歸零時強制解除(revertDynamax)——跟Mega進化不同
+            // 的地方是極巨化有3回合的時間限制，不是永久維持到換人/戰鬥結束才解除
+            if (t.dynamaxTurnsLeft > 0) {
+                t.dynamaxTurnsLeft -= 1;
+                if (t.dynamaxTurnsLeft <= 0) {
+                    const wasGmax = t.isGigantamax;
+                    revertDynamax(t);
+                    log.push(`${nameOf[uid]} 的${wasGmax ? '超極巨化' : '極巨化'}解除了！`);
+                    events.push({ dynamaxRevertEvent: true, uid, nickname: t.nickname });
+                }
+            }
         }
         // 兩邊都要檢查完才能判斷輸贏——任一方這時候HP歸零，先看牠還有沒有活著的候補寶可夢，
         // 有的話不會直接輸掉戰鬥，而是進入「強制替換」狀態。
@@ -10481,6 +11103,12 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             terrainState.turnsLeft -= 1;
             if (terrainState.turnsLeft <= 0) { log.push(`${TERRAIN_NAME_ZH[terrainState.type]}消失了！`); terrainState = { type: null, turnsLeft: 0 }; }
         }
+        // 【第五十一輪新增】重力(超極巨馬麥拉的超極巨天道七星)：全場共用的場地效果，倒數方式
+        // 跟天氣/場地完全一樣
+        if (!winnerUid && gravityState.turnsLeft > 0) {
+            gravityState.turnsLeft -= 1;
+            if (gravityState.turnsLeft <= 0) log.push(`重力恢復正常了！`);
+        }
         // 光牆/反射壁/極光幕/神秘守護/薄霧：兩側各自倒數，時間到了自動解除(跟天氣/場地是同一種
         // 「回合結束才倒數」模式，但這五個是每一側各自獨立的計時器，不是全場共用一份)
         if (!winnerUid) {
@@ -10506,6 +11134,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     if (finalStatus === 'finished') {
         revertMegaEvolution(state[uidA]);
         revertMegaEvolution(state[uidB]);
+        // 【第五十一輪新增】極巨化道理跟Mega進化完全一樣：戰鬥真正結束時要把還維持著極巨化樣子
+        // (maxHp加倍/HP百分比)的一方復原，不然這份放大過的HP會原封不動留在battleState.teams裡
+        revertDynamax(state[uidA]);
+        revertDynamax(state[uidB]);
     }
     const winnerInstanceId = winnerUid ? state[winnerUid].instanceId : null;
     const resolvedRoundNum = roomData.battleState.round || 1;
@@ -10526,6 +11158,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 'battleState.screens': screensState,
                 'battleState.megaUsed': megaUsedState, // 【第三十輪新增】
                 'battleState.zMoveUsed': zMoveUsedState, // 【第三十輪新增】
+                'battleState.dynamaxUsed': dynamaxUsedState, // 【第五十一輪新增】
+                'battleState.dynamaxCharge': dynamaxChargeState, // 【第五十一輪新增】
+                'battleState.gravity': gravityState, // 【第五十一輪新增】
                 'battleState.awaitingSwitch': awaitingSwitchFinal,
                 'battleState.round': (data.battleState.round || 1) + 1,
                 'battleState.log': firebase.firestore.FieldValue.arrayUnion(...log),
