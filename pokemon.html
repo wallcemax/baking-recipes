@@ -89,19 +89,33 @@
     .dynamax-shrink { animation: dynamaxShrink 0.7s ease-in; }
     @keyframes dynamaxShrink { 0%{filter:brightness(1.3) drop-shadow(0 0 12px rgba(239,68,68,0.7))} 100%{filter:brightness(1) drop-shadow(0 0 0 rgba(239,68,68,0))} }
 
-    /* 【第五十二輪新增】極巨化時寶可夢頭上圍繞旋轉的光環特效(使用者提供的圖片)。.dynamax-ring-wrap
-       套用跟sprite本身一模一樣的transform:scale(2);transform-origin:center bottom——這是刻意的：
-       只要跟sprite共用同一個縮放中心點/倍率，這個wrap底下不管放什麼東西，都會跟sprite本身完全
-       同步放大、同步以底部中心為準往上長，不用另外手動換算每隻寶可夢頭部實際位置在哪裡。真正的
-       光環圖片(.dynamax-ring-spin)用絕對定位擺在這個wrap裡「大約頭部高度」的位置(top:20%，取
-       PokéAPI預設精靈圖常見的上方留白比例抓出來的概略值，不會每一種寶可夢都精準對齊，但整體
-       看起來會像是圍繞在頭部/上半身附近)，旋轉動畫也是加在這一層自己身上(不是外層的wrap)，
-       這樣才不會跟wrap身上那個持續存在的inline scale(2)互相打架(同一個屬性tf有@keyframes動畫
-       又同時有別的地方要維持固定值的話，動畫播放中會蓋掉沒列出的那個值——這裡兩層各自只動一種
-       transform，互不衝突) */
-    .dynamax-ring-wrap { position: absolute; inset: 0; pointer-events: none; transform: scale(2); transform-origin: center bottom; z-index: 2; }
-    .dynamax-ring-spin { position: absolute; left: 50%; top: 20%; width: 95%; transform: translate(-50%,-50%) rotate(0deg); animation: dynamaxRingSpin 3.2s linear infinite; }
-    @keyframes dynamaxRingSpin { from { transform: translate(-50%,-50%) rotate(0deg); } to { transform: translate(-50%,-50%) rotate(360deg); } }
+    /* 【第五十三輪新增，第五十四輪修改旋轉方式】極巨化時寶可夢頭上圍繞的光環特效(使用者提供的
+       圖片)。.dynamax-ring-wrap套用跟sprite本身一模一樣的transform:scale(2);transform-origin:
+       center bottom——這是刻意的：只要跟sprite共用同一個縮放中心點/倍率，這個wrap底下不管放
+       什麼東西，都會跟sprite本身完全同步放大、同步以底部中心為準往上長，不用另外手動換算每隻
+       寶可夢頭部實際位置在哪裡。額外加上perspective，讓底下的3D翻轉(rotateX/rotateY)看起來
+       有真正的立體翻轉感、不是單純的左右壓扁。真正的光環圖片(.dynamax-ring-spin)用絕對定位
+       擺在這個wrap裡「大約頭部高度」的位置(top:20%，取PokéAPI預設精靈圖常見的上方留白比例抓
+       出來的概略值，不會每一種寶可夢都精準對齊，但整體看起來會像是圍繞在頭部/上半身附近)，
+       翻轉動畫也是加在這一層自己身上(不是外層的wrap)，這樣才不會跟wrap身上那個持續存在的
+       inline scale(2)互相打架(同一個屬性tf有@keyframes動畫又同時有別的地方要維持固定值的話，
+       動畫播放中會蓋掉沒列出的那個值——這裡兩層各自只動一種transform，互不衝突)。
+       【第五十四輪修改】使用者原話「極巨化的光環轉錯了 不然幫我固定在他頭上慢速左右180度水平
+       翻轉+上下180度垂直翻轉交替看看」——原本是單純的平面360度連續旋轉(dynamaxRingSpin)，
+       使用者覺得不對；改成用3D翻轉(rotateY做水平翻轉、rotateX做垂直翻轉)交替播放：0-25%完成
+       一次水平翻轉(rotateY 0→180)，25-50%接著做垂直翻轉(rotateX 0→180)，50-75%水平翻轉繼續轉
+       回正面(rotateY 180→360，效果等同0度)，75-100%垂直翻轉也繼續轉回正面(rotateX 180→360)，
+       整個循環結束時角度剛好都繞回0度，可以無縫接續下一輪循環，不會有跳動感；8秒一個循環，
+       符合使用者要求的「慢速」 */
+    .dynamax-ring-wrap { position: absolute; inset: 0; pointer-events: none; transform: scale(2); transform-origin: center bottom; z-index: 2; perspective: 500px; }
+    .dynamax-ring-spin { position: absolute; left: 50%; top: 20%; width: 95%; transform: translate(-50%,-50%) rotateY(0deg) rotateX(0deg); animation: dynamaxRingFlip 8s linear infinite; }
+    @keyframes dynamaxRingFlip {
+        0%   { transform: translate(-50%,-50%) rotateY(0deg)   rotateX(0deg); }
+        25%  { transform: translate(-50%,-50%) rotateY(180deg) rotateX(0deg); }
+        50%  { transform: translate(-50%,-50%) rotateY(180deg) rotateX(180deg); }
+        75%  { transform: translate(-50%,-50%) rotateY(360deg) rotateX(180deg); }
+        100% { transform: translate(-50%,-50%) rotateY(360deg) rotateX(360deg); }
+    }
     /* 蕾冠王(全國圖鑑898)極巨化時光環改成藍色——用CSS濾鏡把原圖的紫色調轉成藍色，不用另外
        存一張藍色版圖片(檔案大小才不會多一倍) */
     .dynamax-ring-blue { filter: hue-rotate(-60deg); }
@@ -1797,7 +1811,7 @@ function battlerMirrorFlipStyle(speciesId, isDynamax){
     if (!parts.length) return '';
     return `transform:${parts.join(' ')};${isDynamax ? 'transform-origin:center bottom;' : ''}`;
 }
-// 【第五十二輪新增】極巨化時寶可夢頭上圍繞旋轉的光環圖片(使用者提供)——裁切掉原圖四周的透明留白、
+// 【第五十三輪新增】極巨化時寶可夢頭上圍繞的光環圖片(使用者提供)——裁切掉原圖四周的透明留白、
 // 縮小到360px寬、轉成webp壓縮後再轉base64直接內嵌在檔案裡(原圖1.9MB，這樣處理完只有約58KB)，
 // 不用依賴外部圖床，使用者部署到自己的GitHub Pages時圖片會直接跟著html檔案走，不會有連結失效
 // 或需要額外上傳圖片主機的問題
