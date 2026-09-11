@@ -3884,30 +3884,29 @@ async function evolvePokemon(instanceId, targetSpeciesUrl) {
             return;
         }
 
-        // 暱稱目前沒有另外的自訂改名功能，孵化時預設一律等於中文種類名，所以進化這裡也直接
-        // 同步更新暱稱成新的中文名——不然畫面會變成「皮卡丘進化成雷丘，但暱稱還顯示皮卡丘」這種怪狀況
-        const updateFields = {
-            speciesId: nextInfo.nextSpeciesId,
-            speciesName: nextInfo.nextSpeciesName,
-            speciesNameZh: nextInfo.nextSpeciesNameZh,
-            nickname: nextInfo.nextSpeciesNameZh,
+        // 【第六十一輪修正】這裡以前是直接db.collection('pokemonInstances').update()，是整個
+        // pokemonInstances集合裡唯一還留著讓client直接改speciesId的地方——使用者反映「抽獎讀取量
+        // 又爆了」，追查後發現worker為了不用每次抽獎都全量掃描收藏庫而快取了「玩家目前擁有的種類
+        // 清單」，但這條路徑繞過worker直接寫，快取沒辦法感知這裡的變化，只能靠縮短快取有效期硬撐。
+        // 使用者追問「能不能真的把資料結構改對」，這裡改成呼叫新的pokemon_evolve_plain(worker端
+        // 寫法幾乎照抄既有的pokemon_evolve_with_item，只是不用扣道具)，讓speciesId的異動100%
+        // 由worker掌控，worker就能在改的當下順手同步維護那份快取，不用再靠TTL過期硬撐一致性——
+        // 進化限定招式(pendingMoveLearns)也交給worker自己重新查一次(跟pokemon_evolve_with_item
+        // 同樣的做法)，不用再從client端算好傳過去。firestore.rules也同步鎖死client直接改
+        // speciesId等欄位，逼所有進化都經過這裡，不會有漏網之魚繞過快取維護
+        await callWorker('pokemon_evolve_plain', {
+            instanceId,
+            nextSpeciesId: nextInfo.nextSpeciesId,
+            nextSpeciesName: nextInfo.nextSpeciesName,
+            nextSpeciesNameZh: nextInfo.nextSpeciesNameZh,
             baseHp: nextInfo.baseHp,
             baseAtk: nextInfo.baseAtk,
             baseDef: nextInfo.baseDef,
             baseSpAtk: nextInfo.baseSpAtk,
             baseSpDef: nextInfo.baseSpDef,
             baseSpd: nextInfo.baseSpd,
-            types: nextInfo.nextTypes,
-        };
-        // 進化限定招式(見extractEvolutionMoves註解)：pokemonData就是上面已經打好的進化後資料，
-        // 併進pendingMoveLearns佇列，跟一般升級新招式共用同一套「學/換/不學」彈窗流程
-        const evoMoves = extractEvolutionMoves(pokemonData, inst.moves);
-        if (evoMoves.length) {
-            const existingPending = Array.isArray(inst.pendingMoveLearns) ? inst.pendingMoveLearns : [];
-            const existingNames = new Set(existingPending.map(p => p.name));
-            updateFields.pendingMoveLearns = existingPending.concat(evoMoves.filter(m => !existingNames.has(m.name)));
-        }
-        await db.collection('pokemonInstances').doc(instanceId).update(updateFields);
+            nextTypes: nextInfo.nextTypes,
+        });
         showToast(`進化成功！變成了${nextInfo.nextSpeciesNameZh}`);
         SFX.levelUp();
         setTimeout(() => SFX.cry(nextInfo.nextSpeciesId), 300);
