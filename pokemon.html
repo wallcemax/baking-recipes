@@ -242,7 +242,10 @@
     <!-- ===== 我的寶可夢(box+隊伍) ===== -->
     <div id="tab-box" class="tab-panel hidden">
         <div class="mb-5">
-            <h3 class="font-bold mb-2 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/luxury-ball.png" class="w-5 h-5" style="image-rendering:pixelated">目前隊伍(最多6隻，對戰用第一隻上場)</h3>
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="font-bold flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/luxury-ball.png" class="w-5 h-5" style="image-rendering:pixelated">目前隊伍(最多6隻，對戰用第一隻上場)</h3>
+                <button type="button" onclick="openTeamSaveModal()" class="text-xs bg-gray-100 px-3 py-1.5 rounded-full font-bold inline-flex items-center gap-1 shrink-0"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/exp-share.png" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">隊伍儲存</button>
+            </div>
             <div id="party-list" class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-2"></div>
             <p id="party-empty-hint" class="text-xs text-gray-400">還沒有寶可夢加入隊伍，在下面的收藏庫點「加入隊伍」</p>
         </div>
@@ -363,6 +366,16 @@
                 <h3 class="font-bold mb-1 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/badges/1.png" class="w-4 h-4" onerror="this.style.display='none'">地區對戰</h3>
                 <p class="text-sm text-gray-500 mb-3">依序挑戰各地區的道館館主／試煉隊長！每個關卡限定挑戰一次，打贏後會記錄攻略狀態、沒辦法重複打，獎勵是神奇糖果、偶爾還有稀有道具。</p>
                 <div id="regions-grid" class="grid grid-cols-2 gap-3"></div>
+            </div>
+
+            <!-- 【第五十七輪新增】挑戰傳說訓練家：postgame玩法，隨機遭遇十大地區、共54位傳說訓練家
+                 的其中一位，雙方全員固定Lv.100，不能投降——跟地區對戰(有固定名單、可以逐一攻略)不一樣，
+                 這裡每次都是隨機遇敵、可以重複挑戰，勝率會永久記錄下來 -->
+            <div class="border-t border-gray-100 mt-5 pt-4">
+                <h3 class="font-bold mb-1 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/master-ball.png" class="w-4 h-4" style="image-rendering:pixelated">挑戰傳說訓練家</h3>
+                <p class="text-sm text-gray-500 mb-1">隨機遭遇十大地區、共54位傳說訓練家的其中一位，雙方全員都是Lv.100的硬仗！贏了全隊親密度+5並獲得稀有掉落，輸了(或中途放棄)全隊親密度-5——這場對戰不能投降，戰績會永久記錄下來。</p>
+                <p class="text-xs text-gray-400 mb-3">戰績：<span id="legendary-stats-text">0勝 0敗</span></p>
+                <button onclick="openLegendaryChallengeModal()" class="bg-purple-600 text-white px-5 py-2 rounded-full font-bold text-sm inline-flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/master-ball.png" class="w-4 h-4" style="image-rendering:pixelated">挑戰傳說訓練家</button>
             </div>
         </div>
         <div id="battle-room-view" class="hidden"></div>
@@ -560,6 +573,14 @@
      全部統一2200代幣，讓這些原本完全沒有取得管道的進化道具(例如啃果蟲要用的酸酸蘋果/甜甜蘋果)可以直接花代幣買到 -->
 <div id="mart-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeMartModal()">
     <div class="bg-white rounded-3xl p-6 max-w-md w-full max-h-[85vh] overflow-y-auto" id="mart-modal-content"></div>
+</div>
+
+<!-- 隊伍儲存彈窗(第五十八輪新增)：最多6組欄位，可以把「目前隊伍」快照(6隻以內的instanceId+命名)
+     存起來，之後一鍵套用快速換隊，不用每次都手動一隻一隻加入/移出隊伍。資料存在獨立的
+     pokemonSavedTeams/{uid}集合(見firestore.rules)，純粹是玩家自己的UI便利功能，跟代幣/
+     道具經濟完全無關，所以比照pokemonStoryProgress的做法讓owner直接讀寫，不用另外繞worker.js -->
+<div id="team-save-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeTeamSaveModal()">
+    <div class="bg-white rounded-3xl p-5 max-w-sm w-full max-h-[85vh] overflow-y-auto" id="team-save-modal-content"></div>
 </div>
 
 <!-- 使用道具彈窗(從寶可夢詳情頁點「使用道具」進來，針對某一隻寶可夢用經驗糖果/招式學習器) -->
@@ -1361,6 +1382,8 @@ function startListeners(uid) {
         // 【第二十八輪新增】招式學習器機的「持有x N」數字也是看currentPlayerData.items，
         // 製作成功後coins/items會透過這個onSnapshot即時同步過來，這裡順便重繪一次跟上最新持有量
         renderTmMachineTab();
+        // 【第五十七輪新增】挑戰傳說訓練家的戰績顯示+「保險呼叫」(見該函式說明)
+        renderLegendaryStats();
     });
     instancesUnsub = db.collection('pokemonInstances').where('ownerUid', '==', uid).onSnapshot(snap => {
         currentInstances = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -1370,7 +1393,15 @@ function startListeners(uid) {
         backfillMissingSpecialStats(currentInstances); // fire-and-forget，見該函式說明
         backfillMissingAbilities(currentInstances); // 【第三十六輪新增】fire-and-forget，見該函式說明
     });
-    listenOpenRooms();
+    // 【第五十八輪修正】原本這裡登入就無條件呼叫listenOpenRooms()，對「等待中的房間」這個
+    // 全域查詢(所有玩家共用，不是只看自己的資料)掛上onSnapshot，而且從頭到尾不會取消訂閱——
+    // 玩家只要開著遊戲網頁，不管切到哪個分頁(牧場/猜猜看/收藏庫...)，只要「任何其他玩家」
+    // 開房/取消/被加入，這個監聽器就會被觸發一次，等同每個在線玩家都要為所有人的開房動作
+    // 一起分攤讀取次數，即使自己完全沒有在看「對戰」分頁——這是使用者回報「網頁掛著不動也會
+    // 一直消耗Firebase配額」的另一個根本原因(前一輪已經修正過牧場的pokemon_idle_peek_drops
+    // 也有類似問題，但那只有玩家自己在看牧場分頁才會觸發，不像這個是全域一直開著)。改成
+    // 比照牧場那次的做法，只有「對戰」分頁真的顯示中的時候才訂閱，離開分頁就取消訂閱(見
+    // switchTab/watchRoom/leaveRoomView)，不再無條件於登入當下就訂閱
 }
 
 // ---------- 分頁切換 ----------
@@ -1384,6 +1415,15 @@ function switchTab(name) {
     // 地區對戰的地區格線現在併入「對戰」分頁裡面(#battle-lobby-view)，不再是獨立分頁，
     // 所以改成切到battle分頁時就重繪一次
     if (name === 'battle') renderRegionsTab();
+    // 【第五十八輪新增】「等待中房間列表」的全域onSnapshot監聽器改成只在真的看得到房間大廳
+    // 畫面(對戰分頁，而且目前沒有在某個房間裡面——currentBattleRoomId為null)時才訂閱，離開
+    // 對戰分頁就立刻取消訂閱，避免掛在其他分頁時還持續為全部玩家的開房動作分攤Firestore讀取
+    // (見startListeners註解、watchRoom/leaveRoomView另外處理「進房間/回大廳」時的訂閱切換)
+    if (name === 'battle') {
+        if (!currentBattleRoomId) listenOpenRooms();
+    } else if (roomListUnsub) {
+        roomListUnsub(); roomListUnsub = null;
+    }
 }
 
 // ============================================================
@@ -1764,12 +1804,26 @@ async function fetchSpeciesDisplay(speciesId, isShiny) {
         // 才不會排版跑掉；極少數(通常是很新一代)還沒有官方中文敘述的物種，這裡就直接是空字串
         const zhFlavorEntries = (speciesData.flavor_text_entries || []).filter(e => e.language && String(e.language.name).toLowerCase() === 'zh-hant');
         const flavorTextZh = zhFlavorEntries.length ? zhFlavorEntries[zhFlavorEntries.length - 1].flavor_text.replace(/[\n\f\r]+/g, ' ') : (SPECIES_DESC_ZH_OVERRIDE[data.name] || '');
+        // 【第五十八輪新增spritePixelFront/spritePixelBack】使用者反映Mega進化/超極巨化在對戰畫面
+        // 「我方跟對手正反面沒對齊、看起來左右鏡射」——根本原因是：這兩種型態沒有黑白世代動圖
+        // (spriteAnimated/spriteBackAnimated一定是null)，原本sprite/spriteBack會退回官方精美
+        // 立繪(official-artwork)，但official-artwork是「宣傳美術圖」，跟同一隻寶可夢真正的
+        // in-game前後背影像素圖(front_default/back_default)不保證同一個朝向——已經證實超級噴火龍X
+        // (10034)的official-artwork朝向跟牠自己的像素圖前後圖完全相反，才會有舊版本那個只認
+        // 10034這一個編號的battlerMirrorFlipStyle硬編碼特例。像素圖(front_default/back_default)
+        // 是遊戲資料本身「前後一定同一套朝向規則」保證一致的素材，不像official-artwork是各自獨立
+        // 繪製、方向不保證——所以這裡新增專門給「戰鬥畫面」用的欄位，優先用像素圖，只有像素圖也
+        // 缺的極端狀況才退回official-artwork，這樣不用一個個Mega/超極巨編號手動核對朝向、也不會
+        // 動到collection/圖鑑等其他畫面原本就在用、玩家喜歡的official-artwork精美立繪(sprite/
+        // spriteBack欄位維持原樣不變)
         const result = {
             nameZh: extractZhHantNameClient(speciesData.names, data.name),
             sprite: (shiny && artwork?.front_shiny) || artwork?.front_default || data.sprites?.front_default || '',
             spriteBack: (shiny && data.sprites?.back_shiny) || data.sprites?.back_default || data.sprites?.front_default || '',
             spriteAnimated: (shiny && animated?.front_shiny) || animated?.front_default || null,
             spriteBackAnimated: (shiny && animated?.back_shiny) || animated?.back_default || null,
+            spritePixelFront: (shiny && data.sprites?.front_shiny) || data.sprites?.front_default || (shiny && artwork?.front_shiny) || artwork?.front_default || '',
+            spritePixelBack: (shiny && data.sprites?.back_shiny) || data.sprites?.back_default || (shiny && data.sprites?.front_shiny) || data.sprites?.front_default || (shiny && artwork?.front_shiny) || artwork?.front_default || '',
             types,
             typesZh,
             isShiny: shiny,
@@ -1778,23 +1832,23 @@ async function fetchSpeciesDisplay(speciesId, isShiny) {
         speciesCache.set(cacheKey, result);
         return result;
     } catch (err) {
-        return { nameZh: '???', sprite: '', spriteBack: '', spriteAnimated: null, spriteBackAnimated: null, types: [], typesZh: [], isShiny: shiny, flavorTextZh: '' };
+        return { nameZh: '???', sprite: '', spriteBack: '', spriteAnimated: null, spriteBackAnimated: null, spritePixelFront: '', spritePixelBack: '', types: [], typesZh: [], isShiny: shiny, flavorTextZh: '' };
     }
 }
-// 【第三十九輪新增】超級噴火龍X(圖鑑編號10034，稱霸ＷＰＭ的人最終戰的Mega噴火龍X)這隻
-// NPC限定寶可夢，使用者反映牠的官方靜態造型圖(official-artwork)朝向看起來是反的，要求
-// 水平鏡像翻轉——這裡只認這一個特定圖鑑編號，不影響其他任何寶可夢的造型圖片方向
+// 【第三十九輪新增，第五十八輪移除硬編碼特例】原本這裡只認超級噴火龍X(10034)一個編號、
+// 手動加scaleX(-1)水平鏡像翻轉，因為當時對戰畫面固定用official-artwork(官方宣傳立繪)當
+// 造型圖，而official-artwork的美術朝向跟遊戲本身的像素前後背圖不保證一致(10034剛好整個
+// 相反)。第五十八輪已經把對戰畫面改成優先使用spritePixelFront/spritePixelBack(見
+// fetchSpeciesDisplay)——這兩張像素圖是遊戲資料本身保證前後背同一套朝向規則的素材，不會有
+// official-artwork那種各自獨立繪製、方向不保證的問題，所以不用再對10034這一個編號特別鏡像
+// 翻轉，也不用再一個個Mega/超極巨編號比對official-artwork朝向、擴充這份特例清單
 // 【第五十一輪新增isDynamax參數】極巨化時圖片放大200%(=scale(2))——玩家特別要求「不要把圖片
 // 壓扁」，這裡故意用CSS transform:scale()而不是直接改img的width/height，scale()天生會等比例
-// 縮放兩個維度，不會有壓扁變形的問題。要跟原本超級噴火龍X的水平鏡像翻轉合併成同一個transform
-// 屬性(CSS的transform只認最後一個宣告，兩個transform:各自宣告會互相蓋掉，不會疊加)，所以這裡
-// 把原本回傳單一字串的函式改成同時接受isDynamax，兩種效果都要生效時用空白隔開組合成一個值
-// (例如'transform:scaleX(-1) scale(2);')。極巨化時額外加上transform-origin:center bottom，
+// 縮放兩個維度，不會有壓扁變形的問題。極巨化時額外加上transform-origin:center bottom，
 // 讓放大的效果以「腳底」為基準點往上長大，比較符合「變大」的視覺直覺(預設的center會讓寶可夢
 // 看起來像整個往畫面外膨脹，腳的位置也會跟著飄走)
 function battlerMirrorFlipStyle(speciesId, isDynamax){
     const parts = [];
-    if (speciesId === 10034) parts.push('scaleX(-1)');
     if (isDynamax) parts.push('scale(2)');
     if (!parts.length) return '';
     return `transform:${parts.join(' ')};${isDynamax ? 'transform-origin:center bottom;' : ''}`;
@@ -1852,16 +1906,41 @@ function starsHtml(stars, extraStyle) {
     }
     return html;
 }
-function maxHpOf(instance) { return Math.floor(statAtLevel(instance.baseHp, instance.level, true) * starMultiplier(instance.stars)); }
-function atkOf(instance) { return Math.floor(statAtLevel(instance.baseAtk, instance.level, false) * starMultiplier(instance.stars)); }
-function defOf(instance) { return Math.floor(statAtLevel(instance.baseDef, instance.level, false) * starMultiplier(instance.stars)); }
+// 【第五十七輪新增】親密度門檻——跟worker.js的LEGENDARY_RANCH_BLOCK_FRIENDSHIP/
+// LEGENDARY_PARTY_BLOCK_FRIENDSHIP數字要保持一致，兩邊各自獨立寫死一份(這個功能不像
+// POKEMON_REGIONS那樣走gen_regions.py的splice流程，用得到的地方也不多，直接各自維護)
+const FRIENDSHIP_RANCH_BLOCK = 30; // 親密度這個數字以下(含)，不能放進牧場(已經放著的話，伺服器會自動逐出)
+const FRIENDSHIP_HALF_STATS_BLOCK = 25; // 親密度這個數字以下(含)，戰鬥數值全部打對折
+const FRIENDSHIP_PARTY_BLOCK = 10; // 親密度這個數字以下(含)，強制退出隊伍、也不能再加入隊伍
+// 親密度太低的寶可夢無精打采、發揮不出實力——跟starMultiplier一樣是「乘在算出來的數值上」的
+// 一個係數，套用範圍完全比照starMultiplier(HP/攻擊/防禦/特攻/特防/速度全部都乘)
+function friendshipStatMultiplier(instance) {
+    return (Number(instance && instance.friendship) || 0) <= FRIENDSHIP_HALF_STATS_BLOCK ? 0.5 : 1;
+}
+// 親密度顏色分級，卡片/詳細頁的親密度徽章共用一套判斷，分4級(由差到好)：
+//   ≤10紅(隨時會被踢出隊伍) → ≤25橘(戰鬥數值打對折) → ≤30黃(不能放進牧場) → 其餘綠(一切正常)
+function friendshipTierInfo(friendship) {
+    const f = Number(friendship) || 0;
+    if (f <= FRIENDSHIP_PARTY_BLOCK) return { color: '#dc2626', bg: '#fee2e2', label: '親密度過低，隨時會被移出隊伍' };
+    if (f <= FRIENDSHIP_HALF_STATS_BLOCK) return { color: '#ea580c', bg: '#ffedd5', label: '無精打采，戰鬥數值打對折' };
+    if (f <= FRIENDSHIP_RANCH_BLOCK) return { color: '#ca8a04', bg: '#fef9c3', label: '略顯疏遠，沒辦法放進牧場' };
+    return { color: '#16a34a', bg: '#dcfce7', label: '感情不錯' };
+}
+// 親密度徽章：卡片(隊伍/倉庫/牧場)跟詳細頁共用的小標籤，title顯示這個分級代表什麼意思
+function friendshipBadgeHtml(friendship) {
+    const tier = friendshipTierInfo(friendship);
+    return `<span title="${tier.label}" style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:600;padding:1px 6px;border-radius:9999px;background:${tier.bg};color:${tier.color};white-space:nowrap;">❤ ${Number(friendship) || 0}</span>`;
+}
+function maxHpOf(instance) { return Math.floor(statAtLevel(instance.baseHp, instance.level, true) * starMultiplier(instance.stars) * friendshipStatMultiplier(instance)); }
+function atkOf(instance) { return Math.floor(statAtLevel(instance.baseAtk, instance.level, false) * starMultiplier(instance.stars) * friendshipStatMultiplier(instance)); }
+function defOf(instance) { return Math.floor(statAtLevel(instance.baseDef, instance.level, false) * starMultiplier(instance.stars) * friendshipStatMultiplier(instance)); }
 // 特攻/特防：這次新拆分出來的兩項數值，舊文件(這次修正之前抓到的寶可夢)沒有baseSpAtk/baseSpDef
 // 欄位——backfillSpecialStatsIfMissing()會在背景把這些舊文件補齊(見該函式說明)，但補齊前的
 // 這段空窗期(或萬一補齊失敗)不能讓畫面/戰鬥算出NaN，這裡先用baseAtk/baseDef頂著當作最接近的
 // 估計值(大多數寶可夢物理/特殊數值不會差太多)，之後補齊了自然就會換成真正的數值
-function spAtkOf(instance) { return Math.floor(statAtLevel(instance.baseSpAtk != null ? instance.baseSpAtk : instance.baseAtk, instance.level, false) * starMultiplier(instance.stars)); }
-function spDefOf(instance) { return Math.floor(statAtLevel(instance.baseSpDef != null ? instance.baseSpDef : instance.baseDef, instance.level, false) * starMultiplier(instance.stars)); }
-function spdOf(instance) { return Math.floor(statAtLevel(instance.baseSpd, instance.level, false) * starMultiplier(instance.stars)); }
+function spAtkOf(instance) { return Math.floor(statAtLevel(instance.baseSpAtk != null ? instance.baseSpAtk : instance.baseAtk, instance.level, false) * starMultiplier(instance.stars) * friendshipStatMultiplier(instance)); }
+function spDefOf(instance) { return Math.floor(statAtLevel(instance.baseSpDef != null ? instance.baseSpDef : instance.baseDef, instance.level, false) * starMultiplier(instance.stars) * friendshipStatMultiplier(instance)); }
+function spdOf(instance) { return Math.floor(statAtLevel(instance.baseSpd, instance.level, false) * starMultiplier(instance.stars) * friendshipStatMultiplier(instance)); }
 // 舊文件缺baseSpAtk/baseSpDef時的安全預設(跟上面spAtkOf/spDefOf同一套邏輯，給battleState組隊
 // 那幾處用，不用重複寫if/else)
 function baseSpAtkOf(inst) { return inst.baseSpAtk != null ? inst.baseSpAtk : inst.baseAtk; }
@@ -2206,8 +2285,26 @@ async function renderBoxTab() {
     }
     boxEmptyHint.classList.add('hidden');
 
-    const partyMembers = currentInstances.filter(i => i.inParty).slice(0, 6);
+    let partyMembers = currentInstances.filter(i => i.inParty).slice(0, 6);
     partyEmptyHint.classList.toggle('hidden', partyMembers.length > 0);
+
+    // 【第五十七輪新增】親密度10以下(含)的寶可夢不能留在隊伍裡——這裡是「玩家沒有主動操作、
+    // 但親密度是被動掉到門檻以下」也會被檢查到的地方(對戰輸了/中途放棄傳說訓練家挑戰時，
+    // 全隊親密度都會被伺服器扣5，扣完可能剛好落到這個門檻以下)。inParty是client可以直接寫的
+    // 欄位(跟worker-only的placedForIdle不一樣，不需要另外呼叫worker)，這裡偵測到就直接
+    // 寫回Firestore踢出隊伍，順便跳個提示，不要讓寶可夢憑空從隊伍消失讓玩家一頭霧水
+    const toKickFromParty = partyMembers.filter(i => (Number(i.friendship) || 0) <= FRIENDSHIP_PARTY_BLOCK);
+    if (toKickFromParty.length > 0) {
+        partyMembers = partyMembers.filter(i => !toKickFromParty.includes(i));
+        partyEmptyHint.classList.toggle('hidden', partyMembers.length > 0);
+        toKickFromParty.forEach(inst => {
+            db.collection('pokemonInstances').doc(inst.id).update({ inParty: false }).catch(() => {});
+        });
+        Promise.all(toKickFromParty.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny))).then(disps => {
+            const names = toKickFromParty.map((i, idx) => pokemonDisplayName(i, disps[idx])).join('、');
+            showToast(`${names} 親密度過低，已經自動退出隊伍`);
+        });
+    }
 
     const displays = await Promise.all(currentInstances.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
     if (myToken !== boxRenderToken) return; // 半路已經有更新的render觸發了，這次放棄、不動DOM
@@ -2221,6 +2318,7 @@ async function renderBoxTab() {
             <p class="text-[11px] font-bold truncate">${pokemonDisplayName(inst, d)}${inst.isShiny ? ' ' + shinyIconHtml('w-3 h-3') : ''}</p>
             <p class="text-[10px] leading-none">${starsHtml(inst.stars)}</p>
             <p class="text-[10px] text-gray-400">Lv.${inst.level}</p>
+            <div class="mt-0.5">${friendshipBadgeHtml(inst.friendship)}</div>
         </div>`;
     }).join('');
 
@@ -2266,9 +2364,10 @@ async function renderBoxTab() {
                     <div class="flex gap-1 mt-0.5">${typeBadgesHtml(d.types, d.typesZh)}</div>
                 </div>
             </div>
-            <div class="flex gap-1 mt-2">
+            <div class="flex gap-1 mt-2 flex-wrap items-center">
                 ${inst.inParty ? '<span class="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">隊伍中</span>' : ''}
                 ${inst.placedForIdle ? '<span class="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-bold">牧場中</span>' : ''}
+                ${friendshipBadgeHtml(inst.friendship)}
             </div>
         </div>`;
     }).join('');
@@ -2293,7 +2392,8 @@ async function openDetailModal(instanceId) {
             <p class="font-black text-lg">${pokemonDisplayName(inst, d)}${inst.isShiny ? ' ' + shinyIconHtml('w-4 h-4') : ''}</p>
             <p class="text-sm mb-0.5">${starsHtml(inst.stars)}</p>
             <p class="text-xs text-gray-400 mb-1">${typeBadgesHtml(d.types, d.typesZh)}</p>
-            <p class="text-xs text-gray-400">Lv.${inst.level} · EXP ${inst.exp} · 親密度 ${inst.friendship} · ${inst.flavor}口味</p>
+            <p class="text-xs text-gray-400">Lv.${inst.level} · EXP ${inst.exp} · ${inst.flavor}口味</p>
+            <div class="flex justify-center mt-1">${friendshipBadgeHtml(inst.friendship)}</div>
             ${inst.heldItem ? `<p class="text-xs text-blue-600 mt-1 inline-flex items-center gap-1"><img src="${COMMON_BERRIES.includes(inst.heldItem) ? berrySpriteUrl(inst.heldItem) : itemSpriteForKey(inst.heldItem)}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">攜帶著${heldItemNameZh}</p>` : ''}
             ${inst.ability ? `<p class="text-xs text-purple-600 mt-1">特性：${abilityDisplayInfo(inst.ability) ? abilityDisplayInfo(inst.ability).nameZh : inst.ability}</p>` : ''}
         </div>
@@ -2312,19 +2412,32 @@ async function openDetailModal(instanceId) {
             ${moveDisplays.map(m => `<p class="text-sm flex items-start gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 mt-0.5 shrink-0" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}<span><span class="font-bold">${m.nameZh}</span>${DAMAGE_CLASS_BADGE[m.damageClass] || ''}<span class="text-xs text-gray-400">　${m.descZh || ''}</span></span></p>`).join('')}
         </div>
         <div class="grid grid-cols-2 gap-2 mb-2">
-            <button onclick="toggleParty('${inst.id}')" class="text-sm py-2 rounded-xl font-bold ${inst.inParty ? 'bg-red-100 text-red-600' : 'bg-gray-100'}">${inst.inParty ? '移出隊伍' : '加入隊伍'}</button>
-            <button onclick="toggleIdlePlacement('${inst.id}')" class="text-sm py-2 rounded-xl font-bold ${inst.placedForIdle ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100'}">${inst.placedForIdle ? '牽出牧場' : '放進牧場'}</button>
+            ${(() => {
+                // 【第五十七輪新增】親密度太低時，「加入隊伍」/「放進牧場」這兩個方向要擋掉——
+                // 已經在隊伍/牧場裡的話(要牽出來)不受影響，兩個按鈕各自獨立判斷
+                const cantJoinParty = !inst.inParty && (Number(inst.friendship) || 0) <= FRIENDSHIP_PARTY_BLOCK;
+                const cantJoinRanch = !inst.placedForIdle && (Number(inst.friendship) || 0) <= FRIENDSHIP_RANCH_BLOCK;
+                return `<button onclick="toggleParty('${inst.id}')" ${cantJoinParty ? 'disabled' : ''} class="text-sm py-2 rounded-xl font-bold ${inst.inParty ? 'bg-red-100 text-red-600' : (cantJoinParty ? 'bg-gray-50 text-gray-300 cursor-not-allowed' : 'bg-gray-100')}">${inst.inParty ? '移出隊伍' : (cantJoinParty ? '親密度太低' : '加入隊伍')}</button>
+                <button onclick="toggleIdlePlacement('${inst.id}')" ${cantJoinRanch ? 'disabled' : ''} class="text-sm py-2 rounded-xl font-bold ${inst.placedForIdle ? 'bg-yellow-100 text-yellow-700' : (cantJoinRanch ? 'bg-gray-50 text-gray-300 cursor-not-allowed' : 'bg-gray-100')}">${inst.placedForIdle ? '牽出牧場' : (cantJoinRanch ? '親密度太低' : '放進牧場')}</button>`;
+            })()}
         </div>
         <div class="grid grid-cols-2 gap-2 mb-2">
             <button onclick="openFeedModal('${inst.id}')" class="text-sm py-2 rounded-xl font-bold bg-green-100 text-green-700 inline-flex items-center justify-center gap-1.5"><img src="${berrySpriteUrl('oran')}" class="w-4 h-4" style="image-rendering:pixelated">餵樹果</button>
             <button onclick="openUseItemModal('${inst.id}')" class="text-sm py-2 rounded-xl font-bold bg-blue-100 text-blue-700 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('heart-scale')}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">使用道具</button>
         </div>
         <button onclick="openEquipModal('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-indigo-100 text-indigo-700 inline-flex items-center justify-center gap-1.5 mb-2"><img src="${itemSpriteUrl('life-orb')}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">${inst.heldItem ? '更換裝備道具' : '裝備道具'}</button>
-        ${evoInfo.canEvolve
-            ? (evoInfo.requiresItemName
-                ? `<button onclick="evolvePokemon('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${evoInfo.itemSprite}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">使用「${evoInfo.itemNameZh}」進化成 ${evoInfo.nextName}！(道具會被消耗)</button>`
-                : `<button onclick="evolvePokemon('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('rare-candy')}" class="w-4 h-4" style="image-rendering:pixelated">進化成 ${evoInfo.nextName}！</button>`)
-            : (evoInfo.nextName ? `<p class="text-xs text-gray-400 text-center mb-2 flex items-center justify-center gap-1">${evoInfo.itemSprite ? `<img src="${evoInfo.itemSprite}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span>${evoInfo.hint || ''}</span></p>` : '')}
+        ${(evoInfo.options || []).map(opt => {
+            // 【第五十八輪新增】多分支進化(伊布/啃果蟲等)這裡會列出好幾個opt，符合資格的
+            // 每一種都各自變成一顆可以點的按鈕(帶上這條分支專屬的nextSpeciesUrl，讓
+            // evolvePokemon知道玩家選的是哪一種)，還不符合資格的分支則顯示灰字提示、
+            // 並在提示前面加上目標名稱，避免多個分支的提示混在一起看不出是講哪一種
+            if (opt.canEvolve) {
+                return opt.requiresItemName
+                    ? `<button onclick="evolvePokemon('${inst.id}', '${opt.nextSpeciesUrl}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${opt.itemSprite}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">使用「${opt.itemNameZh}」進化成 ${opt.nextName}！(道具會被消耗)</button>`
+                    : `<button onclick="evolvePokemon('${inst.id}', '${opt.nextSpeciesUrl}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('rare-candy')}" class="w-4 h-4" style="image-rendering:pixelated">進化成 ${opt.nextName}！</button>`;
+            }
+            return opt.nextName ? `<p class="text-xs text-gray-400 text-center mb-2 flex items-center justify-center gap-1">${opt.itemSprite ? `<img src="${opt.itemSprite}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span>${opt.nextName}：${opt.hint || ''}</span></p>` : '';
+        }).join('')}
         <button onclick="closeDetailModal()" class="w-full text-gray-400 text-sm">關閉</button>
     `;
 }
@@ -2454,6 +2567,13 @@ async function toggleParty(instanceId) {
     if (!inst) return;
     const partyCount = currentInstances.filter(i => i.inParty).length;
     if (!inst.inParty && partyCount >= 6) { showToast('隊伍最多只能有6隻'); return; }
+    // 【第五十七輪新增】親密度10以下(含)的寶可夢不能加入隊伍——inParty是client直接可寫的欄位，
+    // firestore.rules沒有另外擋這個門檻(owner本來就能自由寫inParty)，這裡是唯一的把關點。
+    // 只擋「加入」的方向，已經在隊伍裡想移出來不受影響(這種情況也不該被擋，不然會卡死)
+    if (!inst.inParty && (Number(inst.friendship) || 0) <= FRIENDSHIP_PARTY_BLOCK) {
+        showToast(`親密度${FRIENDSHIP_PARTY_BLOCK}以下沒辦法加入隊伍，先去餵樹果提升親密度吧`);
+        return;
+    }
     await db.collection('pokemonInstances').doc(instanceId).update({ inParty: !inst.inParty });
     closeDetailModal();
 }
@@ -2466,6 +2586,13 @@ async function toggleIdlePlacement(instanceId) {
     if (!inst.placedForIdle) {
         const placedCount = currentInstances.filter(i => i.placedForIdle).length;
         if (placedCount >= 10) { showToast('牧場最多只能放10隻寶可夢'); return; }
+        // 【第五十七輪新增】親密度30以下(含)不能放進牧場——真正的把關在worker端
+        // (handlePokemonIdleTogglePlacement，因為placedForIdle是worker-only欄位)，這裡一樣只是
+        // 省一趟網路來回的前端預檢
+        if ((Number(inst.friendship) || 0) <= FRIENDSHIP_RANCH_BLOCK) {
+            showToast(`親密度${FRIENDSHIP_RANCH_BLOCK}以下沒辦法放進牧場，先去餵樹果提升親密度吧`);
+            return;
+        }
     }
     // 改成呼叫伺服器端動作：由worker先結算「換入/換出前」累積的代幣跟EXP，再切換放置狀態，
     // 避免直接改Firestore欄位的話，換入/換出的時間點可以被拿來鑽時數計算的漏洞
@@ -2646,13 +2773,71 @@ const DELIBIRD_MART_ITEM_COST = 2200; // 每個道具統一售價(使用者指�
 // 這兩份鑰匙都要跟worker.js的EXP_CANDY_AMOUNTS/rollGuessReward保持一致
 const EXP_CANDY_AMOUNTS = { 'exp-candy-xs': 50, 'exp-candy-s': 100, 'exp-candy-m': 150, 'exp-candy-l': 300, 'exp-candy-xl': 500 };
 const EXP_CANDY_KEYS = Object.keys(EXP_CANDY_AMOUNTS);
-// ---- 對戰攜帶道具：15種「裝備後長期生效」的道具(不含樹果)，效果實作在resolveBattleRound——
+// ---- 對戰攜帶道具：「裝備後長期生效」的道具(不含樹果)，效果實作在resolveBattleRound——
 // 這份清單跟worker.js的POKEMON_HELD_EQUIPMENT_ITEMS要保持一致，worker那邊拿來當掉落獎池，
 // 這裡拿來畫裝備彈窗的分類 ----
 const POKEMON_HELD_EQUIPMENT_ITEMS = [
     'life-orb', 'rocky-helmet', 'assault-vest',
     'shell-bell', 'leftovers', 'eviolite', 'lagging-tail', 'quick-claw', 'wide-lens', 'zoom-lens',
     'bright-powder', 'mental-herb', 'focus-sash', 'scope-lens', 'kings-rock',
+    // 【第五十八輪新增，使用者附檔「新增道具v2.txt」約60種道具，依效果分類如下】
+    // 銳利之爪/銳利之牙：原本只在POKEMON_MART_EVOLUTION_ITEMS當進化道具用，這裡補上戰鬥效果
+    // (會心一擊+1階／10%畏縮，跟焦點鏡/王者之證共用同一段判斷邏輯)，讓它們變成雙重用途道具
+    'razor-claw', 'razor-fang',
+    // 威力提升類：力量頭帶(物理+10%)/博識眼鏡(特殊+10%)/達人帶(效果絕佳+20%)/
+    // 拳擊手套(拳擊招式+10%且不算接觸)/節拍器(連續同招式疊加，最高+100%)/大根莖(吸血回復+30%)
+    'muscle-band', 'wise-glasses', 'expert-belt', 'punching-glove', 'metronome', 'big-root',
+    // 天氣岩石/場地延長/場地種子：潮濕岩石(雨延長)/熾熱岩石(晴天延長)/沙沙岩石(沙暴延長)/
+    // 冰冷岩石(下雪延長)/光之黏土(光牆/反射壁/極光幕延長)/大地膜(場地延長)/
+    // 青草種子(青草場地+防禦)/薄霧種子(薄霧場地+特防)/電氣種子(電氣場地+防禦)/精神種子(精神場地+特防)
+    'damp-rock', 'heat-rock', 'smooth-rock', 'icy-rock', 'light-clay', 'terrain-extender',
+    'grassy-seed', 'misty-seed', 'electric-seed', 'psychic-seed',
+    // 一次性屬性觸發增益(跟屬性抗性莓果同樣「用一次就消耗掉」)：球根(水→特攻+1)/
+    // 充電電池(電→攻擊+1)/光苔(水→特防+1)/雪球(冰→攻擊+1)
+    'absorb-bulb', 'cell-battery', 'luminous-moss', 'snowball',
+    // 保命類：氣勢頭帶(任何HP下10%機率保留1HP，跟氣勢披帶的「必定但要滿HP」不同)
+    'focus-band',
+    // 自傷寶珠：火焰寶珠(自灼傷)/劇毒寶珠(自劇毒)
+    'flame-orb', 'toxic-orb',
+    // 講究系列：攻/特攻/速度+50%，但被鎖定只能用上一次選的招式(跟折磨/定身法共用isMoveBlockedByStatus)
+    'choice-band', 'choice-specs', 'choice-scarf',
+    // 屬性免疫/防護類：標靶(解除防禦方的屬性免疫)/黑色鐵球(速度減半+讓飛行系也會被地面招式打中)/
+    // 氣球(免疫地面招式，受到攻擊就破)/防塵護目鏡(免疫天氣傷害跟粉末類招式)/
+    // 厚底靴(免疫入場障礙)/部位護具(攻擊方免疫「自己接觸對手」觸發的反擊效果)/
+    // 清淨墜飾(免疫對手造成的能力下降)
+    'ring-target', 'iron-ball', 'air-balloon', 'safety-goggles', 'heavy-duty-boots', 'protective-pads', 'clear-amulet',
+    // 機率/連續次數類：老千骰子(連續攻擊招式至少4次)
+    'loaded-dice',
+    // 聲音招式/被動增益類：爽喉噴霧(使用音波招式後特攻+1)/模仿香草(對手能力提升時跟著提升一次)
+    'throat-spray', 'mirror-herb',
+    // 毒屬性回血/命中閃避類：黑色污泥(毒屬性回1/16，其他屬性扣1/8)/悠閒薰香(降低對手瞄準自己的命中率，
+    // 跟亮粉同效果)/飽腹薰香(同優先度必定最後出招，跟後攻之尾同效果)
+    'black-sludge', 'lax-incense', 'full-incense',
+    // 束縛強化類：這個簡化版引擎沒有實作Wrap/Bind/Fire Spin等「多回合束縛」機制，緊纏鉤爪/緊綁束帶
+    // 目前沒有可以掛勾的效果，先讓玩家可以取得跟裝備(不影響其他任何道具)，等真的做出束縛機制再補上
+    'grip-claw', 'binding-band',
+    // 附著針：每回合結束損自己1/8最大HP(跟毒屬性中毒同樣寫法，不含「碰到自己的對手身上會被轉移」
+    // 那段——這個簡化版引擎的「接觸」判定只在攻擊方對防禦方那個方向做，沒有反向轉移道具的機制)
+    'sticky-barb',
+    // 傳說寶可夢專屬強化寶珠/寶玉：心之水滴(拉帝歐斯/拉帝亞斯，超能力+龍+20%)/金剛寶珠(帝牙盧卡，
+    // 龍+鋼+20%)/白玉寶珠(帕路奇亞，龍+水+20%)/白金寶珠(騎拉帝納，龍+幽靈+20%)/
+    // 大金剛寶玉/大白寶玉/大白金寶玉(官方效果是「強化並且改變型態」，這個簡化版引擎沒有實作
+    // 「原始回歸/起源形態」這類形態轉換機制，這裡讓它們套用跟對應寶珠一樣的強化效果，
+    // 但不會真的變形態——如果不是對應的種類持有，就跟超級石裝錯種類一樣，單純沒有效果、不會出錯)
+    'soul-dew', 'adamant-orb', 'lustrous-orb', 'griseous-orb', 'adamant-crystal', 'lustrous-globe', 'griseous-core',
+    // 腐朽的劍/腐朽的盾(蒼響/藏瑪然特)、朱紅色寶珠/靛藍色寶珠(固拉多/蓋歐卡)：官方本身的效果
+    // 就是「攜帶對應道具的那一隻，上場時變成另一種型態」，沒有形態轉換就完全沒有額外效果——
+    // 這裡沒有實作形態轉換(原因同上)，所以這4種道具目前是純粹的收藏/裝備用道具，這就是它們
+    // official的「裝錯或沒有形態轉換支援」時的正確行為，不是偷工減料
+    'rusted-sword', 'rusted-shield', 'red-orb', 'blue-orb',
+    // 特性相關道具：特性護具(官方效果是「特性不會被對手的招式/特性改變」，例如變裝香水/惡意突擊/
+    // 詭計/害我變身這些改變特性的招式，這個簡化版引擎完全沒有實作任何「改變對手特性」的招式，
+    // 所以目前沒有東西可以讓它防護，等真的做出那些招式再補上判斷)/
+    // 驅勁能量(官方效果只對「顯現特性」古代/未來寶可夢生效，這個簡化版引擎沒有實作古代/未來
+    // 寶可夢跟牠們專屬的特性系統，所以目前沒有效果)/客房服務(官方效果需要戲法空間成功才觸發，
+    // 這個簡化版引擎沒有實作戲法空間，所以目前沒有效果)——這3種先讓玩家能取得跟裝備，等對應的
+    // 招式/特性系統做出來再補上判斷
+    'ability-shield', 'booster-energy', 'room-service',
 ];
 // 【第三十輪新增】POKEMON_MEGA_STONE_ITEMS/POKEMON_Z_CRYSTAL_ITEMS定義在後面MEGA_STONE_CATALOG/
 // Z_CRYSTAL_CATALOG那兩張表宣告的地方(因為要用Object.keys從那兩張表算出來，const宣告順序上
@@ -2676,6 +2861,27 @@ const POKEMON_TYPE_RESIST_BERRY = {
 // 反查表(道具/莓果代號 -> 對應的屬性)，戰鬥引擎判斷「這個屬性強化道具/抗性莓果是不是配對到這次招式的屬性」時用
 const TYPE_BOOST_ITEM_TO_TYPE = Object.fromEntries(Object.entries(POKEMON_TYPE_BOOST_ITEM).map(([ty, key]) => [key, ty]));
 const TYPE_RESIST_BERRY_TO_TYPE = Object.fromEntries(Object.entries(POKEMON_TYPE_RESIST_BERRY).map(([ty, key]) => [key, ty]));
+// 【第五十八輪新增】傳說寶可夢專屬強化寶珠/寶玉：跟上面POKEMON_TYPE_BOOST_ITEM同樣是「裝備對應
+// 屬性招式威力+20%」，但多了一條「只有指定種族(speciesIds)攜帶才生效」的限制——大金剛寶玉/大白寶玉/
+// 大白金寶玉官方效果是「強化+改變形態」，這個簡化版引擎沒有形態轉換(見POKEMON_HELD_EQUIPMENT_ITEMS
+// 旁邊的說明)，這裡讓它們套用跟對應寶珠完全一樣的強化效果，只是不會真的變形態
+const SPECIES_LOCKED_TYPE_BOOST_ITEM = {
+    'soul-dew': { speciesIds: [380, 381], types: ['psychic', 'dragon'] }, // 拉帝亞斯/拉帝歐斯
+    'adamant-orb': { speciesIds: [483], types: ['dragon', 'steel'] }, // 帝牙盧卡
+    'adamant-crystal': { speciesIds: [483], types: ['dragon', 'steel'] },
+    'lustrous-orb': { speciesIds: [484], types: ['dragon', 'water'] }, // 帕路奇亞
+    'lustrous-globe': { speciesIds: [484], types: ['dragon', 'water'] },
+    'griseous-orb': { speciesIds: [487], types: ['dragon', 'ghost'] }, // 騎拉帝納
+    'griseous-core': { speciesIds: [487], types: ['dragon', 'ghost'] },
+};
+// 判斷「這次攻擊方持有的道具，是不是剛好是牠自己種族專屬、而且招式屬性也對得上」的傳說強化寶珠——
+// 種族/屬性任何一項不符都直接沒有效果(跟裝錯超級石一樣，官方本來就是這樣設計，不是bug)
+function speciesLockedOrbMult(atk, moveType) {
+    const info = SPECIES_LOCKED_TYPE_BOOST_ITEM[atk.heldItem];
+    if (!info) return 1;
+    if (!info.speciesIds.includes(parseInt(atk.speciesId, 10))) return 1;
+    return info.types.includes(moveType) ? 1.2 : 1;
+}
 // 裝備道具的效果簡短說明(給裝備彈窗顯示用)，取自使用者附檔——莓果類的效果文字則寫在
 // BERRY_EFFECT_ZH(見上面COMMON_BERRIES定義後)
 const HELD_ITEM_EFFECT_ZH = {
@@ -2694,6 +2900,65 @@ const HELD_ITEM_EFFECT_ZH = {
     'focus-sash': '滿血時被打到必定會死的攻擊，保留1點HP生還(一次性)',
     'scope-lens': '會心一擊機率提升1階',
     'kings-rock': '攻擊命中時，額外10%機率讓對方畏縮',
+    // 【第五十八輪新增】
+    'razor-claw': '會心一擊機率提升1階(效果跟焦點鏡相同)',
+    'razor-fang': '攻擊命中時，額外10%機率讓對方畏縮(效果跟王者之證相同)',
+    'muscle-band': '物理招式威力+10%',
+    'wise-glasses': '特殊招式威力+10%',
+    'expert-belt': '效果絕佳的招式威力+20%',
+    'punching-glove': '拳擊招式威力+10%，且拳擊招式視為不算接觸',
+    'metronome': '連續使用同一招式時，威力每次遞增20%(最高5次+100%)，換招式就重置',
+    'big-root': '吸血招式回復的HP+30%',
+    'damp-rock': '自己使出的下雨效果，持續時間延長到8回合',
+    'heat-rock': '自己使出的大晴天效果，持續時間延長到8回合',
+    'smooth-rock': '自己使出的沙暴效果，持續時間延長到8回合',
+    'icy-rock': '自己使出的下雪效果，持續時間延長到8回合',
+    'light-clay': '自己張開的光牆/反射壁/極光幕，持續時間延長到8回合',
+    'terrain-extender': '自己開出的場地效果，持續時間延長到8回合',
+    'grassy-seed': '青草場地展開時，防禦+1(一次性)',
+    'misty-seed': '薄霧場地展開時，特防+1(一次性)',
+    'electric-seed': '電氣場地展開時，防禦+1(一次性)',
+    'psychic-seed': '精神場地展開時，特防+1(一次性)',
+    'absorb-bulb': '被水屬性招式打中時，特攻+1(一次性)',
+    'cell-battery': '被電屬性招式打中時，攻擊+1(一次性)',
+    'luminous-moss': '被水屬性招式打中時，特防+1(一次性)',
+    'snowball': '被冰屬性招式打中時，攻擊+1(一次性)',
+    'focus-band': '任何HP下，10%機率在會導致瀕死的攻擊中保留1HP',
+    'flame-orb': '戰鬥中會讓自己陷入灼傷狀態',
+    'toxic-orb': '戰鬥中會讓自己陷入劇毒狀態',
+    'choice-band': '攻擊+50%，但只能持續使用同一招式，直到換人為止',
+    'choice-specs': '特攻+50%，但只能持續使用同一招式，直到換人為止',
+    'choice-scarf': '速度+50%，但只能持續使用同一招式，直到換人為止',
+    'ring-target': '解除對手屬性造成的招式無效(不影響特性造成的免疫)',
+    'iron-ball': '速度減半，且讓飛行屬性也會被地面系招式打中',
+    'air-balloon': '免疫地面系招式，但受到任何攻擊就會破裂消失',
+    'safety-goggles': '免疫天氣傷害(沙暴/冰雹)跟粉末類招式',
+    'heavy-duty-boots': '上場時免疫隱形岩/撒菱/毒菱/黏黏網等入場障礙',
+    'protective-pads': '攻擊對手時，免疫對手「被接觸」觸發的反擊效果(例如凸凸頭盔/靜電)',
+    'clear-amulet': '免疫對手招式/特性造成的能力下降',
+    'loaded-dice': '連續攻擊招式至少會打中4次',
+    'throat-spray': '使用音波系招式後，特攻+1',
+    'mirror-herb': '對手的能力提升時，自己也跟著提升一次同樣的能力(整場限1次)',
+    'black-sludge': '毒屬性寶可夢每回合結束回復1/16最大HP，其他屬性則是損失1/8最大HP',
+    'lax-incense': '讓對手瞄準自己的招式命中率降低(效果跟光粉相同)',
+    'full-incense': '同優先度時必定最後出招(效果跟後攻之尾相同)',
+    'grip-claw': '(目前這個簡化版引擎沒有實作束縛系招式的持續回合機制，暫無效果)',
+    'binding-band': '(目前這個簡化版引擎沒有實作束縛系招式的持續回合機制，暫無效果)',
+    'sticky-barb': '每回合結束損失自己1/8最大HP',
+    'soul-dew': '讓拉帝歐斯/拉帝亞斯攜帶：超能力/龍屬性招式威力+20%(其他寶可夢攜帶無效果)',
+    'adamant-orb': '讓帝牙盧卡攜帶：龍/鋼屬性招式威力+20%(其他寶可夢攜帶無效果)',
+    'lustrous-orb': '讓帕路奇亞攜帶：龍/水屬性招式威力+20%(其他寶可夢攜帶無效果)',
+    'griseous-orb': '讓騎拉帝納攜帶：龍/幽靈屬性招式威力+20%(其他寶可夢攜帶無效果)',
+    'adamant-crystal': '讓帝牙盧卡攜帶：龍/鋼屬性招式威力+20%(官方效果還會改變形態，這個簡化版引擎未實作)',
+    'lustrous-globe': '讓帕路奇亞攜帶：龍/水屬性招式威力+20%(官方效果還會改變形態，這個簡化版引擎未實作)',
+    'griseous-core': '讓騎拉帝納攜帶：龍/幽靈屬性招式威力+20%(官方效果還會改變形態，這個簡化版引擎未實作)',
+    'rusted-sword': '官方效果是讓蒼響上場時變成另一種型態，這個簡化版引擎未實作型態轉換，暫無效果',
+    'rusted-shield': '官方效果是讓藏瑪然特上場時變成另一種型態，這個簡化版引擎未實作型態轉換，暫無效果',
+    'red-orb': '官方效果是讓固拉多上場時進行原始回歸，這個簡化版引擎未實作型態轉換，暫無效果',
+    'blue-orb': '官方效果是讓蓋歐卡上場時進行原始回歸，這個簡化版引擎未實作型態轉換，暫無效果',
+    'ability-shield': '官方效果是防止特性被對手改變，這個簡化版引擎未實作改變特性的招式，暫無效果',
+    'booster-energy': '官方效果只對古代/未來寶可夢的特性生效，這個簡化版引擎未實作，暫無效果',
+    'room-service': '官方效果需要戲法空間成功才觸發，這個簡化版引擎未實作戲法空間，暫無效果',
 };
 // 【第二十八輪修正】原本這個道具叫「招式學習器」，這輪使用者要求把名稱讓給真正的招式學習器
 // 道具(tm-001~tm-229，見TM_CATALOG)，這個(忘記的招式可以用它學回來、借用心之鱗片圖示)改名
@@ -2851,6 +3116,158 @@ async function buyMartItem(itemName) {
         SFX.error();
     } finally {
         martBuyInFlight = false;
+    }
+}
+
+// 簡單的HTML特殊字元escape：隊伍名稱是玩家自己用prompt()輸入的自由文字，直接塞進innerHTML
+// 樣板字串裡的話，名稱裡如果剛好打到<、"這類字元會把後面的HTML結構弄壞(不是資安考量，
+// 純粹是避免玩家自己也遇到「隊伍名稱一輸入特殊符號畫面就跑版」的低機率bug)
+function escapeHtmlClient(str) {
+    return String(str).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+// ---------- 隊伍儲存(第五十八輪新增)：最多6組欄位，快速儲存/套用「目前隊伍」 ----------
+// 資料存在獨立集合pokemonSavedTeams/{uid}(一個玩家一份文件，teams陣列最多6筆
+// {name, instanceIds})，純粹是UI便利功能、不影響代幣/道具經濟，所以直接讓owner讀寫，不繞worker.js。
+// 不用onSnapshot常駐監聽(呼應第118號任務「頁面開著就一直打Firebase」的教訓)，改成每次開啟
+// 彈窗才抓一次最新資料，關掉彈窗後這份快取就不需要保持在背景更新
+const TEAM_SAVE_SLOT_COUNT = 6;
+let savedTeamsCache = null; // { teams: [...] } | null(還沒抓過)
+async function fetchSavedTeamsDoc(forceRefresh) {
+    if (savedTeamsCache && !forceRefresh) return savedTeamsCache;
+    const uid = auth.currentUser.uid;
+    const snap = await db.collection('pokemonSavedTeams').doc(uid).get();
+    savedTeamsCache = snap.exists ? (snap.data() || {}) : {};
+    if (!Array.isArray(savedTeamsCache.teams)) savedTeamsCache.teams = [];
+    return savedTeamsCache;
+}
+async function openTeamSaveModal() {
+    const modal = document.getElementById('team-save-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    document.getElementById('team-save-modal-content').innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+    await fetchSavedTeamsDoc(true); // 每次開啟都強制重新抓一次，避免看到別台裝置/上次快取的舊資料
+    await renderTeamSaveModal();
+}
+function closeTeamSaveModal() {
+    document.getElementById('team-save-modal').classList.add('hidden');
+    document.getElementById('team-save-modal').classList.remove('flex');
+}
+async function renderTeamSaveModal() {
+    const content = document.getElementById('team-save-modal-content');
+    const teams = (savedTeamsCache && savedTeamsCache.teams) || [];
+    const currentPartyIds = currentInstances.filter(i => i.inParty).slice(0, 6).map(i => i.id);
+    // 每個欄位可能存到「已經找不到的寶可夢」(後來被放生/交易掉)，顯示時先過濾掉、但儲存的資料本身不動，
+    // 只有玩家自己重新覆蓋儲存時才會連帶把找不到的成員一起清掉
+    const slotInstDisplays = await Promise.all(teams.map(async (team) => {
+        const foundInsts = (team.instanceIds || []).map(id => currentInstances.find(i => i.id === id)).filter(Boolean);
+        const displays = await Promise.all(foundInsts.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
+        return foundInsts.map((inst, idx) => ({ inst, d: displays[idx] }));
+    }));
+    const slotsHtml = [];
+    for (let idx = 0; idx < TEAM_SAVE_SLOT_COUNT; idx++) {
+        const team = teams[idx];
+        if (!team) {
+            slotsHtml.push(`
+                <button type="button" onclick="saveCurrentTeamToSlot(${idx})" ${currentPartyIds.length === 0 ? 'disabled' : ''} class="w-full border-2 border-dashed rounded-xl py-4 text-sm font-bold ${currentPartyIds.length === 0 ? 'text-gray-300 border-gray-100 cursor-not-allowed' : 'text-gray-400 border-gray-200'}">
+                    + 把目前隊伍存到欄位${idx + 1}
+                </button>`);
+        } else {
+            const members = slotInstDisplays[idx] || [];
+            slotsHtml.push(`
+                <div class="bg-gray-50 rounded-xl p-2.5">
+                    <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-sm font-bold truncate">${escapeHtmlClient(team.name || `隊伍${idx + 1}`)}</span>
+                        <span class="text-[10px] text-gray-400 shrink-0">${members.length}隻</span>
+                    </div>
+                    <div class="flex gap-1 mb-2 flex-wrap">
+                        ${members.length > 0 ? members.map(m => `<img src="${m.d?.sprite || ''}" class="w-8 h-8 bg-white rounded-lg" title="${pokemonDisplayName(m.inst, m.d)}">`).join('') : '<span class="text-[10px] text-gray-300">(隊伍成員都已經找不到了)</span>'}
+                    </div>
+                    <div class="grid grid-cols-3 gap-1.5">
+                        <button type="button" onclick="loadTeamFromSlot(${idx})" class="text-xs bg-red-100 text-red-600 py-1.5 rounded-lg font-bold">套用</button>
+                        <button type="button" onclick="saveCurrentTeamToSlot(${idx})" ${currentPartyIds.length === 0 ? 'disabled' : ''} class="text-xs py-1.5 rounded-lg font-bold ${currentPartyIds.length === 0 ? 'bg-gray-100 text-gray-300' : 'bg-blue-100 text-blue-600'}">覆蓋</button>
+                        <button type="button" onclick="deleteTeamSlot(${idx})" class="text-xs bg-gray-200 text-gray-500 py-1.5 rounded-lg font-bold">刪除</button>
+                    </div>
+                </div>`);
+        }
+    }
+    content.innerHTML = `
+        <h3 class="font-bold text-lg mb-1 text-center">隊伍儲存</h3>
+        <p class="text-xs text-gray-400 text-center mb-3">最多可以儲存${TEAM_SAVE_SLOT_COUNT}組隊伍，「套用」會把目前隊伍整組換成該欄位存的隊伍</p>
+        <div class="space-y-2 mb-3">${slotsHtml.join('')}</div>
+        <button onclick="closeTeamSaveModal()" class="w-full text-gray-400 text-sm">關閉</button>
+    `;
+}
+async function saveCurrentTeamToSlot(slotIndex) {
+    const currentParty = currentInstances.filter(i => i.inParty).slice(0, 6);
+    if (currentParty.length === 0) { showToast('目前隊伍是空的，沒有東西可以儲存'); return; }
+    const teams = (savedTeamsCache && savedTeamsCache.teams) || [];
+    const existingName = teams[slotIndex]?.name || '';
+    const input = window.prompt('幫這組隊伍取個名字(最多10個字)：', existingName || `隊伍${slotIndex + 1}`);
+    if (input === null) return; // 玩家按了取消
+    const name = input.trim().slice(0, 10) || `隊伍${slotIndex + 1}`;
+    try {
+        const newTeams = teams.slice(0, TEAM_SAVE_SLOT_COUNT);
+        while (newTeams.length <= slotIndex) newTeams.push(null);
+        newTeams[slotIndex] = { name, instanceIds: currentParty.map(i => i.id) };
+        await db.collection('pokemonSavedTeams').doc(auth.currentUser.uid).set({ teams: newTeams }, { merge: true });
+        savedTeamsCache = { teams: newTeams };
+        showToast(`已儲存隊伍「${name}」`);
+        SFX.confirm();
+        await renderTeamSaveModal();
+    } catch (err) {
+        showToast('儲存失敗：' + err.message);
+    }
+}
+async function loadTeamFromSlot(slotIndex) {
+    const teams = (savedTeamsCache && savedTeamsCache.teams) || [];
+    const team = teams[slotIndex];
+    if (!team) return;
+    const wantedIds = new Set((team.instanceIds || []));
+    const foundInsts = (team.instanceIds || []).map(id => currentInstances.find(i => i.id === id)).filter(Boolean);
+    // 跟單隻手動加入隊伍(toggleParty)同一套規則：親密度過低的不能加入隊伍，套用整組隊伍時
+    // 一樣要檢查，不然會繞過這個防呆
+    const blockedInsts = foundInsts.filter(i => (Number(i.friendship) || 0) <= FRIENDSHIP_PARTY_BLOCK);
+    const loadableInsts = foundInsts.filter(i => !blockedInsts.includes(i));
+    const missingCount = (team.instanceIds || []).length - foundInsts.length;
+    if (loadableInsts.length === 0) { showToast('這組隊伍裡沒有任何寶可夢可以套用了(可能都已經放生/交易，或親密度太低)'); return; }
+    try {
+        const batch = db.batch();
+        // 先把「現在在隊伍裡、但不屬於這組要套用的隊伍」的成員移出隊伍，再把這組隊伍的成員設成inParty，
+        // 這樣「套用」才會是整組替換，不是疊加
+        currentInstances.forEach(inst => {
+            if (inst.inParty && !wantedIds.has(inst.id)) {
+                batch.update(db.collection('pokemonInstances').doc(inst.id), { inParty: false });
+            }
+        });
+        loadableInsts.forEach(inst => {
+            if (!inst.inParty) batch.update(db.collection('pokemonInstances').doc(inst.id), { inParty: true });
+        });
+        await batch.commit();
+        let msg = `已套用隊伍「${team.name || ''}」`;
+        const skippedParts = [];
+        if (missingCount > 0) skippedParts.push(`${missingCount}隻已經找不到`);
+        if (blockedInsts.length > 0) skippedParts.push(`${blockedInsts.length}隻親密度太低`);
+        if (skippedParts.length > 0) msg += `(略過：${skippedParts.join('、')})`;
+        showToast(msg);
+        SFX.confirm();
+        closeTeamSaveModal();
+    } catch (err) {
+        showToast('套用隊伍失敗：' + err.message);
+    }
+}
+async function deleteTeamSlot(slotIndex) {
+    const teams = (savedTeamsCache && savedTeamsCache.teams) || [];
+    if (!teams[slotIndex]) return;
+    if (!window.confirm(`確定要刪除「${teams[slotIndex].name || `隊伍${slotIndex + 1}`}」這組儲存的隊伍嗎？`)) return;
+    try {
+        const newTeams = teams.slice();
+        newTeams[slotIndex] = null;
+        await db.collection('pokemonSavedTeams').doc(auth.currentUser.uid).set({ teams: newTeams }, { merge: true });
+        savedTeamsCache = { teams: newTeams };
+        showToast('已刪除');
+        await renderTeamSaveModal();
+    } catch (err) {
+        showToast('刪除失敗：' + err.message);
     }
 }
 
@@ -3064,6 +3481,31 @@ function syncTmFilterChipStyles() {
     });
 }
 const MOVE_CATEGORY_ZH = { physical: '物理', special: '特殊', status: '變化' };
+// 【第五十七輪新增】挑戰傳說訓練家的戰績顯示+「保險呼叫」：如果玩家的pokemonPlayers文件裡
+// 還留著activeLegendaryChallenge(通常是上次挑戰中途關掉分頁/斷線，前端從沒機會呼叫
+// pokemon_legendary_challenge_finish結算)，這裡在資料刷新的當下主動補打一次worker動作，
+// 讓伺服器有機會把它結算掉(這種情況一般會判定成「中途放棄」：扣全隊親密度但不計入戰績)。
+// legendaryFinishCheckAttempted擋掉短時間內重複觸發(onSnapshot稍有變動就會呼叫這裡)，
+// 一次補結算流程跑完(不管成功或失敗)才會重新允許下一次嘗試
+let legendaryFinishCheckAttempted = false;
+function renderLegendaryStats() {
+    const statsEl = document.getElementById('legendary-stats-text');
+    if (statsEl && currentPlayerData) {
+        const stats = currentPlayerData.legendaryChallengeStats || { wins: 0, losses: 0 };
+        statsEl.textContent = `${stats.wins || 0}勝 ${stats.losses || 0}敗`;
+    }
+    if (currentPlayerData && currentPlayerData.activeLegendaryChallenge && !legendaryFinishCheckAttempted) {
+        legendaryFinishCheckAttempted = true;
+        callWorker('pokemon_legendary_challenge_finish', {}).then(result => {
+            legendaryFinishCheckAttempted = false;
+            if (result && result.settled) {
+                if (result.outcome === 'abandoned') showToast('偵測到上次挑戰中途中斷，已補結算(全隊親密度-5，不計入戰績)');
+                else if (result.outcome === 'win') showToast(`補領傳說訓練家挑戰勝利獎勵！(${result.trainerName || ''})`);
+                else showToast('已補結算上一場傳說訓練家挑戰的結果');
+            }
+        }).catch(() => { legendaryFinishCheckAttempted = false; });
+    }
+}
 function renderTmMachineTab() {
     renderTmTypeFilterChipsOnce();
     syncTmFilterChipStyles();
@@ -3273,6 +3715,14 @@ async function fetchItemNameZh(url) {
         return zh;
     } catch (err) { return null; }
 }
+// 【第五十八輪修正】以前這裡只看node.evolves_to[0]，代表伊布(8條分支)、啃果蟲(3條分支，
+// 依外皮決定進化成結草儿蟲/結蜂/垃垃鬃)這類「一階可以進化成好幾種」的寶可夢，永遠只看得到
+// 陣列裡第一個分支，其餘分支完全沒有機會顯示或進化——這是這輪要修的bug。改成把evolves_to
+// 底下每一條分支都各自獨立判斷資格(判斷邏輯跟原本完全一樣，只是套用在每一條分支上)，全部
+// 回傳成options陣列，讓openDetailModal可以把「現在能進化成誰」的按鈕全部列出來給玩家選。
+// 這個函式本來就有的簡化(不模擬時間/天氣/地點/持有招式屬性等進階條件，只看等級/親密度/
+// 道具持有量)沒有跟著改變——像太陽伊布/月亮伊布這種要看時段的分支，這裡一樣只看親密度
+// 門檻就放行，維持既有行為，不是這輪新引入的改變。
 async function checkEvolutionEligibility(inst) {
     try {
         const species = await (async () => {
@@ -3280,14 +3730,14 @@ async function checkEvolutionEligibility(inst) {
             return res.json();
         })();
         const chainUrl = species.evolution_chain?.url;
-        if (!chainUrl) return { canEvolve: false, nextName: null };
+        if (!chainUrl) return { options: [] };
         let chain = evolutionChainCache.get(chainUrl);
         if (!chain) {
             const res = await fetch(chainUrl);
             chain = await res.json();
             evolutionChainCache.set(chainUrl, chain);
         }
-        // 在進化鏈裡找到目前這隻的節點，看它的下一階(evolves_to)需要什麼條件
+        // 在進化鏈裡找到目前這隻的節點，看它的下一階(evolves_to，可能不只一條)分別需要什麼條件
         function findNode(node) {
             if (node.species.name === species.name) return node;
             for (const child of node.evolves_to || []) {
@@ -3297,34 +3747,37 @@ async function checkEvolutionEligibility(inst) {
             return null;
         }
         const node = findNode(chain.chain);
-        const next = node?.evolves_to?.[0];
-        if (!next) return { canEvolve: false, nextName: null };
-        const detail = next.evolution_details?.[0] || {};
-        const minLevel = detail.min_level || null;
-        const minFriendship = detail.min_happiness || null;
-        let canEvolve = true, hint = '', itemSprite = null, requiresItemName = null, itemNameZh = null;
-        if (minLevel && inst.level < minLevel) { canEvolve = false; hint = `等級到${minLevel}才能進化(目前Lv.${inst.level})`; }
-        else if (minFriendship && (inst.friendship || 0) < minFriendship) { canEvolve = false; hint = `親密度要到${minFriendship}才能進化(目前${inst.friendship || 0})`; }
-        else if (detail.item) {
-            const itemZh = await fetchItemNameZh(detail.item.url);
-            itemSprite = itemSpriteUrl(detail.item.name);
-            itemNameZh = itemZh || detail.item.name;
-            // 進化石(POKEMON_EVOLUTION_STONES)+信使鳥百貨販售的其他進化道具(POKEMON_MART_EVOLUTION_ITEMS，
-            // 第十六輪新增)都支援用背包裡的道具觸發進化——不在這兩張清單裡的極少數道具(理論上已經涵蓋
-            // 官方目前全部的進化道具，見信使鳥百貨清單來源)才會維持「還沒開放」
-            if (POKEMON_EVOLUTION_STONES.includes(detail.item.name) || POKEMON_MART_EVOLUTION_ITEMS.includes(detail.item.name)) {
-                const owned = (currentPlayerData?.items || {})[detail.item.name] || 0;
-                if (owned > 0) { canEvolve = true; requiresItemName = detail.item.name; hint = `使用「${itemNameZh}」進化`; }
-                else { canEvolve = false; hint = `需要道具「${itemNameZh}」才能進化(目前沒有，去玩猜猜看賺一個試試，或去信使鳥百貨用代幣購買)`; }
-            } else {
-                canEvolve = false; hint = `需要道具「${itemNameZh}」才能進化(這個功能還沒開放)`;
+        const branches = node?.evolves_to || [];
+        if (branches.length === 0) return { options: [] };
+        const options = await Promise.all(branches.map(async (next) => {
+            const detail = next.evolution_details?.[0] || {};
+            const minLevel = detail.min_level || null;
+            const minFriendship = detail.min_happiness || null;
+            let canEvolve = true, hint = '', itemSprite = null, requiresItemName = null, itemNameZh = null;
+            if (minLevel && inst.level < minLevel) { canEvolve = false; hint = `等級到${minLevel}才能進化(目前Lv.${inst.level})`; }
+            else if (minFriendship && (inst.friendship || 0) < minFriendship) { canEvolve = false; hint = `親密度要到${minFriendship}才能進化(目前${inst.friendship || 0})`; }
+            else if (detail.item) {
+                const itemZh = await fetchItemNameZh(detail.item.url);
+                itemSprite = itemSpriteUrl(detail.item.name);
+                itemNameZh = itemZh || detail.item.name;
+                // 進化石(POKEMON_EVOLUTION_STONES)+信使鳥百貨販售的其他進化道具(POKEMON_MART_EVOLUTION_ITEMS，
+                // 第十六輪新增)都支援用背包裡的道具觸發進化——不在這兩張清單裡的極少數道具(理論上已經涵蓋
+                // 官方目前全部的進化道具，見信使鳥百貨清單來源)才會維持「還沒開放」
+                if (POKEMON_EVOLUTION_STONES.includes(detail.item.name) || POKEMON_MART_EVOLUTION_ITEMS.includes(detail.item.name)) {
+                    const owned = (currentPlayerData?.items || {})[detail.item.name] || 0;
+                    if (owned > 0) { canEvolve = true; requiresItemName = detail.item.name; hint = `使用「${itemNameZh}」進化`; }
+                    else { canEvolve = false; hint = `需要道具「${itemNameZh}」才能進化(目前沒有，去玩猜猜看賺一個試試，或去信使鳥百貨用代幣購買)`; }
+                } else {
+                    canEvolve = false; hint = `需要道具「${itemNameZh}」才能進化(這個功能還沒開放)`;
+                }
             }
-        }
-        else if (!minLevel && !minFriendship && !detail.item) { canEvolve = inst.level >= 16; hint = `等級到16才能進化(目前Lv.${inst.level})`; }
-        const nextNameZh = await fetchSpeciesNameZhByUrl(next.species.url);
-        return { canEvolve, nextName: nextNameZh || next.species.name, nextSpeciesUrl: next.species.url, hint, itemSprite, requiresItemName, itemNameZh };
+            else if (!minLevel && !minFriendship && !detail.item) { canEvolve = inst.level >= 16; hint = `等級到16才能進化(目前Lv.${inst.level})`; }
+            const nextNameZh = await fetchSpeciesNameZhByUrl(next.species.url);
+            return { canEvolve, nextName: nextNameZh || next.species.name, nextSpeciesUrl: next.species.url, hint, itemSprite, requiresItemName, itemNameZh };
+        }));
+        return { options };
     } catch (err) {
-        return { canEvolve: false, nextName: null };
+        return { options: [] };
     }
 }
 // 進化限定招式(例如魔幻假面喵進化時必定學會的「千變萬花」)：PokéAPI用move_learn_method
@@ -3345,13 +3798,19 @@ function extractEvolutionMoves(pokemonData, knownMoves) {
     });
     return found;
 }
-async function evolvePokemon(instanceId) {
+// 【第五十八輪修正】targetSpeciesUrl是多分支進化(伊布/啃果蟲等)時，玩家在detail modal
+// 點的是「哪一個」進化選項按鈕(見openDetailModal)；不帶這個參數的舊呼叫方式(單一進化分支
+// 的物種、或程式內部其他還沒更新的呼叫點)則退回「挑第一個符合資格的分支」，保持相容
+async function evolvePokemon(instanceId, targetSpeciesUrl) {
     const inst = currentInstances.find(i => i.id === instanceId);
     if (!inst) return;
     const evoInfo = await checkEvolutionEligibility(inst);
-    if (!evoInfo.canEvolve || !evoInfo.nextSpeciesUrl) { showToast('現在還不能進化'); return; }
+    const chosen = targetSpeciesUrl
+        ? (evoInfo.options || []).find(o => o.nextSpeciesUrl === targetSpeciesUrl)
+        : (evoInfo.options || []).find(o => o.canEvolve);
+    if (!chosen || !chosen.canEvolve || !chosen.nextSpeciesUrl) { showToast('現在還不能進化'); return; }
     try {
-        const nextIdMatch = evoInfo.nextSpeciesUrl.match(/\/(\d+)\/?$/);
+        const nextIdMatch = chosen.nextSpeciesUrl.match(/\/(\d+)\/?$/);
         const nextSpeciesId = nextIdMatch ? Number(nextIdMatch[1]) : null;
         if (!nextSpeciesId) throw new Error('抓不到進化後的種類編號');
         const [pokemonRes, speciesRes] = await Promise.all([
@@ -3374,7 +3833,7 @@ async function evolvePokemon(instanceId) {
             // 這裡順便從已經抓好的pokemonData取出來，牧場結算(settleIdleEarnings)才不會拿
             // 進化前的舊屬性去算道具/莓果掉落——反正這次進化本來就要打這支API，不用多花一次請求
             nextTypes: (pokemonData.types || []).map(t => t.type.name),
-            requiresItemName: evoInfo.requiresItemName || null,
+            requiresItemName: chosen.requiresItemName || null,
         };
 
         // 進化前先檢查倉庫裡是不是已經有一隻「進化後」的同種類——有的話不能直接進化變出第二隻，
@@ -3661,6 +4120,7 @@ async function renderIdleTab() {
             <p class="text-[10px] text-gray-400">Lv.${inst.level}</p>
             <div class="flex justify-center flex-wrap gap-1 mt-1">${typeBadgesHtml(displays[idx].types, displays[idx].typesZh)}</div>
             ${inst.inParty ? '<span class="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold mt-1 inline-block">隊伍中</span>' : ''}
+            <div class="mt-1">${friendshipBadgeHtml(inst.friendship)}</div>
         </div>
     `).join('');
 }
@@ -3796,6 +4256,7 @@ async function submitRoomModal() {
     if (roomModalMode === 'join') await submitJoinRoom();
     else if (roomModalMode === 'wild') await submitWildBattleStart();
     else if (roomModalMode === 'gym') await submitGymBattleStart();
+    else if (roomModalMode === 'legendary') await submitLegendaryChallengeStart();
     else await submitCreateRoom();
 }
 async function renderPartyPicker(containerId, party, onPick) {
@@ -4304,7 +4765,12 @@ function entryFieldEffectsFor(member) {
 // setTimeout/交易寫入而連續觸發好幾次)——key用「房間id+目前resolvedRound」，同一回合只排程一次
 let trainerAutoSwitchScheduled = {};
 async function autoHandleTrainerSwitch(roomRef, roomData) {
-    if (!roomData || !roomData.isGymBattle || roomData.status !== 'battling' || !roomData.battleState) return;
+    // 【第五十七輪新增】挑戰傳說訓練家的訓練家隊伍跟道館NPC一樣有候補(最多6隻)，先發倒下時
+    // 一樣需要自動換人頂上——這裡跟道館戰共用同一套判斷/交易邏輯，只是多接受isLegendaryChallenge
+    // 這個房間類型。傳說訓練家沒有directives(allySwitch永遠是undefined)，所以下面只有
+    // isForced(先發倒下、被迫換人)這個分支會真的觸發，主動換人(wantsAllySwitch)這個分支
+    // 對傳說訓練家來說天生不會發生，不影響任何既有行為
+    if (!roomData || (!roomData.isGymBattle && !roomData.isLegendaryChallenge) || roomData.status !== 'battling' || !roomData.battleState) return;
     const bs = roomData.battleState;
     const wildTeam = bs.teams && bs.teams.wild;
     if (!wildTeam) return;
@@ -5130,6 +5596,61 @@ async function claimGymReward(roomId, gymId) {
     }
 }
 
+// 【第五十七輪新增】挑戰傳說訓練家的結算：跟claimGymReward不一樣的地方是這支「不管輸贏都要
+// 呼叫」(見上面呼叫端rewardSettled那段註解)，實際的親密度異動/戰績紀錄/掉落物發放全部收斂在
+// worker.js的settlePendingLegendaryChallenge，這裡單純呼叫+組裝顯示文字。
+// r.settled===false的情況(reason:'none')代表這支API被呼叫時剛好沒有進行中的挑戰可以結算——
+// 理論上不該發生在這個呼叫點(這裡是戰鬥剛結束、activeLegendaryChallenge一定還在)，但保留這個
+// 分支的安靜處理，避免萬一真的發生時噴出使用者看不懂的錯誤
+async function claimLegendaryChallengeResult(roomId) {
+    try {
+        const r = await callWorker('pokemon_legendary_challenge_finish', {});
+        if (!r || !r.settled) return;
+        let msg;
+        if (r.outcome === 'win') {
+            msg = `擊敗了${r.trainerName || '傳說訓練家'}！全隊親密度+${LEGENDARY_FRIENDSHIP_DELTA}`;
+            const drop = r.drop;
+            if (drop) {
+                const parts = [];
+                if (drop.coinsGained) parts.push(`代幣x${drop.coinsGained}`);
+                if (drop.moveReminder) parts.push(`心之鱗x${drop.moveReminder}`);
+                if (drop.rareCandy) parts.push(`神奇糖果x${drop.rareCandy}`);
+                const berryEntries = Object.entries(drop.berries || {});
+                if (berryEntries.length) {
+                    const berryNames = await Promise.all(berryEntries.map(([b]) => fetchBerryNameZh(b)));
+                    berryEntries.forEach(([b, count], idx) => parts.push(`${berryNames[idx] || b}樹果x${count}`));
+                }
+                if (drop.megaStone) {
+                    const nameZh = await fetchGenericItemNameZh(drop.megaStone);
+                    parts.push(nameZh || drop.megaStone);
+                }
+                if (drop.zCrystal) {
+                    const nameZh = await fetchGenericItemNameZh(drop.zCrystal);
+                    parts.push(nameZh || drop.zCrystal);
+                }
+                if (drop.tm) {
+                    const tm = TM_CATALOG[drop.tm];
+                    parts.push(tm ? `招式學習器(${tm.moveZh})` : drop.tm);
+                }
+                if (parts.length) msg += `，獲得：${parts.join('、')}`;
+            }
+            SFX.itemGet();
+        } else if (r.outcome === 'lose') {
+            msg = `輸給了${r.trainerName || '傳說訓練家'}...全隊親密度-${LEGENDARY_FRIENDSHIP_DELTA}`;
+        } else {
+            // outcome === 'abandoned'：理論上不會在這個呼叫點觸發(這裡是戰鬥正常結束的那一刻)，
+            // 只有renderLegendaryStats的「保險呼叫」才比較可能遇到，這裡還是處理一下比較完整
+            msg = `這場挑戰中途中斷，全隊親密度-${LEGENDARY_FRIENDSHIP_DELTA}(不計入戰績)`;
+        }
+        if (battleFinishSummary[roomId]) battleFinishSummary[roomId].legendaryRewardText = msg;
+        if (lastRenderedRoom && lastRenderedRoom.id === roomId) renderRoomView(lastRenderedRoom);
+    } catch (err) {
+        // 結算失敗不影響玩家看到「你贏了/敗北了」的畫面，安靜失敗就好——renderLegendaryStats的
+        // 保險呼叫之後還有機會再補一次
+        console.warn('傳說訓練家挑戰結算失敗', err.message);
+    }
+}
+
 async function rollWildOpponent(playerLevel) {
     // 難度跟著玩家帶去的這隻寶可夢等級走，上下浮動3級，等級太低會被夾到至少1級
     const targetLevel = Math.max(1, playerLevel + Math.floor(Math.random() * 7) - 3);
@@ -5186,6 +5707,277 @@ async function rollWildOpponent(playerLevel) {
         ability: rollAbilityFromPokemonData(pokemonData), // 【第三十二輪新增】野生寶可夢現在也會抽到特性、套用真正的戰鬥效果
     };
 }
+const LEGENDARY_TRAINERS = [
+{"id": "kanto-1", "name": "科拿", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788663065/%E7%A7%91%E6%8B%BF_LPLE_iekzha.png", "region": "kanto", "regionZh": "關都", "gimmick": "mega", "team": [87, 124, 91, 80, 28, 131], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "kanto-2", "name": "希巴", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788663072/%E5%B8%8C%E5%B7%B4_LPLE_b9rnlk.png", "region": "kanto", "regionZh": "關都", "gimmick": "mega", "team": [95, 106, 107, 62, 76, 68], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "kanto-3", "name": "菊子", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788663074/%E8%8F%8A%E5%AD%90_LPLE_azdgtl.png", "region": "kanto", "regionZh": "關都", "gimmick": "mega", "team": [24, 94, 42, 110, 105, 94], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "kanto-4", "name": "阿渡", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788663071/%E9%98%BF%E6%B8%A1_LPLE_anybsm.png", "region": "kanto", "regionZh": "關都", "gimmick": "mega", "team": [117, 142, 130, 103, 6, 149], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "johto-1", "name": "一樹", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788663720/%E4%B8%80%E6%A0%91_HGSS_rxa1ox.png", "region": "johto", "regionZh": "城都", "gimmick": "mega", "team": [437, 124, 326, 80, 282, 178], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "johto-2", "name": "阿桔", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788663715/%E9%98%BF%E6%A1%94_HGSS_yxh57y.png", "region": "johto", "regionZh": "城都", "gimmick": "mega", "team": [435, 49, 454, 89, 169, 317], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "johto-3", "name": "希巴", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788663720/%E5%B8%8C%E5%B7%B4_HGSS_v7jp0r.png", "region": "johto", "regionZh": "城都", "gimmick": "mega", "team": [237, 106, 107, 297, 68, 448], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "johto-4", "name": "梨花", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788663714/%E6%A2%A8%E8%8A%B1_HGSS_vmcoua.png", "region": "johto", "regionZh": "城都", "gimmick": "mega", "team": [461, 442, 359, 229, 430, 197], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "hoenn-1", "name": "花月", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788664466/%E8%8A%B1%E6%9C%88_ORAS_uxsqhx.png", "region": "hoenn", "regionZh": "豐緣", "gimmick": "mega", "team": [560, 275, 319, 571, 630, 359], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "hoenn-2", "name": "芙蓉", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788664470/%E8%8A%99%E8%93%89_ORAS_fd3nrm.png", "region": "hoenn", "regionZh": "豐緣", "gimmick": "mega", "team": [354, 429, 426, 609, 477, 302], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "hoenn-3", "name": "波妮", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788664470/%E6%B3%A2%E5%A6%AE_ORAS_kj4w6j.png", "region": "hoenn", "regionZh": "豐緣", "gimmick": "mega", "team": [460, 614, 478, 584, 365, 362], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "hoenn-4", "name": "源治", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788664471/%E6%BA%90%E6%B2%BB_ORAS_qg6uny.png", "region": "hoenn", "regionZh": "豐緣", "gimmick": "mega", "team": [334, 691, 230, 330, 612, 373], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "sinnoh-1", "name": "阿柳", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788665216/%E9%98%BF%E6%9F%B3_DP_eeoaqc.png", "region": "sinnoh", "regionZh": "神奧", "gimmick": "mega", "team": [469, 212, 416, 214, 330, 452], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "sinnoh-2", "name": "菊野", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788665209/%E8%8F%8A%E9%87%8E_DP_vl5foi.png", "region": "sinnoh", "regionZh": "神奧", "gimmick": "mega", "team": [340, 472, 34, 450, 473, 464], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "sinnoh-3", "name": "大葉", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788665209/%E5%A4%A7%E5%8F%B6_DP_pfsc9w.png", "region": "sinnoh", "regionZh": "神奧", "gimmick": "mega", "team": [38, 229, 78, 392, 59, 467], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "sinnoh-4", "name": "悟松", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788665211/%E6%82%9F%E6%9D%BE_DP_shc0zw.png", "region": "sinnoh", "regionZh": "神奧", "gimmick": "mega", "team": [122, 196, 437, 65, 80, 475], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "unova-1", "name": "婉龍", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788666517/%E5%A9%89%E9%BE%99_BW_jullyz.png", "region": "unova", "regionZh": "合眾", "gimmick": "mega", "team": [563, 94, 478, 426, 623, 609], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "unova-2", "name": "連武", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788666513/%E8%BF%9E%E6%AD%A6_BW_plvjel.png", "region": "unova", "regionZh": "合眾", "gimmick": "mega", "team": [538, 539, 68, 448, 620, 534], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "unova-3", "name": "越橘", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788666513/%E8%B6%8A%E6%A9%98_BW_of41jr.png", "region": "unova", "regionZh": "合眾", "gimmick": "mega", "team": [430, 560, 553, 229, 248, 625], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "unova-4", "name": "嘉德麗雅", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788666515/%E5%98%89%E5%BE%B7%E4%B8%BD%E9%9B%85_BW_fbgzzc.png", "region": "unova", "regionZh": "合眾", "gimmick": "mega", "team": [518, 65, 475, 579, 576, 376], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "kalos-1", "name": "帕琦拉", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788667423/%E5%B8%95%E7%90%A6%E6%8B%89_XY_obdxlx.png", "region": "kalos", "regionZh": "卡洛斯", "gimmick": "mega", "team": [668, 324, 609, 663], "dropText": "隨機超級石x1(不會獲得重複的)若獲得所有超級石則改為代幣5000+隨機樹果x8"},
+{"id": "kalos-2", "name": "志米", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788667422/%E5%BF%97%E7%B1%B3_XY_pvursl.png", "region": "kalos", "regionZh": "卡洛斯", "gimmick": "mega", "team": [693, 121, 130, 689], "dropText": "隨機超級石x1(不會獲得重複的)若獲得所有超級石則改為代幣5000+隨機樹果x8"},
+{"id": "kalos-3", "name": "雁鎧", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788667423/%E9%9B%81%E9%93%A0_XY_nvbro0.png", "region": "kalos", "regionZh": "卡洛斯", "gimmick": "mega", "team": [707, 476, 212, 681], "dropText": "隨機超級石x1(不會獲得重複的)若獲得所有超級石則改為代幣5000+隨機樹果x8"},
+{"id": "kalos-4", "name": "朵拉塞娜", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788667427/%E6%9C%B5%E6%8B%89%E5%A1%9E%E5%A8%9C_XY_touqup.png", "region": "kalos", "regionZh": "卡洛斯", "gimmick": "mega", "team": [691, 334, 621, 715], "dropText": "隨機超級石x1(不會獲得重複的)若獲得所有超級石則改為代幣5000+隨機樹果x8"},
+{"id": "kalos-5", "name": "卡露妮", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788667428/%E5%8D%A1%E9%9C%B2%E5%A6%AE_XY_vpigzh.png", "region": "kalos", "regionZh": "卡洛斯", "gimmick": "mega", "team": [701, 697, 699, 711, 706, 282], "dropText": "隨機超級石x1(不會獲得重複的)若獲得所有超級石則改為代幣5000+隨機樹果x8"},
+{"id": "alola-1", "name": "哈拉", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788668431/%E5%93%88%E6%8B%89_SM_uo5xih.png", "region": "alola", "regionZh": "阿羅拉", "gimmick": "z", "team": [297, 57, 760, 62, 740], "dropText": "隨機Z純晶x1(不會獲得重複的)若獲得所有Z純晶石則改為代幣3000+隨機樹果x8"},
+{"id": "alola-2", "name": "馬睿因", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788668427/%E9%A6%AC%E7%9D%BF%E5%9B%A0_SM_nfabqq.png", "region": "alola", "regionZh": "阿羅拉", "gimmick": "z", "team": [707, 625, 462, 376, 51], "dropText": "隨機Z純晶x1(不會獲得重複的)若獲得所有Z純晶石則改為代幣3000+隨機樹果x8"},
+{"id": "alola-3", "name": "麗姿", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788668428/%E9%BA%97%E5%A7%BF_SM_n92tlv.png", "region": "alola", "regionZh": "阿羅拉", "gimmick": "z", "team": [348, 346, 526, 476, 745], "dropText": "隨機Z純晶x1(不會獲得重複的)若獲得所有Z純晶石則改為代幣3000+隨機樹果x8"},
+{"id": "alola-4", "name": "阿塞蘿拉", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788668432/%E9%98%BF%E5%A1%9E%E8%90%9D%E6%8B%89_SM_f5p2n6.png", "region": "alola", "regionZh": "阿羅拉", "gimmick": "z", "team": [354, 426, 781, 478, 770], "dropText": "隨機Z純晶x1(不會獲得重複的)若獲得所有Z純晶石則改為代幣3000+隨機樹果x8"},
+{"id": "alola-5", "name": "卡希麗", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788668436/%E5%8D%A1%E5%B8%8C%E9%BA%97_SM_g7ncwe.png", "region": "alola", "regionZh": "阿羅拉", "gimmick": "z", "team": [628, 701, 741, 630, 733], "dropText": "隨機Z純晶x1(不會獲得重複的)若獲得所有Z純晶石則改為代幣3000+隨機樹果x8"},
+{"id": "galar-1", "name": "亞洛", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669382/%E4%BA%9E%E6%B4%9B_SWSH_y0wj47.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [829, 830], "dropText": "神奇糖果x1+隨機樹果x5"},
+{"id": "galar-2", "name": "露璃娜", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669430/%E9%9C%B2%E7%92%83%E5%A8%9C_SWSH_facefx.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [118, 846, 834], "dropText": "神奇糖果x1+隨機樹果x5"},
+{"id": "galar-3", "name": "卡蕪", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669380/%E5%8D%A1%E8%95%AA_SWSH_kcjtp2.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [38, 59, 851], "dropText": "神奇糖果x1+隨機樹果x5"},
+{"id": "galar-4", "name": "彩豆", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669427/%E5%BD%A9%E8%B1%86_SWSH_sdgxli.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [237, 675, 865, 68], "dropText": "神奇糖果x2+隨機樹果x6"},
+{"id": "galar-5", "name": "歐尼奧", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669430/%E6%AD%90%E5%B0%BC%E5%A5%A7_SWSH_wsvani.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [562, 778, 864, 94], "dropText": "神奇糖果x2+隨機樹果x6"},
+{"id": "galar-6", "name": "波普菈", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669378/%E6%B3%A2%E6%99%AE%E8%8F%88_SWSH_kogm6n.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [110, 303, 468, 869], "dropText": "神奇糖果x2+隨機樹果x6"},
+{"id": "galar-7", "name": "彼特", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669376/%E5%BD%BC%E7%89%B9_SWSH_tiklui.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [303, 282, 78, 858], "dropText": "神奇糖果x2+隨機樹果x6"},
+{"id": "galar-8", "name": "瑪瓜", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669426/%E7%91%AA%E7%93%9C_SWSH_wlnlcm.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [689, 213, 874, 839], "dropText": "神奇糖果x2+隨機樹果x6"},
+{"id": "galar-9", "name": "美蓉", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669421/%E7%BE%8E%E8%93%89_SWSH_euzjqc.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [873, 555, 875, 131], "dropText": "神奇糖果x2+隨機樹果x6"},
+{"id": "galar-10", "name": "聶梓", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669424/%E8%81%82%E6%A2%93_SWSH_hluszz.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [560, 687, 862, 435], "dropText": "神奇糖果x2+隨機樹果x6"},
+{"id": "galar-11", "name": "瑪俐", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669379/%E7%8E%9B%E4%BF%90_SWSH_ssvx1q.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [510, 454, 560, 877, 861], "dropText": "心之鱗x1+神奇糖果x1+隨機樹果x7"},
+{"id": "galar-12", "name": "奇巴納", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669377/%E5%A5%87%E5%B7%B4%E7%B4%8D_SWSH_qoouak.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [526, 330, 844, 884], "dropText": "神奇糖果x2+隨機樹果x6"},
+{"id": "galar-13", "name": "克拉拉", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669374/%E5%85%8B%E6%8B%89%E6%8B%89_SWSH_x4i1ay.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [199, 110, 452, 545, 80], "dropText": "心之鱗x1+神奇糖果x1+隨機樹果x7"},
+{"id": "galar-14", "name": "賽寶利", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669430/%E8%B5%9B%E5%AE%9D%E5%88%A9_SWSH_fkgapd.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "team": [80, 528, 78, 65, 199], "dropText": "心之鱗x1+神奇糖果x1+隨機樹果x7"},
+{"id": "galar-15", "name": "丹帝", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788669372/%E4%B8%B9%E5%B8%9D_SWSH_acs3fb.png", "region": "galar", "regionZh": "伽勒爾", "gimmick": "gmax", "teamOptions": [[681, 612, 887, 6, 537, 815], [681, 612, 887, 6, 866, 818], [681, 612, 887, 6, 464, 812]], "dropText": "隨機一種招式學習器x1+心之鱗x1+神奇糖果x5+隨機樹果x10"},
+{"id": "paldea-1", "name": "辛俐", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788671686/%E8%BE%9B%E4%BF%90_SV_qktdsm.png", "region": "paldea", "regionZh": "帕底亞", "gimmick": null, "team": [51, 340, 232, 323, 389, 980], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "paldea-2", "name": "波琵", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788671681/%E6%B3%A2%E7%90%B5_SV_jqk4ag.png", "region": "paldea", "regionZh": "帕底亞", "gimmick": null, "team": [879, 437, 823, 462, 411, 959], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "paldea-3", "name": "青木", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788671682/%E9%9D%92%E6%9C%A8_SV_mcbdyi.png", "region": "paldea", "regionZh": "帕底亞", "gimmick": null, "team": [916, 128, 982, 334, 973, 398], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "paldea-4", "name": "八朔", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788671686/%E5%85%AB%E6%9C%94_SV_ngujnm.png", "region": "paldea", "regionZh": "帕底亞", "gimmick": null, "team": [884, 715, 691, 612, 149, 998], "dropText": "心之鱗x1+隨機樹果x8"},
+{"id": "blueberry-1", "name": "赤松", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788672131/%E8%B5%A4%E6%9D%BE_SV_qekj45.png", "region": "blueberry", "regionZh": "藍莓學園", "gimmick": null, "team": [663, 479, 323, 103, 467, 257], "dropText": "代幣2000+神奇糖果x2+隨機樹果x8"},
+{"id": "blueberry-2", "name": "納莉", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788672122/%E7%B4%8D%E8%8E%89_SV_bfwhvz.png", "region": "blueberry", "regionZh": "藍莓學園", "gimmick": null, "team": [51, 227, 579, 395, 212, 376], "dropText": "代幣2000+神奇糖果x2+隨機樹果x8"},
+{"id": "blueberry-3", "name": "紫竽", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788672122/%E7%B4%AB%E7%AB%BD_SV_q4ldji.png", "region": "blueberry", "regionZh": "藍莓學園", "gimmick": null, "team": [210, 547, 730, 869, 80, 530], "dropText": "代幣2000+神奇糖果x2+隨機樹果x8"},
+{"id": "blueberry-4", "name": "杜若", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788672132/%E6%9D%9C%E8%8B%A5_SV_pcjv6o.png", "region": "blueberry", "regionZh": "藍莓學園", "gimmick": null, "team": [330, 149, 230, 612, 254, 1018], "dropText": "代幣2000+神奇糖果x2+隨機樹果x8"},
+{"id": "blueberry-5", "name": "烏栗", "img": "https://res.cloudinary.com/bumzwp9g/image/upload/v1788672125/%E7%83%8F%E6%A0%97_SV_sgsmkn.png", "region": "blueberry", "regionZh": "藍莓學園", "gimmick": null, "team": [275, 469, 472, 476, 1011, 62], "dropText": "代幣2000+神奇糖果x2+隨機樹果x8"}
+];
+
+// 【第五十七輪新增】機率性使用Mega進化/Ｚ招式的機率——「機率性」的具體數字spec沒有明講，
+// 這裡挑一個「常常看得到、但不是每次都用」的數字，之後想調整難度/驚喜感的話改這個常數就好。
+// 伽勒爾(極巨化)刻意不用這個常數：spec明講「穩定會使用」，直接寫死100%(見buildLegendaryTrainerRoster)
+const LEGENDARY_GIMMICK_CHANCE = 0.6;
+// 打贏/打輸(或中途放棄)傳說訓練家挑戰的全隊親密度異動量——只用在claimLegendaryChallengeResult
+// 組訊息文字，真正的異動數字是worker.js算好才回傳的，這裡純粹是顯示用，兩邊數字要保持一致
+// (跟worker.js的LEGENDARY_FRIENDSHIP_DELTA同一個數字)
+const LEGENDARY_FRIENDSHIP_DELTA = 5;
+
+// 組出某位傳說訓練家的完整隊伍(先發+候補)，全員固定Lv.100：
+//  - 招式：套用跟rollWildOpponent同一套「該種類學得會的升級招式裡，取學習等級最高的4招」邏輯，
+//    100級時等於「這隻學得會的升級招式裡最強的4招」
+//  - 絕招機關：依照trainer.gimmick決定「這場戰鬥」要不要武裝機關(mega/z是機率性武裝，gmax
+//    是必定武裝)。武裝成功的話，從隊伍裡挑一隻「真的用得上」的成員配上對應道具(超級石/Z純晶)——
+//    Mega/Z招式的觸發完全是靠heldItem比對(見findMegaInfoFor/findZMoveInfoFor)，只要在建隊
+//    這一步幫對的成員配上對的道具，戰鬥中的判定/觸發完全不用額外改動既有的Mega/Z引擎。
+//    極巨化(gmax)不需要道具，純粹看種類+能量條，交由decideTrainerFullAction在對戰中動態判斷
+//    「什麼時候用」——這裡只負責「這場會不會武裝」，不負責「什麼時候觸發」
+async function buildLegendaryTrainerRoster(trainer) {
+    const teamDexIds = trainer.teamOptions ? trainer.teamOptions[Math.floor(Math.random() * trainer.teamOptions.length)] : trainer.team;
+    const level = 100;
+    const members = await Promise.all(teamDexIds.map(async (speciesId, idx) => {
+        const pokemonRes = await fetch(`https://pokeapi.co/api/v2/pokemon/${speciesId}`);
+        const pokemonData = await pokemonRes.json();
+        const baseStats = {};
+        (pokemonData.stats || []).forEach(s => { baseStats[s.stat.name] = s.base_stat; });
+        // 招式挑法跟rollWildOpponent的levelMoves完全同一套邏輯，100級時「≤targetLevel」這個
+        // 篩選條件形同沒有限制(絕大多數寶可夢的升級招式全部都在100級以前學完)
+        const levelMoves = (pokemonData.moves || [])
+            .map(m => {
+                const detail = (m.version_group_details || []).find(d => d.move_learn_method?.name === 'level-up');
+                return detail ? { name: m.move.name, level: detail.level_learned_at } : null;
+            })
+            .filter(Boolean)
+            .filter(m => m.level <= level)
+            .sort((a, b) => b.level - a.level);
+        const moves = [];
+        for (const mv of levelMoves) {
+            if (!moves.includes(mv.name)) moves.push(mv.name);
+            if (moves.length >= 4) break;
+        }
+        if (moves.length === 0) moves.push('tackle');
+        const maxHp = statAtLevel(baseStats.hp || 45, level, true);
+        return {
+            instanceId: `${trainer.id}::${idx}`,
+            speciesId, level, maxHp, currentHp: maxHp,
+            atk: statAtLevel(baseStats.attack || 45, level, false),
+            def: statAtLevel(baseStats.defense || 45, level, false),
+            spAtk: statAtLevel(baseStats['special-attack'] || 45, level, false),
+            spDef: statAtLevel(baseStats['special-defense'] || 45, level, false),
+            spd: statAtLevel(baseStats.speed || 45, level, false),
+            moves,
+            isShiny: false,
+            heldItem: null,
+            stages: { atk: 0, def: 0, spAtk: 0, spDef: 0, spd: 0, acc: 0, eva: 0 },
+            directives: null,
+            isAce: idx === teamDexIds.length - 1,
+            starMult: 1,
+            ability: rollAbilityFromPokemonData(pokemonData),
+        };
+    }));
+
+    let gimmickKind = null;
+    if (trainer.gimmick === 'mega' && Math.random() < LEGENDARY_GIMMICK_CHANCE) {
+        const stoneEntries = Object.entries(MEGA_STONE_CATALOG);
+        const rayquazaMember = members.find(m => m.speciesId === MEGA_RAYQUAZA.speciesId && m.moves.includes(MEGA_RAYQUAZA.requiredMove));
+        if (rayquazaMember) {
+            gimmickKind = 'mega'; // 烈空坐特例：findMegaInfoFor本來就認得，不需要另外配道具
+        } else {
+            const candidates = members.filter(m => stoneEntries.some(([, s]) => s.baseSpeciesId === m.speciesId));
+            if (candidates.length > 0) {
+                const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+                const stoneKey = stoneEntries.find(([, s]) => s.baseSpeciesId === chosen.speciesId)[0];
+                chosen.heldItem = stoneKey;
+                gimmickKind = 'mega';
+            }
+        }
+    } else if (trainer.gimmick === 'z' && Math.random() < LEGENDARY_GIMMICK_CHANCE) {
+        // 優先找「物種限定Z純晶」(比較稀有，剛好某隻學會要求招式就直接用)，沒有的話退回
+        // 屬性通用Z純晶(找一隻有對應屬性傷害招式的成員)——跟findZMoveInfoFor的判斷邏輯對齊
+        let chosen = null, crystalKey = null;
+        for (const [key, crystal] of Object.entries(Z_CRYSTAL_CATALOG)) {
+            if (crystal.kind !== 'species') continue;
+            const m = members.find(mm => crystal.speciesIds.includes(mm.speciesId) && mm.moves.includes(crystal.requiredMove));
+            if (m) { chosen = m; crystalKey = key; break; }
+        }
+        if (!chosen) {
+            for (const m of members) {
+                const moveTypes = m.moves.map(mv => (MOVE_DATA_ZH[mv] || {}).type).filter(Boolean);
+                const typeCrystalKey = Object.keys(Z_CRYSTAL_CATALOG).find(k => Z_CRYSTAL_CATALOG[k].kind === 'type' && moveTypes.includes(Z_CRYSTAL_CATALOG[k].type));
+                if (typeCrystalKey) { chosen = m; crystalKey = typeCrystalKey; break; }
+            }
+        }
+        if (chosen && crystalKey) { chosen.heldItem = crystalKey; gimmickKind = 'z'; }
+    } else if (trainer.gimmick === 'gmax') {
+        gimmickKind = 'gmax'; // 【必定武裝】伽勒爾訓練家可靠地使用極巨化，不用機率骰
+    }
+
+    return { members, gimmickKind };
+}
+
+// 傳說訓練家戰鬥中，AI(wild)這一側「這回合到底要不要順便用機關」的決策——跟一般野生/道館NPC
+// 共用decideTrainerMoveName決定招式本身，這裡只多加一層「要不要附加mega/zMove/dynamax旗標」
+// 的判斷，兩者合起來才是完整的一次出招動作。legendaryGimmickKind是null的話(玩家打的不是
+// 傳說訓練家挑戰、或這場沒有武裝機關)整段機關判斷都跳過，回傳的action跟原本完全一樣，
+// 不會影響一般野生/道館戰的行為
+function decideTrainerFullAction(wildTeamNow, benchWild, battleState, round, legendaryGimmickKind) {
+    const moveName = decideTrainerMoveName(wildTeamNow, round);
+    const action = { type: 'move', move: moveName, mega: false, zMove: false, dynamax: false };
+    if (!legendaryGimmickKind || !wildTeamNow || wildTeamNow.currentHp <= 0) return action;
+    const uid = 'wild';
+    const alreadyGimmicked = (battleState.megaUsed || {})[uid] || (battleState.zMoveUsed || {})[uid] || (battleState.dynamaxUsed || {})[uid];
+    if (alreadyGimmicked) return action;
+
+    if (legendaryGimmickKind === 'mega') {
+        if (findMegaInfoFor(wildTeamNow)) action.mega = true;
+        return action;
+    }
+    if (legendaryGimmickKind === 'z') {
+        const moveData = MOVE_DATA_ZH[moveName] || {};
+        if (findZMoveInfoFor(wildTeamNow, { name: moveName, type: moveData.type, power: moveData.power })) action.zMove = true;
+        return action;
+    }
+    if (legendaryGimmickKind === 'gmax') {
+        const dynamaxCharge = (battleState.dynamaxCharge || {})[uid] || 0;
+        if (dynamaxCharge < DYNAMAX_CHARGE_NEEDED) return action;
+        const speciesNum = parseInt(wildTeamNow.speciesId, 10);
+        if (DYNAMAX_BANNED_SPECIES_IDS.includes(speciesNum)) return action;
+        // 隊伍裡還有活著的超極巨化候補的話，寧可等牠上場才用掉這場的極巨化名額，不隨便浪費在
+        // 一般極巨化上；沒有這種候補的話(或牠已經倒下/已經是目前上場的這隻)，充能滿了就直接用
+        const aliveMembers = [wildTeamNow, ...(benchWild || [])].filter(m => (m.currentHp || 0) > 0);
+        const teamHasAliveGmax = aliveMembers.some(m => GMAX_ELIGIBLE_SPECIES_IDS.includes(parseInt(m.speciesId, 10)));
+        const thisIsGmax = GMAX_ELIGIBLE_SPECIES_IDS.includes(speciesNum);
+        if (teamHasAliveGmax && !thisIsGmax) return action;
+        action.dynamax = true;
+        return action;
+    }
+    return action;
+}
+
+// 【第五十七輪新增】挑戰傳說訓練家的選人彈窗——跟挑戰野生寶可夢/地區道館不一樣，這裡不用先選
+// 「一隻」出戰，直接帶目前隊伍全部(最多6隻)出發，因為對手是隨機決定的、玩家沒辦法針對性配招，
+// 帶越多後備越安全，沒有理由讓玩家只能選1隻
+function openLegendaryChallengeModal() {
+    const party = currentInstances.filter(i => i.inParty);
+    if (party.length === 0) { showToast('要先在「我的寶可夢」把至少一隻加入隊伍才能出發挑戰'); return; }
+    roomModalMode = 'legendary';
+    pendingRoomInstanceId = null;
+    document.getElementById('create-room-modal-title').textContent = '挑戰傳說訓練家(隨機遭遇)';
+    document.getElementById('create-room-modal-hint').textContent = '會隨機遭遇十大地區、共54位傳說訓練家的其中一位，帶你目前隊伍裡的寶可夢出戰(最多6隻，雙方全員都會是Lv.100)。這場對戰不能投降——輸了、或中途離開都會讓全隊親密度-5，贏了則是全隊親密度+5並獲得掉落物，勝負都會被永久記錄下來。';
+    document.getElementById('create-room-modal-hint').classList.remove('hidden');
+    document.getElementById('create-room-name').classList.add('hidden');
+    document.getElementById('create-room-party-picker').innerHTML = `<p class="col-span-full text-center text-sm text-gray-500 py-6">將帶著目前隊伍全部 ${party.length} 隻寶可夢出戰</p>`;
+    document.getElementById('create-room-submit-btn').textContent = '出發挑戰！';
+    document.getElementById('create-room-modal').classList.remove('hidden');
+    document.getElementById('create-room-modal').classList.add('flex');
+}
+async function submitLegendaryChallengeStart() {
+    const party = currentInstances.filter(i => i.inParty).slice(0, 6);
+    if (party.length === 0) { showToast('隊伍是空的，沒辦法出發'); return; }
+    closeCreateRoomModal();
+    showToast('尋找傳說訓練家...');
+    try {
+        // 54位機率均等隨機挑一位，不特別依隊伍強度/地區調整——這是使用者spec要求的「隨機遭遇」
+        const trainer = LEGENDARY_TRAINERS[Math.floor(Math.random() * LEGENDARY_TRAINERS.length)];
+        // 出發前先向伺服器登記(記錄挑戰誰、帶哪些寶可夢出戰、由伺服器決定roomId)——一定要等這支
+        // API成功回應才能建立真正的房間文件，這是防止「親密度異動被偽造/繞過」的關鍵設計，
+        // 詳見worker.js的handlePokemonLegendaryChallengeStart。這裡也會順手把上一場忘記結算的
+        // 挑戰(如果有)清掉，所以就算玩家上次中途關掉分頁，這裡再挑戰一次也不會被卡住
+        const startResult = await callWorker('pokemon_legendary_challenge_start', { trainerId: trainer.id, teamInstanceIds: party.map(i => i.id) });
+        const roomId = startResult.roomId;
+
+        const { members: trainerMembers, gimmickKind } = await buildLegendaryTrainerRoster(trainer);
+        const leadWild = trainerMembers[0];
+        const benchWild = trainerMembers.slice(1);
+        const displays = await Promise.all(party.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
+        // 雙方全員固定Lv.100：跟連線對戰共用同一套forceLevel機制(PVP_BATTLE_LEVEL)
+        const myTeamAll = party.map((inst, idx) => buildTeamDataFromInstData(inst.id, inst, pokemonDisplayName(inst, displays[idx]), PVP_BATTLE_LEVEL));
+        const myTeam = myTeamAll[0];
+        const myBench = myTeamAll.slice(1);
+        const myUid = auth.currentUser.uid;
+        await db.collection('pokemonBattleRooms').doc(roomId).set({
+            hostUid: myUid,
+            memberUids: [myUid],
+            isWild: true,
+            isLegendaryChallenge: true,
+            legendaryTrainerId: trainer.id,
+            // legendaryGimmickKind只用來驅動AI「什麼時候動用機關」，不在任何UI上顯示——
+            // region會顯示給玩家看，但機關本身要等真的發生(Mega進化/Ｚ招式/極巨化的畫面特效)
+            // 才會知道，這是spec明確要求的「不能提前透露」
+            legendaryGimmickKind: gimmickKind,
+            trainerName: trainer.name,
+            trainerImg: trainer.img,
+            trainerRegionZh: trainer.regionZh,
+            status: 'battling',
+            battleState: {
+                teams: { [myUid]: myTeam, wild: leadWild },
+                bench: { [myUid]: myBench, wild: benchWild },
+                weather: { type: null, turnsLeft: 0 }, terrain: { type: null, turnsLeft: 0 },
+                hazards: { [myUid]: freshHazardsSide(), wild: freshHazardsSide() },
+                screens: { [myUid]: freshScreensSide(), wild: freshScreensSide() },
+                awaitingSwitch: [],
+                round: 1, log: [],
+            },
+            pendingMoves: {},
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        switchTab('battle');
+        watchRoom(roomId);
+    } catch (err) {
+        showToast('挑戰傳說訓練家失敗：' + err.message);
+    }
+}
+
 async function submitWildBattleStart() {
     if (!pendingRoomInstanceId) { showToast('先選一隻寶可夢'); return; }
     const inst = currentInstances.find(i => i.id === pendingRoomInstanceId);
@@ -5238,6 +6030,9 @@ function watchRoom(roomId) {
     battleItemSyncedInstanceIds = new Set();
     document.getElementById('battle-lobby-view').classList.add('hidden');
     document.getElementById('battle-room-view').classList.remove('hidden');
+    // 【第五十八輪新增】進房間後畫面看不到房間大廳列表了，順手取消訂閱listenOpenRooms，
+    // 減少在戰鬥中還持續接收其他玩家開房動態的無謂讀取(回大廳時leaveRoomView會重新訂閱)
+    if (roomListUnsub) { roomListUnsub(); roomListUnsub = null; }
     if (roomDetailUnsub) roomDetailUnsub();
     roomDetailUnsub = db.collection('pokemonBattleRooms').doc(roomId).onSnapshot(async snap => {
         if (!snap.exists) { leaveRoomView(); showToast('對方離開了房間'); return; }
@@ -5254,7 +6049,7 @@ function watchRoom(roomId) {
         // 這樣換人交易一定會排在KO動畫後面才送出，兩者不會再互相搶時間(autoHandleTrainerSwitch
         // 內部原本用來爭取時間的等待邏輯，見它自己的說明，現在只當作最後一道防呆)
         await renderRoomView({ id: snap.id, ...roomData });
-        if (roomData.isGymBattle) {
+        if (roomData.isGymBattle || roomData.isLegendaryChallenge) {
             await autoHandleTrainerSwitch(db.collection('pokemonBattleRooms').doc(roomId), roomData);
         }
     });
@@ -5267,6 +6062,10 @@ function leaveRoomView() {
     document.getElementById('battle-lobby-view').classList.remove('hidden');
     document.getElementById('battle-room-view').classList.add('hidden');
     BGM.play('menu'); // 離開對戰房間，配樂切回大廳版本
+    // 【第五十八輪新增】回到房間大廳畫面，如果玩家目前還停留在「對戰」分頁上，重新訂閱
+    // listenOpenRooms()讓房間列表恢復即時更新(離開分頁的話switchTab本身就不會訂閱，不用在這裡處理)
+    const battleTabEl = document.getElementById('tab-battle');
+    if (battleTabEl && !battleTabEl.classList.contains('hidden')) listenOpenRooms();
 }
 // 對戰中如果我方寶可夢的持有道具/莓果被動觸發消耗掉了(見resolveBattleRound裡對heldItem的各種
 // 消耗邏輯)，battleState.teams/bench裡那份「這場對戰用的暫時副本」的heldItem會變成null，但這
@@ -5517,6 +6316,13 @@ async function renderRoomView(room) {
             rewardClaimAttempted[room.id + ':gym'] = true;
             rewardSettled.push(claimGymReward(room.id, room.gymId));
         }
+        // 【第五十七輪新增】挑戰傳說訓練家：跟上面兩個(coin/gym)不一樣，這裡不管won是true還是
+        // false都要呼叫——輸了也要扣親密度、記錄戰績，贏了才會多附上掉落物，這些分支都在
+        // claimLegendaryChallengeResult內部處理(直接對應worker.js的settlePendingLegendaryChallenge)
+        if (room.isLegendaryChallenge && !rewardClaimAttempted[room.id + ':legendary']) {
+            rewardClaimAttempted[room.id + ':legendary'] = true;
+            rewardSettled.push(claimLegendaryChallengeResult(room.id));
+        }
         // 留一點時間讓玩家看得到戰績/獎勵訊息，才自動回大廳，不用玩家自己按按鈕——等上面收集到的
         // 獎勵API都settle了才開始倒數；額外包一層8秒上限(withTimeout)防止萬一API真的卡住不回應時，
         // 玩家被永遠卡在戰鬥結束畫面回不了大廳
@@ -5702,9 +6508,9 @@ async function renderBattleStage(container, ctx) {
                 const zInfo = (!disabled && !zAlreadyUsed && !dynamaxAlreadyUsed) ? findZMoveInfoFor(myTeam, m) : null;
                 return `<button ${disabled ? 'disabled' : ''} onclick="submitMove('${m.name}', {mega: battlePendingMega, dynamax: battlePendingDynamax})" class="relative rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden ${disabled ? 'opacity-40' : ''}" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
                     <span class="flex items-center gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 shrink-0" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span class="text-white text-sm font-black truncate">${m.nameZh}</span>${DAMAGE_CLASS_BADGE_PILL[m.damageClass] || ''}</span>
-                    <span class="block text-[0.6rem] text-white/85 mt-0.5 truncate">${blockReason || m.descZh || ' '}</span>
+                    <span class="block text-[0.6rem] text-white/85 mt-0.5 whitespace-normal break-words leading-snug">${blockReason || m.descZh || ' '}</span>
                     <span class="block text-[0.6rem] text-white/70 mt-0.5">PP ${pp}/${m.pp || '?'}</span>
-                    ${zInfo ? `<span onclick="event.stopPropagation(); submitMove('${m.name}', {mega: battlePendingMega, zMove: true})" class="absolute top-1 right-1 bg-white/90 text-purple-700 text-[9px] font-black px-1.5 py-0.5 rounded-full shadow" title="Ｚ招式：${zInfo.zMoveNameZh}">Ｚ</span>` : ''}
+                    ${zInfo ? `<span onclick="event.stopPropagation(); submitMove('${m.name}', {mega: battlePendingMega, zMove: true})" class="absolute top-1 right-1 bg-white/90 text-purple-700 text-[9px] font-black px-1.5 py-0.5 rounded-full shadow whitespace-nowrap" title="Ｚ招式：${zInfo.zMoveNameZh}">Ｚ招式</span>` : ''}
                 </button>`;
             }).join('')}</div>`;
             allowSwitchTap = myBench.length > 0; // 這個分支才是「正常選招式」狀態，才能點寶可夢圖片開替換選單
@@ -5732,7 +6538,8 @@ async function renderBattleStage(container, ctx) {
             <div id="z-nameplate-layer" class="z-nameplate-layer"></div>
             <img id="z-badge-opp" class="z-badge" src="https://res.cloudinary.com/bumzwp9g/image/upload/v1788610351/Zmove_mbcynx.png">
             <img id="z-badge-me" class="z-badge" src="https://res.cloudinary.com/bumzwp9g/image/upload/v1788610351/Zmove_mbcynx.png">
-            <div class="absolute top-3 right-3 text-right" style="max-width:52%">
+            <div class="absolute top-3 right-3 text-right" style="max-width:60%">
+                ${room.isLegendaryChallenge ? `<p class="text-[10px] text-purple-600 font-bold truncate">${room.trainerName || '傳說訓練家'}${room.trainerRegionZh ? ` · ${room.trainerRegionZh}` : ''}</p>` : ''}
                 <div class="mb-1">
                     <span class="text-sm font-bold">${oppTeam.nickname}${oppTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(oppTeam)}${oppHazardsScreensBadge}
                     ${battlerAbilityBadgeHtml(oppTeam.ability)}
@@ -5741,12 +6548,13 @@ async function renderBattleStage(container, ctx) {
                 <div class="w-28 ml-auto bg-gray-200 rounded-full h-2.5 mb-2 overflow-hidden">
                     <div id="hpbar-opp" class="hp-bar-fill h-2.5 rounded-full ${hpColor(oppHpPct)}" style="width:${oppHpPct}%"></div>
                 </div>
-                <div class="relative flex justify-end" style="min-height:132px">
+                <div class="relative flex justify-end items-end gap-1" style="min-height:132px">
                     <div id="fx-opp" class="fx-burst"></div>
                     <div id="popupwrap-opp" class="absolute inset-x-0 top-0 flex justify-end z-10"></div>
+                    ${room.isLegendaryChallenge && room.trainerImg ? `<img src="${room.trainerImg}" class="h-28 object-contain shrink-0" onerror="this.style.display='none'">` : ''}
                     <div class="relative w-24 h-32">
                         <img id="pokeball-opp" src="${itemSpriteUrl('poke-ball')}" class="pokeball-icon">
-                        <img id="sprite-opp" src="${oppDisplay.spriteAnimated || oppDisplay.sprite}" class="w-24 h-32 battle-sprite ${oppFainted ? 'sprite-fainted' : ''} ${oppTeam.isDynamaxed ? 'dynamax-scale' : ''}" style="image-rendering:pixelated;object-fit:contain;${battlerMirrorFlipStyle(oppTeam.speciesId, oppTeam.isDynamaxed)}">
+                        <img id="sprite-opp" src="${oppDisplay.spriteAnimated || oppDisplay.spritePixelFront || oppDisplay.sprite}" class="w-24 h-32 battle-sprite ${oppFainted ? 'sprite-fainted' : ''} ${oppTeam.isDynamaxed ? 'dynamax-scale' : ''}" style="image-rendering:pixelated;object-fit:contain;${battlerMirrorFlipStyle(oppTeam.speciesId, oppTeam.isDynamaxed)}">
                         ${dynamaxRingHtml(oppTeam.speciesId, oppTeam.isDynamaxed)}
                     </div>
                 </div>
@@ -5757,7 +6565,7 @@ async function renderBattleStage(container, ctx) {
                     <div id="popupwrap-me" class="absolute inset-x-0 top-0 flex justify-start z-10"></div>
                     <div class="relative w-28 h-36 ${allowSwitchTap ? 'cursor-pointer' : ''}" ${allowSwitchTap ? `onclick="toggleSwitchPicker(true)" title="點擊替換寶可夢"` : ''}>
                         <img id="pokeball-me" src="${itemSpriteUrl('poke-ball')}" class="pokeball-icon">
-                        <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-36 battle-sprite ${myFainted ? 'sprite-fainted' : ''} ${myTeam.isDynamaxed ? 'dynamax-scale' : ''}" style="image-rendering:pixelated;object-fit:contain;${battlerMirrorFlipStyle(myTeam.speciesId, myTeam.isDynamaxed)}">
+                        <img id="sprite-me" src="${myDisplay.spriteBackAnimated || myDisplay.spritePixelBack || myDisplay.spriteBack || myDisplay.sprite}" class="w-28 h-36 battle-sprite ${myFainted ? 'sprite-fainted' : ''} ${myTeam.isDynamaxed ? 'dynamax-scale' : ''}" style="image-rendering:pixelated;object-fit:contain;${battlerMirrorFlipStyle(myTeam.speciesId, myTeam.isDynamaxed)}">
                         ${dynamaxRingHtml(myTeam.speciesId, myTeam.isDynamaxed)}
                         ${allowSwitchTap ? `<img src="${itemSpriteUrl('luxury-ball')}" class="absolute -bottom-1 -right-1 w-5 h-5 pointer-events-none drop-shadow" style="image-rendering:pixelated">` : ''}
                     </div>
@@ -5779,10 +6587,12 @@ async function renderBattleStage(container, ctx) {
                 ${finished && finished.coinsEarned != null ? `<p class="font-bold text-yellow-600">勝利獎勵：代幣+${finished.coinsEarned}、EXP+${finished.expEarned}</p>` : ''}
                 ${finished && finished.newLevel ? `<p class="font-bold text-blue-600">升級了！Lv.${finished.newLevel}</p>` : ''}
                 ${finished && finished.gymRewardText ? `<p class="font-bold text-yellow-600">${finished.gymRewardText}</p>` : ''}
+                ${finished && finished.legendaryRewardText ? `<p class="font-bold ${finished.won ? 'text-yellow-600' : 'text-red-500'}">${finished.legendaryRewardText}</p>` : ''}
             </div>
             <div class="sm:w-3/5">${movesHtml}</div>
         </div>
-        ${finished ? '' : `<div class="text-center mt-3"><button onclick="forfeitRoom('${room.id}')" class="text-xs text-gray-400 underline px-3 py-1">投降離開</button></div>`}
+        ${finished || room.isLegendaryChallenge ? '' : `<div class="text-center mt-3"><button onclick="forfeitRoom('${room.id}')" class="text-xs text-gray-400 underline px-3 py-1">投降離開</button></div>`}
+        ${!finished && room.isLegendaryChallenge ? `<p class="text-center text-[10px] text-gray-400 mt-3">傳說訓練家的挑戰不能投降，只能戰到底(中途離開頁面一樣會扣全隊親密度，不會計入戰績)</p>` : ''}
     `;
     // finished狀態的log box內容比平常多幾行(戰績+獎勵)，手機版max-h-24很容易被撐到要捲動——
     // 每次重繪完自動捲到最底部，確保「你贏了/獎勵」這幾行一定看得到，不用玩家自己往下滑
@@ -6819,28 +7629,41 @@ async function playBattleEvents(events, ctx) {
                 if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
             }
         } else {
-            if (ev.zPierceProtect) {
-                // 【第五十輪新增】Ｚ招式突破守住：明確告訴玩家「防禦方雖然守住了，但還是被打穿1/4傷害」，
-                // 跟一般被守住完全擋下(ev.protectedBlock，上面另一個分支)的文字分開，避免玩家誤以為
-                // 沒有效果
-                appendLog(`${ev.defenderName} 想要防住攻擊，但是Ｚ招式的力量太強了，還是受到了 ${ev.damage} 點傷害！${ev.crit ? '(會心一擊！)' : ''}`);
-            } else if (ev.maxPierceProtect) {
-                // 【第五十一輪新增】極巨招式突破守住：跟上面的Ｚ招式突破守住是同樣的文字提示邏輯
-                appendLog(`${ev.defenderName} 想要防住攻擊，但是極巨招式的力量太強了，還是受到了 ${ev.damage} 點傷害！${ev.crit ? '(會心一擊！)' : ''}`);
-            } else if (ev.damage > 0) {
-                appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，${ev.hitCount > 1 ? `打中了 ${ev.hitCount} 次，總共` : ''}造成 ${ev.damage} 點傷害${ev.effectiveness > 1 ? '，效果絕佳！' : ev.effectiveness < 1 ? '，效果不理想...' : ''}${ev.crit ? '，會心一擊！' : ''}`);
-            } else if (ev.effectiveness === 0) {
-                appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，但是沒有效果...`);
-            } else {
-                appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}！`);
-            }
+            // 【第五十八輪修正】使用者回報「Z招式按鈕點下去後，招式動畫還沒打出來，戰報的傷害
+            // 數字就先跳出來了」——原因是這段含傷害數字的戰報文字，原本寫在zPlayZMoveSequence()
+            // 這一大段演出(Z字覆蓋圖→字樣圖片→特效+音效，通常要播好幾秒)播放「之前」，一般招式
+            // 也是先報數字才做動畫，只是一般招式的衝刺動畫只有500ms，落差不明顯，Z招式的完整
+            // 演出時間長很多，這個順序差就會變得很刺眼。這裡把「含傷害數字」的戰報文字抽成一個
+            // 小函式，讓Z招式改成先播完整段演出、才補上真正的傷害戰報行；一般(非Z)招式維持原本
+            // 「先報數字才做衝刺動畫」的節奏不變，不受這次調整影響
+            const logMainMoveMessage = () => {
+                if (ev.zPierceProtect) {
+                    // 【第五十輪新增】Ｚ招式突破守住：明確告訴玩家「防禦方雖然守住了，但還是被打穿1/4傷害」，
+                    // 跟一般被守住完全擋下(ev.protectedBlock，上面另一個分支)的文字分開，避免玩家誤以為
+                    // 沒有效果
+                    appendLog(`${ev.defenderName} 想要防住攻擊，但是Ｚ招式的力量太強了，還是受到了 ${ev.damage} 點傷害！${ev.crit ? '(會心一擊！)' : ''}`);
+                } else if (ev.maxPierceProtect) {
+                    // 【第五十一輪新增】極巨招式突破守住：跟上面的Ｚ招式突破守住是同樣的文字提示邏輯
+                    appendLog(`${ev.defenderName} 想要防住攻擊，但是極巨招式的力量太強了，還是受到了 ${ev.damage} 點傷害！${ev.crit ? '(會心一擊！)' : ''}`);
+                } else if (ev.damage > 0) {
+                    appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，${ev.hitCount > 1 ? `打中了 ${ev.hitCount} 次，總共` : ''}造成 ${ev.damage} 點傷害${ev.effectiveness > 1 ? '，效果絕佳！' : ev.effectiveness < 1 ? '，效果不理想...' : ''}${ev.crit ? '，會心一擊！' : ''}`);
+                } else if (ev.effectiveness === 0) {
+                    appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}，但是沒有效果...`);
+                } else {
+                    appendLog(`${ev.attackerName} 使出 ${ev.moveNameZh}！`);
+                }
+            };
             if (ev.isZMove) {
-                // 【第四十八輪新增】Z招式：改播完整的Z字覆蓋圖→字樣圖片→特效+音效演出，取代原本
-                // 平淡的「攻擊方衝刺」——播完之後，下面判定傷害的hit-flash/傷害數字/HP條動畫完全
-                // 不變，跟一般招式共用同一套邏輯，不用另外重複寫一份
+                // 【第四十八輪新增，第五十八輪調整順序】Z招式：改播完整的Z字覆蓋圖→字樣圖片→
+                // 特效+音效演出，取代原本平淡的「攻擊方衝刺」——先用一句不含傷害數字的公告(不會
+                // 提前爆出傷害多少)，演出播完後才補上真正的戰報行，下面判定傷害的hit-flash/
+                // 傷害數字/HP條動畫完全不變，跟一般招式共用同一套邏輯，不用另外重複寫一份
+                appendLog(`${ev.attackerName} 使出了Ｚ招式「${ev.moveNameZh}」！`);
                 await zPlayZMoveSequence(ev.moveNameZh, isMeAttacking, atkEl, defEl);
                 if (isStale()) return; // 這段await等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
+                logMainMoveMessage();
             } else {
+                logMainMoveMessage();
                 // 攻擊方衝刺(往對手方向撲過去)
                 atkEl.classList.remove('lunge-right', 'lunge-left');
                 void atkEl.offsetWidth; // 強制reflow，讓同一個class能重新觸發animation
@@ -6974,8 +7797,11 @@ async function playBattleEvents(events, ctx) {
 // 不傳這個參數，維持吃inst.level(寶可夢真實養成等級)
 function buildTeamDataFromInstData(instanceId, inst, nickname, forceLevel) {
     // 星級加成也要套進戰鬥用的數值(不是只有展示用的maxHpOf/atkOf/defOf/spdOf那幾個函式)，
-    // 不然玩家看到的卡片數值跟真正上場戰鬥用的數值會對不上
-    const mult = starMultiplier(inst.stars);
+    // 不然玩家看到的卡片數值跟真正上場戰鬥用的數值會對不上。
+    // 【第五十七輪新增】親密度25以下(含)戰鬥數值打對折，也是同一套「乘在算出來的數值上」的
+    // 邏輯，直接併進同一個mult，下面完全不用另外改——這個函式只給玩家自己的寶可夢(inst一定
+    // 有friendship欄位)用，野生/訓練家NPC走的是另一條建置函式，不會誤套用到沒有親密度概念的NPC身上
+    const mult = starMultiplier(inst.stars) * friendshipStatMultiplier(inst);
     const battleLevel = forceLevel || inst.level;
     const maxHp = Math.floor(statAtLevel(inst.baseHp, battleLevel, true) * mult);
     return {
@@ -7148,6 +7974,12 @@ const AQUA_RING_MOVES = new Set(['aqua-ring']);
 const PAIN_SPLIT_MOVES = new Set(['pain-split']);
 const CURSE_MOVES = new Set(['curse']);
 const DESTINY_BOND_MOVES = new Set(['destiny-bond']);
+// 【第五十八輪新增】睡覺(rest)：PokéAPI的meta對這招完全沒有可用資料(ailment是'none'、
+// healing是0、category是'unique')，跟詛咒/鼓腹擂鼓一樣屬於「正統效果PokéAPI沒有結構化資料，
+// 只能手動實作」的招式——這正是使用者回報「睡覺沒有效果」的根本原因：以前完全沒有對應的
+// 手動實作，這招套用到通用的「治癒封印」/「主要異常狀態」/「直接回血」邏輯時，因為讀到的
+// 全部都是0/none，自然什麼事都不會發生
+const REST_MOVES = new Set(['rest']);
 // 充電(charge)：自己特防+1的部分PokéAPI有給stat_changes，走既有的通用能力等級變化邏輯就會生效，
 // 不用另外處理；但「下一次使用電屬性招式威力加倍」這個效果PokéAPI完全沒有對應欄位可以查
 // (meta裡沒有任何欄位能表示「下一回合條件式加成」)，是玩家回報「技能充電下一回合沒有提升電
@@ -7193,6 +8025,8 @@ function isMagicCoatBounceable(move) {
 async function applyHazardsOnSwitchIn(incoming, hazardsSide) {
     const logs = [];
     if (!incoming || incoming.currentHp <= 0 || !hazardsSide) return { pokemon: incoming, logs };
+    // 【第五十八輪新增】厚底靴(heavy-duty-boots)：上場時完全免疫所有入場障礙(隱形岩/撒菱/毒菱/黏黏網)
+    if (incoming.heldItem === 'heavy-duty-boots') return { pokemon: incoming, logs };
     let mon = { ...incoming };
     const display = await fetchSpeciesDisplay(mon.speciesId, mon.isShiny);
     const types = (display && display.types) || [];
@@ -7754,6 +8588,7 @@ function resetVolatileForBench(battler) {
     outgoing.protectStreak = 0; outgoing.protectedThisTurn = false; outgoing.protectedWithMaxGuard = false; outgoing.mustSwitch = false;
     outgoing.rooted = false; outgoing.seeded = false; outgoing.seederKey = null; outgoing.substituteHp = 0;
     outgoing.lastMoveUsed = null;
+    outgoing.metronomeStreak = 0; // 【第五十八輪新增】換下場後節拍器的連續次數重置，跟lastMoveUsed道理一樣
     outgoing.tauntTurns = 0; outgoing.tormented = false;
     outgoing.disabledMove = null; outgoing.disableTurns = 0;
     outgoing.encoreMove = null; outgoing.encoreTurns = 0;
@@ -8148,9 +8983,11 @@ async function submitSwitch(instanceId) {
                 const pending = { ...(data.pendingMoves || {}) };
                 if (pending[myUid]) throw new Error('這回合已經送出過指令了');
                 const wildTeamNow = data.battleState.teams.wild || { moves: ['tackle'] };
-                const aiMoveName = decideTrainerMoveName(wildTeamNow, data.battleState.round || 1);
+                // 【第五十七輪新增】傳說訓練家挑戰才會帶上mega/zMove/dynamax旗標，一般野生/道館戰
+                // (legendaryGimmickKind是undefined)完全走原本decideTrainerMoveName那條路，行為不變
+                const benchWildNow = (data.battleState.bench && data.battleState.bench.wild) || [];
                 pending[myUid] = { type: 'switch', instanceId };
-                pending.wild = { type: 'move', move: aiMoveName };
+                pending.wild = decideTrainerFullAction(wildTeamNow, benchWildNow, data.battleState, data.battleState.round || 1, data.isLegendaryChallenge ? data.legendaryGimmickKind : null);
                 tx.update(roomRef, { pendingMoves: pending });
                 roomDataAfter = { ...data, pendingMoves: pending };
             });
@@ -8284,8 +9121,10 @@ async function submitWildMove(moveName, opts) {
             const data = snap.data();
             if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
             const wildTeamNow = data.battleState.teams.wild || { moves: ['tackle'] };
-            const aiMoveName = decideTrainerMoveName(wildTeamNow, data.battleState.round || 1);
-            const pending = { [myUid]: { type: 'move', move: moveName, mega, zMove, dynamax }, wild: { type: 'move', move: aiMoveName } };
+            // 【第五十七輪新增】道理跟submitSwitch的wild分支一樣，見那邊的說明
+            const benchWildNow = (data.battleState.bench && data.battleState.bench.wild) || [];
+            const wildAction = decideTrainerFullAction(wildTeamNow, benchWildNow, data.battleState, data.battleState.round || 1, data.isLegendaryChallenge ? data.legendaryGimmickKind : null);
+            const pending = { [myUid]: { type: 'move', move: moveName, mega, zMove, dynamax }, wild: wildAction };
             tx.update(roomRef, { pendingMoves: pending });
             roomDataAfter = { ...data, pendingMoves: pending };
         });
@@ -8598,6 +9437,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (terrainState.type === type) return;
             terrainState = { type, turnsLeft: 999 };
             log.push(`${nameOf[uid]} 的特性把場地變成了${label}！`);
+            triggerTerrainSeeds(type, [uid, opponentUid]); // 【第五十八輪新增】特性開場地時場地種子也要能觸發
         };
         if (ability === 'drought' || ability === 'orichalcum-pulse') setWeather('sun', '晴朗');
         else if (ability === 'drizzle') setWeather('rain', '下雨');
@@ -8659,6 +9499,14 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             log.push(`${nameOf[targetUid]} 的看門犬發動了，攻擊反而提高了！`);
             return;
         }
+        // 【第五十八輪新增】清淨墜飾(clear-amulet)：跟恆淨之軀等特性一樣完全免疫「對手造成」的
+        // 能力下降，但這是道具不是特性——破格系特性(attackerBypassesAbilities)只影響特性造成的
+        // 免疫會不會被無視，不影響道具，所以這裡不套用那個判斷，一律生效；也不像鏡甲會反彈回去
+        if (target.heldItem === 'clear-amulet') {
+            if (sourceLogMsg) log.push(sourceLogMsg);
+            log.push(`${nameOf[targetUid]} 的清淨墜飾發動了，能力沒有下降！`);
+            return;
+        }
         const fullBlockAbilities = ['clear-body', 'white-smoke', 'full-metal-body'];
         const singleStatBlock = { 'hyper-cutter': 'atk', 'big-pecks': 'def', 'keen-eye': 'acc' };
         const blocked = !attackerBypassesAbilities(state[sourceUid]) && (fullBlockAbilities.includes(ability) || singleStatBlock[ability] === statKey);
@@ -8685,6 +9533,28 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 log.push(`${nameOf[targetUid]} 的好勝發動了，特攻大幅提高了！`);
             }
         }
+    }
+    // 【第五十八輪新增】青草/薄霧/電氣/精神種子：場地變成對應種類時，場上持有對應種子的一方
+    // 能力+1(一次性，用掉就消耗掉heldItem)——只在「場地真的變成這個種類」的那一刻觸發，不含
+    // 「場地已經是這個種類、換人上場才補觸發」那條官方規則(這個簡化版引擎的換人流程不會呼叫這裡，
+    // 影響範圍很小，先不處理)。uids傳「目前在場上的雙方」，兩邊都各自檢查一次
+    const TERRAIN_SEED_ITEM = {
+        grassy: { key: 'grassy-seed', statKey: 'def' },
+        misty: { key: 'misty-seed', statKey: 'spDef' },
+        electric: { key: 'electric-seed', statKey: 'def' },
+        psychic: { key: 'psychic-seed', statKey: 'spDef' },
+    };
+    function triggerTerrainSeeds(terrainType, uids) {
+        const info = TERRAIN_SEED_ITEM[terrainType];
+        if (!info) return;
+        uids.forEach(uid => {
+            const t = state[uid];
+            if (!t || t.currentHp <= 0 || t.heldItem !== info.key) return;
+            const before = t.stages[info.statKey] || 0;
+            t.stages[info.statKey] = Math.min(6, before + 1);
+            t.heldItem = null;
+            if (t.stages[info.statKey] !== before) log.push(`${nameOf[uid]} 的${info.key === 'grassy-seed' ? '青草種子' : info.key === 'misty-seed' ? '薄霧種子' : info.key === 'electric-seed' ? '電氣種子' : '精神種子'}發動了，${STAGE_KEY_ZH[info.statKey]}提高了！`);
+        });
     }
     // ---- 特性造成的主要異常狀態免疫：柔軟(麻痺)、不眠/精神力(睡眠，甜甜香氣簡化成單體版本也算)、
     // 免疫(中毒)、水幕/水泡(灼傷)、熔岩鎧甲/水泡(冰凍)、純淨之鹽(全部免疫)、達爾文(晴天下才生效)——
@@ -8726,7 +9596,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (defSubActiveBeforeHit) return; // 替身還在的話，簡化成這批接觸/受傷類特性一律不觸發
         const isContact = moveMakesContact(move, atkT);
         // 攻擊方特性：中毒觸點(接觸30%機率讓對手中毒)、劇毒鎖鏈(不需要接觸，任何命中都有30%機率
-        // 讓對手陷入劇毒)
+        // 讓對手陷入劇毒)——這兩個是「攻擊方自己接觸對手」觸發攻擊方自己的特性，部位護具不影響
+        // (部位護具保護的是「攻擊方被對方反擊」，不是攻擊方自己的主動效果)
         if (!defT.status) {
             if (isContact && atkT.ability === 'poison-touch' && rollChance(30)) {
                 defT.status = 'poison'; defT.toxicCounter = 0;
@@ -8736,7 +9607,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 log.push(`${nameOf[attackerUid]} 的特性讓 ${nameOf[defenderUid]} 陷入了劇毒！`);
             }
         }
-        if (isContact) {
+        // 【第五十八輪新增】部位護具(protective-pads)：攻擊方持有時，免疫下面這批「防禦方因為
+        // 被接觸而反擊攻擊方」的特性(粗糙皮膚/鐵蒺藜反傷、靜電/毒刺/引火焰/孢子異常狀態)——
+        // 只影響這個方向，不影響上面攻擊方自己的中毒觸點/劇毒鎖鏈
+        if (isContact && atkT.heldItem !== 'protective-pads') {
             // 防禦方特性：粗糙皮膚/鐵蒺藜(接觸反傷1/8，魔法防守可以讓攻擊方免疫)
             if ((defT.ability === 'rough-skin' || defT.ability === 'iron-barbs') && atkT.currentHp > 0 && atkT.ability !== 'magic-guard') {
                 const dmg = Math.max(1, Math.floor(atkT.maxHp / 8));
@@ -9080,10 +9954,25 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (mult === 0 && state[opponentUid].identified && bypassIdentifyImmunity(moveOf[uid].type, displayOf[opponentUid].types)) {
             mult = 1;
         }
+        // 【第五十八輪新增】氣球(air-balloon)：防禦方持有時完全免疫地面系招式(視為漂浮於空中)，
+        // 無視原本的屬性相剋倍率；氣球本身在下方「受到攻擊即破裂」的區塊處理消耗
+        if (moveOf[uid].type === 'ground' && state[opponentUid].heldItem === 'air-balloon') {
+            mult = 0;
+        }
         // ---- 校正者(scrappy)：讓一般/格鬥系招式可以打中飄浮的幽靈系(無視幽靈的屬性免疫)；
         // 破格系特性(mold-breaker/turboblaze/teravolt)不影響「屬性天生免疫」，只影響下面的
         // 特性造成的免疫，所以校正者這條規則跟破格無關，獨立處理 ----
         if (mult === 0 && state[uid].ability === 'scrappy' && ['normal', 'fighting'].includes(moveOf[uid].type) && displayOf[opponentUid].types.includes('ghost')) {
+            mult = 1;
+        }
+        // 【第五十八輪新增】標靶(ring-target)：防禦方持有時，解除「屬性天生相剋」造成的完全無效
+        // (只解除屬性表格的免疫，不影響特性造成的免疫，那些在下面各自判斷)
+        if (mult === 0 && state[opponentUid].heldItem === 'ring-target') {
+            mult = 1;
+        }
+        // 【第五十八輪新增】黑色鐵球(iron-ball)：讓飛行屬性也會被地面系招式打中(視為強制接地)——
+        // 這個簡化版引擎沒有實作飄浮特性，所以這裡只處理「飛行屬性天生免疫地面系」這一條規則
+        if (mult === 0 && moveOf[uid].type === 'ground' && state[opponentUid].heldItem === 'iron-ball' && displayOf[opponentUid].types.includes('flying')) {
             mult = 1;
         }
         const defAbility = state[opponentUid] && state[opponentUid].ability;
@@ -9126,6 +10015,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     const effectiveSpeed = uid => {
         const t = state[uid];
         let base = t.spd * statStageMult(t.stages.spd);
+        // 【第五十八輪新增】講究圍巾：速度+50%；黑色鐵球：速度減半
+        if (t.heldItem === 'choice-scarf') base *= 1.5;
+        else if (t.heldItem === 'iron-ball') base *= 0.5;
         // 【第三十二輪新增】天氣系加速特性：對應天氣時速度直接翻倍，彼此互斥(一隻寶可夢不會同時
         // 有兩個天氣加速特性)，用if/else if串接就好
         if (t.ability === 'swift-swim' && weatherState.type === 'rain') base *= 2;
@@ -9158,8 +10050,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 // 【第三十五輪新增】慢出(stall)：特性版的後攻尾巴，效果完全一樣(同優先度必定最後
                 // 出招)，直接併進同一組判斷——如果兩邊剛好都是慢出/都拿著後攻尾巴，等於互相抵銷，
                 // 照樣往下看速度比較，這也是官方規則遇到「雙方都最後」時的處理方式
-                const laggingA = state[uidA].heldItem === 'lagging-tail' || state[uidA].ability === 'stall';
-                const laggingB = state[uidB].heldItem === 'lagging-tail' || state[uidB].ability === 'stall';
+                // 【第五十八輪新增】飽腹薰香(full-incense)：效果跟後攻尾巴完全相同，一起判斷
+                const laggingA = state[uidA].heldItem === 'lagging-tail' || state[uidA].heldItem === 'full-incense' || state[uidA].ability === 'stall';
+                const laggingB = state[uidB].heldItem === 'lagging-tail' || state[uidB].heldItem === 'full-incense' || state[uidB].ability === 'stall';
                 if (laggingA && !laggingB) {
                     order = [uidB, uidA];
                 } else if (laggingB && !laggingA) {
@@ -9367,7 +10260,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         const isHardcodedSpecialMove = !!(HAZARD_MOVE_INFO[move.name] || SCREEN_MOVE_INFO[move.name] || CURSE_MOVES.has(move.name) ||
             BELLY_DRUM_MOVES.has(move.name) || PAIN_SPLIT_MOVES.has(move.name) || DESTINY_BOND_MOVES.has(move.name) ||
             MEMENTO_MOVES.has(move.name) || HAZE_MOVES.has(move.name) || SPITE_MOVES.has(move.name) ||
-            AQUA_RING_MOVES.has(move.name));
+            AQUA_RING_MOVES.has(move.name) || REST_MOVES.has(move.name));
         const ev = {
             attackerKey: attackerUid, defenderKey: defenderUid,
             attackerName: atkName, defenderName: defName,
@@ -9530,7 +10423,23 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 log.push(`${atkName} 的蘋野果發動了，${move.nameZh}的PP恢復了！`);
             }
         }
+        // 【第五十八輪新增】節拍器(metronome)：要在蓋掉lastMoveUsed之前，先比對「這次的招式」
+        // 跟「上一次真正嘗試出招」是不是同一招，算出這次生效的連續次數(最高封頂4，也就是威力
+        // +80%再加上這次是第5次的+100%——跟rollout系列的封頂寫法一致)，存進metronomeStreak讓
+        // 傷害公式那邊直接讀；晚一步等lastMoveUsed被蓋掉才判斷就沒辦法分辨「上一招」是什麼了
+        if (atk.heldItem === 'metronome') {
+            atk.metronomeStreak = (atk.lastMoveUsed === move.name) ? Math.min(4, (atk.metronomeStreak || 0) + 1) : 0;
+        }
         atk.lastMoveUsed = move.name; // 折磨/定身法/再來一次都要知道「上一個真正嘗試出招」是什麼
+        // 【第五十八輪新增】爽喉噴霧(throat-spray)：使用音波系招式後(不管有沒有命中/有沒有效果，
+        // 跟官方規則一樣是「使出」的瞬間就觸發)，特攻+1，一次性消耗掉道具
+        if (atk.heldItem === 'throat-spray' && SOUND_MOVES.has(move.name)) {
+            const before = atk.stages.spAtk || 0;
+            atk.stages.spAtk = Math.min(6, before + 1);
+            atk.heldItem = null;
+            if (atk.ability === 'unburden') atk.unburdenActive = true;
+            if (atk.stages.spAtk !== before) log.push(`${atkName} 的爽喉噴霧發動了，特攻提高了！`);
+        }
 
         // ---- 【第三十輪新增】Ｚ招式的兩個特例：效果跟原招式完全不同，不走一般的傷害流程(也不會
         // 被魔法反射彈回去——正統規則裡魔法反射本來就沒辦法反射Ｚ招式) ----
@@ -9669,7 +10578,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             // 讓對手的命中率降10%，算在「防禦方持有」)。三個可以疊加，全部用乘的
             if (atk.heldItem === 'wide-lens') chance *= 1.1;
             if (atk.heldItem === 'zoom-lens' && order.indexOf(attackerUid) > order.indexOf(defenderUid)) chance *= 1.2;
-            if (def.heldItem === 'bright-powder') chance *= 0.9;
+            // 【第五十八輪新增】悠閒薰香(lax-incense)：效果跟光粉完全相同，一起判斷
+            if (def.heldItem === 'bright-powder' || def.heldItem === 'lax-incense') chance *= 0.9;
             // 特性對命中率的影響：複眼(+30%)、勝利之星(+10%)、蠻力(物理招式-20%，配合威力
             // 加成一起是官方正統的「加威力但降命中」設計)；防禦方沙隱(沙暴中-20%)/雪隱(冰雹中
             // -20%)/亂亂步伐(混亂狀態下閃避加倍，這裡直接換算成對方命中-50%)
@@ -9700,7 +10610,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 複製對方的資料，不管對方是什麼屬性都一定會生效(除非被守住/替身擋下來，那是後面
         // protectedThisTurn/substituteHp各自的判斷，跟這裡的屬性免疫是兩回事)，這正是玩家
         // 回報「變身怎樣都說沒有效果」的成因 ----
-        const powderBlocked = POWDER_MOVES.has(move.name) && (displayOf[defenderUid].types.includes('grass') || def.ability === 'overcoat');
+        // 【第五十八輪新增】防塵護目鏡(safety-goggles)：免疫粉末類招式，跟草屬性/防塵特性一起判斷
+        const powderBlocked = POWDER_MOVES.has(move.name) && (displayOf[defenderUid].types.includes('grass') || def.ability === 'overcoat' || def.heldItem === 'safety-goggles');
         // 入場障礙/光牆系：正統規則裡這批招式是打在「己方/對方那一整側的場地」上，不是打在某一隻
         // 寶可夢身上，不該被「這隻寶可夢的屬性剛好對這個招式屬性免疫」擋下來——例如毒菱(毒屬性)
         // 對上鋼屬性的對手、撒菱(地面屬性)對上飛行屬性的對手，招式本身的屬性只是資料庫裡的分類
@@ -9847,7 +10758,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             let ruinAtkMultZ = 1;
             if (!isSpecialZ && def.ability === 'tablets-of-ruin') ruinAtkMultZ = 0.75;
             else if (isSpecialZ && def.ability === 'vessel-of-ruin') ruinAtkMultZ = 0.75;
-            const atkStatZ = (isSpecialZ ? atk.spAtk : atk.atk) * atkStageMultZ * abilityAtkMultZ * ruinAtkMultZ;
+            const choiceAtkMultZ = ((atk.heldItem === 'choice-band' && !isSpecialZ) || (atk.heldItem === 'choice-specs' && isSpecialZ)) ? 1.5 : 1;
+            const atkStatZ = (isSpecialZ ? atk.spAtk : atk.atk) * atkStageMultZ * abilityAtkMultZ * ruinAtkMultZ * choiceAtkMultZ;
             const defStageMultZ = atk.ability === 'unaware' ? 1 : statStageMult(isSpecialZ ? def.stages.spDef : def.stages.def);
             let abilityDefMultZ = 1;
             if (!isSpecialZ) {
@@ -9878,8 +10790,15 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 }
                 if (def.ability === 'dry-skin' && move.type === 'fire') abilityDmgPostMultZ *= 1.25;
             }
-            const itemDmgMultZ = (atk.heldItem && atk.heldItem === typeBoostKeyZ ? 1.2 : 1) * (atk.heldItem === 'life-orb' ? 1.3 : 1) * abilityDmgPostMultZ;
-            const effectiveCritRateZ = (move.critRate || 0) + (atk.heldItem === 'scope-lens' ? 1 : 0) + (atk.ability === 'super-luck' ? 1 : 0);
+            // 【第五十八輪新增】力量頭帶/博識眼鏡/達人帶/拳擊手套：跟一般傷害公式共用同樣的判斷條件，
+            // Ｚ招式/極巨招式也適用(節拍器連續同招式加成則不適用，這批「一次性大招」不適合套用
+            // 連續使用同招式的邏輯，官方Ｚ招式/極巨招式本身也不會疊節拍器)
+            const muscleWiseMultZ = (atk.heldItem === 'muscle-band' && !isSpecialZ) ? 1.1 : ((atk.heldItem === 'wise-glasses' && isSpecialZ) ? 1.1 : 1);
+            const expertBeltMultZ = (atk.heldItem === 'expert-belt' && eff > 1) ? 1.2 : 1;
+            const punchingGloveMultZ = (atk.heldItem === 'punching-glove' && PUNCH_MOVES.has(move.name)) ? 1.1 : 1;
+            const legendaryOrbMultZ = speciesLockedOrbMult(atk, move.type);
+            const itemDmgMultZ = (atk.heldItem && atk.heldItem === typeBoostKeyZ ? 1.2 : 1) * (atk.heldItem === 'life-orb' ? 1.3 : 1) * abilityDmgPostMultZ * muscleWiseMultZ * expertBeltMultZ * punchingGloveMultZ * legendaryOrbMultZ;
+            const effectiveCritRateZ = (move.critRate || 0) + ((atk.heldItem === 'scope-lens' || atk.heldItem === 'razor-claw') ? 1 : 0) + (atk.ability === 'super-luck' ? 1 : 0);
             const critBlockedByAbilityZ = ['battle-armor', 'shell-armor'].includes(def.ability) && !attackerBypassesAbilities(atk);
             const forcedCritByAbilityZ = atk.ability === 'merciless' && def.status === 'poison';
             const isCritZ = !critBlockedByAbilityZ && (forcedCritByAbilityZ || rollChance(critChance(effectiveCritRateZ) * 100));
@@ -9918,13 +10837,21 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (totalDamage > 0) log.push(`${atkName} 使出 ${move.nameZh}，造成 ${totalDamage} 點傷害！`);
             else log.push(`${atkName} 使出 ${move.nameZh}，但是沒有效果...`);
         } else if (WEATHER_MOVES[move.name]) {
-            weatherState = { type: WEATHER_MOVES[move.name], turnsLeft: 5 };
+            // 【第五十八輪新增】潮濕/熾熱/沙沙/冰冷岩石：自己使出對應天氣時，持續時間從5延長到8回合
+            const weatherRockMap = { rain: 'damp-rock', sun: 'heat-rock', sandstorm: 'smooth-rock', hail: 'icy-rock' };
+            const weatherTurns = (atk.heldItem === weatherRockMap[WEATHER_MOVES[move.name]]) ? 8 : 5;
+            weatherState = { type: WEATHER_MOVES[move.name], turnsLeft: weatherTurns };
             ev.fieldEffect = { kind: 'weather', type: weatherState.type };
             log.push(`${atkName} 使出 ${move.nameZh}，天氣變成了${WEATHER_NAME_ZH[weatherState.type]}！`);
         } else if (TERRAIN_MOVES[move.name]) {
-            terrainState = { type: TERRAIN_MOVES[move.name], turnsLeft: 5 };
+            // 【第五十八輪新增】大地膜：自己開場地時，持續時間從5延長到8回合；青草/薄霧/電氣/精神
+            // 種子：場地真的變成對應種類時，場上雙方(不分是不是自己開的)持有對應種子的就觸發一次性
+            // 能力提升——跟applyOpponentStatDrop一樣是resolveBattleRound裡的巢狀函式，這裡直接呼叫
+            const terrainTurns = (atk.heldItem === 'terrain-extender') ? 8 : 5;
+            terrainState = { type: TERRAIN_MOVES[move.name], turnsLeft: terrainTurns };
             ev.fieldEffect = { kind: 'terrain', type: terrainState.type };
             log.push(`${atkName} 使出 ${move.nameZh}，場地變成了${TERRAIN_NAME_ZH[terrainState.type]}！`);
+            triggerTerrainSeeds(terrainState.type, [attackerUid, defenderUid]);
         } else if (HAZARD_MOVE_INFO[move.name]) {
             // 入場障礙：撒在「對方」那一側(defenderUid)，效果不是現在生效，是對方之後每次換人
             // 上場才結算(applyHazardsOnSwitchIn)
@@ -9951,7 +10878,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             } else if (side[info.key] > 0) {
                 log.push(`但是${atkName}這一側的${move.nameZh}還在生效中！`);
             } else {
-                side[info.key] = info.turns;
+                // 【第五十八輪新增】光之黏土：只延長反射壁/光牆/極光幕(官方效果不含神秘守護/薄霧)
+                const lightClayKeys = ['reflect', 'lightScreen', 'auroraVeil'];
+                side[info.key] = (atk.heldItem === 'light-clay' && lightClayKeys.includes(info.key)) ? 8 : info.turns;
                 log.push(`${atkName} 這一側張開了${move.nameZh}！`);
                 ev.fieldEffect = { kind: 'screen', type: info.key, side: attackerUid };
             }
@@ -10029,6 +10958,32 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 atk.aquaRing = true;
                 log.push(`${atkName} 被水流環包住了！`);
             }
+        } else if (REST_MOVES.has(move.name)) {
+            // 睡覺：治癒封印期間沒辦法安心入睡(跟其他回血效果一樣被擋)；HP已經全滿的話正統
+            // 規則會直接失敗(沒有東西可以恢復)；其餘情況一律回滿HP、治癒原本任何一種主要異常
+            // 狀態(不含混亂，正統規則裡混亂不算異常狀態)，再讓自己進入固定2回合的睡眠——
+            // 這個2回合是寫死的固定值，跟一般中毒粉/催眠術這類招式附加的1~3回合隨機睡眠
+            // 時間不一樣，這也是正統規則的一部分(睡覺的睡眠時間本來就跟其他招式不同)
+            if (atk.healBlockTurns > 0) {
+                log.push(`${atkName} 被治癒封印了，沒辦法安心入睡！`);
+            } else if (atk.currentHp >= atk.maxHp) {
+                log.push(`但是${atkName}的HP已經全滿了，睡覺失敗了！`);
+            } else {
+                const before = atk.currentHp;
+                atk.currentHp = atk.maxHp;
+                atk.status = 'sleep';
+                // 這裡故意設成3，不是字面上的2：上面「atk.status === 'sleep'」那段的醒來判斷是
+                // 「每次輪到自己的回合先扣1，扣完剛好變0才醒過來、而且醒來那一回合可以正常出招」，
+                // 用同一套規則反推，statusTurns要設3才會恰好卡住「接下來2個回合」完全不能動、
+                // 第3個回合才醒來行動——這跟正統規則「睡覺讓對方接下來2回合睡著」是同一件事，
+                // 只是要配合這個引擎既有的扣1判斷零的寫法換算過去
+                atk.statusTurns = 3;
+                atk.toxicCounter = 0;
+                ev.selfHeal = atk.currentHp - before;
+                ev.attackerHpAfter = atk.currentHp;
+                ev.ailmentApplied = { onSelf: true, status: 'sleep', statusNameZh: STATUS_NAME_ZH.sleep };
+                log.push(`${atkName} 進入了熟睡狀態，恢復了 ${ev.selfHeal} 點HP！`);
+            }
         } else if (CHARGE_MOVES.has(move.name)) {
             // 充電：特防+1沿用下面共用的能力等級變化區塊(move.statChanges本來就有這筆資料)，
             // 這裡只負責標記「下一次使用電屬性招式威力加倍」的旗標
@@ -10039,7 +10994,13 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             log.push(`${atkName} 豎起了魔法反射！`);
         } else if (move.power > 0) {
             // 技巧鏈(skill-link)：連續攻擊招式一律固定打出最大次數
-            const hits = (atk.ability === 'skill-link' && move.maxHits) ? move.maxHits : rollMultiHitCount(move.minHits, move.maxHits);
+            // 【第五十八輪新增】老千骰子(loaded-dice)：連續攻擊招式至少打出4次(2~5次的招式等於
+            // 只可能骰到4或5)，如果骰出來的次數本來就≥4(或招式本身最大次數不到4次，例如兩段擊)
+            // 就直接用骰到的結果，不會反而變少
+            const rolledHits = rollMultiHitCount(move.minHits, move.maxHits);
+            const hits = (atk.ability === 'skill-link' && move.maxHits) ? move.maxHits
+                : (atk.heldItem === 'loaded-dice' && move.maxHits) ? Math.max(rolledHits, Math.min(4, move.maxHits))
+                : rolledHits;
             // 物理/特殊分流：move.damageClass是'physical'還是'special'決定這一下要吃攻擊/防禦
             // 這組數值、還是特攻/特防那組——以前這裡不管招式分類一律用同一組atk.atk/def.def，
             // 玩家反映百萬吨拳(物理)、噴射火焰(特殊)這種完全不同類型的招式打起來卻共用同一組
@@ -10069,7 +11030,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             // ---- 不知不覺(unaware)：計算傷害時無視「對方」的能力等級變化——自己是不知不覺的話，
             // 無視對方的防禦/特防等級；對方是不知不覺的話，無視自己的攻擊/特攻等級 ----
             const atkStageMultForCalc = def.ability === 'unaware' ? 1 : statStageMult(isSpecial ? atk.stages.spAtk : atk.stages.atk);
-            const atkStat = (isSpecial ? atk.spAtk : atk.atk) * atkStageMultForCalc * abilityAtkMult * ruinAtkMult;
+            // 【第五十八輪新增】講究頭帶/講究眼鏡：對應的攻擊/特攻+50%(鎖招限制見isMoveBlockedByStatus)
+            const choiceAtkMult = ((atk.heldItem === 'choice-band' && !isSpecial) || (atk.heldItem === 'choice-specs' && isSpecial)) ? 1.5 : 1;
+            const atkStat = (isSpecial ? atk.spAtk : atk.atk) * atkStageMultForCalc * abilityAtkMult * ruinAtkMult * choiceAtkMult;
             const defStageMultForCalc = atk.ability === 'unaware' ? 1 : statStageMult(isSpecial ? def.stages.spDef : def.stages.def);
             // ---- 特性造成的自身防禦/特防倍率：毛皮大衣(物理×2)、鱗粉盾/龍鱗盾這裡簡化成特防×2
             // (等效於「受到的特殊傷害減半」，跟毛皮大衣的物理版本對稱)、奇蹟鱗片(異常狀態下物理
@@ -10136,9 +11099,19 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 }
                 if (defAbilityForDmg === 'dry-skin' && move.type === 'fire') abilityDmgPostMult *= 1.25;
             }
-            const itemDmgMult = (atk.heldItem && atk.heldItem === typeBoostKey ? 1.2 : 1) * (atk.heldItem === 'life-orb' ? 1.3 : 1) * chargeElectricBoost * rolloutMult * abilityDmgPostMult;
+            // 【第五十八輪新增】力量頭帶(物理+10%)/博識眼鏡(特殊+10%)/達人帶(效果絕佳+20%)/
+            // 拳擊手套(拳擊招式+10%，跟PUNCH_MOVES共用同一份清單)/節拍器(連續同招式疊加，見下面
+            // metronomeStreak的維護處——這裡只讀值，不negative修改)
+            const muscleWiseMult = (atk.heldItem === 'muscle-band' && !isSpecial) ? 1.1 : ((atk.heldItem === 'wise-glasses' && isSpecial) ? 1.1 : 1);
+            const expertBeltMult = (atk.heldItem === 'expert-belt' && eff > 1) ? 1.2 : 1;
+            const punchingGloveMult = (atk.heldItem === 'punching-glove' && PUNCH_MOVES.has(move.name)) ? 1.1 : 1;
+            const metronomeMult = atk.heldItem === 'metronome' ? 1 + Math.min(4, atk.metronomeStreak || 0) * 0.2 : 1;
+            // 【第五十八輪新增】心之水滴/金剛寶珠/白玉寶珠/白金寶珠(及對應的大寶玉)：只有指定種族
+            // 攜帶對應道具、招式屬性也吻合時才生效，見speciesLockedOrbMult定義處的說明
+            const legendaryOrbMult = speciesLockedOrbMult(atk, move.type);
+            const itemDmgMult = (atk.heldItem && atk.heldItem === typeBoostKey ? 1.2 : 1) * (atk.heldItem === 'life-orb' ? 1.3 : 1) * chargeElectricBoost * rolloutMult * abilityDmgPostMult * muscleWiseMult * expertBeltMult * punchingGloveMult * metronomeMult * legendaryOrbMult;
             // 焦點鏡(scope-lens)/實戰之爪(super-luck)：會心一擊機率+1階
-            const effectiveCritRate = (move.critRate || 0) + (atk.heldItem === 'scope-lens' ? 1 : 0) + (atk.ability === 'super-luck' ? 1 : 0);
+            const effectiveCritRate = (move.critRate || 0) + ((atk.heldItem === 'scope-lens' || atk.heldItem === 'razor-claw') ? 1 : 0) + (atk.ability === 'super-luck' ? 1 : 0);
             // 戰鬥盔甲/貝殼盔甲：完全免疫會心一擊(除非攻擊方是破格系特性)；狠毒：對中毒的對手
             // 必定會心一擊
             const critBlockedByAbility = ['battle-armor', 'shell-armor'].includes(def.ability) && !attackerBypassesAbilities(atk);
@@ -10146,6 +11119,22 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             // 光牆/反射壁/極光幕：防禦方那一側如果有張開，對應分類的傷害減半——正統規則裡雙打是
             // 2/3、單打(這個遊戲只有單打)是直接減半，會心一擊無視這些減傷(下面isCrit成立時不套用)
             const defScreens = screensState[defenderUid];
+            // 【第五十八輪新增】對特定情境使出時威力加倍的招式：跟「睡覺」一樣，PokéAPI的meta
+            // 對這批招式完全沒有結構化資料可查(ailment/healing/category全部是0/none/damage的
+            // 預設值)，只能手動判斷、乘進跟天氣/場地/道具同一條傷害倍率鏈——毒液衝擊(對方正在
+            // 中毒，包含劇毒)、根源信號彈(hex，對方帶著任何一種主要異常狀態)、鹽水(對方HP已經
+            // 過半以下)、逆鱗(facade，自己帶著燒傷/中毒/麻痺其中一種)。鎮定粉末/覺醒鞭打額外
+            // 判斷對方是不是分別處於麻痺/睡眠(下面命中後會順便解除，是正統規則的一部分)。
+            // 報恨/電牙鳥吞餌這類要看「這回合誰先出招」才能判斷的加倍條件，這個引擎目前沒有
+            // 追蹤「這回合出招順序」的狀態，這輪先不處理(範圍取捨，見交付文件說明)
+            let conditionalMoveMult = 1;
+            if (move.name === 'venoshock' && def.status === 'poison') conditionalMoveMult = 2;
+            else if (move.name === 'hex' && !!def.status) conditionalMoveMult = 2;
+            else if (move.name === 'brine' && def.currentHp <= def.maxHp / 2) conditionalMoveMult = 2;
+            else if (move.name === 'facade' && ['burn', 'poison', 'paralysis'].includes(atk.status)) conditionalMoveMult = 2;
+            else if (move.name === 'smelling-salts' && def.status === 'paralysis') conditionalMoveMult = 2;
+            else if (move.name === 'wake-up-slap' && def.status === 'sleep') conditionalMoveMult = 2;
+            if (conditionalMoveMult > 1) log.push(`${atkName} 的${move.nameZh}威力加倍了！`);
             // 屬性抗性莓果：被剋到(或chilan抗一般屬性，不分剋不剋)的那一下傷害減半，一次性——
             // 只在多段攻擊的「第一次」符合條件的那下觸發，觸發後道具就消失了，後面的攻次不會再減
             let resistBerryConsumed = false;
@@ -10156,7 +11145,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 const isCrit = !critBlockedByAbility && (forcedCritByAbility || rollChance(critChance(effectiveCritRate) * 100));
                 if (isCrit) crit = true;
                 let dmg = computeDamage(atk.level, atkStat, defStat, move.power, eff, stabMult, isCrit ? (atk.ability === 'sniper' ? 2.25 : 1.5) : 1);
-                dmg = Math.max(1, Math.floor(dmg * wDmgMult * tDmgMult * itemDmgMult));
+                dmg = Math.max(1, Math.floor(dmg * wDmgMult * tDmgMult * itemDmgMult * conditionalMoveMult));
                 if (!isCrit && defScreens) {
                     if (defScreens.auroraVeil > 0) dmg = Math.max(1, Math.floor(dmg * 0.5));
                     else if (isSpecial && defScreens.lightScreen > 0) dmg = Math.max(1, Math.floor(dmg * 0.5));
@@ -10190,6 +11179,18 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (hitCount > 1) log.push(`${atkName} 使出 ${move.nameZh}，打中了 ${hitCount} 次，總共造成 ${totalDamage} 點傷害${subTxt}${effTxt}${crit ? '(會心一擊！)' : ''}`);
             else log.push(`${atkName} 使出 ${move.nameZh}，造成 ${totalDamage} 點傷害${subTxt}${effTxt}${crit ? '，會心一擊！' : ''}`);
             if (subBroke) log.push(`${defName} 的替身消失了！`);
+            // 鎮定粉末/覺醒鞭打：正統規則裡這兩招命中後會順便解除觸發加倍的那個異常狀態(麻痺/
+            // 睡眠)，不是這裡額外加的效果——用defSubActiveBeforeHit擋掉「打在替身上」的情況，
+            // 本體根本沒被打到，不該被治好
+            if (totalDamage > 0 && !defSubActiveBeforeHit && def.currentHp > 0) {
+                if (move.name === 'smelling-salts' && def.status === 'paralysis') {
+                    def.status = null; def.statusTurns = 0;
+                    log.push(`${defName} 的麻痺被治好了！`);
+                } else if (move.name === 'wake-up-slap' && def.status === 'sleep') {
+                    def.status = null; def.statusTurns = 0;
+                    log.push(`${defName} 醒過來了！`);
+                }
+            }
             // 生命寶珠(life-orb)反傷：只要有造成傷害就扣攻擊方1/10最大HP，跟招式本身有沒有命中
             // /有沒有效果無關(這裡totalDamage>0已經隱含命中且有效果)
             if (totalDamage > 0 && atk.heldItem === 'life-orb' && atk.ability !== 'magic-guard') {
@@ -10199,7 +11200,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 if (atk.currentHp <= 0) { log.push(`${atkName} 倒下了！`); handleFaint(attackerUid); }
             }
             // 凸凸頭盔(rocky-helmet)：物理招式打中(不含替身)時，攻擊方被反彈1/6最大HP(魔法防守免疫)
-            if (totalDamage > 0 && !defSubActiveBeforeHit && move.damageClass === 'physical' && def.heldItem === 'rocky-helmet' && atk.currentHp > 0 && atk.ability !== 'magic-guard') {
+            // 【第五十八輪新增】部位護具(protective-pads)：攻擊方持有時免疫這個反彈(跟接觸類特性
+            // 反擊共用「攻擊方免疫」的概念，雖然這裡用damageClass簡化判斷接觸而不是真正的isContact)
+            if (totalDamage > 0 && !defSubActiveBeforeHit && move.damageClass === 'physical' && def.heldItem === 'rocky-helmet' && atk.currentHp > 0 && atk.ability !== 'magic-guard' && atk.heldItem !== 'protective-pads') {
                 const helmetDmg = Math.max(1, Math.floor(atk.maxHp / 6));
                 atk.currentHp = Math.max(0, atk.currentHp - helmetDmg);
                 log.push(`${atkName} 被 ${defName} 的凸凸頭盔反彈了 ${helmetDmg} 點傷害！`);
@@ -10211,6 +11214,31 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 const before = atk.currentHp;
                 atk.currentHp = Math.min(atk.maxHp, atk.currentHp + shellHeal);
                 if (atk.currentHp > before) log.push(`${atkName} 的貝殼之鈴發動了，回復了 ${atk.currentHp - before} 點HP！`);
+            }
+            // 【第五十八輪新增】球根/充電電池/光苔/雪球：被特定屬性招式打中時，防禦方能力+1(一次性，
+            // 跟屬性抗性莓果一樣用掉就消耗掉heldItem)。球根跟光苔都是「被水屬性打中」觸發，但加成
+            // 的能力不同(特攻／特防)，所以分開判斷，不能共用同一份「屬性->道具」對照表
+            if (totalDamage > 0 && def.currentHp > 0) {
+                let boostInfo = null;
+                if (move.type === 'water' && def.heldItem === 'absorb-bulb') boostInfo = { statKey: 'spAtk', nameZh: '球根' };
+                else if (move.type === 'water' && def.heldItem === 'luminous-moss') boostInfo = { statKey: 'spDef', nameZh: '光苔' };
+                else if (move.type === 'electric' && def.heldItem === 'cell-battery') boostInfo = { statKey: 'atk', nameZh: '充電電池' };
+                else if (move.type === 'ice' && def.heldItem === 'snowball') boostInfo = { statKey: 'atk', nameZh: '雪球' };
+                if (boostInfo) {
+                    const before = def.stages[boostInfo.statKey] || 0;
+                    def.stages[boostInfo.statKey] = Math.min(6, before + 1);
+                    def.heldItem = null;
+                    if (def.ability === 'unburden') def.unburdenActive = true;
+                    if (def.stages[boostInfo.statKey] !== before) log.push(`${defName} 的${boostInfo.nameZh}發動了，${STAGE_KEY_ZH[boostInfo.statKey]}提高了！`);
+                }
+            }
+            // 【第五十八輪新增】氣球(air-balloon)：只要受到任何一次有造成傷害的命中(不限屬性，
+            // 上面地面系已經在效果倍率階段被完全免疫、不會有totalDamage，所以不會誤觸這裡)，
+            // 氣球就會破裂消耗掉——用替身擋住時視為本體沒被打到，不消耗
+            if (totalDamage > 0 && !defSubActiveBeforeHit && def.heldItem === 'air-balloon') {
+                def.heldItem = null;
+                if (def.ability === 'unburden') def.unburdenActive = true;
+                log.push(`${defName} 的氣球破裂了！`);
             }
             // ---- 地區對戰王牌指令：onHitBoost(被打中時反而提升能力，例如電肚蛙的電力轉換)、
             // trapFoe(打中後困住對方讓牠沒辦法替換，例如焚焰蚣的百火焚身) ----
@@ -10276,7 +11304,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // ---- 吸血／反作用力(drain)：正值回攻擊方血、負值扣攻擊方血(可能因此自己也倒下)。
         // 治癒封印(heal-block)期間，「回血」的那一半會失效，但反作用力傷害還是正常生效 ----
         if (move.drain && totalDamage > 0 && !move.isStruggle && !zPierceProtect) {
-            const rawDrainAmt = Math.round(totalDamage * move.drain / 100);
+            // 【第五十八輪新增】大根莖(big-root)：只加成「真的回血」的吸血招式(move.drain>0)，
+            // 不影響反作用力(move.drain<0)那一半，跟官方規則一致
+            const bigRootMult = (move.drain > 0 && atk.heldItem === 'big-root') ? 1.3 : 1;
+            const rawDrainAmt = Math.round(totalDamage * move.drain / 100 * bigRootMult);
             const healBlocked = rawDrainAmt > 0 && atk.healBlockTurns > 0;
             // 【第三十五輪新增】污泥漿(liquid-ooze)：防守方特性，讓「原本會讓攻擊方回血」的吸血
             // 效果反過來變成扣攻擊方血，扣的量跟原本會回的量一樣多；治癒封印期間本來就不會回血，
@@ -10589,6 +11620,28 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                         ev.statChanges = { onSelf: statTarget === atk, changes: applied };
                         const who = statTarget === atk ? atkName : defName;
                         applied.forEach(a => log.push(`${who} 的${a.statNameZh}${a.change > 0 ? '上升了！' : '下降了！'}`));
+                        // 【第五十八輪新增】模仿香草(mirror-herb)：這批「真的成功提升」的能力變化剛好
+                        // 發生在statTarget身上，牠的對手如果拿著模仿香草(整場限1次)，就跟著複製同樣的
+                        // 提升——只處理「招式直接造成的能力提升」這條路徑(自己強化自己/直接提升對方)，
+                        // 不含特性觸發的能力提升，範圍比官方規則小一點但已經涵蓋最常見的劍舞/龍之舞
+                        // /宇宙powers這類自我強化招式
+                        const buffedUid = statTarget === atk ? attackerUid : defenderUid;
+                        const watcherUid = buffedUid === attackerUid ? defenderUid : attackerUid;
+                        const watcher = state[watcherUid];
+                        if (watcher && watcher.currentHp > 0 && watcher.heldItem === 'mirror-herb') {
+                            const mirrorApplied = [];
+                            applied.forEach(a => {
+                                const before = watcher.stages[a.statKey] || 0;
+                                const after = Math.max(-6, Math.min(6, before + a.change));
+                                watcher.stages[a.statKey] = after;
+                                if (after !== before) mirrorApplied.push({ statKey: a.statKey, statNameZh: a.statNameZh, change: a.change });
+                            });
+                            watcher.heldItem = null;
+                            if (mirrorApplied.length) {
+                                log.push(`${nameOf[watcherUid]} 的模仿香草發動了！`);
+                                mirrorApplied.forEach(a => log.push(`${nameOf[watcherUid]} 的${a.statNameZh}${a.change > 0 ? '上升了！' : '下降了！'}`));
+                            }
+                        }
                     }
                 }
             }
@@ -10597,7 +11650,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // ---- 畏縮：只有「這回合對方還沒出招」才有意義(先攻方讓後攻方這回合直接動不了)，
         // 被替身擋下來時不會畏縮。王者之證(kings-rock)：攻擊命中且有造成傷害時，額外+10%畏縮機率
         // (跟招式本身的畏縮機率相加，不是覆蓋) ----
-        const kingsRockBonus = (totalDamage > 0 && atk.heldItem === 'kings-rock') ? 10 : 0;
+        // 【第五十八輪新增】銳利之牙(razor-fang)：效果跟王者之證完全相同，一起判斷
+        const kingsRockBonus = (totalDamage > 0 && (atk.heldItem === 'kings-rock' || atk.heldItem === 'razor-fang')) ? 10 : 0;
         const effectiveFlinchChance = (move.flinchChance || 0) + kingsRockBonus;
         // 直覺(inner-focus)/鱗粉(shield-dust)：完全不會畏縮(破格系特性攻擊方可以無視)；
         // 堅毅(steadfast)：真的畏縮的話反而讓自己速度提高
@@ -10867,8 +11921,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 } else {
                     // 沙隱/隔音等特性不影響天氣傷害；免疫沙暴/冰雹傷害的除了對應屬性，還有
                     // 魔法防守(全免疫間接傷害)、乾燥皮膚/大衣化石(overcoat，這個特性同時免疫粉塵
-                    // 招式跟天氣傷害)
-                    const immune = types.some(ty => immuneTypes.includes(ty)) || t.ability === 'magic-guard' || t.ability === 'overcoat';
+                    // 招式跟天氣傷害)。【第五十八輪新增】防塵護目鏡(safety-goggles)：跟overcoat
+                    // 同樣道理，一併免疫天氣傷害
+                    const immune = types.some(ty => immuneTypes.includes(ty)) || t.ability === 'magic-guard' || t.ability === 'overcoat' || t.heldItem === 'safety-goggles';
                     if (!immune) {
                         const dmg = Math.max(1, Math.floor(t.maxHp / 16));
                         t.currentHp = Math.max(0, t.currentHp - dmg);
@@ -10954,6 +12009,56 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 if (t.currentHp > before) {
                     log.push(`${nameOf[uid]} 的剩飯發動了，回復了 ${t.currentHp - before} 點HP！`);
                     events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                }
+            }
+            // 【第五十八輪新增】黑色污泥(black-sludge)：毒屬性回1/16最大HP，其他屬性扣1/8最大HP
+            // (扣血部分跟其他間接傷害一樣受魔法防守免疫，回血部分則跟剩飯共用healBlockTurns判斷)
+            if (t.heldItem === 'black-sludge') {
+                const isPoisonType = ((displayOf[uid] && displayOf[uid].types) || []).includes('poison');
+                if (isPoisonType) {
+                    if (!(t.healBlockTurns > 0)) {
+                        const heal = Math.max(1, Math.floor(t.maxHp / 16));
+                        const before = t.currentHp;
+                        t.currentHp = Math.min(t.maxHp, t.currentHp + heal);
+                        if (t.currentHp > before) {
+                            log.push(`${nameOf[uid]} 的黑色污泥發動了，回復了 ${t.currentHp - before} 點HP！`);
+                            events.push({ endTurnHeal: true, pokemonKey: uid, pokemonName: nameOf[uid], amount: t.currentHp - before, hpAfter: t.currentHp });
+                        }
+                    }
+                } else if (t.ability !== 'magic-guard') {
+                    const dmg = Math.max(1, Math.floor(t.maxHp / 8));
+                    t.currentHp = Math.max(0, t.currentHp - dmg);
+                    log.push(`${nameOf[uid]} 被黑色污泥的毒素傷害，損失了 ${dmg} 點HP！`);
+                    events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'black-sludge', damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                    if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+                }
+            }
+            if (t.currentHp <= 0) continue;
+            // 【第五十八輪新增】附著針(sticky-barb)：每回合結束損失自己1/8最大HP(魔法防守免疫)
+            if (t.heldItem === 'sticky-barb' && t.ability !== 'magic-guard') {
+                const dmg = Math.max(1, Math.floor(t.maxHp / 8));
+                t.currentHp = Math.max(0, t.currentHp - dmg);
+                log.push(`${nameOf[uid]} 被附著針傷害，損失了 ${dmg} 點HP！`);
+                events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'sticky-barb', damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
+                if (t.currentHp <= 0) log.push(`${nameOf[uid]} 倒下了！`);
+            }
+            if (t.currentHp <= 0) continue;
+            // 【第五十八輪新增】火焰寶珠/劇毒寶珠：還沒有異常狀態時，回合結束會讓自己陷入灼傷/劇毒
+            // (跟正統規則一樣每回合都會檢查一次，不是只有裝備的那一刻生效；一樣要檢查屬性天生免疫
+            // /特性免疫，跟招式造成異常狀態共用同一套STATUS_TYPE_IMMUNITY/abilityBlocksStatus判斷，
+            // 免疫的話默默不生效，不特別在戰鬥紀錄裡每回合重複刷「免疫」訊息)
+            if (!t.status && (t.heldItem === 'flame-orb' || t.heldItem === 'toxic-orb') && t.currentHp > 0) {
+                const orbStatus = t.heldItem === 'flame-orb' ? 'burn' : 'poison';
+                const ownTypes = (displayOf[uid] && displayOf[uid].types) || [];
+                const typeImmune = (STATUS_TYPE_IMMUNITY[orbStatus] || []).some(ty => ownTypes.includes(ty));
+                if (!typeImmune && !abilityBlocksStatus(t, orbStatus)) {
+                    t.status = orbStatus;
+                    t.statusTurns = 0;
+                    t.toxicCounter = orbStatus === 'poison' ? 1 : 0;
+                    log.push(`${nameOf[uid]} 的${t.heldItem === 'flame-orb' ? '火焰寶珠' : '劇毒寶珠'}發動了，${orbStatus === 'burn' ? '陷入了灼傷狀態' : '被劇毒侵蝕了'}！`);
+                    // 跟上面「想睡覺→正式進入睡眠」的觸發方式共用同一套events.push慣例：沒有攻守方，
+                    // damage傳0(這一刻只是附加異常狀態，還沒開始扣血，扣血要等下一回合的中毒/燒傷結算)
+                    events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: orbStatus, damage: 0, hpAfter: t.currentHp, fainted: false });
                 }
             }
             // 【第三十二輪新增，跨回合記憶特性】反芻(cud-chew)：吃下樹果後，下下回合結束時會
