@@ -348,9 +348,17 @@
     <!-- ===== 對戰 ===== -->
     <div id="tab-battle" class="tab-panel hidden">
         <div id="battle-lobby-view">
+            <!-- 【第五十九輪修正】使用者反映「挑戰傳說訓練家」原本被塞在最下面(地區對戰section
+                 之後)，跟同樣是「單機隨時可以打」的「挑戰野生寶可夢」離得很遠、不容易發現，這裡
+                 把兩個入口合併進同一張卡片，一個是輕鬆練等用、一個是Lv.100訓練家硬仗，放在一起
+                 讓玩家能一眼比較 -->
             <div class="bg-white rounded-2xl card-shadow p-4 mb-4 text-center">
                 <p class="text-sm text-gray-500 mb-3">練等最快的方式：找野生寶可夢單挑！不用等朋友，隨時可以打，贏了一樣有代幣跟經驗值獎勵</p>
-                <button onclick="openWildBattleModal()" class="bg-green-600 text-white px-5 py-2 rounded-full font-bold text-sm inline-flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/safari-ball.png" class="w-4 h-4" style="image-rendering:pixelated">挑戰野生寶可夢</button>
+                <div class="flex flex-wrap items-center justify-center gap-2 mb-3">
+                    <button onclick="openWildBattleModal()" class="bg-green-600 text-white px-5 py-2 rounded-full font-bold text-sm inline-flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/safari-ball.png" class="w-4 h-4" style="image-rendering:pixelated">挑戰野生寶可夢</button>
+                    <button onclick="openLegendaryChallengeModal()" class="bg-purple-600 text-white px-5 py-2 rounded-full font-bold text-sm inline-flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/master-ball.png" class="w-4 h-4" style="image-rendering:pixelated">挑戰傳說訓練家</button>
+                </div>
+                <p class="text-xs text-gray-400 leading-relaxed">挑戰傳說訓練家：隨機遭遇十大地區、共54位傳說訓練家的其中一位，訓練家固定是Lv.100的硬仗、你的隊伍則維持自己原本的等級！贏了全隊親密度+5並獲得稀有掉落，輸了(或中途放棄)全隊親密度-5——這場對戰不能投降，戰績會永久記錄下來，目前戰績：<span id="legendary-stats-text" class="font-bold text-purple-600">0勝 0敗</span></p>
             </div>
             <div class="flex gap-2 mb-4">
                 <button onclick="openCreateRoomModal()" class="bg-red-500 text-white px-4 py-2 rounded-xl font-bold text-sm">+ 開一個房間(跟朋友連線對戰)</button>
@@ -366,16 +374,6 @@
                 <h3 class="font-bold mb-1 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/badges/1.png" class="w-4 h-4" onerror="this.style.display='none'">地區對戰</h3>
                 <p class="text-sm text-gray-500 mb-3">依序挑戰各地區的道館館主／試煉隊長！每個關卡限定挑戰一次，打贏後會記錄攻略狀態、沒辦法重複打，獎勵是神奇糖果、偶爾還有稀有道具。</p>
                 <div id="regions-grid" class="grid grid-cols-2 gap-3"></div>
-            </div>
-
-            <!-- 【第五十七輪新增】挑戰傳說訓練家：postgame玩法，隨機遭遇十大地區、共54位傳說訓練家
-                 的其中一位，雙方全員固定Lv.100，不能投降——跟地區對戰(有固定名單、可以逐一攻略)不一樣，
-                 這裡每次都是隨機遇敵、可以重複挑戰，勝率會永久記錄下來 -->
-            <div class="border-t border-gray-100 mt-5 pt-4">
-                <h3 class="font-bold mb-1 flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/master-ball.png" class="w-4 h-4" style="image-rendering:pixelated">挑戰傳說訓練家</h3>
-                <p class="text-sm text-gray-500 mb-1">隨機遭遇十大地區、共54位傳說訓練家的其中一位，雙方全員都是Lv.100的硬仗！贏了全隊親密度+5並獲得稀有掉落，輸了(或中途放棄)全隊親密度-5——這場對戰不能投降，戰績會永久記錄下來。</p>
-                <p class="text-xs text-gray-400 mb-3">戰績：<span id="legendary-stats-text">0勝 0敗</span></p>
-                <button onclick="openLegendaryChallengeModal()" class="bg-purple-600 text-white px-5 py-2 rounded-full font-bold text-sm inline-flex items-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/master-ball.png" class="w-4 h-4" style="image-rendering:pixelated">挑戰傳說訓練家</button>
             </div>
         </div>
         <div id="battle-room-view" class="hidden"></div>
@@ -623,6 +621,16 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
+// 【第五十九輪新增】防禦性設定：Firestore SDK預設看到物件裡任何一個欄位「明確被設成undefined」
+// 就會直接整個寫入失敗(拋出「Unsupported field value: undefined」)，這個遊戲的戰鬥狀態物件
+// 非常龐大、巢狀很深(battleState.teams/bench底下每隻寶可夢的完整戰鬥資料)，只要任何一個地方
+// 少設定了某個欄位、又被別的地方拿去複製賦值，就會讓整場戰鬥卡死在「已送出指令，等待對手...」
+// (使用者這輪回報的挑戰傳說訓練家卡住+顯示undefined，根本原因就是這個模式——已經在
+// buildLegendaryTrainerRoster補上遺漏的nickname欄位，但為了避免同一種模式在其他地方再次發生、
+// 讓整場戰鬥卡死，這裡改成「遇到undefined欄位就直接忽略那個欄位，其餘資料照常寫入」，
+// 犧牲一點點「資料是不是完全符合預期」的嚴謹度，換來「不會因為一個小地方漏設定就讓整場
+// 戰鬥永久卡死」的穩固度，這裡的取捨對這個遊戲來說明顯划算
+db.settings({ ignoreUndefinedProperties: true });
 auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
 
 const CLOUDFLARE_AI_PROXY_URL = 'https://baking-recipes-ai.wallcemax.workers.dev/';
@@ -5790,6 +5798,16 @@ async function buildLegendaryTrainerRoster(trainer) {
         const pokemonData = await pokemonRes.json();
         const baseStats = {};
         (pokemonData.stats || []).forEach(s => { baseStats[s.stat.name] = s.base_stat; });
+        // 【第五十九輪新增】訓練家寶可夢的暱稱：跟buildTrainerTeamMember(道館NPC)不一樣，
+        // LEGENDARY_TRAINERS的team欄位只有純數字圖鑑編號、沒有預先寫好的中文名稱，這裡漏掉了
+        // 設定nickname欄位，直接導致對戰畫面上對手名稱顯示成「undefined」字樣——更嚴重的是，
+        // 如果這隻寶可夢後來Mega進化(applyMegaEvolution會把battler.nickname存進megaEvolvedFrom
+        // 快照)，或極巨化/Mega造成的megaEvolveEvent/dynamaxEvent事件物件，這些地方都會把這個
+        // undefined值原封不動存進要寫回Firestore的物件裡——Firestore不接受「明確設為undefined
+        // 的欄位」，回合結算的Transaction.update()會直接整個失敗、戰鬥卡在「已送出指令，
+        // 等待對手...」不會再繼續(這就是使用者回報「出現undefined還有直接卡住」的根本原因)。
+        // 這裡額外查一次PokéAPI的物種中文名稱(跟fetchSpeciesDisplay同一套zh-Hant名稱來源)當暱稱
+        const nickname = await fetchSpeciesNameZhByUrl(pokemonData.species.url) || pokemonData.name;
         // 招式挑法跟rollWildOpponent的levelMoves完全同一套邏輯，100級時「≤targetLevel」這個
         // 篩選條件形同沒有限制(絕大多數寶可夢的升級招式全部都在100級以前學完)
         const levelMoves = (pokemonData.moves || [])
@@ -5809,7 +5827,7 @@ async function buildLegendaryTrainerRoster(trainer) {
         const maxHp = statAtLevel(baseStats.hp || 45, level, true);
         return {
             instanceId: `${trainer.id}::${idx}`,
-            speciesId, level, maxHp, currentHp: maxHp,
+            speciesId, nickname, level, maxHp, currentHp: maxHp,
             atk: statAtLevel(baseStats.attack || 45, level, false),
             def: statAtLevel(baseStats.defense || 45, level, false),
             spAtk: statAtLevel(baseStats['special-attack'] || 45, level, false),
@@ -5913,7 +5931,7 @@ function openLegendaryChallengeModal() {
     roomModalMode = 'legendary';
     pendingRoomInstanceId = null;
     document.getElementById('create-room-modal-title').textContent = '挑戰傳說訓練家(隨機遭遇)';
-    document.getElementById('create-room-modal-hint').textContent = '會隨機遭遇十大地區、共54位傳說訓練家的其中一位，帶你目前隊伍裡的寶可夢出戰(最多6隻，雙方全員都會是Lv.100)。這場對戰不能投降——輸了、或中途離開都會讓全隊親密度-5，贏了則是全隊親密度+5並獲得掉落物，勝負都會被永久記錄下來。';
+    document.getElementById('create-room-modal-hint').textContent = '會隨機遭遇十大地區、共54位傳說訓練家的其中一位，帶你目前隊伍裡的寶可夢出戰(最多6隻，訓練家固定是Lv.100，你的隊伍維持自己原本的等級)。這場對戰不能投降——輸了、或中途離開都會讓全隊親密度-5，贏了則是全隊親密度+5並獲得掉落物，勝負都會被永久記錄下來。';
     document.getElementById('create-room-modal-hint').classList.remove('hidden');
     document.getElementById('create-room-name').classList.add('hidden');
     document.getElementById('create-room-party-picker').innerHTML = `<p class="col-span-full text-center text-sm text-gray-500 py-6">將帶著目前隊伍全部 ${party.length} 隻寶可夢出戰</p>`;
@@ -5940,8 +5958,12 @@ async function submitLegendaryChallengeStart() {
         const leadWild = trainerMembers[0];
         const benchWild = trainerMembers.slice(1);
         const displays = await Promise.all(party.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
-        // 雙方全員固定Lv.100：跟連線對戰共用同一套forceLevel機制(PVP_BATTLE_LEVEL)
-        const myTeamAll = party.map((inst, idx) => buildTeamDataFromInstData(inst.id, inst, pokemonDisplayName(inst, displays[idx]), PVP_BATTLE_LEVEL));
+        // 【第五十九輪修正】原本這裡誤用PVP_BATTLE_LEVEL把玩家隊伍也強制拉到Lv.100，使用者
+        // 明確回報「訓練家固定100級，但玩家應該按照自己原本的等級」——只有buildLegendaryTrainerRoster
+        // 那邊的訓練家隊伍該固定100級(已經是，見上面`const level = 100;`)，玩家自己的隊伍這裡
+        // 改成不帶forceLevel參數，讓buildTeamDataFromInstData退回使用inst.level(玩家寶可夢自己
+        // 真正的等級)，這樣才是「訓練家硬仗、玩家用自己養出來的實力去挑戰」的正確難度曲線
+        const myTeamAll = party.map((inst, idx) => buildTeamDataFromInstData(inst.id, inst, pokemonDisplayName(inst, displays[idx])));
         const myTeam = myTeamAll[0];
         const myBench = myTeamAll.slice(1);
         const myUid = auth.currentUser.uid;
