@@ -2833,18 +2833,17 @@ const POKEMON_HELD_EQUIPMENT_ITEMS = [
     // 「原始回歸/起源形態」這類形態轉換機制，這裡讓它們套用跟對應寶珠一樣的強化效果，
     // 但不會真的變形態——如果不是對應的種類持有，就跟超級石裝錯種類一樣，單純沒有效果、不會出錯)
     'soul-dew', 'adamant-orb', 'lustrous-orb', 'griseous-orb', 'adamant-crystal', 'lustrous-globe', 'griseous-core',
-    // 腐朽的劍/腐朽的盾(蒼響/藏瑪然特)、朱紅色寶珠/靛藍色寶珠(固拉多/蓋歐卡)：官方本身的效果
-    // 就是「攜帶對應道具的那一隻，上場時變成另一種型態」，沒有形態轉換就完全沒有額外效果——
-    // 這裡沒有實作形態轉換(原因同上)，所以這4種道具目前是純粹的收藏/裝備用道具，這就是它們
-    // official的「裝錯或沒有形態轉換支援」時的正確行為，不是偷工減料
+    // 【第六十一輪實裝】腐朽的劍/腐朽的盾(蒼響/藏瑪然特)、朱紅色寶珠/靛藍色寶珠(固拉多/蓋歐卡)：
+    // 官方效果是「攜帶對應道具的那一隻，上場時自動變成另一種型態(劍之王/盾之王/原始回歸)」，
+    // 這裡直接沿用Mega進化的「查PokéAPI該型態種族值、覆蓋speciesId」機制實作出真正的形態轉換
+    // (見下面LEGENDARY_FORM_CATALOG/applyLegendaryFormChange)，不是單純套用寶珠倍率了事
     'rusted-sword', 'rusted-shield', 'red-orb', 'blue-orb',
     // 特性相關道具：特性護具(官方效果是「特性不會被對手的招式/特性改變」，例如變裝香水/惡意突擊/
     // 詭計/害我變身這些改變特性的招式，這個簡化版引擎完全沒有實作任何「改變對手特性」的招式，
-    // 所以目前沒有東西可以讓它防護，等真的做出那些招式再補上判斷)/
-    // 驅勁能量(官方效果只對「顯現特性」古代/未來寶可夢生效，這個簡化版引擎沒有實作古代/未來
-    // 寶可夢跟牠們專屬的特性系統，所以目前沒有效果)/客房服務(官方效果需要戲法空間成功才觸發，
-    // 這個簡化版引擎沒有實作戲法空間，所以目前沒有效果)——這3種先讓玩家能取得跟裝備，等對應的
-    // 招式/特性系統做出來再補上判斷
+    // 所以目前沒有東西可以讓它防護，等真的做出那些招式再補上判斷——明確的範圍取捨，見交付紀錄)/
+    // 【第六十一輪實裝】驅勁能量：讓顯現「顯現特性」(古代寶可夢的太古咆哮/未來寶可夢的量子躍動)
+    // 的寶可夢保證觸發特性效果(不用等天氣/場地條件)，見下面PARADOX_ABILITY_SET跟paradoxStatMult/
+    // 客房服務(戲法空間生效瞬間讓持有者速度降1階)已經在第六十輪跟著戲法空間一起實裝了
     'ability-shield', 'booster-energy', 'room-service',
 ];
 // 【第三十輪新增】POKEMON_MEGA_STONE_ITEMS/POKEMON_Z_CRYSTAL_ITEMS定義在後面MEGA_STONE_CATALOG/
@@ -2950,8 +2949,8 @@ const HELD_ITEM_EFFECT_ZH = {
     'black-sludge': '毒屬性寶可夢每回合結束回復1/16最大HP，其他屬性則是損失1/8最大HP',
     'lax-incense': '讓對手瞄準自己的招式命中率降低(效果跟光粉相同)',
     'full-incense': '同優先度時必定最後出招(效果跟後攻之尾相同)',
-    'grip-claw': '(目前這個簡化版引擎沒有實作束縛系招式的持續回合機制，暫無效果)',
-    'binding-band': '(目前這個簡化版引擎沒有實作束縛系招式的持續回合機制，暫無效果)',
+    'grip-claw': '【第六十一輪實裝】讓自己使出的束縛系招式(纏繞/綁緊/火焰漩渦等)持續時間必定是上限(5回合)',
+    'binding-band': '【第六十一輪實裝】被自己束縛住的對手，回合結束損失的HP從1/8提高到1/6最大HP',
     'sticky-barb': '每回合結束損失自己1/8最大HP',
     'soul-dew': '讓拉帝歐斯/拉帝亞斯攜帶：超能力/龍屬性招式威力+20%(其他寶可夢攜帶無效果)',
     'adamant-orb': '讓帝牙盧卡攜帶：龍/鋼屬性招式威力+20%(其他寶可夢攜帶無效果)',
@@ -2960,13 +2959,13 @@ const HELD_ITEM_EFFECT_ZH = {
     'adamant-crystal': '讓帝牙盧卡攜帶：龍/鋼屬性招式威力+20%(官方效果還會改變形態，這個簡化版引擎未實作)',
     'lustrous-globe': '讓帕路奇亞攜帶：龍/水屬性招式威力+20%(官方效果還會改變形態，這個簡化版引擎未實作)',
     'griseous-core': '讓騎拉帝納攜帶：龍/幽靈屬性招式威力+20%(官方效果還會改變形態，這個簡化版引擎未實作)',
-    'rusted-sword': '官方效果是讓蒼響上場時變成另一種型態，這個簡化版引擎未實作型態轉換，暫無效果',
-    'rusted-shield': '官方效果是讓藏瑪然特上場時變成另一種型態，這個簡化版引擎未實作型態轉換，暫無效果',
-    'red-orb': '官方效果是讓固拉多上場時進行原始回歸，這個簡化版引擎未實作型態轉換，暫無效果',
-    'blue-orb': '官方效果是讓蓋歐卡上場時進行原始回歸，這個簡化版引擎未實作型態轉換，暫無效果',
+    'rusted-sword': '【第六十一輪實裝】讓蒼響攜帶：上場時自動變成「劍之王」形態，攻擊/速度大幅提升',
+    'rusted-shield': '【第六十一輪實裝】讓藏瑪然特攜帶：上場時自動變成「盾之王」形態，防禦/特防大幅提升',
+    'red-orb': '【第六十一輪實裝】讓固拉多攜帶：上場時自動進行原始回歸，全能力大幅提升並變成地面/火屬性',
+    'blue-orb': '【第六十一輪實裝】讓蓋歐卡攜帶：上場時自動進行原始回歸，全能力大幅提升並變成水屬性',
     'ability-shield': '官方效果是防止特性被對手改變，這個簡化版引擎未實作改變特性的招式，暫無效果',
     'booster-energy': '官方效果只對古代/未來寶可夢的特性生效，這個簡化版引擎未實作，暫無效果',
-    'room-service': '官方效果需要戲法空間成功才觸發，這個簡化版引擎未實作戲法空間，暫無效果',
+    'room-service': '【第六十輪實裝】戲法空間這一刻剛生效時，場上帶著這個道具的寶可夢速度降1階',
 };
 // 【第二十八輪修正】原本這個道具叫「招式學習器」，這輪使用者要求把名稱讓給真正的招式學習器
 // 道具(tm-001~tm-229，見TM_CATALOG)，這個(忘記的招式可以用它學回來、借用心之鱗片圖示)改名
@@ -4900,9 +4899,11 @@ async function autoHandleTrainerSwitch(roomRef, roomData) {
                 update.winnerInstanceId = humanUid && data.battleState.teams[humanUid] ? data.battleState.teams[humanUid].instanceId : null;
                 // 【第三十輪新增】戰鬥在這裡真正結束——如果贏的玩家(humanUid)場上還維持著Mega進化
                 // 的樣子，這裡也要復原，道理跟resolveBattleRound最後寫回前的處理一樣
-                if (humanUid && data.battleState.teams[humanUid] && data.battleState.teams[humanUid].megaEvolvedFrom) {
+                if (humanUid && data.battleState.teams[humanUid] && (data.battleState.teams[humanUid].megaEvolvedFrom || data.battleState.teams[humanUid].legendaryFormFrom)) {
                     const revertedHuman = { ...data.battleState.teams[humanUid] };
                     revertMegaEvolution(revertedHuman);
+                    // 【第六十一輪新增】原始回歸/劍之王/盾之王道理跟Mega進化一樣，這裡也要一併復原
+                    revertLegendaryFormChange(revertedHuman);
                     update['battleState.teams.' + humanUid] = revertedHuman;
                 }
             } else if (settledFainted) {
@@ -6591,7 +6592,7 @@ async function renderBattleStage(container, ctx) {
             <div class="absolute top-3 right-3 text-right" style="max-width:60%">
                 ${room.isLegendaryChallenge ? `<p class="text-[10px] text-purple-600 font-bold truncate">${room.trainerName || '傳說訓練家'}${room.trainerRegionZh ? ` · ${room.trainerRegionZh}` : ''}</p>` : ''}
                 <div class="mb-1">
-                    <span class="text-sm font-bold">${oppTeam.nickname}${oppTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(oppTeam)}${oppHazardsScreensBadge}
+                    <span class="text-sm font-bold">${oppTeam.nickname}${oppTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(oppTeam, weather, terrain)}${oppHazardsScreensBadge}
                     ${battlerAbilityBadgeHtml(oppTeam.ability)}
                     <div id="hptext-opp" class="text-xs text-gray-400">${oppTeam.currentHp}/${oppTeam.maxHp}</div>
                 </div>
@@ -6621,7 +6622,7 @@ async function renderBattleStage(container, ctx) {
                     </div>
                 </div>
                 <div class="mb-1">
-                    <span class="text-sm font-bold">${myTeam.nickname}${myTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(myTeam)}${myHazardsScreensBadge}
+                    <span class="text-sm font-bold">${myTeam.nickname}${myTeam.isShiny ? ' ' + shinyIconHtml('w-3.5 h-3.5') : ''}</span> ${battleStatusBadgesHtml(myTeam, weather, terrain)}${myHazardsScreensBadge}
                     ${battlerAbilityBadgeHtml(myTeam.ability)}
                     <div id="hptext-me" class="text-xs text-gray-400">${myTeam.currentHp}/${myTeam.maxHp}</div>
                 </div>
@@ -7514,6 +7515,10 @@ async function playBattleEvents(events, ctx) {
             if (ev.fieldEffect.kind === 'weather' || ev.fieldEffect.kind === 'terrain') {
                 const label = ev.fieldEffect.kind === 'weather' ? WEATHER_NAME_ZH[ev.fieldEffect.type] : TERRAIN_NAME_ZH[ev.fieldEffect.type];
                 appendLog(`${ev.fieldEffect.kind === 'weather' ? '天氣' : '場地'}變成了${label}！`);
+            } else if (ev.fieldEffect.kind === 'trickRoom') {
+                // 【第六十輪新增】戲法空間的文字已經在resolveBattleRound那邊用log.push寫進
+                // battleState.log了(含「製造出/恢復原狀」的正確措辭)，這裡不用重複印，只需要
+                // 沿用跟天氣/場地一樣的停頓時間讓玩家看得到畫面變化
             }
             await sleep(650);
             if (isStale()) return; // 這段sleep等待期間，畫面可能已經被新一輪onSnapshot觸發的renderRoomView取代掉了(見isStale定義處註解)，不能再繼續動這些(可能已經被別的動畫接手/換掉)DOM元素
@@ -8763,6 +8768,35 @@ function accStageMult(stage) {
     const s = Math.max(-6, Math.min(6, stage || 0));
     return s >= 0 ? (3 + s) / 3 : 3 / (3 - s);
 }
+// ============================================================
+// 【第六十一輪新增】太古咆哮(protosynthesis)/量子躍動(quark-drive)：古代/未來寶可夢的專屬特性，
+// official效果都是「條件成立時，自己數值最高的那一項能力(攻擊/防禦/特攻/特防/速度五選一，
+// 不含HP，同分時攻擊優先)額外提升(速度是1.5倍，其餘是1.3倍)，直到條件消失或被替換下場為止」。
+// 太古咆哮的觸發條件是「大晴天」，量子躍動是「電氣場地」——這兩個古今兩派特性除了觸發天氣/場地
+// 種類不一樣之外，效果公式完全相同。使用者這輪要補上的道具「驅勁能量(booster-energy)」官方
+// 效果就是「不管天氣/場地符不符合，都保證讓這個特性生效」，這裡直接當成「持有驅勁能量」是跟
+// 「天氣/場地條件成立」平行的第二種觸發方式，兩者只要其中一個成立效果就會開啟
+// ============================================================
+const PARADOX_ABILITY_SET = new Set(['protosynthesis', 'quark-drive']);
+// 判斷某隻寶可夢的太古咆哮/量子躍動「現在有沒有生效」
+function paradoxAbilityActive(battler, weatherState, terrainState) {
+    if (battler.ability === 'protosynthesis') return weatherState.type === 'sun' || battler.heldItem === 'booster-energy';
+    if (battler.ability === 'quark-drive') return terrainState.type === 'electric' || battler.heldItem === 'booster-energy';
+    return false;
+}
+// 算出某隻寶可夢「數值最高的那一項能力」是不是剛好等於呼叫端現在正在算的statKey，是的話回傳
+// 對應倍率(速度1.5倍/其他1.3倍)，不是的話回傳1(等於沒有效果)——五項能力同分時，依照官方規則
+// 用atk>def>spAtk>spDef>spd的優先順序決定要提升哪一項
+function paradoxStatMult(battler, statKey, weatherState, terrainState) {
+    if (!PARADOX_ABILITY_SET.has(battler.ability)) return 1;
+    if (!paradoxAbilityActive(battler, weatherState, terrainState)) return 1;
+    const stats = { atk: battler.atk, def: battler.def, spAtk: battler.spAtk, spDef: battler.spDef, spd: battler.spd };
+    const order = ['atk', 'def', 'spAtk', 'spDef', 'spd'];
+    let bestKey = order[0];
+    order.forEach(k => { if (stats[k] > stats[bestKey]) bestKey = k; });
+    if (bestKey !== statKey) return 1;
+    return statKey === 'spd' ? 1.5 : 1.3;
+}
 // 玩家反映「特攻/特防」被當成跟「攻擊/防禦」同一組數值——以前這個遊戲的能力等級系統只有5個
 // key(atk/def/spd/acc/eva)，劍舞(attack)、冥想(special-attack)這種招式的能力等級變化全部
 // 都收斂到同一個'atk'鍵，效果因此完全一樣(冥想其實該加特攻，卻被當成加攻擊)。這裡拆成真正對應
@@ -8872,7 +8906,7 @@ function genericIconHtml(src, sizeClass, title) {
 function rootedIconHtml(sizeClass) { return genericIconHtml(berrySpriteUrl('leppa'), sizeClass, '扎根'); }
 function seededIconHtml(sizeClass) { return genericIconHtml(itemSpriteUrl('big-root'), sizeClass, '寄生種子'); }
 function substituteIconHtml(sizeClass) { return genericIconHtml(typeIconUrl('normal'), sizeClass, '替身'); }
-function battleStatusBadgesHtml(team) {
+function battleStatusBadgesHtml(team, weather, terrain) {
     if (!team) return '';
     let html = '';
     if (team.status) html += statusIconHtml(team.status, 'w-3.5 h-3.5');
@@ -8901,9 +8935,17 @@ function battleStatusBadgesHtml(team) {
     // 【第三十輪新增】Mega進化中：借用超級石(如果知道具體是哪一顆的話)或通用的「妙蛙花進化石」
     // 圖示提示玩家「現在是Mega後的樣子，退場就會變回原本種類」
     if (team.megaEvolvedFrom) html += genericIconHtml(itemSpriteUrl('venusaurite'), 'w-3.5 h-3.5', 'Mega進化中');
+    // 【第六十一輪新增】原始回歸/劍之王/盾之王形態中：借用對應道具本身的圖示當badge，提示玩家
+    // 「現在是變身後的樣子，退場就會變回原本種類」，寫法完全比照上面的Mega進化badge
+    if (team.legendaryFormFrom) html += genericIconHtml(itemSpriteUrl(LEGENDARY_FORM_CATALOG[team.heldItem] ? team.heldItem : 'red-orb'), 'w-3.5 h-3.5', '傳說形態變身中');
     // 【第五十一輪新增】極巨化/超極巨化中：這個badge同時用在myTeam跟oppTeam兩邊(跟其他所有
     // 狀態小圖示共用同一個函式)，所以對方極巨化的時候玩家也看得到提示，不是只有自己這邊才顯示
     if (team.isDynamaxed) html += genericIconHtml(itemSpriteUrl('dynamax-candy'), 'w-3.5 h-3.5', `${team.isGigantamax ? '超極巨化' : '極巨化'}中(剩餘${team.dynamaxTurnsLeft || 0}回合)`);
+    // 【第六十一輪新增】太古咆哮/量子躍動生效中：呼叫端(renderBattleStage)有天氣/場地資料才會
+    // 傳weather/terrain進來，沒傳的地方(理論上不存在，保留防呆)就當作沒有天氣/場地一樣不顯示
+    if (PARADOX_ABILITY_SET.has(team.ability) && paradoxAbilityActive(team, weather || { type: null }, terrain || { type: null })) {
+        html += genericIconHtml(itemSpriteUrl('booster-energy'), 'w-3.5 h-3.5', `${team.ability === 'protosynthesis' ? '太古咆哮' : '量子躍動'}生效中(數值最高的能力+30%，速度則是+50%)`);
+    }
     return html;
 }
 // ---------- 天氣/場地：圖示素材(天氣用道具庫的「天氣石」，場地用道具庫的「場地種子」，
@@ -9244,6 +9286,69 @@ async function applyMegaEvolution(battler, megaInfo) {
 }
 
 // ============================================================
+// 【第六十一輪新增】傳說寶可夢專屬的「自動變身」道具：朱紅色寶珠/靛藍色寶珠讓固拉多/蓋歐卡
+// 「原始回歸」，腐朽的劍/腐朽的盾讓蒼響/藏瑪然特變成「劍之王/盾之王」形態。跟Mega進化最大的
+// 差異：這4種道具不需要玩家額外勾選，只要「上場時剛好帶著對應道具、而且種類還沒變身」就會
+// 自動觸發，也完全不佔用Mega/Ｚ招式/極巨化共用的那份「一場對戰只能三選一用一次」名額——這是
+// 官方規則，這4種道具本來就跟那3個系統完全獨立、可以同時存在(只是遊戲裡沒有寶可夢兩種都能用)。
+// 實作上直接沿用fetchMegaBaseStats(其實只是「用PokéAPI的slug字串查種族值」的通用工具，取名
+// 沿用歷史命名，跟Mega進化沒有真正的耦合)跟applyMegaEvolution幾乎一樣的做法：覆蓋speciesId
+// 成PokéAPI能辨識的形態slug，屬性/圖鑑圖片就會透過既有的fetchSpeciesDisplay自動正確帶出來
+// ============================================================
+const LEGENDARY_FORM_CATALOG = {
+    'red-orb': { baseSpeciesId: 383, formSlug: 'groudon-primal', prefix: '原始回歸的' }, // 固拉多
+    'blue-orb': { baseSpeciesId: 382, formSlug: 'kyogre-primal', prefix: '原始回歸的' }, // 蓋歐卡
+    'rusted-sword': { baseSpeciesId: 888, formSlug: 'zacian-crowned', prefix: '劍之王形態的' }, // 蒼響
+    'rusted-shield': { baseSpeciesId: 889, formSlug: 'zamazenta-crowned', prefix: '盾之王形態的' }, // 藏瑪然特
+};
+// 這隻寶可夢現在符不符合「該自動變身」的條件：持有對應道具，而且種類正好還是原本種類(數字圖鑑編號)。
+// 變身之後speciesId會變成PokéAPI的形態slug字串，不會再等於原本的數字編號，天然就不會重複觸發第二次
+// (跟findMegaInfoFor靠megaUsedState名額擋重複觸發的做法不同，這裡靠speciesId本身的變化天然防呆)
+function findLegendaryFormInfoFor(battler) {
+    const info = battler.heldItem && LEGENDARY_FORM_CATALOG[battler.heldItem];
+    if (info && info.baseSpeciesId === battler.speciesId) return info;
+    return null;
+}
+// 實際執行變身：原地改掉speciesId/暱稱/數值，記下復原用的快照——戰鬥結束要復原回原本種類，
+// 理由跟revertMegaEvolution完全一樣：不然這份「變身後的樣子」會原封不動留在battleState.teams
+// 裡，變成下一場戰鬥開局就已經是變身狀態的假資料
+async function applyLegendaryFormChange(battler, info) {
+    const baseStats = await fetchMegaBaseStats(info.formSlug);
+    const mult = battler.starMult || 1;
+    const newMaxHp = Math.floor(statAtLevel(baseStats.hp, battler.level, true) * mult);
+    battler.legendaryFormFrom = {
+        speciesId: battler.speciesId, nickname: battler.nickname,
+        atk: battler.atk, def: battler.def, spAtk: battler.spAtk, spDef: battler.spDef, spd: battler.spd,
+        maxHp: battler.maxHp,
+    };
+    battler.speciesId = info.formSlug;
+    battler.nickname = info.prefix + battler.nickname;
+    battler.atk = Math.floor(statAtLevel(baseStats.atk, battler.level, false) * mult);
+    battler.def = Math.floor(statAtLevel(baseStats.def, battler.level, false) * mult);
+    battler.spAtk = Math.floor(statAtLevel(baseStats.spAtk, battler.level, false) * mult);
+    battler.spDef = Math.floor(statAtLevel(baseStats.spDef, battler.level, false) * mult);
+    battler.spd = Math.floor(statAtLevel(baseStats.spd, battler.level, false) * mult);
+    battler.maxHp = newMaxHp;
+    // 跟Mega進化同樣的規則：變身不會回血，現有HP數字原封不動保留，只在新maxHp比現在HP還低時才夾住
+    battler.currentHp = Math.min(battler.currentHp, newMaxHp);
+}
+// 戰鬥結束復原，時機/寫法完全比照revertMegaEvolution
+function revertLegendaryFormChange(battler) {
+    if (!battler.legendaryFormFrom) return;
+    const original = battler.legendaryFormFrom;
+    battler.speciesId = original.speciesId;
+    battler.nickname = original.nickname;
+    battler.atk = original.atk;
+    battler.def = original.def;
+    battler.spAtk = original.spAtk;
+    battler.spDef = original.spDef;
+    battler.spd = original.spd;
+    battler.maxHp = original.maxHp;
+    battler.currentHp = Math.min(battler.currentHp, original.maxHp);
+    battler.legendaryFormFrom = null;
+}
+
+// ============================================================
 // 【第三十輪新增】Ｚ招式：判斷「這個招式現在能不能用Ｚ純晶強化」、實際算出強化後的威力/分類/
 // 招式名稱。正統規則：一場對戰裡整個「我方」全場只能用掉一次Ｚ招式名額，用
 // battleState.zMoveUsed({[uid]:bool})這個新的頂層欄位追蹤，道理跟上面的megaUsed一樣。
@@ -9320,6 +9425,12 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     // (weatherState)是相同層級的概念，用{turnsLeft}紀錄還剩幾回合，0代表沒有重力
     const gravityAll = roomData.battleState.gravity || {};
     const gravityState = { turnsLeft: gravityAll.turnsLeft || 0 };
+    // 【第六十輪新增】戲法空間(Trick Room)：跟重力同樣是全場共用、跟天氣同一層級的場地效果，
+    // 用{turnsLeft}紀錄還剩幾回合，0代表沒有生效中。生效時「速度慢的先動」，見下面effectiveSpeed
+    // 排序那段的反向判斷；使用者這輪要求補上的道具「客房服務(room-service)」依賴這個效果
+    // (戲法空間生效的當下，持有這個道具的寶可夢速度會降1階)，這裡先把場地效果本身做出來
+    const trickRoomAll = roomData.battleState.trickRoom || {};
+    let trickRoomState = { turnsLeft: trickRoomAll.turnsLeft || 0 };
 
     const log = [];
     const events = []; // 結構化的事件，給前端播放動畫用
@@ -9396,6 +9507,22 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (info.fainted) handleFaint(uidB);
         }
     }
+
+    // 【第六十一輪新增】傳說寶可夢自動變身道具(原始回歸/劍之王/盾之王)：時機比照下面的Mega進化，
+    // 放在換人結束、抓種類資料(displayOf)之前處理，這樣新形態的屬性/圖鑑圖片才會直接正確。
+    // 跟Mega進化不同的地方：不需要玩家勾選任何東西，兩邊(不分玩家/對手)只要上場的寶可夢符合
+    // 條件就會自動觸發，所以這裡兩個uid都要檢查，不像Mega/極巨化只檢查有出招動作的那一方
+    async function tryProcessLegendaryFormChange(uid) {
+        if (state[uid].currentHp <= 0) return; // 防呆：已經倒下的不處理
+        const info = findLegendaryFormInfoFor(state[uid]);
+        if (!info) return;
+        const beforeName = state[uid].nickname;
+        await applyLegendaryFormChange(state[uid], info);
+        log.push(`${beforeName} 的力量覺醒了...變成了 ${state[uid].nickname}！`);
+        events.push({ megaEvolveEvent: true, uid, inSpeciesId: state[uid].speciesId, nickname: state[uid].nickname });
+    }
+    await tryProcessLegendaryFormChange(uidA);
+    await tryProcessLegendaryFormChange(uidB);
 
     // 【第三十輪新增】Mega進化：要放在換人結束、抓種類資料(displayOf)之前處理——這樣底下
     // fetchSpeciesDisplay抓到的就已經是Mega後的種類，屬性/圖鑑圖片全部自動正確，不用另外
@@ -10080,6 +10207,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 飛毛腿(quick-feet)：陷入異常狀態時速度變1.5倍，而且正統規則是連麻痺原本的減速效果也會
         // 一併無視(所以這裡直接return，不會再疊乘下面的麻痺0.5倍)
         if (t.ability === 'quick-feet' && t.status) return base * 1.5;
+        // 【第六十一輪新增】太古咆哮/量子躍動：如果「速度」剛好是這隻寶可夢數值最高的那一項，
+        // 條件生效時速度變1.5倍(paradoxStatMult內部已經判斷過是不是真的輪到速度被選中)
+        base *= paradoxStatMult(t, 'spd', weatherState, terrainState);
         return t.status === 'paralysis' ? base * 0.5 : base;
     };
     let order;
@@ -10109,7 +10239,12 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     order = [uidA, uidB];
                 } else {
                     const spdA = effectiveSpeed(uidA), spdB = effectiveSpeed(uidB);
-                    order = spdA === spdB ? (Math.random() < 0.5 ? [uidA, uidB] : [uidB, uidA]) : (spdA > spdB ? [uidA, uidB] : [uidB, uidA]);
+                    // 【第六十輪新增】戲法空間生效中：速度比較整個反過來，「慢的先動」——這裡只反轉
+                    // 純速度比較這一步，優先度/先制之爪/後攻尾巴這些「比速度之前」就已經決定順序的
+                    // 判斷完全不受影響，跟正統規則一致(Trick Room不會蓋掉優先度或先制道具的判斷)
+                    const trickRoomActive = trickRoomState.turnsLeft > 0;
+                    order = spdA === spdB ? (Math.random() < 0.5 ? [uidA, uidB] : [uidB, uidA])
+                        : ((spdA > spdB) !== trickRoomActive ? [uidA, uidB] : [uidB, uidA]);
                 }
             }
         }
@@ -10805,6 +10940,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 else if (atk.ability === 'flare-boost' && atk.status === 'burn') abilityAtkMultZ = 1.5;
             }
             if (atk.ability === 'defeatist' && atk.currentHp <= atk.maxHp / 2) abilityAtkMultZ *= 0.5;
+            // 【第六十一輪新增】太古咆哮/量子躍動：跟其他攻擊特性一樣疊乘在abilityAtkMultZ上，
+            // 是不是真的輪到攻擊/特攻被選中(數值最高)由paradoxStatMult內部判斷
+            abilityAtkMultZ *= paradoxStatMult(atk, isSpecialZ ? 'spAtk' : 'atk', weatherState, terrainState);
             let ruinAtkMultZ = 1;
             if (!isSpecialZ && def.ability === 'tablets-of-ruin') ruinAtkMultZ = 0.75;
             else if (isSpecialZ && def.ability === 'vessel-of-ruin') ruinAtkMultZ = 0.75;
@@ -10817,6 +10955,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 else if (def.ability === 'marvel-scale' && def.status) abilityDefMultZ = 1.5;
                 else if (def.ability === 'grass-pelt' && terrainState.type === 'grassy') abilityDefMultZ = 1.5;
             } else if (def.ability === 'ice-scales') abilityDefMultZ = 2;
+            // 【第六十一輪新增】太古咆哮/量子躍動：防禦方也可能是被選中(防禦/特防數值最高)的一方
+            abilityDefMultZ *= paradoxStatMult(def, isSpecialZ ? 'spDef' : 'def', weatherState, terrainState);
             let ruinDefMultZ = 1;
             if (!isSpecialZ && atk.ability === 'sword-of-ruin') ruinDefMultZ = 0.75;
             else if (isSpecialZ && atk.ability === 'beads-of-ruin') ruinDefMultZ = 0.75;
@@ -10902,6 +11042,29 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             ev.fieldEffect = { kind: 'terrain', type: terrainState.type };
             log.push(`${atkName} 使出 ${move.nameZh}，場地變成了${TERRAIN_NAME_ZH[terrainState.type]}！`);
             triggerTerrainSeeds(terrainState.type, [attackerUid, defenderUid]);
+        } else if (move.name === 'trick-room') {
+            // 【第六十輪新增】戲法空間：正統規則是「開關」而不是單純延長時間——已經生效中的話，
+            // 再用一次會直接把它關掉(不分是不是同一隻/同一方用的)，這裡跟天氣/場地系(單純蓋掉
+            // 剩餘回合數重新計時)刻意不一樣
+            if (trickRoomState.turnsLeft > 0) {
+                trickRoomState = { turnsLeft: 0 };
+                log.push(`${atkName} 使出 ${move.nameZh}，把奇怪的空間恢復原狀了！`);
+            } else {
+                trickRoomState = { turnsLeft: 5 };
+                log.push(`${atkName} 使出 ${move.nameZh}，製造出了奇怪的空間！`);
+                // 【第六十輪新增】客房服務(room-service)：戲法空間「這一刻剛生效」的瞬間，場上
+                // (不分敵我，兩邊都要檢查)帶著這個道具的寶可夢速度降1階一次——正統規則不看是
+                // 哪一方設出來的，兩邊只要在場上都會觸發
+                [uidA, uidB].forEach(sideUid => {
+                    const holder = state[sideUid];
+                    if (holder && holder.currentHp > 0 && holder.heldItem === 'room-service') {
+                        const before = holder.stages.spd || 0;
+                        holder.stages.spd = Math.max(-6, before - 1);
+                        if (holder.stages.spd !== before) log.push(`${nameOf[sideUid]} 的客房服務發動了，速度下降了！`);
+                    }
+                });
+            }
+            ev.fieldEffect = { kind: 'trickRoom', active: trickRoomState.turnsLeft > 0 };
         } else if (HAZARD_MOVE_INFO[move.name]) {
             // 入場障礙：撒在「對方」那一側(defenderUid)，效果不是現在生效，是對方之後每次換人
             // 上場才結算(applyHazardsOnSwitchIn)
@@ -11072,6 +11235,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 else if (atk.ability === 'flare-boost' && atk.status === 'burn') abilityAtkMult = 1.5;
             }
             if (atk.ability === 'defeatist' && atk.currentHp <= atk.maxHp / 2) abilityAtkMult *= 0.5;
+            // 【第六十一輪新增】太古咆哮/量子躍動：跟其他攻擊特性一樣疊乘在abilityAtkMult上，
+            // 是不是真的輪到攻擊/特攻被選中(數值最高)由paradoxStatMult內部判斷
+            abilityAtkMult *= paradoxStatMult(atk, isSpecial ? 'spAtk' : 'atk', weatherState, terrainState);
             // ---- 支配之盤四天王特性(蕭瑟之鈴/嚴刑之劍/滿盈之杯/塗漆之杖)：不是加強自己，是壓制
             // 「對方」對應那項能力25%——所以要看對手(state[defenderUid])身上有沒有這個特性 ----
             let ruinAtkMult = 1;
@@ -11093,6 +11259,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 else if (def.ability === 'marvel-scale' && def.status) abilityDefMult = 1.5;
                 else if (def.ability === 'grass-pelt' && terrainState.type === 'grassy') abilityDefMult = 1.5;
             } else if (def.ability === 'ice-scales') abilityDefMult = 2;
+            // 【第六十一輪新增】太古咆哮/量子躍動：防禦方也可能是被選中(防禦/特防數值最高)的一方
+            abilityDefMult *= paradoxStatMult(def, isSpecial ? 'spDef' : 'def', weatherState, terrainState);
             let ruinDefMult = 1;
             if (!isSpecial && atk.ability === 'sword-of-ruin') ruinDefMult = 0.75;
             else if (isSpecial && atk.ability === 'beads-of-ruin') ruinDefMult = 0.75;
@@ -11602,7 +11770,9 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                     def.trapperKey = attackerUid;
                     def.trapDamage = !trapInfo.pure;
                     const tmin = trapInfo.min || 4, tmax = trapInfo.max || 5;
-                    def.trapTurns = tmin + Math.floor(Math.random() * (tmax - tmin + 1));
+                    // 【第六十輪新增】緊纏鉤爪(grip-claw)：使用束縛招式的一方帶著這個道具時，
+                    // 持續回合數固定拉滿到這招的最大值(不再隨機骰4~5/5~6回合)，正統規則的效果
+                    def.trapTurns = (atk.heldItem === 'grip-claw') ? tmax : (tmin + Math.floor(Math.random() * (tmax - tmin + 1)));
                     log.push(`${defName} 被束縛住了，沒辦法替換寶可夢！`);
                 }
             }
@@ -12218,7 +12388,14 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
 
             // ---- 這次新補齊的回合結束效果：束縛系纏繞傷害、惡夢、瞌睡轉睡眠、亡語之歌倒數 ----
             if (t.trapped && t.trapDamage) {
-                const dmg = Math.max(1, Math.floor(t.maxHp / 8));
+                // 【第六十輪新增】緊綁束帶(binding-band)：困住這隻寶可夢的那一方(t.trapperKey)
+                // 目前場上的寶可夢帶著這個道具時，纏繞傷害從1/8提升到1/6最大HP——正統規則是看
+                // 「使出束縛招式的那隻」持有的道具，這裡簡化成看trapperKey那一側「現在場上」的
+                // 寶可夢(絕大多數情況下就是同一隻，只有極少數「設下束縛後中途換人」的情境會有差異，
+                // 這個簡化跟引擎其他地方的既定簡化原則一致)
+                const trapper = t.trapperKey ? state[t.trapperKey] : null;
+                const bindFraction = (trapper && trapper.heldItem === 'binding-band') ? 6 : 8;
+                const dmg = Math.max(1, Math.floor(t.maxHp / bindFraction));
                 t.currentHp = Math.max(0, t.currentHp - dmg);
                 log.push(`${nameOf[uid]} 被束縛招式傷害，損失了 ${dmg} 點HP！`);
                 events.push({ endTurnStatus: true, pokemonKey: uid, pokemonName: nameOf[uid], status: 'trap', damage: dmg, hpAfter: t.currentHp, fainted: t.currentHp <= 0 });
@@ -12361,6 +12538,13 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             gravityState.turnsLeft -= 1;
             if (gravityState.turnsLeft <= 0) log.push(`重力恢復正常了！`);
         }
+        // 【第六十輪新增】戲法空間：倒數方式跟重力完全一樣(全場共用、回合結束才倒數)——
+        // 中途被再使用一次而提早關掉的情況已經在move處理那段直接歸零，這裡自然倒數到0時
+        // 才會走到這個分支印出「時間到了」的訊息
+        if (!winnerUid && trickRoomState.turnsLeft > 0) {
+            trickRoomState.turnsLeft -= 1;
+            if (trickRoomState.turnsLeft <= 0) log.push(`奇怪的空間消失了！`);
+        }
         // 光牆/反射壁/極光幕/神秘守護/薄霧：兩側各自倒數，時間到了自動解除(跟天氣/場地是同一種
         // 「回合結束才倒數」模式，但這五個是每一側各自獨立的計時器，不是全場共用一份)
         if (!winnerUid) {
@@ -12390,6 +12574,10 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // (maxHp加倍/HP百分比)的一方復原，不然這份放大過的HP會原封不動留在battleState.teams裡
         revertDynamax(state[uidA]);
         revertDynamax(state[uidB]);
+        // 【第六十一輪新增】原始回歸/劍之王/盾之王道理也完全一樣：戰鬥真正結束時要復原回原本種類，
+        // 不然下一場戰鬥開局就會誤判成已經是變身狀態(即使那時候根本沒有再帶著對應道具)
+        revertLegendaryFormChange(state[uidA]);
+        revertLegendaryFormChange(state[uidB]);
     }
     const winnerInstanceId = winnerUid ? state[winnerUid].instanceId : null;
     const resolvedRoundNum = roomData.battleState.round || 1;
@@ -12413,6 +12601,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 'battleState.dynamaxUsed': dynamaxUsedState, // 【第五十一輪新增】
                 'battleState.dynamaxCharge': dynamaxChargeState, // 【第五十一輪新增】
                 'battleState.gravity': gravityState, // 【第五十一輪新增】
+                'battleState.trickRoom': trickRoomState, // 【第六十輪新增】
                 'battleState.awaitingSwitch': awaitingSwitchFinal,
                 'battleState.round': (data.battleState.round || 1) + 1,
                 'battleState.log': firebase.firestore.FieldValue.arrayUnion(...log),
