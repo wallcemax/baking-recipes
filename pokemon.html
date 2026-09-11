@@ -3496,13 +3496,28 @@ const MOVE_CATEGORY_ZH = { physical: '物理', special: '特殊', status: '變�
 // legendaryFinishCheckAttempted擋掉短時間內重複觸發(onSnapshot稍有變動就會呼叫這裡)，
 // 一次補結算流程跑完(不管成功或失敗)才會重新允許下一次嘗試
 let legendaryFinishCheckAttempted = false;
+// 【第六十輪新增】legendaryChallengeInProgress：修正使用者回報的「打贏戰報沒有道具、沒記錄
+// 戰績、親密度反而越打越低」——根因是這支「保險呼叫」掛在玩家文件的onSnapshot上，只要
+// pokemonPlayers/{uid}文件觸發任何一次更新(包含submitLegendaryChallengeStart一開始，伺服器
+// 剛把activeLegendaryChallenge寫進玩家文件的那一瞬間)，只要當下room還沒變成finished，就會被
+// 判定成「中途放棄」——但從「伺服器登記這場挑戰」到「client端真的把battleState寫進
+// pokemonBattleRooms、房間才算開始戰鬥」中間還要跑buildLegendaryTrainerRoster(組訓練家隊伍，
+// 含好幾次PokéAPI查詢)這類非同步流程，這段時間window內玩家自己的文件onSnapshot幾乎一定會先
+// 觸發一次，「還沒真的開始打」就先被誤判放棄、扣了親密度、清空activeLegendaryChallenge——等
+// 戰鬥真的打完，伺服器已經找不到這場挑戰紀錄可以結算，親密度/戰績/掉落道具全部發不出來。
+// worker.js那邊已經加上一道緩衝期(LEGENDARY_CHALLENGE_SETTLE_GRACE_MS)防同一種問題，這裡在
+// client端再補一道更直接的防線：只要「這個分頁自己剛發起、還沒離開房間」的這整段期間(不只是
+// 剛開始那幾秒，涵蓋整場戰鬥不管打多久)，完全不要呼叫這支保險API——反正真的還在打，不算
+// 放棄，equal沒有結算的必要；只有玩家真的離開房間(打完自動離開、或中途關閉分頁重新整理)之後，
+// 這個旗標才會變回false，讓保險呼叫恢復正常運作去抓「真的忘記結算」的舊挑戰
+let legendaryChallengeInProgress = false;
 function renderLegendaryStats() {
     const statsEl = document.getElementById('legendary-stats-text');
     if (statsEl && currentPlayerData) {
         const stats = currentPlayerData.legendaryChallengeStats || { wins: 0, losses: 0 };
         statsEl.textContent = `${stats.wins || 0}勝 ${stats.losses || 0}敗`;
     }
-    if (currentPlayerData && currentPlayerData.activeLegendaryChallenge && !legendaryFinishCheckAttempted) {
+    if (currentPlayerData && currentPlayerData.activeLegendaryChallenge && !legendaryFinishCheckAttempted && !legendaryChallengeInProgress) {
         legendaryFinishCheckAttempted = true;
         callWorker('pokemon_legendary_challenge_finish', {}).then(result => {
             legendaryFinishCheckAttempted = false;
@@ -5953,6 +5968,11 @@ async function submitLegendaryChallengeStart() {
         // 挑戰(如果有)清掉，所以就算玩家上次中途關掉分頁，這裡再挑戰一次也不會被卡住
         const startResult = await callWorker('pokemon_legendary_challenge_start', { trainerId: trainer.id, teamInstanceIds: party.map(i => i.id) });
         const roomId = startResult.roomId;
+        // 【第六十輪新增】從這裡開始(伺服器已經把activeLegendaryChallenge記到玩家文件上)到底下
+        // 房間文件真的寫進Firestore、玩家真的進到房間畫面為止，都算「這場挑戰進行中」，見
+        // legendaryChallengeInProgress的說明——這中間buildLegendaryTrainerRoster要打好幾次
+        // PokéAPI，是這個race最容易發生的窗口
+        legendaryChallengeInProgress = true;
 
         const { members: trainerMembers, gimmickKind } = await buildLegendaryTrainerRoster(trainer);
         const leadWild = trainerMembers[0];
@@ -5996,6 +6016,10 @@ async function submitLegendaryChallengeStart() {
         switchTab('battle');
         watchRoom(roomId);
     } catch (err) {
+        // 【第六十輪新增】流程中途失敗(例如房間文件真的沒寫成功)，重新開放保險呼叫機制去處理
+        // 伺服器那邊可能已經登記、但client這裡沒能力繼續完成的挑戰(靠worker.js的
+        // LEGENDARY_CHALLENGE_SETTLE_GRACE_MS緩衝期，之後真的會被正確判定成中途放棄)
+        legendaryChallengeInProgress = false;
         showToast('挑戰傳說訓練家失敗：' + err.message);
     }
 }
@@ -6081,6 +6105,10 @@ function leaveRoomView() {
     currentBattleRoomId = null;
     battleShowSwitchPicker = false;
     lastRenderedRoom = null;
+    // 【第六十輪新增】離開房間畫面(不管是打完自動離開、還是中途按投降/關閉)，代表這場戰鬥(如果
+    // 剛好是挑戰傳說訓練家)已經不會再有進行中的client端流程佔用玩家文件的更新事件，重新開放
+    // renderLegendaryStats的保險呼叫機制，讓它能繼續抓「真的忘記結算」的舊挑戰
+    legendaryChallengeInProgress = false;
     document.getElementById('battle-lobby-view').classList.remove('hidden');
     document.getElementById('battle-room-view').classList.add('hidden');
     BGM.play('menu'); // 離開對戰房間，配樂切回大廳版本
