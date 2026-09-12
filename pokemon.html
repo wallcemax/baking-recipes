@@ -1775,6 +1775,28 @@ const SPECIES_DESC_ZH_OVERRIDE = {
     'terapagos': '外殼堅硬如結晶，蘊藏著轉換能量的神祕力量，與太晶化現象有著深厚淵源。',
     'pecharunt': '外表看似親切可愛，卻會分送特製的麻糬，讓對方在不知不覺間聽命於己。',
 };
+// 【第六十五輪新增，修第六十四輪遺留的bug】極少數「非預設variety」的寶可夢(全國圖鑑編號以外、
+// 10000+的那些型態專屬pokemon編號，例如連擊流武道熊師10191)，PokéAPI的`/pokemon-species/`
+// 端點完全查不到對應資料(只有原始物種的編號查得到，見上面第三十七輪那段註解)，導致下面
+// fetchSpeciesDisplay抓不到zh-Hant名稱時，只能退回`data.name`這個英文代號(例如
+// "urshifu-rapid-strike")當作nameZh——這個退回值本身「看起來像有值」(不是空字串/null)，
+// 導致`pokemonDisplayName`(優先看`display.nameZh`，找不到才退回`instance.speciesNameZh`)
+// 永遠優先顯示這個醜醜的英文代號，而不是進化時已經存好的正確中文名稱(`instance.speciesNameZh`)
+// ——這是第六十四輪修武道熊師/鬃岩狼人進化型態bug時漏掉的地方，玩家进化成連擊流之後，
+// box/隊伍/詳細資料到處都會看到"urshifu-rapid-strike"這種英文字串，不是中文名。
+// 這裡新增一張「用數字pokemon編號當key」的覆寫表(刻意不用英文代號字串當key，因為代號拼法
+// 沒有100%查證過、容易打錯，數字編號才是這輪查證時最確定的資料)，fetchSpeciesDisplay抓不到
+// zh-Hant名稱時，先查這張表再查退回英文代號——之後每次新增「同一species底下有非預設variety」
+// 的寶可夢(這輪還有Toxtricity低調型態/Basculegion雌性/蕾冠王合體型態)都會補進這張表
+const SPECIES_NAME_ZH_OVERRIDE = {
+    10191: '連擊流武道熊師', // 武道熊師(連擊流)，第六十四輪新增進化選項
+    10126: '鬃岩狼人（黑夜的樣子）', // 第六十四輪新增進化選項
+    10152: '鬃岩狼人（黃昏的樣子）', // 第六十四輪新增(目前還沒開放進化成這個型態，先補齊備用)
+    10184: '顫弦蠑螈（低調的樣子）', // 第六十五輪新增進化選項
+    10248: '幽尾玄魚（雌性的樣子）', // 第六十五輪新增進化選項
+    10193: '蕾冠王（騎白馬的樣子）', // 第六十五輪新增，蕾冠王與雪暴馬合體
+    10194: '蕾冠王（騎黑馬的樣子）', // 第六十五輪新增，蕾冠王與靈幽馬合體
+};
 
 async function fetchSpeciesDisplay(speciesId, isShiny) {
     const shiny = !!isShiny;
@@ -1825,7 +1847,16 @@ async function fetchSpeciesDisplay(speciesId, isShiny) {
         // 動到collection/圖鑑等其他畫面原本就在用、玩家喜歡的official-artwork精美立繪(sprite/
         // spriteBack欄位維持原樣不變)
         const result = {
-            nameZh: extractZhHantNameClient(speciesData.names, data.name),
+            // 【第六十五輪修正】原本這裡直接用extractZhHantNameClient(查不到zh-Hant名稱就退回
+            // 英文代號data.name)，非預設variety(見上面SPECIES_NAME_ZH_OVERRIDE的說明)一律查不到、
+            // 一律退回英文代號——改成先查真正的zh-Hant資料，查不到才查SPECIES_NAME_ZH_OVERRIDE
+            // (用data.id這個數字編號查，不是用容易打錯的英文代號字串)，兩邊都查不到才最終退回
+            // 英文代號(不能直接呼叫extractZhHantNameClient，牠內建查不到就退回'???'的行為，
+            // 會讓下面的SPECIES_NAME_ZH_OVERRIDE查詢永遠被'???'短路蓋過去，這裡改成自己手動找)
+            nameZh: (() => {
+                const zhEntry = (speciesData.names || []).find(n => n.language && String(n.language.name).toLowerCase() === 'zh-hant');
+                return (zhEntry && zhEntry.name) || SPECIES_NAME_ZH_OVERRIDE[data.id] || data.name;
+            })(),
             sprite: (shiny && artwork?.front_shiny) || artwork?.front_default || data.sprites?.front_default || '',
             spriteBack: (shiny && data.sprites?.back_shiny) || data.sprites?.back_default || data.sprites?.front_default || '',
             spriteAnimated: (shiny && animated?.front_shiny) || animated?.front_default || null,
@@ -2283,7 +2314,13 @@ async function renderBoxTab() {
     renderBoxTypeFilterChipsOnce();
     syncBoxFilterChipStyles();
 
-    if (currentInstances.length === 0) {
+    // 【第六十五輪新增】已經合體進蕾冠王身上的雪暴馬/靈幽馬(hiddenFused)不能再被單獨看到/操作，
+    // 只有解除合體後才會重新出現——用這個「顯示用清單」取代直接用currentInstances，跟原始資料
+    // 分開，其他地方(親密度/放牧場檢查等)不受影響，因為合體時已經強制把inParty/placedForIdle
+    // 都設回false了，這裡單純是擋掉倉庫格子本身還會顯示得到它的問題
+    const visibleInstances = currentInstances.filter(i => !i.hiddenFused);
+
+    if (visibleInstances.length === 0) {
         boxList.innerHTML = '';
         partyList.innerHTML = '';
         boxEmptyHint.classList.remove('hidden');
@@ -2293,7 +2330,7 @@ async function renderBoxTab() {
     }
     boxEmptyHint.classList.add('hidden');
 
-    let partyMembers = currentInstances.filter(i => i.inParty).slice(0, 6);
+    let partyMembers = visibleInstances.filter(i => i.inParty).slice(0, 6);
     partyEmptyHint.classList.toggle('hidden', partyMembers.length > 0);
 
     // 【第五十七輪新增】親密度10以下(含)的寶可夢不能留在隊伍裡——這裡是「玩家沒有主動操作、
@@ -2314,9 +2351,9 @@ async function renderBoxTab() {
         });
     }
 
-    const displays = await Promise.all(currentInstances.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
+    const displays = await Promise.all(visibleInstances.map(i => fetchSpeciesDisplay(i.speciesId, i.isShiny)));
     if (myToken !== boxRenderToken) return; // 半路已經有更新的render觸發了，這次放棄、不動DOM
-    const displayMap = new Map(currentInstances.map((i, idx) => [i.id, displays[idx]]));
+    const displayMap = new Map(visibleInstances.map((i, idx) => [i.id, displays[idx]]));
 
     partyList.innerHTML = partyMembers.map(inst => {
         const d = displayMap.get(inst.id) || {};
@@ -2332,7 +2369,7 @@ async function renderBoxTab() {
 
     // ---- 套用搜尋/屬性/狀態篩選 ----
     const searchTerm = (document.getElementById('box-search-input')?.value || '').trim().toLowerCase();
-    let filtered = currentInstances.filter(inst => {
+    let filtered = visibleInstances.filter(inst => {
         const d = displayMap.get(inst.id) || {};
         if (searchTerm) {
             const name = pokemonDisplayName(inst, d).toLowerCase();
@@ -2381,6 +2418,76 @@ async function renderBoxTab() {
     }).join('');
 }
 
+// ============================================================
+// 蕾冠王×雪暴馬/靈幽馬合體/解除合體(第六十五輪新增)：跟一般進化選項並列在詳情彈窗裡，不另外開
+// 彈窗——跟現有多分支進化選項(伊布/啃果蟲等)同一種「條件不夠就顯示灰字提示」呈現手法，操作模式
+// 一致。合體是「兩隻寶可夢暫時合成一隻」，完全可逆，跟進化(單向、原本那隻本體改變種類)是不同的
+// 概念，所以獨立寫一個函式、不是塞進checkEvolutionEligibility裡
+// ============================================================
+async function calyrexDetailExtraHtml(inst) {
+    const ownedReins = (currentPlayerData?.items || {})['reins-of-unity'] || 0;
+    if (Number(inst.speciesId) === CALYREX_BASE_SPECIES_ID) {
+        const parts = [];
+        for (const horseSpeciesIdStr of Object.keys(CALYREX_FUSION_CATALOG)) {
+            const horseSpeciesId = Number(horseSpeciesIdStr);
+            const cfg = CALYREX_FUSION_CATALOG[horseSpeciesId];
+            // 只挑「還沒被合體藏起來、也沒放牧場中」的那一隻——放牧場中的要先牽出來(跟進化合併
+            // 同一個限制，見handlePokemonCalyrexFuse)，已經合體的hiddenFused不會出現在這裡
+            const horse = currentInstances.find(i => Number(i.speciesId) === horseSpeciesId && !i.hiddenFused && !i.placedForIdle);
+            const horseOwnedAtAll = currentInstances.some(i => Number(i.speciesId) === horseSpeciesId && !i.hiddenFused);
+            if (!horse) {
+                const hint = !horseOwnedAtAll ? `倉庫裡沒有${cfg.horseNameZh}` : `${cfg.horseNameZh}還在牧場中，要先牽出來`;
+                parts.push(`<p class="text-xs text-gray-400 text-center mb-2">合體成${cfg.fusedSpeciesNameZh}：${hint}</p>`);
+            } else if (ownedReins <= 0) {
+                parts.push(`<p class="text-xs text-gray-400 text-center mb-2">合體成${cfg.fusedSpeciesNameZh}：需要「牽絆韁繩」，去信使鳥百貨買一個</p>`);
+            } else {
+                parts.push(`<button onclick="fuseCalyrex('${inst.id}','${horse.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-teal-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('reins-of-unity')}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">與${cfg.horseNameZh}合體，變成${cfg.fusedSpeciesNameZh}！</button>`);
+            }
+        }
+        return parts.join('');
+    }
+    if (CALYREX_FUSED_FORM_IDS.includes(Number(inst.speciesId))) {
+        if (ownedReins <= 0) {
+            return `<p class="text-xs text-gray-400 text-center mb-2">需要「牽絆韁繩」才能解除合體，去信使鳥百貨買一個</p>`;
+        }
+        return `<button onclick="splitCalyrex('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-teal-100 text-teal-700 mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('reins-of-unity')}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">解除合體</button>`;
+    }
+    return '';
+}
+let calyrexFusionInFlight = false; // 避免連點兩次同時送出兩個合體/解除合體請求
+async function fuseCalyrex(calyrexInstanceId, horseInstanceId) {
+    if (calyrexFusionInFlight) return;
+    calyrexFusionInFlight = true;
+    try {
+        const result = await callWorker('pokemon_calyrex_fuse', { calyrexInstanceId, horseInstanceId });
+        showToast(`合體成功！變成了${result.fusedSpeciesNameZh}`);
+        SFX.levelUp();
+        closeDetailModal();
+    } catch (err) {
+        showToast('合體失敗：' + err.message);
+        SFX.error();
+        openDetailModal(calyrexInstanceId);
+    } finally {
+        calyrexFusionInFlight = false;
+    }
+}
+async function splitCalyrex(calyrexInstanceId) {
+    if (calyrexFusionInFlight) return;
+    calyrexFusionInFlight = true;
+    try {
+        const result = await callWorker('pokemon_calyrex_split', { calyrexInstanceId });
+        showToast(`已經解除合體，變回${result.speciesNameZh}了`);
+        SFX.levelUp();
+        closeDetailModal();
+    } catch (err) {
+        showToast('解除合體失敗：' + err.message);
+        SFX.error();
+        openDetailModal(calyrexInstanceId);
+    } finally {
+        calyrexFusionInFlight = false;
+    }
+}
+
 async function openDetailModal(instanceId) {
     const inst = currentInstances.find(i => i.id === instanceId);
     if (!inst) return;
@@ -2392,6 +2499,7 @@ async function openDetailModal(instanceId) {
 
     const d = await fetchSpeciesDisplay(inst.speciesId, inst.isShiny);
     const evoInfo = await checkEvolutionEligibility(inst);
+    const calyrexExtraHtml = await calyrexDetailExtraHtml(inst);
     const moveDisplays = await Promise.all((inst.moves || []).map(fetchMoveData));
     const heldItemNameZh = inst.heldItem ? await (COMMON_BERRIES.includes(inst.heldItem) ? fetchBerryNameZh(inst.heldItem) : fetchGenericItemNameZh(inst.heldItem)) : null;
     content.innerHTML = `
@@ -2439,13 +2547,16 @@ async function openDetailModal(instanceId) {
             // 每一種都各自變成一顆可以點的按鈕(帶上這條分支專屬的nextSpeciesUrl，讓
             // evolvePokemon知道玩家選的是哪一種)，還不符合資格的分支則顯示灰字提示、
             // 並在提示前面加上目標名稱，避免多個分支的提示混在一起看不出是講哪一種
+            // 【第六十四輪新增】formKey：武道熊師/鬃岩狼人這種同一個nextSpeciesUrl底下有兩個
+            // 以上型態選項的情況，光靠nextSpeciesUrl分不清玩家點的是哪一個，額外多帶一個參數
             if (opt.canEvolve) {
                 return opt.requiresItemName
-                    ? `<button onclick="evolvePokemon('${inst.id}', '${opt.nextSpeciesUrl}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${opt.itemSprite}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">使用「${opt.itemNameZh}」進化成 ${opt.nextName}！(道具會被消耗)</button>`
-                    : `<button onclick="evolvePokemon('${inst.id}', '${opt.nextSpeciesUrl}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('rare-candy')}" class="w-4 h-4" style="image-rendering:pixelated">進化成 ${opt.nextName}！</button>`;
+                    ? `<button onclick="evolvePokemon('${inst.id}', '${opt.nextSpeciesUrl}', '${opt.formKey || ''}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${opt.itemSprite}" class="w-4 h-4" style="image-rendering:pixelated" onerror="this.style.display='none'">使用「${opt.itemNameZh}」進化成 ${opt.nextName}！(道具會被消耗)</button>`
+                    : `<button onclick="evolvePokemon('${inst.id}', '${opt.nextSpeciesUrl}', '${opt.formKey || ''}')" class="w-full text-sm py-2 rounded-xl font-bold bg-purple-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('rare-candy')}" class="w-4 h-4" style="image-rendering:pixelated">進化成 ${opt.nextName}！</button>`;
             }
             return opt.nextName ? `<p class="text-xs text-gray-400 text-center mb-2 flex items-center justify-center gap-1">${opt.itemSprite ? `<img src="${opt.itemSprite}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span>${opt.nextName}：${opt.hint || ''}</span></p>` : '';
         }).join('')}
+        ${calyrexExtraHtml}
         <button onclick="closeDetailModal()" class="w-full text-gray-400 text-sm">關閉</button>
     `;
 }
@@ -2775,8 +2886,30 @@ const POKEMON_MART_EVOLUTION_ITEMS = [
     'black-augurite','peat-block','auspicious-armor','malicious-armor','metal-alloy',
     'unremarkable-teacup','masterpiece-teacup',
     'scroll-of-darkness','scroll-of-waters','linking-cord',
+    // 【第六十五輪新增】牽絆韁繩：蕾冠王跟雪暴馬/靈幽馬合體用的道具，跟上面這些「用掉就消耗」的
+    // 進化道具性質不一樣——這個是可以重複使用的鑰匙道具(合體、解除合體都要「持有」但不會被扣掉)，
+    // 混在這份清單裡純粹是借用同一個信使鳥百貨的購買/白名單機制，用法說明畫在蕾冠王詳情頁裡
+    // (見openDetailModal的calyrexDetailExtraHtml)，跟worker.js的同名常數要保持一致
+    'reins-of-unity',
 ];
 const DELIBIRD_MART_ITEM_COST = 2200; // 每個道具統一售價(使用者指定)，唯獨不賣POKEMON_EVOLUTION_STONES那10種進化之石(已經有猜猜看小遊戲當取得管道)
+// 【第六十五輪新增】蕾冠王(898)跟雪暴馬(899)/靈幽馬(901)的合體/解除合體：合體後蕾冠王的種族值
+// 是官方寫死的固定數值(來源：Bulbapedia/PokéAPI pokemon.csv，2026年版本確認)，不受搭配的那隻馬
+// 個體差異影響，馬本身的等級/招式/道具/星級全程不動——跟worker.js裡同名的常數要保持一致
+const CALYREX_BASE_SPECIES_ID = 898;
+const CALYREX_FUSION_CATALOG = {
+    899: { // 雪暴馬 Glastrier → 蕾冠王(騎白馬的樣子)
+        fusedSpeciesId: 10193, fusedSpeciesName: 'calyrex-ice', fusedSpeciesNameZh: '蕾冠王（騎白馬的樣子）',
+        types: ['psychic', 'ice'], horseNameZh: '雪暴馬',
+        baseHp: 100, baseAtk: 165, baseDef: 150, baseSpAtk: 85, baseSpDef: 130, baseSpd: 50,
+    },
+    901: { // 靈幽馬 Spectrier → 蕾冠王(騎黑馬的樣子)
+        fusedSpeciesId: 10194, fusedSpeciesName: 'calyrex-shadow', fusedSpeciesNameZh: '蕾冠王（騎黑馬的樣子）',
+        types: ['psychic', 'ghost'], horseNameZh: '靈幽馬',
+        baseHp: 100, baseAtk: 85, baseDef: 80, baseSpAtk: 165, baseSpDef: 100, baseSpd: 150,
+    },
+};
+const CALYREX_FUSED_FORM_IDS = [10193, 10194];
 // 神奇糖果的正確效果是「不看EXP、直接升1級」，經驗糖果拆成XS~XL五階、各自給固定EXP——
 // 這兩份鑰匙都要跟worker.js的EXP_CANDY_AMOUNTS/rollGuessReward保持一致
 const EXP_CANDY_AMOUNTS = { 'exp-candy-xs': 50, 'exp-candy-s': 100, 'exp-candy-m': 150, 'exp-candy-l': 300, 'exp-candy-xl': 500 };
@@ -3091,7 +3224,7 @@ async function openMartModal() {
 
     content.innerHTML = `
         <h3 class="font-bold text-lg mb-1 text-center flex items-center justify-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/225.png" class="w-6 h-6" style="image-rendering:pixelated" onerror="this.style.display='none'">信使鳥百貨</h3>
-        <p class="text-xs text-gray-400 text-center mb-3">收購各種官方進化道具(除了進化石以外)，每個統一${DELIBIRD_MART_ITEM_COST}代幣，買到之後到寶可夢詳情頁的「進化」按鈕就能直接用掉。進化石(火之石/水之石等10種)不在這裡賣，要去玩「猜猜看」小遊戲賺</p>
+        <p class="text-xs text-gray-400 text-center mb-3">收購各種官方進化道具(除了進化石以外)，每個統一${DELIBIRD_MART_ITEM_COST}代幣，買到之後到寶可夢詳情頁的「進化」按鈕就能直接用掉。進化石(火之石/水之石等10種)不在這裡賣，要去玩「猜猜看」小遊戲賺。「牽絆韁繩」比較特別：買到後不會被用掉，只要持有著，就能在蕾冠王的詳情頁跟雪暴馬/靈幽馬合體、或解除合體</p>
         <div class="grid grid-cols-3 gap-2 mb-3">
             ${POKEMON_MART_EVOLUTION_ITEMS.map((key, idx) => `
                 <div class="text-xs bg-gray-50 rounded-xl p-2 flex flex-col items-center gap-1 relative">
@@ -3737,6 +3870,86 @@ async function fetchItemNameZh(url) {
         return zh;
     } catch (err) { return null; }
 }
+// 【第六十四輪新增，使用者回報「武道熊用惡之掛軸/水之掛軸都變成同一個型態」】極少數寶可夢的
+// 進化鏈資料形狀跟伊布/啃果蟲(上面第五十八輪處理的「一階可以進化成好幾種species」)不一樣：
+// 熊徒弟→武道熊師只有「一條」evolves_to分支(都是武道熊師這一個species)，但那條分支底下的
+// evolution_details陣列裡有好幾筆條件，各自對應「同一個species底下不同的variety(型態)」——
+// 一擊流/連擊流是兩個variety、pokemon編號不一樣(892跟10191)，但species編號是同一個892。
+// 舊程式碼只讀evolution_details[0]、又只用species編號取代pokemon編號去查/pokemon/(這兩個
+// 編號絕大多數寶可夢剛好相同，只有這種variety分裂的少數特例才會不一樣)，導致玩家不管用哪個
+// 掛軸，一律變成同一個(evolution_details[0]那筆對應的)型態——這正是使用者回報的bug。
+// 這裡建兩張表，把「查得到對應variety」的每一筆evolution_details都獨立列成一個選項(跟第
+// 五十八輪「每條分支獨立列成選項」的精神一致，只是這次是同一條分支底下再往下展開)；查不到
+// 表的絕大多數寶可夢完全維持原行為(只看evolution_details[0])，不受影響
+//
+// 1) 道具觸發、依道具種類決定型態(目前只有熊徒弟→武道熊師)：key是進化道具的英文代號
+const EVOLUTION_ITEM_FORM_OVERRIDE = {
+    // 一擊流是武道熊師的「預設」variety，pokemon編號跟species編號相同(892)，跟一般寶可夢
+    // 進化後的行為一樣；連擊流是「非預設」variety，pokemon編號跟species編號不同(10191)——
+    // 這正是舊程式碼bug的根源(舊程式碼不管用哪個掛軸，永遠只查species預設編號892)
+    'scroll-of-darkness': { pokemonId: 892, formNameZh: '一擊流武道熊師' },
+    'scroll-of-waters': { pokemonId: 10191, formNameZh: '連擊流武道熊師' },
+};
+// 2) 升級觸發、依時段決定型態(目前只有狂吠小狼→鬃岩狼人)：外層key是「下一階」的species編號，
+// 內層key是PokéAPI的time_of_day欄位值('day'/'night')。正統規則另外還有第三種「黃昏之姿」，
+// 但額外要求玩家手上的狂吠小狼本身是「特殊配布、帶著悠閒特性的個體」——這個遊戲從來沒有模擬
+// 過「哪一隻寶可夢是特殊配布個體」這種資料維度，沒辦法正確判斷玩家這隻夠不夠資格，所以這裡
+// 故意只開白天/夜晚兩種(比照伊布日月伊布那組「這遊戲本來就不模擬時段，親密度到了就兩個都
+// 給玩家自己選」的既有簡化精神——這裡改成「等級到了兩個時段都給玩家選」)，黃昏之姿維持
+// 「這個功能還沒開放」，不會讓玩家卡在一個看起來能選、實際上永遠選不到的選項
+const EVOLUTION_TIME_OF_DAY_FORM_OVERRIDE = {
+    745: {
+        day: { pokemonId: 745, formNameZh: '鬃岩狼人（白晝的樣子）' },
+        night: { pokemonId: 10126, formNameZh: '鬃岩狼人（黑夜的樣子）' },
+    },
+};
+// 3) 【第六十五輪新增，使用者要求「把那些同類問題寶可夢也要修正」】既沒有道具、也沒有
+// time_of_day可以拿來分裂evolution_details的情況(毒電嬰→顫弦蠑螈由性格決定、野蠻鱸魚→
+// 幽尾玄魚由性別決定)——這兩種真正的官方判斷依據(性格/性別)這個遊戲從頭到尾都沒有記錄
+// (不是bug，是資料模型本來就沒有這兩個欄位，要修就等於要新增全新的屬性)，查證後跟使用者
+// 確認：「性別問題就直接給玩家兩種進化自由選擇就好」——這裡採用同一個精神，連性格也一併
+// 套用(毒電嬰只有1筆min_level:30的條件，兩種型態都只看等級，沒有比性別更難處理的額外
+// 判斷條件，比鬃岩狼人的日/夜選擇還單純)。跟前面兩張表不一樣的地方：PokéAPI原始資料在這裡
+// 只有「一筆」evolution_details(不像鬃岩狼人天生有兩筆可以分)，這裡直接把同一筆條件複製
+// 成兩份、各自配上不同的formOverride，讓玩家在資格條件完全相同的情況下自由選要進化成哪一種
+const EVOLUTION_MANUAL_CHOICE_FORM_OVERRIDE = {
+    849: [ // 毒電嬰→顫弦蠑螈：正統規則由性格決定，這裡讓玩家自己選
+        { pokemonId: 849, formNameZh: '顫弦蠑螈（高調的樣子）' },
+        { pokemonId: 10184, formNameZh: '顫弦蠑螈（低調的樣子）' },
+    ],
+    902: [ // 野蠻鱸魚→幽尾玄魚：正統規則要求「白條紋」特殊外型+吃過294點反作用力傷害才能進化、
+        // 且性別跟進化前的野蠻鱸魚一致，這個遊戲的轉蛋池只有基本型態(見gen_regions.py附近的
+        // 說明)、也沒有追蹤反作用力累積傷害，這裡比照鬃岩狼人的既有簡化精神——只看等級(現有
+        // 的通用退回規則本來就是Lv.16)，兩種性別的幽尾玄魚都給玩家自由選
+        { pokemonId: 902, formNameZh: '幽尾玄魚（雄性的樣子）' },
+        { pokemonId: 10248, formNameZh: '幽尾玄魚（雌性的樣子）' },
+    ],
+};
+// 給一條evolves_to分支，決定要展開成幾個選項：查得到表就把「有對應variety」的每一筆
+// evolution_details都獨立展開(回傳{ detail, formOverride }陣列)，查不到表就完全維持舊行為
+// (只看第一筆，formOverride是null)
+function deriveEvolutionDetailVariants(next) {
+    const details = next.evolution_details || [];
+    const itemVariants = details.filter(d => d.item && EVOLUTION_ITEM_FORM_OVERRIDE[d.item.name]);
+    if (itemVariants.length > 0) {
+        return itemVariants.map(d => ({ detail: d, formOverride: EVOLUTION_ITEM_FORM_OVERRIDE[d.item.name] }));
+    }
+    const nextIdMatch = next.species.url.match(/\/(\d+)\/?$/);
+    const nextSpeciesIdNum = nextIdMatch ? Number(nextIdMatch[1]) : null;
+    const timeTable = nextSpeciesIdNum != null ? EVOLUTION_TIME_OF_DAY_FORM_OVERRIDE[nextSpeciesIdNum] : null;
+    if (timeTable) {
+        const timeVariants = details.filter(d => d.time_of_day && timeTable[d.time_of_day]);
+        if (timeVariants.length > 0) {
+            return timeVariants.map(d => ({ detail: d, formOverride: timeTable[d.time_of_day] }));
+        }
+    }
+    const manualChoices = nextSpeciesIdNum != null ? EVOLUTION_MANUAL_CHOICE_FORM_OVERRIDE[nextSpeciesIdNum] : null;
+    if (manualChoices && manualChoices.length > 0) {
+        const baseDetail = details[0] || {};
+        return manualChoices.map(formOverride => ({ detail: baseDetail, formOverride }));
+    }
+    return [{ detail: details[0] || {}, formOverride: null }];
+}
 // 【第五十八輪修正】以前這裡只看node.evolves_to[0]，代表伊布(8條分支)、啃果蟲(3條分支，
 // 依外皮決定進化成結草儿蟲/結蜂/垃垃鬃)這類「一階可以進化成好幾種」的寶可夢，永遠只看得到
 // 陣列裡第一個分支，其餘分支完全沒有機會顯示或進化——這是這輪要修的bug。改成把evolves_to
@@ -3771,33 +3984,46 @@ async function checkEvolutionEligibility(inst) {
         const node = findNode(chain.chain);
         const branches = node?.evolves_to || [];
         if (branches.length === 0) return { options: [] };
-        const options = await Promise.all(branches.map(async (next) => {
-            const detail = next.evolution_details?.[0] || {};
-            const minLevel = detail.min_level || null;
-            const minFriendship = detail.min_happiness || null;
-            let canEvolve = true, hint = '', itemSprite = null, requiresItemName = null, itemNameZh = null;
-            if (minLevel && inst.level < minLevel) { canEvolve = false; hint = `等級到${minLevel}才能進化(目前Lv.${inst.level})`; }
-            else if (minFriendship && (inst.friendship || 0) < minFriendship) { canEvolve = false; hint = `親密度要到${minFriendship}才能進化(目前${inst.friendship || 0})`; }
-            else if (detail.item) {
-                const itemZh = await fetchItemNameZh(detail.item.url);
-                itemSprite = itemSpriteUrl(detail.item.name);
-                itemNameZh = itemZh || detail.item.name;
-                // 進化石(POKEMON_EVOLUTION_STONES)+信使鳥百貨販售的其他進化道具(POKEMON_MART_EVOLUTION_ITEMS，
-                // 第十六輪新增)都支援用背包裡的道具觸發進化——不在這兩張清單裡的極少數道具(理論上已經涵蓋
-                // 官方目前全部的進化道具，見信使鳥百貨清單來源)才會維持「還沒開放」
-                if (POKEMON_EVOLUTION_STONES.includes(detail.item.name) || POKEMON_MART_EVOLUTION_ITEMS.includes(detail.item.name)) {
-                    const owned = (currentPlayerData?.items || {})[detail.item.name] || 0;
-                    if (owned > 0) { canEvolve = true; requiresItemName = detail.item.name; hint = `使用「${itemNameZh}」進化`; }
-                    else { canEvolve = false; hint = `需要道具「${itemNameZh}」才能進化(目前沒有，去玩猜猜看賺一個試試，或去信使鳥百貨用代幣購買)`; }
-                } else {
-                    canEvolve = false; hint = `需要道具「${itemNameZh}」才能進化(這個功能還沒開放)`;
+        const optionGroups = await Promise.all(branches.map(async (next) => {
+            const variants = deriveEvolutionDetailVariants(next);
+            return Promise.all(variants.map(async ({ detail, formOverride }) => {
+                const minLevel = detail.min_level || null;
+                const minFriendship = detail.min_happiness || null;
+                let canEvolve = true, hint = '', itemSprite = null, requiresItemName = null, itemNameZh = null;
+                if (minLevel && inst.level < minLevel) { canEvolve = false; hint = `等級到${minLevel}才能進化(目前Lv.${inst.level})`; }
+                else if (minFriendship && (inst.friendship || 0) < minFriendship) { canEvolve = false; hint = `親密度要到${minFriendship}才能進化(目前${inst.friendship || 0})`; }
+                else if (detail.item) {
+                    const itemZh = await fetchItemNameZh(detail.item.url);
+                    itemSprite = itemSpriteUrl(detail.item.name);
+                    itemNameZh = itemZh || detail.item.name;
+                    // 進化石(POKEMON_EVOLUTION_STONES)+信使鳥百貨販售的其他進化道具(POKEMON_MART_EVOLUTION_ITEMS，
+                    // 第十六輪新增)都支援用背包裡的道具觸發進化——不在這兩張清單裡的極少數道具(理論上已經涵蓋
+                    // 官方目前全部的進化道具，見信使鳥百貨清單來源)才會維持「還沒開放」
+                    if (POKEMON_EVOLUTION_STONES.includes(detail.item.name) || POKEMON_MART_EVOLUTION_ITEMS.includes(detail.item.name)) {
+                        const owned = (currentPlayerData?.items || {})[detail.item.name] || 0;
+                        if (owned > 0) { canEvolve = true; requiresItemName = detail.item.name; hint = `使用「${itemNameZh}」進化`; }
+                        else { canEvolve = false; hint = `需要道具「${itemNameZh}」才能進化(目前沒有，去玩猜猜看賺一個試試，或去信使鳥百貨用代幣購買)`; }
+                    } else {
+                        canEvolve = false; hint = `需要道具「${itemNameZh}」才能進化(這個功能還沒開放)`;
+                    }
                 }
-            }
-            else if (!minLevel && !minFriendship && !detail.item) { canEvolve = inst.level >= 16; hint = `等級到16才能進化(目前Lv.${inst.level})`; }
-            const nextNameZh = await fetchSpeciesNameZhByUrl(next.species.url);
-            return { canEvolve, nextName: nextNameZh || next.species.name, nextSpeciesUrl: next.species.url, hint, itemSprite, requiresItemName, itemNameZh };
+                else if (!minLevel && !minFriendship && !detail.item) { canEvolve = inst.level >= 16; hint = `等級到16才能進化(目前Lv.${inst.level})`; }
+                // 【第六十四輪新增】有formOverride代表這是武道熊師/鬃岩狼人這種「同一species底下
+                // 不同variety」的選項：型態專屬中文名稱直接用表裡寫好的(不用再查一次species名稱，
+                // 反正也查不到型態專屬的官方名稱)，nextPokemonId是型態專屬的pokemon編號(跟
+                // nextSpeciesUrl解析出來的species編號不一樣)，formKey給evolvePokemon辨識玩家
+                // 點的是哪一個型態(同一個nextSpeciesUrl底下可能有兩個以上的選項，光靠
+                // nextSpeciesUrl沒辦法分辨玩家選的是哪一個)
+                const nextNameZh = formOverride ? formOverride.formNameZh : (await fetchSpeciesNameZhByUrl(next.species.url));
+                return {
+                    canEvolve, nextName: nextNameZh || next.species.name, nextSpeciesUrl: next.species.url,
+                    nextPokemonId: formOverride ? formOverride.pokemonId : null,
+                    formKey: formOverride ? String(formOverride.pokemonId) : '',
+                    hint, itemSprite, requiresItemName, itemNameZh,
+                };
+            }));
         }));
-        return { options };
+        return { options: optionGroups.flat() };
     } catch (err) {
         return { options: [] };
     }
@@ -3823,25 +4049,34 @@ function extractEvolutionMoves(pokemonData, knownMoves) {
 // 【第五十八輪修正】targetSpeciesUrl是多分支進化(伊布/啃果蟲等)時，玩家在detail modal
 // 點的是「哪一個」進化選項按鈕(見openDetailModal)；不帶這個參數的舊呼叫方式(單一進化分支
 // 的物種、或程式內部其他還沒更新的呼叫點)則退回「挑第一個符合資格的分支」，保持相容
-async function evolvePokemon(instanceId, targetSpeciesUrl) {
+async function evolvePokemon(instanceId, targetSpeciesUrl, formKey) {
     const inst = currentInstances.find(i => i.id === instanceId);
     if (!inst) return;
     const evoInfo = await checkEvolutionEligibility(inst);
     const chosen = targetSpeciesUrl
-        ? (evoInfo.options || []).find(o => o.nextSpeciesUrl === targetSpeciesUrl)
+        ? (evoInfo.options || []).find(o => o.nextSpeciesUrl === targetSpeciesUrl && (o.formKey || '') === (formKey || ''))
         : (evoInfo.options || []).find(o => o.canEvolve);
     if (!chosen || !chosen.canEvolve || !chosen.nextSpeciesUrl) { showToast('現在還不能進化'); return; }
     try {
+        // 【第六十四輪新增】baseSpeciesId是/pokemon-species/端點認得的「原始物種」編號(名稱/
+        // 圖鑑故事/進化鏈都認這個)；nextPokemonId則是實際要查/pokemon/、也是之後要寫進
+        // instance.speciesId欄位的編號——絕大多數寶可夢這兩個編號相同，只有武道熊師/鬃岩狼人
+        // 這種variety分裂的特例(chosen.nextPokemonId有值)才會不一樣，這裡分開算，不能像
+        // 舊程式碼那樣共用同一個編號去查兩個端點(/pokemon-species/{variety編號}查不到資料)
         const nextIdMatch = chosen.nextSpeciesUrl.match(/\/(\d+)\/?$/);
-        const nextSpeciesId = nextIdMatch ? Number(nextIdMatch[1]) : null;
-        if (!nextSpeciesId) throw new Error('抓不到進化後的種類編號');
+        const baseSpeciesId = nextIdMatch ? Number(nextIdMatch[1]) : null;
+        if (!baseSpeciesId) throw new Error('抓不到進化後的種類編號');
+        const nextSpeciesId = chosen.nextPokemonId || baseSpeciesId;
         const [pokemonRes, speciesRes] = await Promise.all([
             fetch(`https://pokeapi.co/api/v2/pokemon/${nextSpeciesId}`),
-            fetch(`https://pokeapi.co/api/v2/pokemon-species/${nextSpeciesId}`),
+            fetch(`https://pokeapi.co/api/v2/pokemon-species/${baseSpeciesId}`),
         ]);
         const pokemonData = await pokemonRes.json();
         const speciesData = await speciesRes.json();
-        const nextNameZh = extractZhHantNameClient(speciesData.names, pokemonData.name);
+        // chosen.nextName在有型態覆寫(formOverride)時已經是型態專屬的正確中文名稱(例如
+        // 「連擊流武道熊師」)，/pokemon-species/{baseSpeciesId}查到的names陣列只有物種本身的
+        // 名稱(「武道熊師」)，沒有型態資訊——優先用chosen.nextName，查不到才退回species名稱
+        const nextNameZh = chosen.nextName || extractZhHantNameClient(speciesData.names, pokemonData.name);
         const baseStats = {};
         (pokemonData.stats || []).forEach(s => { baseStats[s.stat.name] = s.base_stat; });
         const nextInfo = {
@@ -5635,43 +5870,57 @@ async function claimGymReward(roomId, gymId) {
     }
 }
 
+// 【第六十四輪新增】把「這場戰鬥的drop掉落物」轉成一份文字片段陣列的邏輯，從原本寫在
+// claimLegendaryChallengeResult內部的那一段抽出來獨立成函式——新增的戰後劇情(見下面
+// openLegendaryPostBattleDialogue)也需要用同一份掉落物文字組成台詞，兩邊共用同一份邏輯，
+// 不要各自維護一份容易兜不起來的重複程式碼
+async function buildLegendaryDropParts(drop) {
+    const parts = [];
+    if (!drop) return parts;
+    if (drop.coinsGained) parts.push(`代幣x${drop.coinsGained}`);
+    if (drop.moveReminder) parts.push(`心之鱗x${drop.moveReminder}`);
+    if (drop.rareCandy) parts.push(`神奇糖果x${drop.rareCandy}`);
+    const berryEntries = Object.entries(drop.berries || {});
+    if (berryEntries.length) {
+        const berryNames = await Promise.all(berryEntries.map(([b]) => fetchBerryNameZh(b)));
+        berryEntries.forEach(([b, count], idx) => parts.push(`${berryNames[idx] || b}樹果x${count}`));
+    }
+    if (drop.megaStone) {
+        const nameZh = await fetchGenericItemNameZh(drop.megaStone);
+        parts.push(nameZh || drop.megaStone);
+    }
+    if (drop.zCrystal) {
+        const nameZh = await fetchGenericItemNameZh(drop.zCrystal);
+        parts.push(nameZh || drop.zCrystal);
+    }
+    if (drop.tm) {
+        const tm = TM_CATALOG[drop.tm];
+        parts.push(tm ? `招式學習器(${tm.moveZh})` : drop.tm);
+    }
+    return parts;
+}
 // 【第五十七輪新增】挑戰傳說訓練家的結算：跟claimGymReward不一樣的地方是這支「不管輸贏都要
 // 呼叫」(見上面呼叫端rewardSettled那段註解)，實際的親密度異動/戰績紀錄/掉落物發放全部收斂在
 // worker.js的settlePendingLegendaryChallenge，這裡單純呼叫+組裝顯示文字。
 // r.settled===false的情況(reason:'none')代表這支API被呼叫時剛好沒有進行中的挑戰可以結算——
 // 理論上不該發生在這個呼叫點(這裡是戰鬥剛結束、activeLegendaryChallenge一定還在)，但保留這個
 // 分支的安靜處理，避免萬一真的發生時噴出使用者看不懂的錯誤
+// 【第六十四輪修正】使用者要求「戰後劇情對話內容還要說這場比賽得到了什麼獎勵」——這裡額外把
+// r.trainerId跟掉落物文字(不含「擊敗了${trainerName}！...」這種第三人稱框架文字，純粹是
+// 「獲得了什麼」這一段，給openLegendaryPostBattleDialogue用第一人稱台詞的方式講出來)存進
+// battleFinishSummary，renderRoomView的finished分支會在rewardSettled都settle之後讀取
 async function claimLegendaryChallengeResult(roomId) {
     try {
         const r = await callWorker('pokemon_legendary_challenge_finish', {});
         if (!r || !r.settled) return;
         let msg;
+        let dropPartsText = '';
         if (r.outcome === 'win') {
             msg = `擊敗了${r.trainerName || '傳說訓練家'}！全隊親密度+${LEGENDARY_FRIENDSHIP_DELTA}`;
-            const drop = r.drop;
-            if (drop) {
-                const parts = [];
-                if (drop.coinsGained) parts.push(`代幣x${drop.coinsGained}`);
-                if (drop.moveReminder) parts.push(`心之鱗x${drop.moveReminder}`);
-                if (drop.rareCandy) parts.push(`神奇糖果x${drop.rareCandy}`);
-                const berryEntries = Object.entries(drop.berries || {});
-                if (berryEntries.length) {
-                    const berryNames = await Promise.all(berryEntries.map(([b]) => fetchBerryNameZh(b)));
-                    berryEntries.forEach(([b, count], idx) => parts.push(`${berryNames[idx] || b}樹果x${count}`));
-                }
-                if (drop.megaStone) {
-                    const nameZh = await fetchGenericItemNameZh(drop.megaStone);
-                    parts.push(nameZh || drop.megaStone);
-                }
-                if (drop.zCrystal) {
-                    const nameZh = await fetchGenericItemNameZh(drop.zCrystal);
-                    parts.push(nameZh || drop.zCrystal);
-                }
-                if (drop.tm) {
-                    const tm = TM_CATALOG[drop.tm];
-                    parts.push(tm ? `招式學習器(${tm.moveZh})` : drop.tm);
-                }
-                if (parts.length) msg += `，獲得：${parts.join('、')}`;
+            const parts = await buildLegendaryDropParts(r.drop);
+            if (parts.length) {
+                dropPartsText = parts.join('、');
+                msg += `，獲得：${dropPartsText}`;
             }
             SFX.itemGet();
         } else if (r.outcome === 'lose') {
@@ -5681,7 +5930,12 @@ async function claimLegendaryChallengeResult(roomId) {
             // 只有renderLegendaryStats的「保險呼叫」才比較可能遇到，這裡還是處理一下比較完整
             msg = `這場挑戰中途中斷，全隊親密度-${LEGENDARY_FRIENDSHIP_DELTA}(不計入戰績)`;
         }
-        if (battleFinishSummary[roomId]) battleFinishSummary[roomId].legendaryRewardText = msg;
+        if (battleFinishSummary[roomId]) {
+            battleFinishSummary[roomId].legendaryRewardText = msg;
+            battleFinishSummary[roomId].legendaryTrainerId = r.trainerId || null;
+            battleFinishSummary[roomId].legendaryOutcome = r.outcome;
+            battleFinishSummary[roomId].legendaryDropPartsText = dropPartsText;
+        }
         if (lastRenderedRoom && lastRenderedRoom.id === roomId) renderRoomView(lastRenderedRoom);
     } catch (err) {
         // 結算失敗不影響玩家看到「你贏了/敗北了」的畫面，安靜失敗就好——renderLegendaryStats的
@@ -5882,6 +6136,68 @@ const LEGENDARY_STORY_BG = {
     default: "https://res.cloudinary.com/bumzwp9g/image/upload/v1788528771/magnific_UPZO6amwny_uhrqlh.jpg",
 };
 
+// 【第六十四輪新增，使用者要求「挑戰傳說訓練家接下來給我戰後劇情，並且戰後劇情對話內容還要
+// 說這場比賽得到了什麼獎勵」】跟LEGENDARY_TRAINER_DIALOGUE(戰前嗆聲台詞)不同，這裡是54位
+// 訓練家各自的贏/輸「戰後反應」台詞(各1句，原創撰寫，延續戰前台詞已經查證好的人物性格/口吻，
+// 不是翻譯/引用任何官方遊戲文字)——實際獎勵內容(掉落了什麼道具)是動態的，不會寫進這張表，
+// 會在openLegendaryPostBattleDialogue另外組一句「這是你應得的獎勵：...」接在win台詞後面
+const LEGENDARY_TRAINER_POSTBATTLE = {
+    "kanto-1": { win: "看來我的冰系智慧，還是不敵你的熱情啊——這場敗仗，我心服口服。", lose: "呵，終究還是我的智慧技高一籌，你的熱情還需要多多磨練呢。" },
+    "kanto-2": { win: "痛快！這種被拳頭徹底擊敗的感覺，還真讓人熱血沸騰！", lose: "哈哈，還是我的拳頭更硬啊——下次拿出更強的氣勢再來吧！" },
+    "kanto-3": { win: "哼，乳臭未乾的小鬼，這次算你贏了……老太婆我也該多練練了。", lose: "哼哼，嚇死你了吧？年紀大可不代表好對付，小鬼。" },
+    "kanto-4": { win: "很好，你證明了自己配得上這場勝利——這條龍，由衷向你致敬。", lose: "不錯的意志，但近乎無敵的血統，還是超越了你的努力。" },
+    "johto-1": { win: "……看來「輸」這個字，今天總算被你寫進了我的字典裡。", lose: "看吧，我說過了——「輸」這個字，從來就不存在於我的選項之中。" },
+    "johto-2": { win: "呵呵呵，忍者的幻術終究還是被你的直覺看穿了，佩服。", lose: "呵呵呵，毒霧與幻惑之術，果然讓你摸不著頭緒吧？" },
+    "johto-3": { win: "呼哈，拳頭與汗水鍛造出的力量，終究還是不敵你的鬥志！痛快的一戰！", lose: "呼哈！這身鍛鍊多年的力量，可不是說著玩的，再接再厲吧！" },
+    "johto-4": { win: "呵，看來這次，強與弱的界線，是站在你那一邊了。", lose: "呵，我說過了吧——強與弱，不過是人類自私的偏見，你還需要看清這一點。" },
+    "hoenn-1": { win: "哈，少說廢話——看來這次，你的實力確實在我之上。", lose: "哈，我就說過了，強弱如何，交手便知——你還差得遠呢。" },
+    "hoenn-2": { win: "呵呵，幽靈的把戲終究還是被你看穿了，你身上的靈氣不簡單呢。", lose: "呵呵，別眨眼哦——幽靈的把戲，可不是那麼容易看得真切的。" },
+    "hoenn-3": { win: "哼，看來你的鬥志，比我的冰霜更加熾熱啊——這場敗仗，我認了。", lose: "哼，冰冷之中也藏著熾熱的鬥志——看來你還沒能真正見識到。" },
+    "hoenn-4": { win: "很好，你與夥伴之間的默契，超越了我們——這是一場精彩的對決。", lose: "看到了嗎？這就是我們之間，真正的默契與羈絆。" },
+    "sinnoh-1": { win: "沒想到，蟲系寶可夢的速度終究還是慢了一步——這次是你贏了。", lose: "哈哈，別小看蟲系寶可夢的速度，這次讓你見識到了吧！" },
+    "sinnoh-2": { win: "哎呀呀，老骨頭終究還是敵不過年輕人的衝勁啊，佩服佩服。", lose: "哎呀，老骨頭還硬朗得很吧？大地的重量，可不是輕易能撼動的。" },
+    "sinnoh-3": { win: "喲！這把火終究還是被你的熱情蓋過去了——痛快的一戰！", lose: "喲！感受到了嗎？這就是我燃燒到底的熱情！" },
+    "sinnoh-4": { win: "……看來，是我的計算出了差錯。這場勝利，是你應得的。", lose: "冷靜與智慧才是致勝關鍵——這一點，你還需要多加磨練。" },
+    "unova-1": { win: "呵，沒想到這次故事的結局，會是我的落敗呢——真是個好靈感。", lose: "呵呵，我用幽靈之筆寫下的結局，你還無法改寫呢。" },
+    "unova-2": { win: "很好！這雙鐵拳終究還是被你的意志擊碎了，痛快！", lose: "呵呵，鐵拳鍛鍊出的意志，可不是說著玩的！" },
+    "unova-3": { win: "呵，看來這次命運的骰子，終究還是滾到了你那一邊。", lose: "呵，我說過了——命運的骰子，這次滾到了我這邊。" },
+    "unova-4": { win: "……這是一場，令人心醉的美好對決。你的力量與溫柔，我由衷佩服。", lose: "謝謝你，讓我又度過了一場，令人心醉的美好對決。" },
+    "kalos-1": { win: "哎呀，看來這則獨家頭條，得換成「你」的勝利了呢。", lose: "哎呀呀，這把烈焰，燒穿了你所有的自信吧？真是個好頭條。" },
+    "kalos-2": { win: "……這道料理，還是輸給了你端出的那一份。心服口服。", lose: "戰鬥如同料理，你還差了一點火候呢。" },
+    "kalos-3": { win: "汝之劍術更勝一籌，雁鎧甘拜下風——這是一場堂堂正正的較量。", lose: "以劍與鎧為誓，這場較量，雁鎧不負所望。" },
+    "kalos-4": { win: "哎呀呀，真是敗給你了呢，孩子——奶奶我也該多練練了。", lose: "哎呀呀，奶奶的老骨頭，還沒你想的那麼弱呢，乖孩子。" },
+    "kalos-5": { win: "……這場對決的劇本，最後由你來寫下結局呢。精彩極了。", lose: "謝謝你，讓我以冠軍之姿，獻上了這麼華麗的一戰。" },
+    "alola-1": { win: "哈哈哈，這身老骨頭終究還是比不上你的鬥志啊，好樣的！", lose: "哈哈哈，老骨頭的鬥志，可不是說著玩的，好好磨練吧！" },
+    "alola-2": { win: "星星和鋼鐵一樣，從不說謊——這次它們告訴我，你更強。", lose: "別緊張，這只是最理性的一次確認——你的實力，還差一點。" },
+    "alola-3": { win: "很好，你把這份鬥志磨得更亮了——真正的對手，果然是自己。", lose: "記住，真正的對手一直是自己——這次，你還需要多磨練一下。" },
+    "alola-4": { win: "哎呀，這次真的被你和你的寶可夢們嚇了一跳呢，厲害厲害！", lose: "呵呵，幽靈朋友們的把戲，是不是讓你嚇了一跳呀？" },
+    "alola-5": { win: "呵，看來這次，你的一擊比我的推桿更加精準呢。", lose: "看好了，這就是穩穩落在勝利洞口的一擊。" },
+    "galar-1": { win: "哈哈哈，想不到田裡忙完，還會被你的寶可夢打得這麼徹底呢！", lose: "哈哈，田裡的活忙完了，換我的寶可夢上場——這次算我贏了！" },
+    "galar-2": { win: "喲，平靜的海面下藏著巨浪——這次，你的巨浪比我更大呢。", lose: "喲，我說過了吧，別小看我——這片海，可不是那麼容易掀翻的。" },
+    "galar-3": { win: "年輕人，你這股火焰，燒得比我更加猛烈啊——好樣的！", lose: "只要還活著，我就會不斷燃燒鍛鍊——這次的火焰，由我勝出。" },
+    "galar-4": { win: "……拳頭最誠實，這次它告訴我，你更強。", lose: "拳頭最誠實——這次，它站在我這邊。" },
+    "galar-5": { win: "……面具之下，我輸得心服口服。", lose: "……面具之下才是真正的我——這次，它贏了。" },
+    "galar-6": { win: "哎呀呀，老身的謎題終究還是被你解開了呢，好孩子。", lose: "哎呀呀，老身這身鬥志，一點都不含糊吧？" },
+    "galar-7": { win: "哼，沒想到，我這身天才的驕傲，竟然會敗在你手上。", lose: "哼，我可是被欽點的天才——這次，讓你見識到了吧。" },
+    "galar-8": { win: "嘿，沒想到你不只有真本事，還贏了我這身技巧，服了！", lose: "嘿，岩石不只會蠻幹——這身真本事，你見識到了吧？" },
+    "galar-9": { win: "哎呀，你的意志比我想的還堅強呢——阿姨甘拜下風。", lose: "哎呀，阿姨仔細瞧過了——你的意志，還沒有那麼堅強呢。" },
+    "galar-10": { win: "……終於，有人讓我認真了一次。這場敗仗，我認。", lose: "……尖釘鎮的真本事，你見識到了吧。" },
+    "galar-11": { win: "你也走到這一步了啊——這次，是你的實力更勝一籌。", lose: "抱歉了——我的實力，這次讓你見識到了。" },
+    "galar-12": { win: "喔，沒想到，傳聞中的你，實力比傳聞還要誇張呢。", lose: "先拍張照留念吧——我說了，你會輸得心服口服。" },
+    "galar-13": { win: "呵呵，沒想到你比看起來難對付多了呢——毒藥這次沒能奏效。", lose: "呵呵，毒藥的滋味，不會太甜美吧？" },
+    "galar-14": { win: "哦？一介凡人，居然能勝過天才的力量……有點意思。", lose: "就說了，這是真正天才的力量——凡人終究不敵。" },
+    "galar-15": { win: "哈哈哈！沒想到，冠軍時間的主角，今天是你啊！", lose: "沒錯，就是現在——冠軍的時間，依然屬於我！" },
+    "paldea-1": { win: "喲，看來你的斤兩，比我想的重多了，小鬼。", lose: "別緊張，小鬼——這次，你的斤兩還差得遠呢。" },
+    "paldea-2": { win: "唔，鋼鐵般的意志，終究還是被你打穿了呢！", lose: "別小看我，鋼鐵般的意志，才不會輕易認輸！" },
+    "paldea-3": { win: "唉，是你贏了啊。簡單一點說——我認輸。", lose: "我不擅長複雜的事——簡單一點，這次是我贏了。" },
+    "paldea-4": { win: "喔，你的光芒，真的讓我想起了年輕的自己——這場敗仗，心甘情願。", lose: "就用最真摯的心，我的巨龍與你共舞了一場——這次，我們獲勝。" },
+    "blueberry-1": { win: "喔~肉都涼了，不過這場對決夠痛快，算你贏了！", lose: "肉烤好了，火也旺了——這場較量，也一樣火熱地由我獲勝！" },
+    "blueberry-2": { win: "……鋼鐵終究還是彎折了。但我不後悔，這是為了想守護的人。", lose: "鋼鐵不會退縮——為了想守護的人，這次，我不能輸。" },
+    "blueberry-3": { win: "哎呀，看來這次的小測驗，是你答得比我好呢，乖孩子。", lose: "既然吃飽喝足，那我就不客氣地拿下這次的勝利了，乖孩子。" },
+    "blueberry-4": { win: "喔喔喔！血液還在沸騰，但這次，勝利屬於你！痛快！", lose: "龍族的驕傲，由我來守護——這次，我做到了！" },
+    "blueberry-5": { win: "……又輸了。看來我還需要變得更強，豁出一切也不夠呢。", lose: "我必須變得更強，哪怕要豁出一切——這次，我做到了。" },
+};
+
 // 【第五十七輪新增】機率性使用Mega進化/Ｚ招式的機率——「機率性」的具體數字spec沒有明講，
 // 這裡挑一個「常常看得到、但不是每次都用」的數字，之後想調整難度/驚喜感的話改這個常數就好。
 // 伽勒爾(極巨化)刻意不用這個常數：spec明講「穩定會使用」，直接寫死100%(見buildLegendaryTrainerRoster)
@@ -6050,6 +6366,38 @@ function openLegendaryTrainerDialogue(trainer, vsLine, onDone) {
         beats.push({ s: trainer.name, t: info.line2 });
     }
     beats.push({ s: trainer.name, t: vsLine });
+    storyModalState = { beats, idx: 0, fastForward: false, onDone: onDone || null, gymId: LEGENDARY_STORY_GYM_SENTINEL, phase: null };
+    document.getElementById('story-ff-btn').textContent = '快進：關';
+    document.getElementById('story-modal').classList.remove('hidden');
+    document.getElementById('story-modal').classList.add('flex');
+    const bgEl = document.getElementById('story-bg');
+    const bgUrl = (info && LEGENDARY_STORY_BG[info.bgTag]) || LEGENDARY_STORY_BG.default;
+    bgEl.src = bgUrl;
+    bgEl.style.opacity = '1';
+    clearStoryPortraits();
+    legendaryDialoguePortraitLock = trainer.img;
+    const rightEl = document.getElementById('story-portrait-right');
+    rightEl.src = trainer.img;
+    rightEl.style.opacity = '1';
+    rightEl.style.transform = 'scale(1.84)';
+    renderStoryBeat();
+}
+
+// 【第六十四輪新增，使用者要求「挑戰傳說訓練家接下來給我戰後劇情，並且戰後劇情對話內容還要
+// 說這場比賽得到了什麼獎勵」】戰後劇情：跟上面openLegendaryTrainerDialogue共用同一套
+// #story-modal視覺/立繪鎖定機制(legendaryDialoguePortraitLock/LEGENDARY_STORY_GYM_SENTINEL)，
+// 差別是這裡播的是LEGENDARY_TRAINER_POSTBATTLE查到的贏/輸反應台詞(1句)，贏的話再多接一句由
+// 呼叫端(claimLegendaryChallengeResult結算完成後，renderRoomView組好)、含實際掉落物文字的
+// 獎勵宣言(rewardLine)——輸的話沒有獎勵，rewardLine傳空字串/null就不會多播這一句。背景沿用
+// 戰前那句台詞查到的bgTag(同一位訓練家戰前戰後理當是同一個場景)，查不到台詞資料的話(防禦性
+// 寫法，理論上54位都有)就完全不播、直接呼叫onDone，不會卡住既有的「戰鬥結束後自動離開房間」流程
+function openLegendaryPostBattleDialogue(trainer, won, rewardLine, onDone) {
+    const info = LEGENDARY_TRAINER_DIALOGUE[trainer.id];
+    const postInfo = LEGENDARY_TRAINER_POSTBATTLE[trainer.id];
+    const beats = [];
+    if (postInfo) beats.push({ s: trainer.name, t: won ? postInfo.win : postInfo.lose });
+    if (won && rewardLine) beats.push({ s: trainer.name, t: rewardLine });
+    if (beats.length === 0) { if (onDone) onDone(); return; }
     storyModalState = { beats, idx: 0, fastForward: false, onDone: onDone || null, gymId: LEGENDARY_STORY_GYM_SENTINEL, phase: null };
     document.getElementById('story-ff-btn').textContent = '快進：關';
     document.getElementById('story-modal').classList.remove('hidden');
@@ -6551,7 +6899,28 @@ async function renderRoomView(room) {
                 // 才回大廳，不用固定的2.5秒——劇情本身可能比2.5秒長很多。openStoryModal內建了
                 // 「找不到劇情就直接呼叫onDone」的判斷，這裡不用另外再判斷一次hasStory
                 const gymFound = room.isGymBattle && room.gymId ? findGym(room.gymId) : null;
-                if (won && gymFound && hasStory(gymFound.gym, 'after') && !isStorySeen(room.gymId, 'after')) {
+                // 【第六十四輪新增】挑戰傳說訓練家：不管輸贏都播一段戰後劇情(跟道館「只有贏才有
+                // 戰後劇情、且只播一次」不一樣，這裡每次挑戰結束都要播，訓練家是隨機遇到的、
+                // 沒有isStorySeen那套「看過就不再顯示」的概念)。legendaryTrainerId等欄位是上面
+                // claimLegendaryChallengeResult結算完成(withTimeout等的就是這個)才會補上battleFinishSummary，
+                // 這裡直接讀就一定是最新的；如果那支API失敗過(legendaryTrainerId還是undefined)，
+                // find不到訓練家、這個分支自然就不會進來，退回下面原本的2.5秒直接離開
+                const legendaryTrainerForPostBattle = room.isLegendaryChallenge
+                    ? LEGENDARY_TRAINERS.find(t => t.id === battleFinishSummary[room.id].legendaryTrainerId)
+                    : null;
+                if (legendaryTrainerForPostBattle) {
+                    setTimeout(() => {
+                        if (lastRenderedRoom && lastRenderedRoom.id === room.id) {
+                            const dropPartsText = battleFinishSummary[room.id].legendaryDropPartsText;
+                            const rewardLine = (won && dropPartsText) ? `這是你應得的獎勵：${dropPartsText}。` : '';
+                            openLegendaryPostBattleDialogue(legendaryTrainerForPostBattle, won, rewardLine, () => {
+                                if (lastRenderedRoom && lastRenderedRoom.id === room.id) leaveRoomView();
+                            });
+                        } else {
+                            leaveRoomView();
+                        }
+                    }, 800);
+                } else if (won && gymFound && hasStory(gymFound.gym, 'after') && !isStorySeen(room.gymId, 'after')) {
                     setTimeout(() => {
                         if (lastRenderedRoom && lastRenderedRoom.id === room.id) {
                             openStoryModal(room.gymId, 'after', () => {
@@ -9007,6 +9376,15 @@ const FIXED_DAMAGE_MOVES = {
 // 一擊必殺招式：命中的話不管等級差，直接讓對方0血(這裡簡化成只看命中率骰不骰得中，
 // 不額外套用官方那套「等級差進一步降低命中率」的規則)
 const OHKO_MOVES = new Set(['fissure', 'horn-drill', 'guillotine', 'sheer-cold']);
+// 【第六十四輪新增，使用者回報「自爆發動後自己不會死掉也不會受傷，似乎無效」】自爆/大霹靂：
+// 正統規則是「使用招式的當下就注定會陷入昏厥，即使這次攻擊落空/沒有效果/被守住擋下來也一樣」
+// (Bulbapedia原文："This will happen even if the move fails or misses.")——這件事完全獨立於
+// 傷害有沒有算出來，所以除了下面共用的傷害後處理區塊(power>0/FIXED_DAMAGE_MOVES命中的情況)，
+// 還額外在命中判定/屬性免疫/守住這3個原本會提前continue跳過的分支各自補一段倒下收尾(見那幾處)。
+// 搏命(final-gambit)的「用招式的人也會昏厥」查證後確認是同一種機制，但它本身走的是
+// FIXED_DAMAGE_MOVES分支、而且沒有查到「沒命中/被守住一樣會昏厥」這麼強的官方保證，範圍上
+// 只在正常命中的情況下處理(跟下面共用的SELF_FAINT_MOVES一起做)，不跟這個Set混在一起
+const SELF_DESTRUCT_MOVES = new Set(['self-destruct', 'explosion']);
 // 連續攻擊招式要打幾下：min/max都相同就直接固定次數，2~5次的經典連續技則照官方機率分布骰
 // (2下35%／3下35%／4下15%／5下15%)，其他min/max組合退回線性均勻分布
 function rollMultiHitCount(minHits, maxHits) {
@@ -10947,6 +11325,18 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (!hit) {
             ev.missed = true;
             log.push(`${atkName} 使出 ${move.nameZh}，但是沒有命中！`);
+            // 【第六十四輪新增】自爆/大霹靂：Bulbapedia原文保證「即使這次攻擊落空，使用招式
+            // 的一方依然會陷入昏厥」("This will happen even if the move fails or misses.")，
+            // 跟一般「沒命中就什麼事都沒發生」的招式完全不同，所以這裡額外補一段收尾，沿用跟
+            // 掙扎反作用力/吸血招式一致的handleFaint+break模式(倒下之後這回合不會再有其他人出招)
+            if (SELF_DESTRUCT_MOVES.has(move.name) && atk.currentHp > 0) {
+                atk.currentHp = 0;
+                ev.attackerHpAfter = 0;
+                log.push(`${atkName} 倒下了！`);
+                events.push(ev);
+                handleFaint(attackerUid);
+                break;
+            }
             events.push(ev);
             continue;
         }
@@ -10979,6 +11369,16 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
             if (def.directives && def.directives.guardDisguiseTriggered) {
                 log.push(`${defName} 的畫皮擋下了這次攻擊！`);
                 def.directives.guardDisguiseTriggered = false;
+            }
+            // 【第六十四輪新增】自爆/大霹靂：即使對目標的屬性沒有效果，使用招式的一方依然會昏厥
+            // (跟上面沒命中的分支是同一條Bulbapedia規則，這裡是"沒有效果"這個獨立的提前收尾分支)
+            if (SELF_DESTRUCT_MOVES.has(move.name) && atk.currentHp > 0) {
+                atk.currentHp = 0;
+                ev.attackerHpAfter = 0;
+                log.push(`${atkName} 倒下了！`);
+                events.push(ev);
+                handleFaint(attackerUid);
+                break;
             }
             events.push(ev);
             continue;
@@ -11048,6 +11448,16 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (isProtectedTarget && !zPierceProtect && !maxPierceProtect) {
             ev.protectedBlock = true;
             log.push(`${defName} 防住了攻擊！`);
+            // 【第六十四輪新增】自爆/大霹靂：即使被守住完全擋下來，使用招式的一方依然會昏厥
+            // (同一條Bulbapedia規則的第三個提前收尾分支，跟沒命中/沒有效果那兩處寫法一致)
+            if (SELF_DESTRUCT_MOVES.has(move.name) && atk.currentHp > 0) {
+                atk.currentHp = 0;
+                ev.attackerHpAfter = 0;
+                log.push(`${atkName} 倒下了！`);
+                events.push(ev);
+                handleFaint(attackerUid);
+                break;
+            }
             events.push(ev);
             continue;
         }
@@ -11659,6 +12069,16 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         ev.fainted = fainted;
         ev.hitSubstitute = defSubActiveBeforeHit;
         ev.subBroken = subBroke;
+
+        // ---- 【第六十四輪新增】自爆/大霹靂/搏命：這裡處理的是「正常命中」這條路徑(沒命中/沒
+        // 效果/被守住那三種提前收尾已經各自在前面補過了，見SELF_DESTRUCT_MOVES定義處的說明)。
+        // 這裡只負責把攻擊方的HP歸零，不在這裡直接log/handleFaint/break——下面「招式本身讓
+        // 攻擊方自己倒下」那段既有的共用收尾(訣別之言自我犧牲用的同一段)會自動接手處理，
+        // 沿用跟其他「自己歸零HP」招式完全一致的收尾方式 ----
+        if ((SELF_DESTRUCT_MOVES.has(move.name) || move.name === 'final-gambit') && atk.currentHp > 0) {
+            atk.currentHp = 0;
+            ev.attackerHpAfter = 0;
+        }
 
         // ---- 亡語之約(destiny-bond)：稍早設下這個flag的一方，如果這次真的被打倒了，反過來讓
         // 打倒牠的攻擊方也跟著陣亡——用handleFaint(attackerUid)的部分收在下面events.push(ev)
