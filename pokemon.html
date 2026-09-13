@@ -586,6 +586,13 @@
     <div class="bg-white rounded-3xl p-6 max-w-sm w-full max-h-[85vh] overflow-y-auto" id="use-item-modal-content"></div>
 </div>
 
+<!-- 查看可學習的招式學習器彈窗(第七十一輪新增，從寶可夢詳情頁「目前招式」下方點進來)：純資訊性
+     清單，列出這隻「理論上」能透過某個招式學習器學會的所有招式(不管玩家手上有沒有實際持有那個
+     招式學習器)，幫玩家決定要不要花代幣製作特定編號的招式學習器，不用先製作出來試了才知道學不學得會 -->
+<div id="learnable-tm-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeLearnableTmModal()">
+    <div class="bg-white rounded-3xl p-6 max-w-md w-full max-h-[85vh] overflow-y-auto" id="learnable-tm-modal-content"></div>
+</div>
+
 <!-- 裝備道具彈窗(從寶可夢詳情頁點「裝備道具」進來，讓寶可夢帶上對戰道具/莓果上場，見openEquipModal) -->
 <div id="equip-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeEquipModal()">
     <div class="bg-white rounded-3xl p-6 max-w-sm w-full max-h-[85vh] overflow-y-auto" id="equip-modal-content"></div>
@@ -2524,9 +2531,10 @@ async function openDetailModal(instanceId) {
             <div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400">速度</p><p class="font-bold">${spdOf(inst)}</p></div>
         </div>
         <p class="text-xs text-gray-400 mb-1">目前招式</p>
-        <div class="text-left mb-3 space-y-1">
+        <div class="text-left mb-1.5 space-y-1">
             ${moveDisplays.map(m => `<p class="text-sm flex items-start gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 mt-0.5 shrink-0" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">` : ''}<span><span class="font-bold">${m.nameZh}</span>${DAMAGE_CLASS_BADGE[m.damageClass] || ''}<span class="text-xs text-gray-400">　${m.descZh || ''}</span></span></p>`).join('')}
         </div>
+        <button onclick="openLearnableTmListModal('${inst.id}')" class="text-xs text-blue-500 underline mb-3">查看可學習的招式學習器</button>
         <div class="grid grid-cols-2 gap-2 mb-2">
             ${(() => {
                 // 【第五十七輪新增】親密度太低時，「加入隊伍」/「放進牧場」這兩個方向要擋掉——
@@ -3585,6 +3593,143 @@ async function useTmOnInstance(instanceId, tmKey) {
     } finally {
         useItemInFlight = false;
     }
+}
+// 跟上面useTmOnInstance幾乎一樣，唯一差別是成功後關閉的是「查看可學習的招式學習器」清單彈窗
+// (learnable-tm-modal)而不是use-item-modal——故意複製一份而不是幫useTmOnInstance多加一個
+// 參數，維持既有呼叫端(openUseItemModal那邊的按鈕)完全不用改
+async function useTmFromLearnableList(instanceId, tmKey) {
+    if (useItemInFlight) return;
+    useItemInFlight = true;
+    try {
+        const result = await callWorker('pokemon_use_tm', { instanceId, tmKey });
+        showToast(`已經教會「${result.moveZh}」，稍後確認要不要學習！`);
+        SFX.itemGet();
+        closeLearnableTmModal();
+    } catch (err) {
+        showToast('使用招式學習器失敗：' + err.message);
+        SFX.error();
+    } finally {
+        useItemInFlight = false;
+    }
+}
+
+// ============================================================
+// 【第七十一輪新增】查看可學習的招式學習器：使用者回報「頑皮熊貓在第八世代能用TM63學會吸收拳，
+// 但我們的招式學習器編號是照第九世代編的，頑皮熊貓在第九世代學不到吸收拳」——製作一個招式學習器
+// 要花10000代幣，玩家沒有辦法事先知道某個編號對某隻寶可夢到底有沒有效，容易猜錯浪費代幣。這裡
+// 新增一份純資訊性清單，一次查該物種完整的PokéAPI學習資料(跟worker.js的handlePokemonUseTm
+// 共用同一套findPreferredVersionGroupForMove判斷邏輯：優先看第九世代，這隻/這一招剛好在第九
+// 世代沒有機器學習資料，才依序退回較舊世代)，列出229個招式學習器裡「這隻理論上學得會」的那些，
+// 不管玩家手上有沒有實際持有——只需要打一次/pokemon/{id}(該物種所有招式的學習方式資料本來就
+// 整包含在單次回應裡)，不會因為要比對229個TM而變成229次網路請求
+// ============================================================
+const VERSION_GROUP_FALLBACK_CHAIN = [
+    'scarlet-violet', 'sword-shield', 'ultra-sun-ultra-moon', 'sun-moon',
+    'omega-ruby-alpha-sapphire', 'x-y', 'black-2-white-2', 'black-white',
+    'heartgold-soulsilver', 'platinum', 'diamond-pearl',
+    'emerald', 'ruby-sapphire', 'firered-leafgreen',
+    'crystal', 'gold-silver', 'yellow', 'red-blue',
+];
+const VERSION_GROUP_LABEL_ZH = {
+    'scarlet-violet': '第九世代', 'sword-shield': '第八世代',
+    'ultra-sun-ultra-moon': '第七世代', 'sun-moon': '第七世代',
+    'omega-ruby-alpha-sapphire': '第六世代', 'x-y': '第六世代',
+    'black-2-white-2': '第五世代', 'black-white': '第五世代',
+    'heartgold-soulsilver': '第四世代', 'platinum': '第四世代', 'diamond-pearl': '第四世代',
+    'emerald': '第三世代', 'ruby-sapphire': '第三世代', 'firered-leafgreen': '第三世代',
+    'crystal': '第二世代', 'gold-silver': '第二世代',
+    'yellow': '第一世代', 'red-blue': '第一世代',
+};
+// 跟worker.js的findPreferredVersionGroupForMove是同一套邏輯(不同檔案各自維護一份，跟
+// TM_CATALOG/LEGENDARY_TRAINERS等既有共用資料的做法一致)，兩邊用同一個判斷基準，清單裡
+// 顯示「學得會」的招式學習器，玩家實際去使用(handlePokemonUseTm)一定不會被伺服器擋下來
+function findPreferredVersionGroupForMove(moveEntry, methodName) {
+    if (!moveEntry) return null;
+    const groups = new Set((moveEntry.version_group_details || [])
+        .filter(d => d.move_learn_method && d.move_learn_method.name === methodName)
+        .map(d => d.version_group && d.version_group.name)
+        .filter(Boolean));
+    for (const vg of VERSION_GROUP_FALLBACK_CHAIN) {
+        if (groups.has(vg)) return vg;
+    }
+    return groups.size > 0 ? [...groups][0] : null;
+}
+// speciesId → 完整pokemonData.moves陣列的小快取，同一隻寶可夢重複打開這份清單不用重複打API
+// (跟fetchSpeciesDisplay等既有快取一樣是頁面內記憶體快取，重新整理頁面就會清空，沒關係，
+// 反正PokéAPI資料本身不會變動，下次要用的時候再查一次就好)
+let learnableTmSpeciesMovesCache = new Map();
+async function openLearnableTmListModal(instanceId) {
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst) return;
+    const modal = document.getElementById('learnable-tm-modal');
+    const content = document.getElementById('learnable-tm-modal-content');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    content.innerHTML = '<p class="text-center text-gray-400 py-10">載入中...</p>';
+
+    let movesArr = learnableTmSpeciesMovesCache.get(inst.speciesId);
+    if (!movesArr) {
+        try {
+            const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${inst.speciesId}`);
+            const data = await res.json();
+            movesArr = data.moves || [];
+            learnableTmSpeciesMovesCache.set(inst.speciesId, movesArr);
+        } catch (err) {
+            content.innerHTML = `<p class="text-center text-red-400 py-10">查詢失敗，稍後再試</p><button onclick="closeLearnableTmModal()" class="w-full text-gray-400 text-sm mt-2">關閉</button>`;
+            return;
+        }
+    }
+
+    const knownMoves = new Set(inst.moves || []);
+    const pendingNames = new Set((inst.pendingMoveLearns || []).map(p => p.name));
+    const ownedItems = currentPlayerData?.items || {};
+    const rows = Object.entries(TM_CATALOG).map(([tmKey, tm]) => {
+        const moveEntry = movesArr.find(m => m.move && m.move.name === tm.moveSlug);
+        const vg = findPreferredVersionGroupForMove(moveEntry, 'machine');
+        return { tmKey, tm, vg };
+    }).filter(r => r.vg); // 只列「學得會」的，跟按鈕名稱「查看可學習的招式學習器」對應
+    rows.sort((a, b) => a.tm.tmNum.localeCompare(b.tm.tmNum));
+
+    if (rows.length === 0) {
+        content.innerHTML = `
+            <h3 class="font-bold text-lg mb-3 text-center">可學習的招式學習器</h3>
+            <p class="text-sm text-gray-400 text-center py-8">查不到這隻能透過任何招式學習器學會的招式</p>
+            <button onclick="closeLearnableTmModal()" class="w-full text-gray-400 text-sm mt-1">關閉</button>
+        `;
+        return;
+    }
+    const moveDisplays = await Promise.all(rows.map(r => fetchMoveData(r.tm.moveSlug)));
+    content.innerHTML = `
+        <h3 class="font-bold text-lg mb-1 text-center">可學習的招式學習器</h3>
+        <p class="text-xs text-gray-400 text-center mb-3">列出${pokemonDisplayName(inst, await fetchSpeciesDisplay(inst.speciesId, inst.isShiny))}理論上學得會的招式學習器，不論手上有沒有持有——標示「降世代」代表第九世代資料裡查不到，是照較舊世代的資料判斷</p>
+        <div class="space-y-1.5 mb-3">
+            ${rows.map((r, idx) => {
+                const owned = ownedItems[r.tmKey] || 0;
+                const already = knownMoves.has(r.tm.moveSlug);
+                const pending = pendingNames.has(r.tm.moveSlug);
+                const fallbackTag = r.vg !== 'scarlet-violet' ? `<span class="text-[10px] text-orange-500 font-bold ml-1">(降世代:${VERSION_GROUP_LABEL_ZH[r.vg] || r.vg})</span>` : '';
+                let actionHtml;
+                if (already) actionHtml = `<span class="text-xs text-gray-400 shrink-0">已學會</span>`;
+                else if (pending) actionHtml = `<span class="text-xs text-gray-400 shrink-0">排隊中</span>`;
+                else if (owned > 0) actionHtml = `<button onclick="useTmFromLearnableList('${instanceId}','${r.tmKey}')" class="shrink-0 bg-sky-500 text-white text-xs font-bold px-3 py-1.5 rounded-full">教學(x${owned})</button>`;
+                else actionHtml = `<span class="text-[11px] text-gray-400 shrink-0">尚未持有</span>`;
+                return `<div class="w-full bg-gray-50 rounded-xl p-2 flex items-center gap-2">
+                    <img src="${itemSpriteForKey(r.tmKey)}" class="w-8 h-8 shrink-0" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
+                    <div class="flex-1 min-w-0">
+                        <span class="block text-sm font-bold truncate">招式學習器${r.tm.tmNum}：${moveDisplays[idx].nameZh}${fallbackTag}</span>
+                        ${moveDisplays[idx].descZh ? `<span class="block text-[11px] text-gray-400 leading-snug mt-0.5">${moveDisplays[idx].descZh}</span>` : ''}
+                    </div>
+                    ${actionHtml}
+                </div>`;
+            }).join('')}
+        </div>
+        <p class="text-[11px] text-gray-400 text-center mb-2">尚未持有的可以到「招式學習器機」花代幣製作</p>
+        <button onclick="closeLearnableTmModal()" class="w-full text-gray-400 text-sm">關閉</button>
+    `;
+}
+function closeLearnableTmModal() {
+    document.getElementById('learnable-tm-modal').classList.add('hidden');
+    document.getElementById('learnable-tm-modal').classList.remove('flex');
 }
 
 // ============================================================
