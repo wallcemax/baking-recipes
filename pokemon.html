@@ -254,7 +254,7 @@
             <button type="button" onclick="openBagModal()" class="text-xs bg-gray-100 px-3 py-1.5 rounded-full font-bold inline-flex items-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/bag.png" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">背包</button>
             <button type="button" onclick="openMartModal()" class="text-xs bg-gray-100 px-3 py-1.5 rounded-full font-bold inline-flex items-center gap-1"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/225.png" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">信使鳥百貨</button>
         </div>
-        <p class="text-xs text-gray-400 mb-2">已收集種類：<span id="box-dex-progress-current">0</span>/<span id="box-dex-progress-total">0</span>(之後遊戲更新種類變多，這個總數也會跟著調高)</p>
+        <p class="text-xs text-gray-400 mb-2">已收集種類：<span id="box-dex-progress-current">0</span>/<span id="box-dex-progress-total">0</span></p>
         <div class="mb-3 space-y-2">
             <input id="box-search-input" type="text" placeholder="搜尋暱稱/種類名字..." oninput="debouncedRenderBoxTab()" class="w-full text-sm border border-gray-200 rounded-xl px-3 py-2">
             <div class="flex flex-wrap gap-1.5 items-center">
@@ -3282,6 +3282,7 @@ async function openBagModal() {
         <p class="text-[11px] text-gray-400 text-center mb-2">點擊道具可以查看說明</p>
         ${itemKeys.length > 0 ? `
             <p class="text-xs text-gray-400 mb-1.5">道具</p>
+            <div id="bag-item-desc-box-items" class="hidden bg-purple-50 rounded-xl p-3 mb-2 text-xs flex items-start gap-2"></div>
             <div class="grid grid-cols-4 gap-2 mb-3">
                 ${itemKeys.map((k, idx) => `<button onclick="showBagItemDesc('${k}')" class="text-xs bg-gray-50 hover:bg-purple-50 rounded-lg p-2 flex flex-col items-center gap-1 relative">
                     <span class="absolute top-0.5 right-1 text-[10px] font-black text-purple-600">x${items[k]}</span>
@@ -3291,6 +3292,7 @@ async function openBagModal() {
             </div>` : ''}
         ${berryKeys.length > 0 ? `
             <p class="text-xs text-gray-400 mb-1.5">莓果</p>
+            <div id="bag-item-desc-box-berries" class="hidden bg-green-50 rounded-xl p-3 mb-2 text-xs flex items-start gap-2"></div>
             <div class="grid grid-cols-4 gap-2 mb-3">
                 ${berryKeys.map((k, idx) => `<button onclick="showBagItemDesc('${k}')" class="text-xs bg-gray-50 hover:bg-green-50 rounded-lg p-2 flex flex-col items-center gap-1 relative">
                     <span class="absolute top-0.5 right-1 text-[10px] font-black text-green-600">x${berries[k]}</span>
@@ -3298,25 +3300,26 @@ async function openBagModal() {
                     <span class="text-center leading-tight">${berryNames[idx]}</span>
                 </button>`).join('')}
             </div>` : ''}
-        <div id="bag-item-desc-box" class="hidden bg-purple-50 rounded-xl p-3 mb-3 text-xs flex items-start gap-2"></div>
         <p class="text-xs text-gray-400 text-center mb-2">經驗糖果/心之鱗/招式學習器/進化石要到寶可夢詳情頁的「使用道具」使用；莓果要到「餵樹果」使用；對戰攜帶道具/莓果要到「裝備道具」給寶可夢帶上場</p>
         <button onclick="closeBagModal()" class="w-full text-gray-400 text-sm">關閉</button>
     `;
 }
-// 【第七十三輪新增】點擊背包裡的道具/莓果，在網格下方顯示這個道具的說明文字——莓果的說明
-// (BERRY_EFFECT_ZH)是同步查表，一般道具的說明(fetchItemDescZh)大部分情況也是同步查表(招式
-// 學習器/超級石/Ｚ純晶/特殊道具/對戰道具都有現成的中文說明表)，只有極少數兩者都沒收錄的
-// 一般道具(藥水/精靈球/進化石等)才需要真的打一次PokéAPI，這裡先顯示「載入中」再補上結果，
-// 避免看起來像點了沒反應
+// 【第七十三輪新增，第七十五輪調整位置】點擊背包裡的道具/莓果，顯示這個道具的說明文字——
+// 道具說明顯示在道具網格「上方」、莓果說明顯示在莓果網格「上方」(各自獨立一個框，不用點了
+// 道具還要往下捲才看得到說明)。莓果的說明(BERRY_EFFECT_ZH)是同步查表，一般道具的說明
+// (fetchItemDescZh)大部分情況也是同步查表(招式學習器/超級石/Ｚ純晶/特殊道具/對戰道具都有
+// 現成的中文說明表)，只有極少數兩者都沒收錄的一般道具(藥水/精靈球/進化石等)才需要真的打
+// 一次PokéAPI，這裡先顯示「載入中」再補上結果，避免看起來像點了沒反應
 async function showBagItemDesc(key) {
-    const box = document.getElementById('bag-item-desc-box');
-    if (!box) return;
     const info = bagItemDisplayInfo[key];
     if (!info) return;
+    const box = document.getElementById(info.isBerry ? 'bag-item-desc-box-berries' : 'bag-item-desc-box-items');
+    if (!box) return;
     box.classList.remove('hidden');
     box.dataset.key = key; // 先同步標記「現在顯示的是這個道具」，比await還早設定——這樣不管等一下
     // 哪個道具先查完，只有「當下標記的那個key」還跟自己一樣時才准許寫入畫面，避免點了道具A(還在
-    // 等API回應)又立刻點道具B，結果A比較慢查完、反而蓋掉B已經顯示好的說明
+    // 等API回應)又立刻點道具B，結果A比較慢查完、反而蓋掉B已經顯示好的說明。道具框跟莓果框是
+    // 兩個獨立的div、各自有自己的dataset.key，所以先點道具、緊接著點莓果，兩邊互不影響
     box.innerHTML = `<img src="${info.icon}" class="w-8 h-8 flex-shrink-0" style="image-rendering:pixelated" onerror="this.style.visibility='hidden'">
         <div><p class="font-bold text-purple-700 mb-0.5">${info.name}</p><p class="text-gray-500 leading-snug">查詢說明中...</p></div>`;
     const desc = info.isBerry ? (BERRY_EFFECT_ZH[key] || '目前查不到這個道具的說明文字') : await fetchItemDescZh(key);
