@@ -4982,7 +4982,7 @@ async function buildTrainerTeamMember(member, idx, gymId) {
 // 逐一使出指定招式，最後一招之後就一直重複用最後一招)，兩者都沒有觸發/沒設定的話，
 // 就照原本野生對戰一樣完全隨機——這是為什麼真正的野生寶可夢(沒有directives欄位)行為
 // 完全不受影響的原因
-function decideTrainerMoveName(wildTeamState, round) {
+function decideTrainerMoveName(wildTeamState, round, styleCtx) {
     const moves = (wildTeamState && wildTeamState.moves && wildTeamState.moves.length) ? wildTeamState.moves : ['tackle'];
     const d = wildTeamState && wildTeamState.directives;
     if (d) {
@@ -4994,6 +4994,15 @@ function decideTrainerMoveName(wildTeamState, round) {
             const idx = Math.min(Math.max(0, (round || 1) - 1), d.moveScript.length - 1);
             return d.moveScript[idx];
         }
+    }
+    // 【第七十輪新增】挑戰傳說訓練家的戰鬥風格：styleCtx只有在「這場是傳說訓練家挑戰」時才會
+    // 有值(見decideTrainerFullAction/buildLegendaryStyleCtx)，一般野生對戰/道館NPC(styleCtx
+    // 是undefined)完全不會進到這個分支，行為跟以前一模一樣。archetype是'gambler'(賭徒型)的
+    // 訓練家也刻意跳過，直接沿用下面原本的均等亂數——這是設計上就要的「完全隨性、不能預測」
+    // 個性，不是漏掉沒處理
+    if (styleCtx && styleCtx.archetype && styleCtx.archetype !== 'gambler') {
+        const weights = moves.map(mv => scoreMoveForStyle(styleCtx.archetype, mv, styleCtx));
+        return pickWeightedMove(moves, weights);
     }
     return moves[Math.floor(Math.random() * moves.length)];
 }
@@ -6207,6 +6216,149 @@ const LEGENDARY_GIMMICK_CHANCE = 0.6;
 // (跟worker.js的LEGENDARY_FRIENDSHIP_DELTA同一個數字)
 const LEGENDARY_FRIENDSHIP_DELTA = 5;
 
+// 【第七十輪新增】使用者要求「你已經了解了54位傳說訓練家的風格，請把他們的風格做到他們的對戰
+// 行為上」——這54位訓練家原本雖然有各自的開戰台詞(LEGENDARY_TRAINER_DIALOGUE)/戰後反應
+// (LEGENDARY_TRAINER_POSTBATTLE)，但實際對戰時的招式選擇完全走decideTrainerMoveName的
+// 均等亂數，跟野生寶可夢一模一樣——等於「有性格的台詞，沒有性格的行為」。這裡把每位訓練家
+// 對應到7種戰鬥風格原型之一，判斷依據**只用**這兩份既有台詞的字面語氣+隊伍屬性搭配(逐一
+// 讀過54位的line1/line2/win/lose後才分類)，刻意不依賴「這個在地化中文名字對應到真實遊戲
+// 裡的哪個角色」這種記憶(角色對應容易記錯，台詞文字才是這個遊戲裡「這位訓練家真正的樣子」)：
+//   aggressive(侵略型)：台詞強調直來直往、看威力出招，不太管相剋(例如"少說廢話,強弱如何,
+//     交手便知"的花月)
+//   finisher(終結型)：平時普通，但對手殘血時會火力全開一口氣結束戰鬥(例如"冠軍時間"的丹帝、
+//     "穩穩落在勝利洞口"的卡希麗)
+//   calculating(計算型)：台詞明講理性/智慧/技巧，會認真看屬性相剋而不是純粹比威力(例如
+//     "冷靜與智慧才是致勝關鍵"的悟松、"不只會蠻幹"的瑪瓜)
+//   trickster(詭計型)：偏好狀態/干擾招式而不是傷害招，台詞帶著調皮/謎題/毒霧/幽靈把戲的
+//     語氣(例如出謎題的波普菈、放毒霧幻惑的阿桔)
+//   bulky(耐久型)：血量低時優先回血/固守，台詞強調老練持久/守護(例如"老骨頭還硬朗"的菊野、
+//     "鋼鐵不會退縮"的納莉)
+//   gambler(賭博型)：台詞本身就是賭博/命運意象(越橘、烏栗)，這裡刻意不加任何評分邏輯，
+//     維持decideTrainerMoveName原本100%均等亂數——「風格」就是完全不可預測
+//   balanced(均衡型)：台詞語氣中性、沒有明顯偏向任何極端，威力/相剋各給一點權重，不特化
+// scoreMoveForStyle/pickWeightedMove只有archetype!=='gambler'時才會被呼叫，balanced也是
+// 「加權評分後平均分佈比較廣」而不是完全不評分——7種原型每一種都要讓招式選擇「看起來不一樣」，
+// 這也是使用者要求的重點
+const LEGENDARY_TRAINER_BATTLE_STYLE = {
+    "kanto-1": "calculating", "kanto-2": "aggressive", "kanto-3": "trickster", "kanto-4": "bulky",
+    "johto-1": "finisher", "johto-2": "trickster", "johto-3": "aggressive", "johto-4": "calculating",
+    "hoenn-1": "aggressive", "hoenn-2": "trickster", "hoenn-3": "finisher", "hoenn-4": "balanced",
+    "sinnoh-1": "aggressive", "sinnoh-2": "bulky", "sinnoh-3": "aggressive", "sinnoh-4": "calculating",
+    "unova-1": "trickster", "unova-2": "aggressive", "unova-3": "gambler", "unova-4": "balanced",
+    "kalos-1": "aggressive", "kalos-2": "calculating", "kalos-3": "balanced", "kalos-4": "bulky", "kalos-5": "finisher",
+    "alola-1": "bulky", "alola-2": "calculating", "alola-3": "balanced", "alola-4": "trickster", "alola-5": "finisher",
+    "galar-1": "balanced", "galar-2": "finisher", "galar-3": "aggressive", "galar-4": "aggressive",
+    "galar-5": "trickster", "galar-6": "trickster", "galar-7": "calculating", "galar-8": "calculating",
+    "galar-9": "bulky", "galar-10": "finisher", "galar-11": "aggressive", "galar-12": "finisher",
+    "galar-13": "trickster", "galar-14": "calculating", "galar-15": "finisher",
+    "paldea-1": "aggressive", "paldea-2": "bulky", "paldea-3": "aggressive", "paldea-4": "balanced",
+    "blueberry-1": "balanced", "blueberry-2": "bulky", "blueberry-3": "trickster", "blueberry-4": "aggressive", "blueberry-5": "gambler",
+};
+// 招式的狀態文字裡常見的「異常/干擾效果」關鍵字——MOVE_DATA_ZH沒有結構化的ailment欄位(只有
+// desc敘述文字)，trickster原型要挑「干擾招式」的話只能從desc文字裡認關鍵字，抓不到算普通
+// status招式(還是有基本權重)，不會整支函式壞掉，純粹是「認得的話額外加碼」
+const LEGENDARY_TRICKSTER_KEYWORDS = /麻痺|睡眠|中毒|混亂|燒傷|冰凍|害怕|畏縮|降低|封住|束縛/;
+const LEGENDARY_HEALING_KEYWORDS = /回復|再生|吸取|回血/;
+// 讀取typeRelationCache裡「已經預熱好的」屬性相剋資料，純同步查表、不會觸發新的fetch——
+// 之所以能保證預熱過，是因為buildLegendaryTrainerRoster(這場戰鬥開始前，唯一會建立這支隊伍
+// 的地方)已經把隊伍裡所有招式的攻擊屬性都跑過一次fetchTypeEffectiveness。查不到(理論上不該
+// 發生，除非上面的預熱漏掉了某招)就安全退回1倍(一般效果)，不會讓分數變成NaN或負數
+function getTypeEffSync(attackType, defendTypes) {
+    if (!attackType || !defendTypes || !defendTypes.length) return 1;
+    const rel = typeRelationCache.get(attackType);
+    if (!rel) return 1;
+    let mult = 1;
+    defendTypes.forEach(dt => {
+        if (rel.double_damage_to.some(t => t.name === dt)) mult *= 2;
+        if (rel.half_damage_to.some(t => t.name === dt)) mult *= 0.5;
+        if (rel.no_damage_to.some(t => t.name === dt)) mult *= 0;
+    });
+    return mult;
+}
+// 玩家(對訓練家來說是"敵方")寶可夢的屬性——訓練家自己隊伍的屬性已經在buildLegendaryTrainerRoster
+// 直接存進member.types(反正pokemonData本來就查過了，不用再另外查)，但玩家隊伍的battler物件
+// (buildTeamDataFromInstData)沒有存.types欄位，只能退回speciesCache查(fetchSpeciesDisplay
+// 在對戰畫面渲染玩家寶可夢名稱/圖片時大多已經預熱過)，查不到就傳null，呼叫端(getTypeEffSync)
+// 對null/空陣列一律安全退回1倍中立效果，不會因為剛好沒預熱到而整個出錯或卡住
+function getSpeciesTypesSync(speciesId, isShiny) {
+    if (!speciesId) return null;
+    const cacheKey = speciesId + ':' + (isShiny ? 1 : 0);
+    const cached = speciesCache.get(cacheKey);
+    return (cached && cached.types) || null;
+}
+// 依照戰鬥風格原型，幫某一招算出一個「權重分數」(不是絕對分數，只用來跟同一隻寶可夢手上其他
+// 招式互相比大小)，分數越高、等一下pickWeightedMove抽到的機率越高——刻意保留一定機率會抽到
+// 分數較低的招式(不是直接if/else挑分數最高的那招)，這樣同一位訓練家每次遇到行為還是會有點
+// 變化，不會變成「一眼就看穿、每次都用同一招」的死板腳本
+function scoreMoveForStyle(archetype, moveName, ctx) {
+    const md = MOVE_DATA_ZH[moveName] || {};
+    const power = md.power || 0;
+    const isStatus = md.category === 'status' || !power;
+    const isDamaging = !isStatus && power > 0;
+    const eff = isDamaging ? getTypeEffSync(md.type, ctx.foeTypes) : 1;
+    const stab = (isDamaging && ctx.selfTypes && md.type && ctx.selfTypes.includes(md.type)) ? 1.15 : 1;
+    switch (archetype) {
+        case 'aggressive': // 侵略型：無腦看招式威力，越強越愛用，幾乎不管屬性相剋
+            return isDamaging ? Math.max(1, power) : 2;
+        case 'finisher': { // 終結型：對手殘血(≤35%)時不是均勻加碼，而是用power^1.6大幅放大威力
+            // 之間的差距，讓「威力最高的那一招」明顯比其他招更容易被選到(平時只是單純比威力，
+            // 各招式之間的相對比例跟aggressive差不多，感覺不出「集中火力結束戰鬥」的個性)
+            const critical = isDamaging && ctx.foeHpPct != null && ctx.foeHpPct <= 35;
+            if (critical) return Math.pow(Math.max(1, power), 1.6) * 2;
+            return isDamaging ? Math.max(1, power) : 3;
+        }
+        case 'calculating': { // 計算型：非常看重屬性相剋(平方放大差距)，其次才是威力
+            if (!isDamaging) return 4;
+            return Math.max(1, power) * Math.pow(Math.max(eff, 0.05), 2) * stab;
+        }
+        case 'trickster': { // 詭計型：偏好狀態/干擾招式，認得干擾關鍵字的話再加碼，傷害招的
+            // 權重額外打折(0.3倍)，跟狀態招拉出明顯差距，才不會被單一高威力招式蓋過去
+            if (isStatus) return LEGENDARY_TRICKSTER_KEYWORDS.test(md.desc || '') ? 18 : 10;
+            return Math.max(1, power) * 0.3;
+        }
+        case 'bulky': { // 耐久型：自己殘血(≤50%)時優先回血/固守招式(權重隨血量越低越誇張)，
+            // 同時把傷害招的權重打折(0.4倍，代表這時候更想著活下去而不是拚攻擊)；血量還健康時
+            // 就是穩紮穩打單純看威力，跟原本一樣
+            const isHealing = isStatus && LEGENDARY_HEALING_KEYWORDS.test(md.desc || '');
+            const critical = ctx.selfHpPct != null && ctx.selfHpPct <= 50;
+            if (isHealing && critical) return 30 + Math.max(0, 50 - ctx.selfHpPct) * 4;
+            return isDamaging ? Math.max(1, power) * (critical ? 0.4 : 0.85) : 3;
+        }
+        case 'balanced': // 均衡型：威力搭配一點屬性相剋，不走極端，但不同招式之間還是有差
+            return isDamaging ? Math.max(1, power) * Math.pow(Math.max(eff, 0.05), 1.1) * stab : 3;
+        default: // gambler或其他未知值：理論上不會走到這裡(decideTrainerMoveName會直接跳過)，
+            return 1; // 保底給均等權重，安全退化成跟原本一樣的隨機
+    }
+}
+// 加權隨機抽一招：weights全部加總後，在總和範圍內random一個數字，依序扣減直到落在某個區間——
+// 這是標準的「輪盤法」加權抽樣，不是每次都選權重最高的那個，才會保留「多數時候符合個性，但偶爾
+// 也會有意外」的手感。total算出來是0/NaN(理論上不該發生，因為每個分支都保底回傳>0的數字)時
+// 直接退回原本的均等亂數，多一層安全網
+function pickWeightedMove(moves, weights) {
+    const total = weights.reduce((sum, w) => sum + (Number.isFinite(w) && w > 0 ? w : 0), 0);
+    if (!total) return moves[Math.floor(Math.random() * moves.length)];
+    let r = Math.random() * total;
+    for (let i = 0; i < moves.length; i++) {
+        r -= (Number.isFinite(weights[i]) && weights[i] > 0) ? weights[i] : 0;
+        if (r <= 0) return moves[i];
+    }
+    return moves[moves.length - 1];
+}
+// 組出decideTrainerMoveName要用的styleCtx：legendaryTrainerId是null/undefined的話(不是傳說
+// 訓練家挑戰)直接回傳null，styleCtx整段新邏輯都不會啟動，一般野生/道館戰完全不受影響
+function buildLegendaryStyleCtx(legendaryTrainerId, wildTeamNow, foeTeamNow) {
+    if (!legendaryTrainerId) return null;
+    const archetype = LEGENDARY_TRAINER_BATTLE_STYLE[legendaryTrainerId] || 'balanced';
+    const selfHpPct = (wildTeamNow && wildTeamNow.maxHp) ? (wildTeamNow.currentHp / wildTeamNow.maxHp * 100) : 100;
+    const foeHpPct = (foeTeamNow && foeTeamNow.maxHp) ? (foeTeamNow.currentHp / foeTeamNow.maxHp * 100) : null;
+    return {
+        archetype,
+        selfHpPct, foeHpPct,
+        selfTypes: (wildTeamNow && wildTeamNow.types) || null,
+        foeTypes: foeTeamNow ? getSpeciesTypesSync(foeTeamNow.speciesId, foeTeamNow.isShiny) : null,
+    };
+}
+
 // 組出某位傳說訓練家的完整隊伍(先發+候補)，全員固定Lv.100：
 //  - 招式：套用跟rollWildOpponent同一套「該種類學得會的升級招式裡，取學習等級最高的4招」邏輯，
 //    100級時等於「這隻學得會的升級招式裡最強的4招」
@@ -6267,8 +6419,24 @@ async function buildLegendaryTrainerRoster(trainer) {
             isAce: idx === teamDexIds.length - 1,
             starMult: 1,
             ability: rollAbilityFromPokemonData(pokemonData),
+            // 【第七十輪新增】給戰鬥風格系統(scoreMoveForStyle的本系加成/getTypeEffSync)用——
+            // pokemonData本來就查過了，這裡直接順手存起來，不用另外多打一次PokéAPI
+            types: (pokemonData.types || []).map(t => t.type.name),
         };
     }));
+
+    // 【第七十輪新增】預熱typeRelationCache：decideTrainerMoveName在submitSwitch/submitWildMove
+    // 的Firestore交易(db.runTransaction)裡是同步呼叫，交易衝突時整段函式會被重跑，如果在裡面
+    // 才第一次await新的PokéAPI查詢，等於每次重跑都要重新打一次網路請求，拖慢玩家出招的反應
+    // 速度——這裡趁buildLegendaryTrainerRoster本來就是async、而且整場戰鬥開始前只會呼叫這一次
+    // 的機會，把這支隊伍所有招式的攻擊屬性都先查好存進快取，之後getTypeEffSync才能在交易裡
+    // 純同步讀快取，不用等
+    const moveTypesToWarm = new Set();
+    members.forEach(m => (m.moves || []).forEach(mv => {
+        const t = (MOVE_DATA_ZH[mv] || {}).type;
+        if (t) moveTypesToWarm.add(t);
+    }));
+    await Promise.all([...moveTypesToWarm].map(t => fetchTypeEffectiveness(t, [])));
 
     let gimmickKind = null;
     if (trainer.gimmick === 'mega' && Math.random() < LEGENDARY_GIMMICK_CHANCE) {
@@ -6314,8 +6482,13 @@ async function buildLegendaryTrainerRoster(trainer) {
 // 的判斷，兩者合起來才是完整的一次出招動作。legendaryGimmickKind是null的話(玩家打的不是
 // 傳說訓練家挑戰、或這場沒有武裝機關)整段機關判斷都跳過，回傳的action跟原本完全一樣，
 // 不會影響一般野生/道館戰的行為
-function decideTrainerFullAction(wildTeamNow, benchWild, battleState, round, legendaryGimmickKind) {
-    const moveName = decideTrainerMoveName(wildTeamNow, round);
+function decideTrainerFullAction(wildTeamNow, benchWild, battleState, round, legendaryGimmickKind, legendaryTrainerId, foeTeamNow) {
+    // 【第七十輪新增】legendaryTrainerId/foeTeamNow是新增的兩個參數，兩邊呼叫端(submitSwitch/
+    // submitWildMove)只有「這場是傳說訓練家挑戰」時才會傳值進來，一般野生/道館戰兩者都是
+    // undefined，buildLegendaryStyleCtx會直接回傳null，decideTrainerMoveName看到styleCtx是
+    // null就完全走原本的邏輯，行為不變
+    const styleCtx = buildLegendaryStyleCtx(legendaryTrainerId, wildTeamNow, foeTeamNow);
+    const moveName = decideTrainerMoveName(wildTeamNow, round, styleCtx);
     const action = { type: 'move', move: moveName, mega: false, zMove: false, dynamax: false };
     if (!legendaryGimmickKind || !wildTeamNow || wildTeamNow.currentHp <= 0) return action;
     const uid = 'wild';
@@ -9623,7 +9796,10 @@ async function submitSwitch(instanceId) {
                 // (legendaryGimmickKind是undefined)完全走原本decideTrainerMoveName那條路，行為不變
                 const benchWildNow = (data.battleState.bench && data.battleState.bench.wild) || [];
                 pending[myUid] = { type: 'switch', instanceId };
-                pending.wild = decideTrainerFullAction(wildTeamNow, benchWildNow, data.battleState, data.battleState.round || 1, data.isLegendaryChallenge ? data.legendaryGimmickKind : null);
+                // 【第七十輪新增】多傳legendaryTrainerId(挑第幾號傳說訓練家，用來查戰鬥風格原型)
+                // 跟myTeam(玩家目前上場的寶可夢，讓AI能看敵方殘血/屬性)——一般野生/道館戰
+                // data.isLegendaryChallenge是false，兩個新參數都會是null，行為不變
+                pending.wild = decideTrainerFullAction(wildTeamNow, benchWildNow, data.battleState, data.battleState.round || 1, data.isLegendaryChallenge ? data.legendaryGimmickKind : null, data.isLegendaryChallenge ? data.legendaryTrainerId : null, myTeam);
                 tx.update(roomRef, { pendingMoves: pending });
                 roomDataAfter = { ...data, pendingMoves: pending };
             });
@@ -9759,7 +9935,10 @@ async function submitWildMove(moveName, opts) {
             const wildTeamNow = data.battleState.teams.wild || { moves: ['tackle'] };
             // 【第五十七輪新增】道理跟submitSwitch的wild分支一樣，見那邊的說明
             const benchWildNow = (data.battleState.bench && data.battleState.bench.wild) || [];
-            const wildAction = decideTrainerFullAction(wildTeamNow, benchWildNow, data.battleState, data.battleState.round || 1, data.isLegendaryChallenge ? data.legendaryGimmickKind : null);
+            // 【第七十輪新增】道理跟submitSwitch那邊一樣，多傳legendaryTrainerId跟玩家目前上場的
+            // 寶可夢(myTeam)給戰鬥風格系統用，見那邊的說明
+            const myTeam = data.battleState.teams[myUid];
+            const wildAction = decideTrainerFullAction(wildTeamNow, benchWildNow, data.battleState, data.battleState.round || 1, data.isLegendaryChallenge ? data.legendaryGimmickKind : null, data.isLegendaryChallenge ? data.legendaryTrainerId : null, myTeam);
             const pending = { [myUid]: { type: 'move', move: moveName, mega, zMove, dynamax }, wild: wildAction };
             tx.update(roomRef, { pendingMoves: pending });
             roomDataAfter = { ...data, pendingMoves: pending };
