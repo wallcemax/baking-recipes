@@ -6807,6 +6807,21 @@ function decideTrainerFullAction(wildTeamNow, benchWild, battleState, round, leg
     // undefined，buildLegendaryStyleCtx會直接回傳null，decideTrainerMoveName看到styleCtx是
     // null就完全走原本的邏輯，行為不變
     const styleCtx = buildLegendaryStyleCtx(legendaryTrainerId, wildTeamNow, foeTeamNow);
+    // 【第七十六輪新增】雙回合蓄力招式(飛翔/挖洞/潛水/彈跳/影子分身/未來勢力/自由落體/日光烈焰等)
+    // 「放」的那一回合，一定要無條件繼續放出蓄力中的同一招，不能改選別的招式、也不能換人——玩家
+    // 端(renderBattleStage的movesHtml，見「myTeam.chargingMove」那段)本來就有這個限制，強制只能
+    // 送出正在蓄力的招式，但這裡(NPC/野生/傳說訓練家的AI決策)完全沒有檢查chargingMove，蓄力回合
+    // 結束後AI可能隨機選到別的招式、或(傳說訓練家)被換人判斷換下場。resolveBattleRound裡真正
+    // 清除chargingMove的那一行(`if (alreadyCharging) atk.chargingMove = null;`)只有「這次選的
+    // 招式跟chargingMove完全同名」才會執行到，AI選了別的招式的話，chargingMove就會永遠卡在原本
+    // 蓄力中的招式名稱，後面判定命中率的defVanished(這隻是不是在飛翔/挖洞等「消失中」)就會一路
+    // 誤判成true下去——玩家後來不管用什麼招式打這隻，都會一直顯示「沒有命中」，直到牠換下場(靠
+    // resetVolatileForBench清掉chargingMove)或戰鬥結束為止。這裡在換人判斷之前先攔截：只要還在
+    // 蓄力中，直接強制回傳「繼續放出同一招」的行動，跳過換人判斷跟隨機/風格化選招邏輯，行為對齊
+    // 玩家端本來就有的限制
+    if (wildTeamNow && wildTeamNow.chargingMove) {
+        return { type: 'move', move: wildTeamNow.chargingMove, mega: false, zMove: false, dynamax: false };
+    }
     // 【第七十二輪新增】換人判斷要放在決定招式之前——正統規則裡「換人」跟「出招」是互斥的兩種
     // 回合行動，選了換人這回合就不會再出招/用機關，resolveBattleRound本來就有處理actionA/
     // actionB.type==='switch'的通用邏輯(玩家自己換人時就是走這條路)，這裡只要讓AI也有機會
