@@ -1954,11 +1954,19 @@ async function fetchSpeciesDisplay(speciesId, isShiny) {
             typesZh,
             isShiny: shiny,
             flavorTextZh,
+            // 【第八十二輪新增】體重(公斤)：PokéAPI的weight欄位單位是「十分之一公斤」，直接除以10
+            // 換算——這個欄位其實已經跟著pokemonRes一起抓下來了，只是原本完全沒有讀出來，補這一行
+            // 不用多查一次網路請求。用途見下面WEIGHT_RATIO_MOVE_POWER_TABLE/WEIGHT_ABSOLUTE_MOVE_POWER_TABLE
+            // 旁邊的說明(重磅衝撞/高溫重壓/踢倒/打草結這幾招要用)。跟types一樣，Mega進化/換型態時
+            // 這裡會自動抓到新型態自己的體重(PokéAPI每個/pokemon/資源都有各自獨立的weight欄位)
+            weight: (data.weight || 0) / 10,
         };
         speciesCache.set(cacheKey, result);
         return result;
     } catch (err) {
-        return { nameZh: '???', sprite: '', spriteBack: '', spriteAnimated: null, spriteBackAnimated: null, spritePixelFront: '', spritePixelBack: '', types: [], typesZh: [], isShiny: shiny, flavorTextZh: '' };
+        // 查詢失敗查不到體重時用0代表「未知」，不是某個具體重量——下面的體重招式威力計算函式
+        // 看到0(或對手也是0)會主動判斷成「資料不足」退回安全的中間威力，不會拿0去除造成除以0
+        return { nameZh: '???', sprite: '', spriteBack: '', spriteAnimated: null, spriteBackAnimated: null, spritePixelFront: '', spritePixelBack: '', types: [], typesZh: [], isShiny: shiny, flavorTextZh: '', weight: 0 };
     }
 }
 // 【第三十九輪新增，第五十八輪移除硬編碼特例】原本這裡只認超級噴火龍X(10034)一個編號、
@@ -10806,6 +10814,37 @@ async function applyArceusMultitypeDisplay(battler, baseDisplay) {
     return { ...baseDisplay, ...formDisplay };
 }
 
+// ============================================================
+// 【第八十二輪新增】體重相關的變動威力招式：重磅衝撞(heavy-slam)/高溫重壓(heat-crash)是比較
+// 「自己體重是對手的幾倍」，踢倒(low-kick)/打草結(grass-knot)是只看「對手自己的絕對體重」，
+// 兩組都是官方寫死的固定級距(不是連續公式)，數值查證Bulbapedia確認、每個世代都沒有改過。
+// MOVE_DATA_ZH裡這4招原本就正確標成power:null(代表威力不是固定值)，但完全沒有實作對應的
+// 動態計算，導致目前這4招打出來威力等於0——這裡補上實際的計算邏輯。
+// 體重資料來自fetchSpeciesDisplay這輪新增的weight欄位(見那裡的說明，不用多查一次網路)，
+// 查詢失敗時weight會是0，下面兩個計算函式都把「任一邊體重是0(代表查不到)」視為資料不足，
+// 退回40這個兩組級距裡都存在、位置最中間的安全預設值，不會拿0去除造成Infinity或NaN。
+// ============================================================
+function weightRatioMovePower(attackerWeightKg, defenderWeightKg) {
+    if (!(attackerWeightKg > 0) || !(defenderWeightKg > 0)) return 40; // 查不到體重資料時的安全預設
+    const ratio = attackerWeightKg / defenderWeightKg;
+    if (ratio >= 5) return 120;
+    if (ratio >= 4) return 100;
+    if (ratio >= 3) return 80;
+    if (ratio >= 2) return 60;
+    return 40;
+}
+function weightAbsoluteMovePower(targetWeightKg) {
+    if (!(targetWeightKg > 0)) return 40; // 查不到體重資料時的安全預設
+    if (targetWeightKg >= 200) return 120;
+    if (targetWeightKg >= 100) return 100;
+    if (targetWeightKg >= 50) return 80;
+    if (targetWeightKg >= 25) return 60;
+    if (targetWeightKg >= 10) return 40;
+    return 20;
+}
+const WEIGHT_RATIO_MOVES = new Set(['heavy-slam', 'heat-crash']); // 比較「自己比對手重幾倍」
+const WEIGHT_ABSOLUTE_MOVES = new Set(['low-kick', 'grass-knot']); // 只看「對手自己的絕對體重」
+
 // 結算一整個回合：不再只是單純比大小算傷害，而是完整跑過「出招前異常狀態檢查(畏縮/冰凍/睡眠/
 // 麻痺/混亂)→命中判定→傷害(含一擊必殺/固定傷害/連續攻擊/會心一擊)→吸血或反作用力→回血招式→
 // 附加異常狀態→能力等級變化→畏縮判定」，最後再處理「回合結束的中毒/劇毒/燒傷」持續傷害——
@@ -11455,6 +11494,17 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (moveOf[uid].name === 'judgment') {
             const arceusInfo = findArceusMultitypeInfoFor(state[uid]);
             if (arceusInfo) moveOf[uid] = { ...moveOf[uid], type: arceusInfo.type, typeIcon: typeIconUrl(arceusInfo.type) };
+        }
+        // 【第八十二輪新增】體重相關的變動威力招式：重磅衝撞/高溫重壓(比較雙方體重倍數)、
+        // 踢倒/打草結(只看對手絕對體重)，威力計算見上面weightRatioMovePower/
+        // weightAbsoluteMovePower旁邊的說明。displayOf在這個時間點已經抓好雙方的體重(包含
+        // Mega進化等會改變體重的型態變化，因為displayOf本來就是換人/變身處理完之後才抓的)，
+        // 同樣用淺拷貝覆寫power，不會動到moveDataCache共用的原始物件
+        const opponentUid = uid === uidA ? uidB : uidA;
+        if (WEIGHT_RATIO_MOVES.has(moveOf[uid].name)) {
+            moveOf[uid] = { ...moveOf[uid], power: weightRatioMovePower(displayOf[uid].weight, displayOf[opponentUid].weight) };
+        } else if (WEIGHT_ABSOLUTE_MOVES.has(moveOf[uid].name)) {
+            moveOf[uid] = { ...moveOf[uid], power: weightAbsoluteMovePower(displayOf[opponentUid].weight) };
         }
         // 【第三十輪新增】Ｚ招式：只覆寫「威力」跟「顯示名稱」這兩個欄位(用淺拷貝，不會動到
         // moveDataCache裡共用的原始物件)，屬性/分類/命中率/PP/招式代號完全不變——這樣後面
