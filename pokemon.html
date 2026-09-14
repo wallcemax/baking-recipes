@@ -2395,6 +2395,14 @@ function syncBoxFilterChipStyles() {
 // 存一份純粹是因為worker.js的常數是伺服器端專用、client端本來就不會去讀它；之後官方出新一代、
 // worker.js那邊調高數字時，這裡也要記得同步調高，兩邊才會顯示一致的總數
 const POKEMON_SPECIES_COUNT = 1025;
+// 【第七十八輪新增】收藏庫「已收集種類/總種類數」畫面用的分母：這輪(第七十七輪)新增57隻地區
+// 型態可以捕捉之後，玩家收藏的speciesId不再只會落在1~1025號，如果分母還是只用上面的
+// POKEMON_SPECIES_COUNT(1025)，玩家把1025隻基本型態都收集齊、再額外抓到幾隻地區型態，
+// 畫面上的分子(不重複speciesId數)會超過分母，變成類似「1050/1025」這種超過100%、看起來像
+// 壞掉的顯示。這裡另外算一個「畫面總數」=1025+57=1082，把地區型態也算進「全國圖鑑總數」裡，
+// 不直接改動POKEMON_SPECIES_COUNT本身——那個常數在野生對戰/猜猜看/拼圖抽選池那幾處，語意是
+// 「基本型態的範圍是1~1025號」，跟這裡「畫面顯示的總數」是不同用途，混在一起改會出錯
+const POKEMON_DEX_PROGRESS_TOTAL = POKEMON_SPECIES_COUNT + POKEMON_REGIONAL_FORM_POOL.length;
 let boxRenderToken = 0;
 async function renderBoxTab() {
     const myToken = ++boxRenderToken;
@@ -2421,7 +2429,7 @@ async function renderBoxTab() {
     if (dexProgressCurrentEl && dexProgressTotalEl) {
         const ownedSpeciesCount = new Set(currentInstances.map(i => i.speciesId)).size;
         dexProgressCurrentEl.textContent = ownedSpeciesCount;
-        dexProgressTotalEl.textContent = POKEMON_SPECIES_COUNT;
+        dexProgressTotalEl.textContent = POKEMON_DEX_PROGRESS_TOTAL; // 【第七十八輪修正】改用含地區型態的總數，見上面POKEMON_DEX_PROGRESS_TOTAL旁的說明
     }
 
     if (visibleInstances.length === 0) {
@@ -4596,10 +4604,12 @@ async function evolvePokemon(instanceId, targetSpeciesUrl, formKey) {
 
 // ============================================================
 // 進化合併：進化前發現倉庫已經有同種類，跳出來讓玩家自己選要保留哪一隻本體(等級/經驗值/招式)。
-// 消失的那隻只會把+1星貢獻給留下來的那隻，星級以外的東西全部一起拿不回來——這牽涉到「刪除自己
-// 的一筆資料」，Firestore規則(見firestore.rules的pokemonInstances)完全擋掉client端直接刪除，
-// 所以最終寫入(含刪除)一定要透過worker的pokemon_evolve_merge動作、用伺服器端權限完成，
-// 不能直接db.update/delete
+// 【第七十九輪修正】星級計算改成「兩隻星級相加、再加上原本就有的+1融合加成」(見worker.js的
+// handlePokemonEvolveMerge旁邊的說明)，消失的那隻已經練起來的星級不會平白浪費掉；等級/經驗值/
+// 招式這些星級以外的東西沒有跟著合併，還是只保留「留下來的那隻本體」原本的樣子，沒被留下的
+// 那隻在這部分依然拿不回來——這牽涉到「刪除自己的一筆資料」，Firestore規則(見firestore.rules的
+// pokemonInstances)完全擋掉client端直接刪除，所以最終寫入(含刪除)一定要透過worker的
+// pokemon_evolve_merge動作、用伺服器端權限完成，不能直接db.update/delete
 // ============================================================
 let pendingEvolveMergeInfo = null; // 暫存這次進化目標種類的資料(species/base stats)，給合併彈窗的按鈕用
 async function showEvolveMergeModal(evolvingInst, duplicateInst, nextInfo) {
@@ -4625,7 +4635,7 @@ async function showEvolveMergeModal(evolvingInst, duplicateInst, nextInfo) {
 
     content.innerHTML = `
         <p class="font-black text-base mb-1">進化後會跟已經擁有的重複！</p>
-        <p class="text-gray-500 text-sm mb-3">倉庫裡已經有一隻${duplicateDisplay.nameZh}了，要保留哪一隻本體？<br>沒被保留的那隻會消失，只把+1星貢獻給留下來的那隻(等級、練的招式都拿不回來)</p>
+        <p class="text-gray-500 text-sm mb-3">倉庫裡已經有一隻${duplicateDisplay.nameZh}了，要保留哪一隻本體？<br>沒被保留的那隻會消失，牠的星級會併入留下來的那隻(兩隻星級相加再+1，封頂5星)，但等級、練的招式沒辦法一起合併，拿不回來</p>
         ${optionCard(`留下這次要進化的這隻(進化成${evolvingDisplay.nameZh})`, evolvingInst, evolvingDisplay, evolvingInst.id)}
         ${optionCard('留下倉庫原本的這隻', duplicateInst, duplicateDisplay, duplicateInst.id)}
         <button onclick="closeEvolveMergeModal()" class="w-full text-gray-400 text-sm mt-1">先不要，取消進化</button>
