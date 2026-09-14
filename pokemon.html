@@ -2616,6 +2616,77 @@ async function splitCalyrex(calyrexInstanceId) {
     }
 }
 
+// ============================================================
+// 奈克洛茲瑪×索爾迦雷歐/露奈雅拉合體/解除合體(第八十三輪新增)：跟上面蕾冠王合體
+// (calyrexDetailExtraHtml/fuseCalyrex/splitCalyrex)完全同一套UI模式逐行對照過來(使用者原話
+// 「跟蕾冠王黑白馬機制一樣就可以」)，唯一差異是鑰匙道具換成necrosol-fuser、worker action
+// 換成pokemon_necrozma_fuse/split。合體後的黃昏之鬃/拂曉之翼奈克洛茲瑪之後還能在戰鬥中攜帶
+// 究極奈克洛Z進行「究極爆發」，見findUltraBurstInfoFor旁邊的說明
+// ============================================================
+async function necrozmaDetailExtraHtml(inst) {
+    const ownedFuser = (currentPlayerData?.items || {})['necrosol-fuser'] || 0;
+    if (Number(inst.speciesId) === NECROZMA_BASE_SPECIES_ID) {
+        const parts = [];
+        for (const partnerSpeciesIdStr of Object.keys(NECROZMA_FUSION_CATALOG)) {
+            const partnerSpeciesId = Number(partnerSpeciesIdStr);
+            const cfg = NECROZMA_FUSION_CATALOG[partnerSpeciesId];
+            // 只挑「還沒被合體藏起來、也沒放牧場中」的那一隻——放牧場中的要先牽出來(跟進化合併
+            // 同一個限制，見handlePokemonNecrozmaFuse)，已經合體的hiddenFused不會出現在這裡
+            const partner = currentInstances.find(i => Number(i.speciesId) === partnerSpeciesId && !i.hiddenFused && !i.placedForIdle);
+            const partnerOwnedAtAll = currentInstances.some(i => Number(i.speciesId) === partnerSpeciesId && !i.hiddenFused);
+            if (!partner) {
+                const hint = !partnerOwnedAtAll ? `倉庫裡沒有${cfg.partnerNameZh}` : `${cfg.partnerNameZh}還在牧場中，要先牽出來`;
+                parts.push(`<p class="text-xs text-gray-400 text-center mb-2">合體成${cfg.fusedSpeciesNameZh}：${hint}</p>`);
+            } else if (ownedFuser <= 0) {
+                parts.push(`<p class="text-xs text-gray-400 text-center mb-2">合體成${cfg.fusedSpeciesNameZh}：需要「奈克洛索爾合體器」，去信使鳥百貨買一個</p>`);
+            } else {
+                parts.push(`<button onclick="fuseNecrozma('${inst.id}','${partner.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-indigo-500 text-white mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('necrosol-fuser')}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">與${cfg.partnerNameZh}合體，變成${cfg.fusedSpeciesNameZh}！</button>`);
+            }
+        }
+        return parts.join('');
+    }
+    if (NECROZMA_FUSED_FORM_IDS.includes(Number(inst.speciesId))) {
+        if (ownedFuser <= 0) {
+            return `<p class="text-xs text-gray-400 text-center mb-2">需要「奈克洛索爾合體器」才能解除合體，去信使鳥百貨買一個</p>`;
+        }
+        return `<button onclick="splitNecrozma('${inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-indigo-100 text-indigo-700 mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('necrosol-fuser')}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">解除合體</button>`;
+    }
+    return '';
+}
+let necrozmaFusionInFlight = false; // 避免連點兩次同時送出兩個合體/解除合體請求
+async function fuseNecrozma(necrozmaInstanceId, partnerInstanceId) {
+    if (necrozmaFusionInFlight) return;
+    necrozmaFusionInFlight = true;
+    try {
+        const result = await callWorker('pokemon_necrozma_fuse', { necrozmaInstanceId, partnerInstanceId });
+        showToast(`合體成功！變成了${result.fusedSpeciesNameZh}`);
+        SFX.levelUp();
+        closeDetailModal();
+    } catch (err) {
+        showToast('合體失敗：' + err.message);
+        SFX.error();
+        openDetailModal(necrozmaInstanceId);
+    } finally {
+        necrozmaFusionInFlight = false;
+    }
+}
+async function splitNecrozma(necrozmaInstanceId) {
+    if (necrozmaFusionInFlight) return;
+    necrozmaFusionInFlight = true;
+    try {
+        const result = await callWorker('pokemon_necrozma_split', { necrozmaInstanceId });
+        showToast(`已經解除合體，變回${result.speciesNameZh}了`);
+        SFX.levelUp();
+        closeDetailModal();
+    } catch (err) {
+        showToast('解除合體失敗：' + err.message);
+        SFX.error();
+        openDetailModal(necrozmaInstanceId);
+    } finally {
+        necrozmaFusionInFlight = false;
+    }
+}
+
 async function openDetailModal(instanceId) {
     const inst = currentInstances.find(i => i.id === instanceId);
     if (!inst) return;
@@ -2628,6 +2699,7 @@ async function openDetailModal(instanceId) {
     const d = await fetchSpeciesDisplay(inst.speciesId, inst.isShiny);
     const evoInfo = await checkEvolutionEligibility(inst);
     const calyrexExtraHtml = await calyrexDetailExtraHtml(inst);
+    const necrozmaExtraHtml = await necrozmaDetailExtraHtml(inst);
     // 【第八十輪新增】倉庫裡是不是還有同一種類、另一個亮度的個體(見worker.js的ownedKey旁的
     // 說明：第八十輪起同一種類的普通版/閃光版分開追蹤，兩隻可能同時存在)——如果有，顯示按鈕
     // 讓玩家自己選要不要把兩隻合併(見showShinyMergeModal)
@@ -2691,6 +2763,7 @@ async function openDetailModal(instanceId) {
         }).join('')}
         ${shinyMergeCounterpart ? `<button onclick="showShinyMergeModal('${inst.isShiny ? inst.id : shinyMergeCounterpart.id}', '${inst.isShiny ? shinyMergeCounterpart.id : inst.id}')" class="w-full text-sm py-2 rounded-xl font-bold bg-yellow-100 text-yellow-700 mb-2 inline-flex items-center justify-center gap-1.5"><img src="${itemSpriteUrl('shiny-stone')}" class="w-5 h-5" style="image-rendering:pixelated" onerror="this.style.display='none'">${inst.isShiny ? '合併倉庫裡的普通版(星級併入這隻)' : '合併進倉庫裡的閃光版(星級併入閃光版)'}</button>` : ''}
         ${calyrexExtraHtml}
+        ${necrozmaExtraHtml}
         <button onclick="closeDetailModal()" class="w-full text-gray-400 text-sm">關閉</button>
     `;
 }
@@ -3025,6 +3098,12 @@ const POKEMON_MART_EVOLUTION_ITEMS = [
     // 混在這份清單裡純粹是借用同一個信使鳥百貨的購買/白名單機制，用法說明畫在蕾冠王詳情頁裡
     // (見openDetailModal的calyrexDetailExtraHtml)，跟worker.js的同名常數要保持一致
     'reins-of-unity',
+    // 【第八十三輪新增】奈克洛索爾合體器：奈克洛茲瑪跟索爾迦雷歐/露奈雅拉合體用的道具，跟
+    // 「牽絆韁繩」同樣是可重複使用的鑰匙道具，不是官方遊戲裡真實存在的道具——官方遊戲的
+    // 黃昏之鬃/拂曉之翼奈克洛茲瑪是劇情直接給的固定個體，這裡比照蕾冠王合體系統自創一個
+    // 讓玩家能自己操作合體/解除合體的道具，用法說明畫在奈克洛茲瑪詳情頁裡(見
+    // necrozmaDetailExtraHtml)，跟worker.js的同名常數要保持一致
+    'necrosol-fuser',
 ];
 const DELIBIRD_MART_ITEM_COST = 2200; // 每個道具統一售價(使用者指定)，唯獨不賣POKEMON_EVOLUTION_STONES那10種進化之石(已經有猜猜看小遊戲當取得管道)
 // 【第六十五輪新增】蕾冠王(898)跟雪暴馬(899)/靈幽馬(901)的合體/解除合體：合體後蕾冠王的種族值
@@ -3044,6 +3123,25 @@ const CALYREX_FUSION_CATALOG = {
     },
 };
 const CALYREX_FUSED_FORM_IDS = [10193, 10194];
+// 【第八十三輪新增】奈克洛茲瑪(800)跟索爾迦雷歐(791)/露奈雅拉(792)的合體/解除合體：跟蕾冠王的
+// 合體系統完全同一套機制(使用者原話「跟蕾冠王黑白馬機制一樣就可以」)，合體後的種族值同樣是
+// 官方寫死的固定數值(來源：Bulbapedia/PokéAPI pokemon.csv，2026年版本確認：黃昏之鬃10155/
+// 拂曉之翼10156)，索爾迦雷歐/露奈雅拉本身的等級/招式/道具/星級全程不動——跟worker.js裡
+// 同名的常數要保持一致
+const NECROZMA_BASE_SPECIES_ID = 800;
+const NECROZMA_FUSION_CATALOG = {
+    791: { // 索爾迦雷歐 Solgaleo → 奈克洛茲瑪(黃昏之鬃)
+        fusedSpeciesId: 10155, fusedSpeciesName: 'necrozma-dusk', fusedSpeciesNameZh: '奈克洛茲瑪（黃昏之鬃）',
+        types: ['psychic', 'steel'], partnerNameZh: '索爾迦雷歐',
+        baseHp: 97, baseAtk: 157, baseDef: 127, baseSpAtk: 113, baseSpDef: 109, baseSpd: 77,
+    },
+    792: { // 露奈雅拉 Lunala → 奈克洛茲瑪(拂曉之翼)
+        fusedSpeciesId: 10156, fusedSpeciesName: 'necrozma-dawn', fusedSpeciesNameZh: '奈克洛茲瑪（拂曉之翼）',
+        types: ['psychic', 'ghost'], partnerNameZh: '露奈雅拉',
+        baseHp: 97, baseAtk: 113, baseDef: 109, baseSpAtk: 157, baseSpDef: 127, baseSpd: 77,
+    },
+};
+const NECROZMA_FUSED_FORM_IDS = [10155, 10156];
 // 神奇糖果的正確效果是「不看EXP、直接升1級」，經驗糖果拆成XS~XL五階、各自給固定EXP——
 // 這兩份鑰匙都要跟worker.js的EXP_CANDY_AMOUNTS/rollGuessReward保持一致
 const EXP_CANDY_AMOUNTS = { 'exp-candy-xs': 50, 'exp-candy-s': 100, 'exp-candy-m': 150, 'exp-candy-l': 300, 'exp-candy-xl': 500 };
@@ -3240,6 +3338,9 @@ const HELD_ITEM_EFFECT_ZH = {
 const SPECIAL_ITEM_NAME_ZH = {
     'move-reminder': '心之鱗', 'rare-candy': '神奇糖果',
     'exp-candy-xs': '經驗糖果XS', 'exp-candy-s': '經驗糖果S', 'exp-candy-m': '經驗糖果M', 'exp-candy-l': '經驗糖果L', 'exp-candy-xl': '經驗糖果XL',
+    // 【第八十三輪新增】奈克洛索爾合體器：跟reins-of-unity(牽絆韁繩)一樣，不是PokéAPI真實
+    // 存在的道具，沒有zh-Hant可以查
+    'necrosol-fuser': '奈克洛索爾合體器',
 };
 // 【第七十三輪新增】跟SPECIAL_ITEM_NAME_ZH同樣的道理——這幾種道具都不是PokéAPI真實存在的
 // 道具(或是查得到但官方說明文字跟這個簡化版引擎的實際效果不一致)，說明文字直接手寫，
@@ -3252,6 +3353,7 @@ const SPECIAL_ITEM_DESC_ZH = {
     'exp-candy-m': '在寶可夢詳情頁「使用道具」選用，獲得中量經驗值(滿級無效果)',
     'exp-candy-l': '在寶可夢詳情頁「使用道具」選用，獲得大量經驗值(滿級無效果)',
     'exp-candy-xl': '在寶可夢詳情頁「使用道具」選用，獲得特大量經驗值(滿級無效果)',
+    'necrosol-fuser': '持有著就能在奈克洛茲瑪的詳情頁跟索爾迦雷歐/露奈雅拉合體、或解除合體(不會被用掉)',
 };
 const genericItemNameZhCache = new Map();
 // 【第七十三輪新增】背包「點擊道具顯示說明」用的統一查詢函式，跟fetchGenericItemNameZh同一套
@@ -3455,7 +3557,7 @@ async function openMartModal() {
 
     content.innerHTML = `
         <h3 class="font-bold text-lg mb-1 text-center flex items-center justify-center gap-1.5"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/225.png" class="w-6 h-6" style="image-rendering:pixelated" onerror="this.style.display='none'">信使鳥百貨</h3>
-        <p class="text-xs text-gray-400 text-center mb-3">收購各種官方進化道具(除了進化石以外)，每個統一${DELIBIRD_MART_ITEM_COST}代幣，買到之後到寶可夢詳情頁的「進化」按鈕就能直接用掉。進化石(火之石/水之石等10種)不在這裡賣，要去玩「猜猜看」小遊戲賺。「牽絆韁繩」比較特別：買到後不會被用掉，只要持有著，就能在蕾冠王的詳情頁跟雪暴馬/靈幽馬合體、或解除合體</p>
+        <p class="text-xs text-gray-400 text-center mb-3">收購各種官方進化道具(除了進化石以外)，每個統一${DELIBIRD_MART_ITEM_COST}代幣，買到之後到寶可夢詳情頁的「進化」按鈕就能直接用掉。進化石(火之石/水之石等10種)不在這裡賣，要去玩「猜猜看」小遊戲賺。「牽絆韁繩」比較特別：買到後不會被用掉，只要持有著，就能在蕾冠王的詳情頁跟雪暴馬/靈幽馬合體、或解除合體。「奈克洛索爾合體器」也是同樣道理，能在奈克洛茲瑪的詳情頁跟索爾迦雷歐/露奈雅拉合體、或解除合體</p>
         <div class="grid grid-cols-3 gap-2 mb-3">
             ${POKEMON_MART_EVOLUTION_ITEMS.map((key, idx) => `
                 <div class="text-xs bg-gray-50 rounded-xl p-2 flex flex-col items-center gap-1 relative">
@@ -5663,11 +5765,13 @@ async function autoHandleTrainerSwitch(roomRef, roomData) {
                 update.winnerInstanceId = humanUid && data.battleState.teams[humanUid] ? data.battleState.teams[humanUid].instanceId : null;
                 // 【第三十輪新增】戰鬥在這裡真正結束——如果贏的玩家(humanUid)場上還維持著Mega進化
                 // 的樣子，這裡也要復原，道理跟resolveBattleRound最後寫回前的處理一樣
-                if (humanUid && data.battleState.teams[humanUid] && (data.battleState.teams[humanUid].megaEvolvedFrom || data.battleState.teams[humanUid].legendaryFormFrom)) {
+                if (humanUid && data.battleState.teams[humanUid] && (data.battleState.teams[humanUid].megaEvolvedFrom || data.battleState.teams[humanUid].legendaryFormFrom || data.battleState.teams[humanUid].ultraBurstFrom)) {
                     const revertedHuman = { ...data.battleState.teams[humanUid] };
                     revertMegaEvolution(revertedHuman);
                     // 【第六十一輪新增】原始回歸/劍之王/盾之王道理跟Mega進化一樣，這裡也要一併復原
                     revertLegendaryFormChange(revertedHuman);
+                    // 【第八十三輪新增】究極爆發道理也一樣，這裡也要一併復原
+                    revertUltraBurst(revertedHuman);
                     update['battleState.teams.' + humanUid] = revertedHuman;
                 }
             } else if (settledFainted) {
@@ -7490,7 +7594,7 @@ function toggleMegaPending() {
     // 【第五十一輪新增】Mega進化/極巨化「一場對戰三選一」在UI層也做成互斥的勾選(跟Ｚ招式的
     // 「Ｚ」徽章是另外點擊觸發、天然互斥不同，Mega/極巨化都是checkbox，需要手動清掉另一個)，
     // 這樣玩家不會不小心同時勾選兩個，送出時才在resolveBattleRound發現衝突
-    if (battlePendingMega) battlePendingDynamax = false;
+    if (battlePendingMega) { battlePendingDynamax = false; battlePendingUltraBurst = false; } // 【第八十三輪新增】究極爆發也要互斥
     if (lastRenderedRoom) renderRoomView(lastRenderedRoom);
 }
 // 【第五十一輪新增】battlePendingDynamax：跟battlePendingMega同樣的做法，是純前端UI狀態
@@ -7499,7 +7603,16 @@ function toggleMegaPending() {
 let battlePendingDynamax = false;
 function toggleDynamaxPending() {
     battlePendingDynamax = !battlePendingDynamax;
-    if (battlePendingDynamax) battlePendingMega = false;
+    if (battlePendingDynamax) { battlePendingMega = false; battlePendingUltraBurst = false; } // 【第八十三輪新增】究極爆發也要互斥
+    if (lastRenderedRoom) renderRoomView(lastRenderedRoom);
+}
+// 【第八十三輪新增】battlePendingUltraBurst：跟battlePendingMega/battlePendingDynamax同樣的
+// 做法，是純前端UI狀態(玩家有沒有勾選「這回合順便究極爆發」)，不寫進Firestore，切換時手動
+// 重新呼叫renderRoomView。每次真正送出招式(submitMove/submitWildMove)後要記得歸零
+let battlePendingUltraBurst = false;
+function toggleUltraBurstPending() {
+    battlePendingUltraBurst = !battlePendingUltraBurst;
+    if (battlePendingUltraBurst) { battlePendingMega = false; battlePendingDynamax = false; }
     if (lastRenderedRoom) renderRoomView(lastRenderedRoom);
 }
 
@@ -7830,10 +7943,18 @@ async function renderBattleStage(container, ctx) {
         </button>`;
     } else {
         const myMoveDisplays = await Promise.all((myTeam.moves || []).map(fetchMoveData));
+        // 【第八十三輪修正】阿爾宙斯多屬性(Multitype)的制裁光礫屬性覆寫：這段邏輯在resolveBattleRound
+        // 組moveOf時本來就有做(第八十一輪新增)，但這裡畫「Ｚ招式」徽章用的usableList/zInfo卻是
+        // 直接吃myMoveDisplays(沒套用覆寫)，導致帶著對應屬性Z純晶的阿爾宙斯即使已經觸發了
+        // Multitype、制裁光礫也符合條件(見findZMoveInfoFor)，畫面上卻永遠不會顯示「Ｚ招式」徽章——
+        // 伺服器端結算其實一直是對的，純粹是這裡的顯示漏了套用覆寫。修法比照resolveBattleRound
+        // 那段完全相同的判斷式(只在真的是judgment、而且真的觸發Multitype時才覆寫type/typeIcon)
+        const myArceusInfo = findArceusMultitypeInfoFor(myTeam);
+        const myMoveDisplaysWithOverrides = myMoveDisplays.map(m => (m.name === 'judgment' && myArceusInfo) ? { ...m, type: myArceusInfo.type, typeIcon: typeIconUrl(myArceusInfo.type) } : m);
         // 招式清單改用isMoveBlockedByStatus統一判斷「這招現在能不能選」——PP用完只是其中一種
         // 原因，這次新補的挑釁/定身法/折磨/封印/封聲都要在這裡一起擋掉，玩家才不會選到送出去
         // 才被伺服器擋下來的招式
-        const usableList = myMoveDisplays.map(m => ({ m, pp: getMovePp(myTeam, m), blockReason: isMoveBlockedByStatus(myTeam, m) }));
+        const usableList = myMoveDisplaysWithOverrides.map(m => ({ m, pp: getMovePp(myTeam, m), blockReason: isMoveBlockedByStatus(myTeam, m) }));
         const usableCount = usableList.filter(x => x.pp > 0 && !x.blockReason).length;
         // 【第三十輪新增】Mega進化/Ｚ招式的資格判斷——每次重繪都重新算一次，讀最新的room.battleState
         // (megaUsed/zMoveUsed這兩個「整場戰鬥只能用一次」的名額，見resolveBattleRound的說明)
@@ -7841,7 +7962,14 @@ async function renderBattleStage(container, ctx) {
         const zAlreadyUsed = !!(room.battleState && room.battleState.zMoveUsed && room.battleState.zMoveUsed[myUid]);
         // 【第五十一輪新增】極巨化的「整場戰鬥只能用一次」名額，跟上面兩個一樣的防呆寫法
         const dynamaxAlreadyUsed = !!(room.battleState && room.battleState.dynamaxUsed && room.battleState.dynamaxUsed[myUid]);
-        const megaInfoNow = !megaAlreadyUsed && !zAlreadyUsed && !dynamaxAlreadyUsed && !myTeam.megaEvolvedFrom ? findMegaInfoFor(myTeam) : null;
+        // 【第八十三輪新增】究極爆發的「整場戰鬥只能用一次」名額，跟上面三個一樣的防呆寫法——
+        // 究極爆發成為Mega/Ｚ招式/極巨化這組「四選一」機關名額的第四個成員
+        const ultraBurstAlreadyUsed = !!(room.battleState && room.battleState.ultraBurstUsed && room.battleState.ultraBurstUsed[myUid]);
+        // 這隻現在是不是「上一回合結束時就已經是究極奈克洛茲瑪」——用來讓Ｚ招式徽章的資格預覽
+        // 跟resolveBattleRound裡wasAlreadyUltraBeforeThisRound同一套判斷(見findZMoveInfoFor的
+        // requiresPriorTurnBurst閘門)，剛爆發的那個回合不會顯示焚天滅世熾光爆的徽章
+        const myWasAlreadyUltra = myTeam.speciesId === NECROZMA_ULTRA_SLUG;
+        const megaInfoNow = !megaAlreadyUsed && !zAlreadyUsed && !dynamaxAlreadyUsed && !ultraBurstAlreadyUsed && !myTeam.megaEvolvedFrom ? findMegaInfoFor(myTeam) : null;
         const megaToggleHtml = megaInfoNow ? `
             <label class="flex items-center gap-1.5 mb-1.5 text-xs font-bold text-purple-600 select-none">
                 <input type="checkbox" ${battlePendingMega ? 'checked' : ''} onchange="toggleMegaPending()" class="w-4 h-4 accent-purple-600">
@@ -7857,7 +7985,7 @@ async function renderBattleStage(container, ctx) {
         const dynamaxBanned = DYNAMAX_BANNED_SPECIES_IDS.includes(mySpeciesNum);
         const myGmaxInfo = GMAX_MOVE_TABLE[mySpeciesNum] || null;
         const dynamaxLabel = myGmaxInfo ? '超極巨化' : '極巨化';
-        const dynamaxEligibleNow = !dynamaxAlreadyUsed && !megaAlreadyUsed && !zAlreadyUsed && !dynamaxBanned && dynamaxChargeReady && !myTeam.isDynamaxed;
+        const dynamaxEligibleNow = !dynamaxAlreadyUsed && !megaAlreadyUsed && !zAlreadyUsed && !ultraBurstAlreadyUsed && !dynamaxBanned && dynamaxChargeReady && !myTeam.isDynamaxed;
         let dynamaxToggleHtml = '';
         if (myTeam.isDynamaxed) {
             dynamaxToggleHtml = `<div class="mb-1.5 text-xs font-bold text-red-500">${myTeam.isGigantamax ? '超極巨化' : '極巨化'}中(剩餘${myTeam.dynamaxTurnsLeft || 0}回合解除)</div>`;
@@ -7867,20 +7995,35 @@ async function renderBattleStage(container, ctx) {
                 <input type="checkbox" ${battlePendingDynamax ? 'checked' : ''} onchange="toggleDynamaxPending()" class="w-4 h-4 accent-red-500">
                 這回合順便${dynamaxLabel}(這場戰鬥只能用一次)
             </label>`;
-        } else if (!dynamaxAlreadyUsed && !dynamaxBanned && !megaAlreadyUsed && !zAlreadyUsed) {
+        } else if (!dynamaxAlreadyUsed && !dynamaxBanned && !megaAlreadyUsed && !zAlreadyUsed && !ultraBurstAlreadyUsed) {
             dynamaxToggleHtml = `
             <div class="mb-1.5">
                 <div class="flex items-center justify-between text-[0.6rem] text-gray-400 mb-0.5"><span>極巨能量</span><span>${Math.min(dynamaxCharge, DYNAMAX_CHARGE_NEEDED)}/${DYNAMAX_CHARGE_NEEDED}</span></div>
                 <div class="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden"><div class="h-1.5 rounded-full bg-red-400" style="width:${Math.min(100, Math.round(dynamaxCharge / DYNAMAX_CHARGE_NEEDED * 100))}%"></div></div>
             </div>`;
         }
+        // 【第八十三輪新增】究極爆發勾選框：跟megaToggleHtml/dynamaxToggleHtml同樣的呈現手法——
+        // 正在究極爆發中顯示狀態文字，符合資格但還沒觸發時顯示checkbox讓玩家勾選
+        let ultraBurstToggleHtml = '';
+        const ultraBurstInfoNow = !megaAlreadyUsed && !zAlreadyUsed && !dynamaxAlreadyUsed && !ultraBurstAlreadyUsed && !myTeam.ultraBurstFrom ? findUltraBurstInfoFor(myTeam) : null;
+        if (myTeam.ultraBurstFrom) {
+            ultraBurstToggleHtml = `<div class="mb-1.5 text-xs font-bold text-amber-600">究極爆發中</div>`;
+        } else if (ultraBurstInfoNow) {
+            ultraBurstToggleHtml = `
+            <label class="flex items-center gap-1.5 mb-1.5 text-xs font-bold text-amber-600 select-none">
+                <input type="checkbox" ${battlePendingUltraBurst ? 'checked' : ''} onchange="toggleUltraBurstPending()" class="w-4 h-4 accent-amber-600">
+                這回合順便究極爆發(這場戰鬥只能用一次，跟Ｚ招式不能同一回合使用)
+            </label>`;
+        }
         if (usableCount === 0) {
-            movesHtml = `${megaToggleHtml}${dynamaxToggleHtml}<button onclick="submitMove('struggle', {mega: battlePendingMega, dynamax: battlePendingDynamax})" class="w-full h-full min-h-[110px] rounded-2xl bg-gray-500 text-white font-black text-base active:scale-95 transition-transform">所有招式都沒辦法使用了，使出掙扎！</button>`;
+            movesHtml = `${megaToggleHtml}${dynamaxToggleHtml}${ultraBurstToggleHtml}<button onclick="submitMove('struggle', {mega: battlePendingMega, dynamax: battlePendingDynamax, ultraBurst: battlePendingUltraBurst})" class="w-full h-full min-h-[110px] rounded-2xl bg-gray-500 text-white font-black text-base active:scale-95 transition-transform">所有招式都沒辦法使用了，使出掙扎！</button>`;
         } else {
-            movesHtml = `${megaToggleHtml}${dynamaxToggleHtml}<div class="grid grid-cols-2 gap-2">${usableList.map(({ m, pp, blockReason }) => {
+            movesHtml = `${megaToggleHtml}${dynamaxToggleHtml}${ultraBurstToggleHtml}<div class="grid grid-cols-2 gap-2">${usableList.map(({ m, pp, blockReason }) => {
                 const disabled = pp <= 0 || !!blockReason;
-                const zInfo = (!disabled && !zAlreadyUsed && !dynamaxAlreadyUsed) ? findZMoveInfoFor(myTeam, m) : null;
-                return `<button ${disabled ? 'disabled' : ''} onclick="submitMove('${m.name}', {mega: battlePendingMega, dynamax: battlePendingDynamax})" class="relative rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden ${disabled ? 'opacity-40' : ''}" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
+                // 【第八十三輪修正】傳入zMoveTurnGateOk：只有「上一回合結束時就已經是究極奈克洛
+                // 茲瑪」才會讓究極奈克洛Z的焚天滅世熾光爆通過閘門，剛爆發那個回合不會顯示徽章
+                const zInfo = (!disabled && !zAlreadyUsed && !dynamaxAlreadyUsed) ? findZMoveInfoFor(myTeam, m, { zMoveTurnGateOk: myWasAlreadyUltra }) : null;
+                return `<button ${disabled ? 'disabled' : ''} onclick="submitMove('${m.name}', {mega: battlePendingMega, dynamax: battlePendingDynamax, ultraBurst: battlePendingUltraBurst})" class="relative rounded-2xl py-2.5 px-3 text-left shadow active:scale-95 transition-transform overflow-hidden ${disabled ? 'opacity-40' : ''}" style="background:${TYPE_COLORS[m.type] || '#6b7280'}">
                     <span class="flex items-center gap-1.5">${m.typeIcon ? `<img src="${m.typeIcon}" class="w-4 h-4 shrink-0" style="image-rendering:pixelated" onerror="this.style.display='none'">` : ''}<span class="text-white text-sm font-black truncate">${m.nameZh}</span>${DAMAGE_CLASS_BADGE_PILL[m.damageClass] || ''}</span>
                     <span class="block text-[0.6rem] text-white/85 mt-0.5 whitespace-normal break-words leading-snug">${blockReason || m.descZh || ' '}</span>
                     <span class="block text-[0.6rem] text-white/70 mt-0.5">PP ${pp}/${m.pp || '?'}</span>
@@ -9530,7 +9673,7 @@ const MEGA_RAYQUAZA = {"speciesId":384,"requiredMove":"dragon-ascent","megaSlug"
 // 特殊地區/融合型態)，這個遊戲的轉蛋池只有全國圖鑑1~1025號的「基本型態」、沒有這些特殊地區/融合
 // 型態，所以這裡都退而求其次比照對應的「基本型態」全國圖鑑編號放行(雷丘26號、索爾迦雷歐791號、
 // 露奈雅拉792號、奈克洛茲瑪800號)，讓這幾顆純晶在這個遊戲裡至少還有實際能用的對象，是刻意的簡化
-const Z_CRYSTAL_CATALOG = {"normalium-z":{"kind":"type","nameZh":"一般Ｚ","type":"normal","zMoveSlugPhysical":"breakneck-blitz--physical","zMoveSlugSpecial":"breakneck-blitz--special","zMoveNameZh":"究極無敵大衝撞"},"firium-z":{"kind":"type","nameZh":"火Ｚ","type":"fire","zMoveSlugPhysical":"inferno-overdrive--physical","zMoveSlugSpecial":"inferno-overdrive--special","zMoveNameZh":"超強極限爆焰彈"},"waterium-z":{"kind":"type","nameZh":"水Ｚ","type":"water","zMoveSlugPhysical":"hydro-vortex--physical","zMoveSlugSpecial":"hydro-vortex--special","zMoveNameZh":"超級水流大漩渦"},"electrium-z":{"kind":"type","nameZh":"電Ｚ","type":"electric","zMoveSlugPhysical":"gigavolt-havoc--physical","zMoveSlugSpecial":"gigavolt-havoc--special","zMoveNameZh":"終極伏特狂雷閃"},"grassium-z":{"kind":"type","nameZh":"草Ｚ","type":"grass","zMoveSlugPhysical":"bloom-doom--physical","zMoveSlugSpecial":"bloom-doom--special","zMoveNameZh":"絢爛繽紛花怒放"},"icium-z":{"kind":"type","nameZh":"冰Ｚ","type":"ice","zMoveSlugPhysical":"subzero-slammer--physical","zMoveSlugSpecial":"subzero-slammer--special","zMoveNameZh":"激狂大地萬里冰"},"fightinium-z":{"kind":"type","nameZh":"格鬥Ｚ","type":"fighting","zMoveSlugPhysical":"all-out-pummeling--physical","zMoveSlugSpecial":"all-out-pummeling--special","zMoveNameZh":"全力無雙激烈拳"},"poisonium-z":{"kind":"type","nameZh":"毒Ｚ","type":"poison","zMoveSlugPhysical":"acid-downpour--physical","zMoveSlugSpecial":"acid-downpour--special","zMoveNameZh":"強酸劇毒滅絕雨"},"groundium-z":{"kind":"type","nameZh":"地面Ｚ","type":"ground","zMoveSlugPhysical":"tectonic-rage--physical","zMoveSlugSpecial":"tectonic-rage--special","zMoveNameZh":"地動山搖地裂崩"},"flyinium-z":{"kind":"type","nameZh":"飛行Ｚ","type":"flying","zMoveSlugPhysical":"supersonic-skystrike--physical","zMoveSlugSpecial":"supersonic-skystrike--special","zMoveNameZh":"極速俯衝轟烈撞"},"psychium-z":{"kind":"type","nameZh":"超能力Ｚ","type":"psychic","zMoveSlugPhysical":"shattered-psyche--physical","zMoveSlugSpecial":"shattered-psyche--special","zMoveNameZh":"至高精神破壞波"},"buginium-z":{"kind":"type","nameZh":"蟲Ｚ","type":"bug","zMoveSlugPhysical":"savage-spin-out--physical","zMoveSlugSpecial":"savage-spin-out--special","zMoveNameZh":"絕對捕食迴旋斬"},"rockium-z":{"kind":"type","nameZh":"岩石Ｚ","type":"rock","zMoveSlugPhysical":"continental-crush--physical","zMoveSlugSpecial":"continental-crush--special","zMoveNameZh":"毀天滅地巨岩墜"},"ghostium-z":{"kind":"type","nameZh":"幽靈Ｚ","type":"ghost","zMoveSlugPhysical":"never-ending-nightmare--physical","zMoveSlugSpecial":"never-ending-nightmare--special","zMoveNameZh":"無盡暗夜之誘惑"},"dragonium-z":{"kind":"type","nameZh":"龍Ｚ","type":"dragon","zMoveSlugPhysical":"devastating-drake--physical","zMoveSlugSpecial":"devastating-drake--special","zMoveNameZh":"究極巨龍震天地"},"darkinium-z":{"kind":"type","nameZh":"惡Ｚ","type":"dark","zMoveSlugPhysical":"black-hole-eclipse--physical","zMoveSlugSpecial":"black-hole-eclipse--special","zMoveNameZh":"黑洞吞噬萬物滅"},"steelium-z":{"kind":"type","nameZh":"鋼Ｚ","type":"steel","zMoveSlugPhysical":"corkscrew-crash--physical","zMoveSlugSpecial":"corkscrew-crash--special","zMoveNameZh":"超絕螺旋連擊"},"fairium-z":{"kind":"type","nameZh":"妖精Ｚ","type":"fairy","zMoveSlugPhysical":"twinkle-tackle--physical","zMoveSlugSpecial":"twinkle-tackle--special","zMoveNameZh":"可愛星星飛天撞"},"pikashunium-z":{"kind":"species","nameZh":"皮卡丘Ｚ","speciesIds":[25],"requiredMove":"volt-tackle","zMoveSlug":"catastropika","zMoveNameZh":"皮卡皮卡必殺擊","type":"electric","category":"physical","power":210,"special":null},"pikanium-z":{"kind":"species","nameZh":"智皮卡Ｚ","speciesIds":[25],"requiredMove":"thunderbolt","zMoveSlug":"10-000-000-volt-thunderbolt","zMoveNameZh":"千萬伏特","type":"electric","category":"special","power":195,"special":null},"aloraichium-z":{"kind":"species","nameZh":"阿羅雷Ｚ","speciesIds":[26],"requiredMove":"thunderbolt","zMoveSlug":"stoked-sparksurfer","zMoveNameZh":"駕雷馭電戲衝浪","type":"electric","category":"special","power":175,"special":null},"snorlium-z":{"kind":"species","nameZh":"卡比獸Ｚ","speciesIds":[143],"requiredMove":"giga-impact","zMoveSlug":"pulverizing-pancake","zMoveNameZh":"認真起來大爆擊","type":"normal","category":"physical","power":210,"special":null},"eevium-z":{"kind":"species","nameZh":"伊布Ｚ","speciesIds":[133],"requiredMove":"last-resort","zMoveSlug":"extreme-evoboost","zMoveNameZh":"九彩昇華齊聚頂","type":"normal","category":"status","power":null,"special":"evoboost"},"mewnium-z":{"kind":"species","nameZh":"夢幻Ｚ","speciesIds":[151],"requiredMove":"psychic","zMoveSlug":"genesis-supernova","zMoveNameZh":"起源超新星大爆炸","type":"psychic","category":"special","power":185,"special":null},"decidium-z":{"kind":"species","nameZh":"狙射樹梟Ｚ","speciesIds":[724],"requiredMove":"spirit-shackle","zMoveSlug":"sinister-arrow-raid","zMoveNameZh":"遮天蔽日暗影箭","type":"ghost","category":"physical","power":180,"special":null},"incinium-z":{"kind":"species","nameZh":"熾焰咆哮虎Ｚ","speciesIds":[727],"requiredMove":"darkest-lariat","zMoveSlug":"malicious-moonsault","zMoveNameZh":"極惡飛躍粉碎擊","type":"dark","category":"physical","power":180,"special":null},"primarium-z":{"kind":"species","nameZh":"西獅海壬Ｚ","speciesIds":[730],"requiredMove":"sparkling-aria","zMoveSlug":"oceanic-operetta","zMoveNameZh":"海神莊嚴交響樂","type":"water","category":"special","power":195,"special":null},"tapunium-z":{"kind":"species","nameZh":"卡璞Ｚ","speciesIds":[785,786,787,788],"requiredMove":"natures-madness","zMoveSlug":"guardian-of-alola","zMoveNameZh":"巨人衛士・阿羅拉","type":"fairy","category":"special","power":null,"special":"fixedFractionDamage"},"marshadium-z":{"kind":"species","nameZh":"瑪夏多Ｚ","speciesIds":[802],"requiredMove":"spectral-thief","zMoveSlug":"soul-stealing-7-star-strike","zMoveNameZh":"七星奪魂腿","type":"ghost","category":"physical","power":195,"special":null},"kommonium-z":{"kind":"species","nameZh":"杖尾鱗甲龍Ｚ","speciesIds":[784],"requiredMove":"clanging-scales","zMoveSlug":"clangorous-soulblaze","zMoveNameZh":"熾魂熱舞烈音爆","type":"dragon","category":"special","power":185,"special":null},"lycanium-z":{"kind":"species","nameZh":"鬃岩狼人Ｚ","speciesIds":[745],"requiredMove":"stone-edge","zMoveSlug":"splintered-stormshards","zMoveNameZh":"狼嘯石牙颶風暴","type":"rock","category":"physical","power":190,"special":null},"mimikium-z":{"kind":"species","nameZh":"謎擬ＱＺ","speciesIds":[778],"requiredMove":"play-rough","zMoveSlug":"lets-snuggle-forever","zMoveNameZh":"親密無間大亂揍","type":"fairy","category":"physical","power":190,"special":null},"solganium-z":{"kind":"species","nameZh":"索爾迦雷歐Ｚ","speciesIds":[791],"requiredMove":"sunsteel-strike","zMoveSlug":"searing-sunraze-smash","zMoveNameZh":"日光回旋下蒼穹","type":"steel","category":"physical","power":200,"special":null},"lunalium-z":{"kind":"species","nameZh":"露奈雅拉Ｚ","speciesIds":[792],"requiredMove":"moongeist-beam","zMoveSlug":"menacing-moonraze-maelstrom","zMoveNameZh":"月華飛濺落靈霄","type":"ghost","category":"special","power":200,"special":null},"ultranecrozium-z":{"kind":"species","nameZh":"究極奈克洛Ｚ","speciesIds":[800],"requiredMove":"photon-geyser","zMoveSlug":"light-that-burns-the-sky","zMoveNameZh":"焚天滅世熾光爆","type":"psychic","category":"special","power":200,"special":null}};
+const Z_CRYSTAL_CATALOG = {"normalium-z":{"kind":"type","nameZh":"一般Ｚ","type":"normal","zMoveSlugPhysical":"breakneck-blitz--physical","zMoveSlugSpecial":"breakneck-blitz--special","zMoveNameZh":"究極無敵大衝撞"},"firium-z":{"kind":"type","nameZh":"火Ｚ","type":"fire","zMoveSlugPhysical":"inferno-overdrive--physical","zMoveSlugSpecial":"inferno-overdrive--special","zMoveNameZh":"超強極限爆焰彈"},"waterium-z":{"kind":"type","nameZh":"水Ｚ","type":"water","zMoveSlugPhysical":"hydro-vortex--physical","zMoveSlugSpecial":"hydro-vortex--special","zMoveNameZh":"超級水流大漩渦"},"electrium-z":{"kind":"type","nameZh":"電Ｚ","type":"electric","zMoveSlugPhysical":"gigavolt-havoc--physical","zMoveSlugSpecial":"gigavolt-havoc--special","zMoveNameZh":"終極伏特狂雷閃"},"grassium-z":{"kind":"type","nameZh":"草Ｚ","type":"grass","zMoveSlugPhysical":"bloom-doom--physical","zMoveSlugSpecial":"bloom-doom--special","zMoveNameZh":"絢爛繽紛花怒放"},"icium-z":{"kind":"type","nameZh":"冰Ｚ","type":"ice","zMoveSlugPhysical":"subzero-slammer--physical","zMoveSlugSpecial":"subzero-slammer--special","zMoveNameZh":"激狂大地萬里冰"},"fightinium-z":{"kind":"type","nameZh":"格鬥Ｚ","type":"fighting","zMoveSlugPhysical":"all-out-pummeling--physical","zMoveSlugSpecial":"all-out-pummeling--special","zMoveNameZh":"全力無雙激烈拳"},"poisonium-z":{"kind":"type","nameZh":"毒Ｚ","type":"poison","zMoveSlugPhysical":"acid-downpour--physical","zMoveSlugSpecial":"acid-downpour--special","zMoveNameZh":"強酸劇毒滅絕雨"},"groundium-z":{"kind":"type","nameZh":"地面Ｚ","type":"ground","zMoveSlugPhysical":"tectonic-rage--physical","zMoveSlugSpecial":"tectonic-rage--special","zMoveNameZh":"地動山搖地裂崩"},"flyinium-z":{"kind":"type","nameZh":"飛行Ｚ","type":"flying","zMoveSlugPhysical":"supersonic-skystrike--physical","zMoveSlugSpecial":"supersonic-skystrike--special","zMoveNameZh":"極速俯衝轟烈撞"},"psychium-z":{"kind":"type","nameZh":"超能力Ｚ","type":"psychic","zMoveSlugPhysical":"shattered-psyche--physical","zMoveSlugSpecial":"shattered-psyche--special","zMoveNameZh":"至高精神破壞波"},"buginium-z":{"kind":"type","nameZh":"蟲Ｚ","type":"bug","zMoveSlugPhysical":"savage-spin-out--physical","zMoveSlugSpecial":"savage-spin-out--special","zMoveNameZh":"絕對捕食迴旋斬"},"rockium-z":{"kind":"type","nameZh":"岩石Ｚ","type":"rock","zMoveSlugPhysical":"continental-crush--physical","zMoveSlugSpecial":"continental-crush--special","zMoveNameZh":"毀天滅地巨岩墜"},"ghostium-z":{"kind":"type","nameZh":"幽靈Ｚ","type":"ghost","zMoveSlugPhysical":"never-ending-nightmare--physical","zMoveSlugSpecial":"never-ending-nightmare--special","zMoveNameZh":"無盡暗夜之誘惑"},"dragonium-z":{"kind":"type","nameZh":"龍Ｚ","type":"dragon","zMoveSlugPhysical":"devastating-drake--physical","zMoveSlugSpecial":"devastating-drake--special","zMoveNameZh":"究極巨龍震天地"},"darkinium-z":{"kind":"type","nameZh":"惡Ｚ","type":"dark","zMoveSlugPhysical":"black-hole-eclipse--physical","zMoveSlugSpecial":"black-hole-eclipse--special","zMoveNameZh":"黑洞吞噬萬物滅"},"steelium-z":{"kind":"type","nameZh":"鋼Ｚ","type":"steel","zMoveSlugPhysical":"corkscrew-crash--physical","zMoveSlugSpecial":"corkscrew-crash--special","zMoveNameZh":"超絕螺旋連擊"},"fairium-z":{"kind":"type","nameZh":"妖精Ｚ","type":"fairy","zMoveSlugPhysical":"twinkle-tackle--physical","zMoveSlugSpecial":"twinkle-tackle--special","zMoveNameZh":"可愛星星飛天撞"},"pikashunium-z":{"kind":"species","nameZh":"皮卡丘Ｚ","speciesIds":[25],"requiredMove":"volt-tackle","zMoveSlug":"catastropika","zMoveNameZh":"皮卡皮卡必殺擊","type":"electric","category":"physical","power":210,"special":null},"pikanium-z":{"kind":"species","nameZh":"智皮卡Ｚ","speciesIds":[25],"requiredMove":"thunderbolt","zMoveSlug":"10-000-000-volt-thunderbolt","zMoveNameZh":"千萬伏特","type":"electric","category":"special","power":195,"special":null},"aloraichium-z":{"kind":"species","nameZh":"阿羅雷Ｚ","speciesIds":[26],"requiredMove":"thunderbolt","zMoveSlug":"stoked-sparksurfer","zMoveNameZh":"駕雷馭電戲衝浪","type":"electric","category":"special","power":175,"special":null},"snorlium-z":{"kind":"species","nameZh":"卡比獸Ｚ","speciesIds":[143],"requiredMove":"giga-impact","zMoveSlug":"pulverizing-pancake","zMoveNameZh":"認真起來大爆擊","type":"normal","category":"physical","power":210,"special":null},"eevium-z":{"kind":"species","nameZh":"伊布Ｚ","speciesIds":[133],"requiredMove":"last-resort","zMoveSlug":"extreme-evoboost","zMoveNameZh":"九彩昇華齊聚頂","type":"normal","category":"status","power":null,"special":"evoboost"},"mewnium-z":{"kind":"species","nameZh":"夢幻Ｚ","speciesIds":[151],"requiredMove":"psychic","zMoveSlug":"genesis-supernova","zMoveNameZh":"起源超新星大爆炸","type":"psychic","category":"special","power":185,"special":null},"decidium-z":{"kind":"species","nameZh":"狙射樹梟Ｚ","speciesIds":[724],"requiredMove":"spirit-shackle","zMoveSlug":"sinister-arrow-raid","zMoveNameZh":"遮天蔽日暗影箭","type":"ghost","category":"physical","power":180,"special":null},"incinium-z":{"kind":"species","nameZh":"熾焰咆哮虎Ｚ","speciesIds":[727],"requiredMove":"darkest-lariat","zMoveSlug":"malicious-moonsault","zMoveNameZh":"極惡飛躍粉碎擊","type":"dark","category":"physical","power":180,"special":null},"primarium-z":{"kind":"species","nameZh":"西獅海壬Ｚ","speciesIds":[730],"requiredMove":"sparkling-aria","zMoveSlug":"oceanic-operetta","zMoveNameZh":"海神莊嚴交響樂","type":"water","category":"special","power":195,"special":null},"tapunium-z":{"kind":"species","nameZh":"卡璞Ｚ","speciesIds":[785,786,787,788],"requiredMove":"natures-madness","zMoveSlug":"guardian-of-alola","zMoveNameZh":"巨人衛士・阿羅拉","type":"fairy","category":"special","power":null,"special":"fixedFractionDamage"},"marshadium-z":{"kind":"species","nameZh":"瑪夏多Ｚ","speciesIds":[802],"requiredMove":"spectral-thief","zMoveSlug":"soul-stealing-7-star-strike","zMoveNameZh":"七星奪魂腿","type":"ghost","category":"physical","power":195,"special":null},"kommonium-z":{"kind":"species","nameZh":"杖尾鱗甲龍Ｚ","speciesIds":[784],"requiredMove":"clanging-scales","zMoveSlug":"clangorous-soulblaze","zMoveNameZh":"熾魂熱舞烈音爆","type":"dragon","category":"special","power":185,"special":null},"lycanium-z":{"kind":"species","nameZh":"鬃岩狼人Ｚ","speciesIds":[745],"requiredMove":"stone-edge","zMoveSlug":"splintered-stormshards","zMoveNameZh":"狼嘯石牙颶風暴","type":"rock","category":"physical","power":190,"special":null},"mimikium-z":{"kind":"species","nameZh":"謎擬ＱＺ","speciesIds":[778],"requiredMove":"play-rough","zMoveSlug":"lets-snuggle-forever","zMoveNameZh":"親密無間大亂揍","type":"fairy","category":"physical","power":190,"special":null},"solganium-z":{"kind":"species","nameZh":"索爾迦雷歐Ｚ","speciesIds":[791],"requiredMove":"sunsteel-strike","zMoveSlug":"searing-sunraze-smash","zMoveNameZh":"日光回旋下蒼穹","type":"steel","category":"physical","power":200,"special":null},"lunalium-z":{"kind":"species","nameZh":"露奈雅拉Ｚ","speciesIds":[792],"requiredMove":"moongeist-beam","zMoveSlug":"menacing-moonraze-maelstrom","zMoveNameZh":"月華飛濺落靈霄","type":"ghost","category":"special","power":200,"special":null},"ultranecrozium-z":{"kind":"species","nameZh":"究極奈克洛Ｚ","speciesIds":["necrozma-ultra"],"requiredMove":"photon-geyser","zMoveSlug":"light-that-burns-the-sky","zMoveNameZh":"焚天滅世熾光爆","type":"psychic","category":"special","power":200,"special":null,"requiresPriorTurnBurst":true}};
 
 // 官方「Z招式威力對照表」：屬性通用Z招式(不含寶可夢限定的固定威力Z招式)的威力完全由原本招式的
 // 威力換算而來，跟原招式屬性/招式本身完全無關，這張表是公版規則，寫死沒問題
@@ -10036,6 +10179,10 @@ function resetVolatileForBench(battler) {
     // 也要用同一套復原邏輯——不然「贏了那一局、但贏的那隻還維持著Mega後的樣子」會一路帶到下一場
     // 戰鬥的初始狀態，變成一隻打不掉的假Mega
     revertMegaEvolution(outgoing);
+    // 【第八十三輪新增】究極爆發復原：換人就會立刻解除究極爆發狀態，道理跟Mega進化完全一樣——
+    // 正統規則裡究極爆發也是「退場」的當下就解除(這個簡化版遊戲讓Ultra Burst比照Mega進化的
+    // 揮發性處理方式)
+    revertUltraBurst(outgoing);
     // 【第五十一輪新增】極巨化復原：換人(不管自願還是被強制換下場)就會立刻解除極巨化狀態——
     // 正統規則裡極巨化在「退場」的當下也會直接解除(跟Mega進化一樣)，不會保留到下一次上場，
     // 也不會延續到下一場戰鬥。抽成獨立函式revertDynamax是因為除了這裡以外，回合數用完的自然
@@ -10094,6 +10241,24 @@ function revertMegaEvolution(battler) {
     // 才夾住(理論上不會發生，Mega通常HP種族值不會比原本低太多，這裡純粹防呆)
     battler.currentHp = Math.min(battler.currentHp, original.maxHp);
     battler.megaEvolvedFrom = null;
+}
+// 【第八十三輪新增】究極爆發(Ultra Burst)復原：時機/寫法完全比照revertMegaEvolution——換人
+// (不管自願還是被強制換下場)、戰鬥真正結束都要復原成爆發前的黃昏之鬃/拂曉之翼樣子，理由
+// 一樣是「不然這份爆發後的樣子會原封不動留在battleState.teams裡，變成下一場戰鬥開局就已經是
+// 究極奈克洛茲瑪的假資料」
+function revertUltraBurst(battler) {
+    if (!battler.ultraBurstFrom) return;
+    const original = battler.ultraBurstFrom;
+    battler.speciesId = original.speciesId;
+    battler.nickname = original.nickname;
+    battler.atk = original.atk;
+    battler.def = original.def;
+    battler.spAtk = original.spAtk;
+    battler.spDef = original.spDef;
+    battler.spd = original.spd;
+    battler.maxHp = original.maxHp;
+    battler.currentHp = Math.min(battler.currentHp, original.maxHp);
+    battler.ultraBurstFrom = null;
 }
 // 【第五十一輪新增】極巨化復原：把maxHp從極巨化前的快照(dynamaxOriginalMaxHp)復原回去，
 // 並且把currentHp「按百分比等比例縮小」而不是直接夾住——正統規則裡極巨化/解除都會這樣換算HP
@@ -10392,9 +10557,11 @@ async function submitMove(moveName, opts) {
     const mega = !!(opts && opts.mega);
     const zMove = !!(opts && opts.zMove);
     const dynamax = !!(opts && opts.dynamax); // 【第五十一輪新增】這回合順便極巨化/超極巨化
+    const ultraBurst = !!(opts && opts.ultraBurst); // 【第八十三輪新增】這回合順便究極爆發
     battlePendingMega = false; // 送出後歸零，避免沿用到下一次選招式/下一隻寶可夢身上
     battlePendingDynamax = false; // 【第五十一輪新增】道理跟battlePendingMega一樣
-    if (currentRoomIsWild) return submitWildMove(moveName, { mega, zMove, dynamax });
+    battlePendingUltraBurst = false; // 【第八十三輪新增】道理跟battlePendingMega一樣
+    if (currentRoomIsWild) return submitWildMove(moveName, { mega, zMove, dynamax, ultraBurst });
     const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
     const myUid = auth.currentUser.uid;
     let roomDataAfter = null;
@@ -10405,7 +10572,7 @@ async function submitMove(moveName, opts) {
             if (!data || data.status !== 'battling') throw new Error('這場對戰已經結束了');
             const pending = { ...(data.pendingMoves || {}) };
             if (pending[myUid]) throw new Error('這回合已經送出過招式了');
-            pending[myUid] = { type: 'move', move: moveName, mega, zMove, dynamax };
+            pending[myUid] = { type: 'move', move: moveName, mega, zMove, dynamax, ultraBurst };
             tx.update(roomRef, { pendingMoves: pending });
             roomDataAfter = { ...data, pendingMoves: pending };
         });
@@ -10544,9 +10711,13 @@ async function submitForcedSwitch(instanceId) {
                 update.winnerInstanceId = opponentUid && data.battleState.teams[opponentUid] ? data.battleState.teams[opponentUid].instanceId : null;
                 // 【第三十輪新增】戰鬥在這裡真正結束——如果贏的那一方(opponentUid)場上還維持著
                 // Mega進化的樣子，這裡也要復原，道理跟resolveBattleRound最後寫回前的處理一樣
-                if (opponentUid && newTeams[opponentUid] && newTeams[opponentUid].megaEvolvedFrom) {
+                if (opponentUid && newTeams[opponentUid] && (newTeams[opponentUid].megaEvolvedFrom || newTeams[opponentUid].ultraBurstFrom)) {
                     newTeams[opponentUid] = { ...newTeams[opponentUid] };
                     revertMegaEvolution(newTeams[opponentUid]);
+                    // 【第八十三輪新增】究極爆發道理跟Mega進化一樣，這裡也要一併復原(這個分支
+                    // 原本就沒有檢查legendaryFormFrom，是既有的不一致——這裡只補上獨立的
+                    // ultraBurstFrom檢查，不動既有的legendaryFormFrom缺口)
+                    revertUltraBurst(newTeams[opponentUid]);
                     update['battleState.teams'] = newTeams;
                 }
             } else if (settledFainted) {
@@ -10570,6 +10741,7 @@ async function submitWildMove(moveName, opts) {
     const mega = !!(opts && opts.mega);
     const zMove = !!(opts && opts.zMove);
     const dynamax = !!(opts && opts.dynamax); // 【第五十一輪新增】
+    const ultraBurst = !!(opts && opts.ultraBurst); // 【第八十三輪新增】
     const roomRef = db.collection('pokemonBattleRooms').doc(currentBattleRoomId);
     const myUid = auth.currentUser.uid;
     let roomDataAfter = null;
@@ -10585,7 +10757,7 @@ async function submitWildMove(moveName, opts) {
             // 寶可夢(myTeam)給戰鬥風格系統用，見那邊的說明
             const myTeam = data.battleState.teams[myUid];
             const wildAction = decideTrainerFullAction(wildTeamNow, benchWildNow, data.battleState, data.battleState.round || 1, data.isLegendaryChallenge ? data.legendaryGimmickKind : null, data.isLegendaryChallenge ? data.legendaryTrainerId : null, myTeam);
-            const pending = { [myUid]: { type: 'move', move: moveName, mega, zMove, dynamax }, wild: wildAction };
+            const pending = { [myUid]: { type: 'move', move: moveName, mega, zMove, dynamax, ultraBurst }, wild: wildAction };
             tx.update(roomRef, { pendingMoves: pending });
             roomDataAfter = { ...data, pendingMoves: pending };
         });
@@ -10651,6 +10823,56 @@ async function applyMegaEvolution(battler, megaInfo) {
     battler.spd = Math.floor(statAtLevel(baseStats.spd, battler.level, false) * mult);
     battler.maxHp = newMaxHp;
     // 正統規則：Mega進化不會回血，現有HP數字原封不動保留，只有在新的maxHp比現在HP還低時才夾住
+    battler.currentHp = Math.min(battler.currentHp, newMaxHp);
+}
+
+// ============================================================
+// 【第八十三輪新增】究極爆發(Ultra Burst)：黃昏之鬃/拂曉之翼奈克洛茲瑪(合體方式見上面
+// necrozmaDetailExtraHtml/fuseNecrozma)攜帶「究極奈克洛Z」(ultranecrozium-z)時，可以在戰鬥中
+// 花掉一整場戰鬥限定的機關名額(比照Mega/Ｚ招式/極巨化的三選一，這裡擴充成四選一)變身成
+// 「究極奈克洛茲瑪」——查證來源：Bulbapedia「Ultra Burst」條目、Smogon機制討論串、以及使用者
+// 提供的52poke wiki(https://wiki.52poke.com/zh-hant/究極奈克洛Ｚ（道具）)三方都確認：究極爆發
+// 本身不會消耗這一整回合(跟Mega進化一樣，變身完當回合還能繼續攻擊)，但「究極爆發」跟「使用
+// 專屬Ｚ招式焚天滅世熾光爆」不能在同一回合發生(52poke原話：「究極爆發和Ｚ招式的使用不能在
+// 同一回合中進行」)——因為兩者共用同一個機關按鈕位置，Ｚ招式要等爆發的下一回合才能使用，見
+// findZMoveInfoFor的requiresPriorTurnBurst閘門、以及resolveBattleRound裡wasAlreadyUltra的
+// 判斷。實作手法完全比照applyMegaEvolution/findMegaInfoFor(同樣是「原地換種類/數值、記快照」
+// 的揮發性變身)，種族值直接沿用既有的fetchMegaBaseStats即時查PokéAPI(不用額外查證，PokéAPI
+// 本來就有究極奈克洛茲瑪的/pokemon/necrozma-ultra這個標準資源，跟黃昏之鬃/拂曉之翼一樣是
+// 完整獨立的/pokemon/資源，不是Arceus型態那種特殊的/pokemon-form/子資源，見交付紀錄的說明)
+// ============================================================
+const NECROZMA_ULTRA_SLUG = 'necrozma-ultra';
+// 這隻寶可夢現在符不符合「可以究極爆發」的條件：本體是黃昏之鬃(10155)或拂曉之翼(10156)奈克洛
+// 茲瑪，而且正好持有究極奈克洛Z——跟正統規則一致，這顆Z純晶同時身兼「觸發究極爆發的鑰匙」跟
+// 「爆發後隔一回合強化焚天滅世熾光爆」兩種用途(不需要另外設計一個專屬道具觸發爆發)
+function findUltraBurstInfoFor(battler) {
+    const fusionEntry = Object.values(NECROZMA_FUSION_CATALOG).find(cfg => cfg.fusedSpeciesId === Number(battler.speciesId));
+    if (fusionEntry && battler.heldItem === 'ultranecrozium-z') {
+        return { ultraSlug: NECROZMA_ULTRA_SLUG };
+    }
+    return null;
+}
+// 實際執行究極爆發：把battler原地改成究極奈克洛茲瑪的種類/數值，並記下復原用的快照。呼叫端要
+// 自己確保「這次真的可以究極爆發」(findUltraBurstInfoFor有回傳、ultraBurstUsed還沒被用掉)，
+// 這個函式本身不重複檢查——寫法逐行比照applyMegaEvolution
+async function applyUltraBurst(battler, burstInfo) {
+    const baseStats = await fetchMegaBaseStats(burstInfo.ultraSlug);
+    const mult = battler.starMult || 1;
+    const newMaxHp = Math.floor(statAtLevel(baseStats.hp, battler.level, true) * mult);
+    battler.ultraBurstFrom = {
+        speciesId: battler.speciesId, nickname: battler.nickname,
+        atk: battler.atk, def: battler.def, spAtk: battler.spAtk, spDef: battler.spDef, spd: battler.spd,
+        maxHp: battler.maxHp,
+    };
+    battler.speciesId = burstInfo.ultraSlug;
+    battler.nickname = '究極爆發的' + battler.nickname;
+    battler.atk = Math.floor(statAtLevel(baseStats.atk, battler.level, false) * mult);
+    battler.def = Math.floor(statAtLevel(baseStats.def, battler.level, false) * mult);
+    battler.spAtk = Math.floor(statAtLevel(baseStats.spAtk, battler.level, false) * mult);
+    battler.spDef = Math.floor(statAtLevel(baseStats.spDef, battler.level, false) * mult);
+    battler.spd = Math.floor(statAtLevel(baseStats.spd, battler.level, false) * mult);
+    battler.maxHp = newMaxHp;
+    // 跟Mega進化同樣的規則：究極爆發不會回血，現有HP數字原封不動保留，只在新maxHp比現在HP還低時才夾住
     battler.currentHp = Math.min(battler.currentHp, newMaxHp);
 }
 
@@ -10725,13 +10947,18 @@ function revertLegendaryFormChange(battler) {
 // 寶可夢限定Ｚ招式連分類都不一樣，見special欄位)不一樣——這樣屬性相剋/命中判定/PP消耗完全
 // 不用另外處理，只要在算完displayOf/moveOf之後蓋掉power/nameZh兩個欄位即可
 // ============================================================
-function findZMoveInfoFor(battler, move) {
+function findZMoveInfoFor(battler, move, opts) {
     const crystalKey = battler.heldItem;
     const crystal = crystalKey && Z_CRYSTAL_CATALOG[crystalKey];
     if (!crystal) return null;
     if (crystal.kind === 'species') {
         if (!crystal.speciesIds.includes(battler.speciesId)) return null;
         if (move.name !== crystal.requiredMove) return null;
+        // 【第八十三輪新增】究極奈克洛Z專屬：焚天滅世熾光爆一定要「上一回合已經究極爆發過」
+        // 才能用，不能跟究極爆發同一回合發生(查證來源見findUltraBurstInfoFor旁邊的說明)。
+        // 呼叫端(resolveBattleRound)會傳opts.zMoveTurnGateOk = 這隻在這回合開始「爆發判斷之前」
+        // 就已經是究極奈克洛茲瑪了嗎——如果是true代表不是這回合才剛爆發，可以放行
+        if (crystal.requiresPriorTurnBurst && !(opts && opts.zMoveTurnGateOk)) return null;
         return { zMoveNameZh: crystal.zMoveNameZh, power: crystal.power, special: crystal.special };
     }
     // kind==='type'：屬性通用純晶，招式屬性要跟純晶屬性相同，而且只給「有威力的攻擊招式」用
@@ -10894,6 +11121,11 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     const dynamaxChargeAll = roomData.battleState.dynamaxCharge || {};
     const dynamaxUsedState = { [uidA]: !!dynamaxUsedAll[uidA], [uidB]: !!dynamaxUsedAll[uidB] };
     const dynamaxChargeState = { [uidA]: dynamaxChargeAll[uidA] || 0, [uidB]: dynamaxChargeAll[uidB] || 0 };
+    // 【第八十三輪新增】究極爆發「整場戰鬥只能用一次」的名額(ultraBurstUsed)，跟megaUsed/
+    // zMoveUsed/dynamaxUsed同一套防呆寫法——舊房間文件沒有這個欄位，預設當作「還沒用過」，
+    // 究極爆發成為Mega/Ｚ招式/極巨化這組「整場戰鬥限定一次」機關名額的第四個成員
+    const ultraBurstUsedAll = roomData.battleState.ultraBurstUsed || {};
+    const ultraBurstUsedState = { [uidA]: !!ultraBurstUsedAll[uidA], [uidB]: !!ultraBurstUsedAll[uidB] };
     // 【第五十一輪新增】重力(Gravity，超極巨馬麥拉的超極巨招式)：全場共用的場地效果，跟天氣
     // (weatherState)是相同層級的概念，用{turnsLeft}紀錄還剩幾回合，0代表沒有重力
     const gravityAll = roomData.battleState.gravity || {};
@@ -11009,7 +11241,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // Ｚ招式或極巨化名額的一方，就不能再Mega進化——三個系統共用同一份「特殊強化名額」。
         // action.zMove/action.dynamax則是防呆「同一次出招」不小心同時勾選了兩種以上(例如UI上
         // 同時勾了Mega/極巨化checkbox，或勾了Mega又點了Ｚ招式徽章)，這種情況一律只承認Mega進化
-        if (zMoveUsedState[uid] || dynamaxUsedState[uid] || action.zMove || action.dynamax) { log.push(`${state[uid].nickname} 這場對戰已經使用過其他強化招式的名額，沒辦法再Mega進化了！`); return; }
+        // 【第八十三輪新增】究極爆發也算進這個「四選一」名額互斥檢查
+        if (zMoveUsedState[uid] || dynamaxUsedState[uid] || ultraBurstUsedState[uid] || action.zMove || action.dynamax || action.ultraBurst) { log.push(`${state[uid].nickname} 這場對戰已經使用過其他強化招式的名額，沒辦法再Mega進化了！`); return; }
         const megaInfo = findMegaInfoFor(state[uid]);
         if (!megaInfo) { log.push(`${state[uid].nickname} 現在沒辦法Mega進化！`); return; }
         const beforeName = state[uid].nickname;
@@ -11031,7 +11264,8 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         if (dynamaxUsedState[uid]) { log.push(`${state[uid].nickname} 這場對戰的極巨化名額已經用掉了！`); return; }
         // 【第五十一輪新增】跟上面tryProcessMegaAction同樣道理，action.mega/action.zMove是防呆
         // 「同一次出招」不小心同時勾選/點了兩種以上特殊強化，這種情況一律不承認極巨化
-        if (megaUsedState[uid] || zMoveUsedState[uid] || action.mega || action.zMove) { log.push(`${state[uid].nickname} 這場對戰已經使用過其他強化招式的名額，沒辦法再極巨化了！`); return; }
+        // 【第八十三輪新增】究極爆發也算進這個「四選一」名額互斥檢查
+        if (megaUsedState[uid] || zMoveUsedState[uid] || ultraBurstUsedState[uid] || action.mega || action.zMove || action.ultraBurst) { log.push(`${state[uid].nickname} 這場對戰已經使用過其他強化招式的名額，沒辦法再極巨化了！`); return; }
         if (dynamaxChargeState[uid] < DYNAMAX_CHARGE_NEEDED) { log.push(`${state[uid].nickname} 的極巨能量還沒充滿！`); return; }
         const speciesNum = parseInt(state[uid].speciesId, 10);
         if (DYNAMAX_BANNED_SPECIES_IDS.includes(speciesNum)) { log.push(`${state[uid].nickname} 沒辦法極巨化！`); return; }
@@ -11052,6 +11286,37 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
     }
     await tryProcessDynamaxAction(uidA, actionA);
     await tryProcessDynamaxAction(uidB, actionB);
+
+    // 【第八十三輪新增】究極爆發(Ultra Burst)：黃昏之鬃/拂曉之翼奈克洛茲瑪攜帶究極奈克洛Z時，
+    // 花掉一整場戰鬥限定的機關名額變身成究極奈克洛茲瑪——處理時機/寫法完全比照tryProcessMegaAction
+    // (放在換人結束、抓種類資料displayOf之前，這樣底下fetchSpeciesDisplay抓到的就已經是爆發後
+    // 的種類，屬性/圖鑑圖片全部自動正確)。
+    // wasAlreadyUltraBeforeThisRound必須在「究極爆發真正處理之前」就先記下來，用來判斷這隻是
+    // 「這回合才剛爆發」還是「上一回合就已經是究極奈克洛茲瑪了」——只有後者才能使用焚天滅世熾光爆
+    // (查證來源見findUltraBurstInfoFor旁邊的說明：究極爆發跟Ｚ招式不能同一回合發生)。換人退場
+    // 的那一方已經在performSwitch→resetVolatileForBench→revertUltraBurst復原過了，所以這裡
+    // 直接讀state[uid].speciesId在「這個時間點」是不是究極奈克洛茲瑪，天然就是正確的「上一回合
+    // 結束時的狀態」，不需要額外的快照變數
+    const wasAlreadyUltraBeforeThisRound = {
+        [uidA]: state[uidA].speciesId === NECROZMA_ULTRA_SLUG,
+        [uidB]: state[uidB].speciesId === NECROZMA_ULTRA_SLUG,
+    };
+    async function tryProcessUltraBurstAction(uid, action) {
+        if (!action || action.type !== 'move' || !action.ultraBurst) return;
+        if (state[uid].currentHp <= 0) return; // 防呆：已經倒下的不能究極爆發
+        if (ultraBurstUsedState[uid]) { log.push(`${state[uid].nickname} 這場對戰的究極爆發名額已經用掉了！`); return; }
+        // 究極爆發也是「四選一」機關名額的其中一種，道理跟tryProcessMegaAction一樣
+        if (megaUsedState[uid] || zMoveUsedState[uid] || dynamaxUsedState[uid] || action.mega || action.zMove || action.dynamax) { log.push(`${state[uid].nickname} 這場對戰已經使用過其他強化招式的名額，沒辦法再究極爆發了！`); return; }
+        const burstInfo = findUltraBurstInfoFor(state[uid]);
+        if (!burstInfo) { log.push(`${state[uid].nickname} 現在沒辦法究極爆發！`); return; }
+        const beforeName = state[uid].nickname;
+        await applyUltraBurst(state[uid], burstInfo);
+        ultraBurstUsedState[uid] = true;
+        log.push(`${beforeName} 的力量覺醒了...究極爆發成了 ${state[uid].nickname}！`);
+        events.push({ megaEvolveEvent: true, uid, inSpeciesId: state[uid].speciesId, nickname: state[uid].nickname });
+    }
+    await tryProcessUltraBurstAction(uidA, actionA);
+    await tryProcessUltraBurstAction(uidB, actionB);
 
     // 換人之後才抓「現在真正在場上」的種類資料——如果剛剛換過人，要用新上場那隻的speciesId查屬性
     // 【第八十一輪新增applyArceusMultitypeDisplay】阿爾宙斯持有對應屬性Z純晶時，這裡會把
@@ -11514,8 +11779,12 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 【第五十一輪新增】act.mega/act.dynamax是防呆「同一次出招」不小心同時勾選/點了兩種以上
         // 特殊強化，這種情況一律不承認Ｚ招式(前面tryProcessMegaAction/tryProcessDynamaxAction
         // 也已經用同樣的道理各自擋掉了自己那一種)
-        if (act.zMove && !zMoveUsedState[uid] && !act.mega && !act.dynamax) {
-            const zResult = findZMoveInfoFor(state[uid], moveOf[uid]);
+        // 【第八十三輪新增】act.ultraBurst同樣防呆——究極爆發跟Ｚ招式不能同一回合發生，這裡擋掉
+        // 「這回合同時勾了究極爆發又點了Ｚ招式徽章」的情況；真正決定「上一回合有沒有已經是究極
+        // 奈克洛茲瑪」的閘門是下面傳給findZMoveInfoFor的zMoveTurnGateOk(見wasAlreadyUltraBeforeThisRound
+        // 旁邊的說明)
+        if (act.zMove && !zMoveUsedState[uid] && !act.mega && !act.dynamax && !act.ultraBurst) {
+            const zResult = findZMoveInfoFor(state[uid], moveOf[uid], { zMoveTurnGateOk: wasAlreadyUltraBeforeThisRound[uid] });
             if (zResult) {
                 moveOf[uid] = { ...moveOf[uid], power: zResult.power, nameZh: zResult.zMoveNameZh, __zSpecial: zResult.special || null, __isZMove: true };
                 zMoveUsedState[uid] = true;
@@ -14142,6 +14411,11 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
         // 不然下一場戰鬥開局就會誤判成已經是變身狀態(即使那時候根本沒有再帶著對應道具)
         revertLegendaryFormChange(state[uidA]);
         revertLegendaryFormChange(state[uidB]);
+        // 【第八十三輪新增】究極爆發道理也完全一樣：戰鬥真正結束時要復原回爆發前的黃昏之鬃/
+        // 拂曉之翼樣子，不然下一場戰鬥開局就會誤判成已經是究極奈克洛茲瑪(即使那時候根本沒有
+        // 再帶著究極奈克洛Z)
+        revertUltraBurst(state[uidA]);
+        revertUltraBurst(state[uidB]);
     }
     const winnerInstanceId = winnerUid ? state[winnerUid].instanceId : null;
     const resolvedRoundNum = roomData.battleState.round || 1;
@@ -14164,6 +14438,7 @@ async function resolveBattleRound(roomRef, roomData, uidA, uidB) {
                 'battleState.zMoveUsed': zMoveUsedState, // 【第三十輪新增】
                 'battleState.dynamaxUsed': dynamaxUsedState, // 【第五十一輪新增】
                 'battleState.dynamaxCharge': dynamaxChargeState, // 【第五十一輪新增】
+                'battleState.ultraBurstUsed': ultraBurstUsedState, // 【第八十三輪新增】
                 'battleState.gravity': gravityState, // 【第五十一輪新增】
                 'battleState.trickRoom': trickRoomState, // 【第六十輪新增】
                 'battleState.awaitingSwitch': awaitingSwitchFinal,
