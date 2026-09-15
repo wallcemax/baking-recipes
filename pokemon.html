@@ -2879,8 +2879,24 @@ function replaceMoveWithNew(instanceId, replaceIdx) {
     const newForgotten = [...forgottenSet].slice(-20);
     resolvePendingMoveLearn(instanceId, newMoves, { forgottenMoves: newForgotten });
 }
+// 【第八十六輪修正】使用者回報「壘磊石升級到100等學了很多技能，但心之鱗都沒有記錄他錯過或
+// 遺忘的技能」——根因：這裡以前只是把這次的待學招式直接丟掉(resolvePendingMoveLearn第二個
+// 參數傳null、也沒有帶forgottenMoves)，玩家點「先不要」放棄學習的招式就此徹底消失，沒有機會
+// 再用心之鱗學回來。這不是壘磊石專屬的問題——skipLearnMove是所有寶可夢、所有來源(升級/進化
+// 限定招式/招式學習器教學`pending.viaTm`)共用的同一支函式，只要玩家對任何一次「學習新招式」
+// 彈窗點了「先不要」，這個缺口都會發生，等級差距越大(像使用者這次一口氣升到100等)、彈窗跳出
+// 的次數越多，遺漏的招式就越多。修法比照旁邊`replaceMoveWithNew`已經在做的同一套邏輯(Set去重、
+// 上限20筆)，把這次放棄學習的招式名稱也記進forgottenMoves——即使是招式學習器教學被放棄的
+// 情況也一併記錄，不然玩家等於白白浪費一個已經扣掉的招式學習器道具，之後用心之鱗學回來不需要
+// 再另外查證這隻現在學不學得會(forgottenMoves本來就是「這隻本來就有資格學」的招式才會被放進來)
 function skipLearnMove(instanceId) {
-    resolvePendingMoveLearn(instanceId, null);
+    const inst = currentInstances.find(i => i.id === instanceId);
+    if (!inst || !inst.pendingMoveLearns || !inst.pendingMoveLearns[0]) { resolvePendingMoveLearn(instanceId, null); return; }
+    const skippedMoveName = inst.pendingMoveLearns[0].name;
+    const forgottenSet = new Set(inst.forgottenMoves || []);
+    if (skippedMoveName) forgottenSet.add(skippedMoveName);
+    const newForgotten = [...forgottenSet].slice(-20);
+    resolvePendingMoveLearn(instanceId, null, { forgottenMoves: newForgotten });
 }
 // 點背景空白處關閉：找目前正在顯示的那一隻，當成「先不要」處理掉(不會留著卡住讓提示消失不了)
 function dismissLearnMoveModal() {
